@@ -20,6 +20,14 @@
  * reuses the existing formatTakaMinor helper (CC package).
  */
 
+import { fmtMoneyMinor, fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
 import { formatTakaMinor } from "./connections";
 
 // ---------------------------------------------------------------------------
@@ -67,14 +75,20 @@ export type AutoDraftToggleKey =
   | "youtubeEnabled";
 
 /** The toggles, in panel order, with their Bengali labels. */
-export const AUTO_DRAFT_TOGGLES: { key: AutoDraftToggleKey; label: string }[] = [
-  { key: "newProductEnabled", label: "নতুন product এলে" },
-  { key: "saleEnabled", label: "সেল / প্রমোশন শুরু হলে" },
-  { key: "backInStockEnabled", label: "Back-in-stock (স্টক ফিরলে)" },
-  { key: "reviewMilestoneEnabled", label: "রিভিউ মাইলফলক হলে" },
-  { key: "rssEnabled", label: "RSS feed থেকে নতুন আইটেম" },
-  { key: "youtubeEnabled", label: "নিজের YouTube চ্যানেলের নতুন ভিডিও" },
+export const AUTO_DRAFT_TOGGLES: { key: AutoDraftToggleKey; label: string; labelEn: string }[] = [
+  { key: "newProductEnabled", label: "নতুন product এলে", labelEn: "When a new product arrives" },
+  { key: "saleEnabled", label: "সেল / প্রমোশন শুরু হলে", labelEn: "When a sale / promotion starts" },
+  { key: "backInStockEnabled", label: "Back-in-stock (স্টক ফিরলে)", labelEn: "Back-in-stock" },
+  { key: "reviewMilestoneEnabled", label: "রিভিউ মাইলফলক হলে", labelEn: "When a review milestone is hit" },
+  { key: "rssEnabled", label: "RSS feed থেকে নতুন আইটেম", labelEn: "New item from an RSS feed" },
+  { key: "youtubeEnabled", label: "নিজের YouTube চ্যানেলের নতুন ভিডিও", labelEn: "New video on my YouTube channel" },
 ];
+
+export function autoDraftToggleLabel(key: AutoDraftToggleKey, locale: UiLocale = "bn"): string {
+  const found = AUTO_DRAFT_TOGGLES.find((t) => t.key === key);
+  if (!found) return key;
+  return locale === "en" ? found.labelEn : found.label;
+}
 
 export const AUTO_DRAFT_CAP_MIN = 1;
 export const AUTO_DRAFT_CAP_MAX = 20;
@@ -135,17 +149,24 @@ const AUTO_DRAFT_KIND_LABELS: Record<AutoDraftKind, string> = {
   review_milestone: "⭐ রিভিউ মাইলফলক",
 };
 
+const AUTO_DRAFT_KIND_LABELS_EN: Record<AutoDraftKind, string> = {
+  new_product: "🆕 New product",
+  sale: "🏷️ Sale",
+  back_in_stock: "📦 Back-in-stock",
+  review_milestone: "⭐ Review milestone",
+};
+
 /** Bengali event label for an autoDraftKind, or null when the post
  * was not commerce-generated (or the kind is unknown). */
-export function autoDraftKindLabel(kind: AutoDraftKind | string | null | undefined): string | null {
+export function autoDraftKindLabel(kind: AutoDraftKind | string | null | undefined, locale: UiLocale = "bn"): string | null {
   if (!kind) return null;
-  return AUTO_DRAFT_KIND_LABELS[kind as AutoDraftKind] ?? null;
+  return (locale === "en" ? AUTO_DRAFT_KIND_LABELS_EN[kind as AutoDraftKind] : AUTO_DRAFT_KIND_LABELS[kind as AutoDraftKind]) ?? null;
 }
 
 /** Full badge text for a post card, e.g. "Auto draft · 🆕 নতুন
  * product" — null when there is nothing to badge. */
-export function autoDraftBadgeLabel(kind: AutoDraftKind | string | null | undefined): string | null {
-  const label = autoDraftKindLabel(kind);
+export function autoDraftBadgeLabel(kind: AutoDraftKind | string | null | undefined, locale: UiLocale = "bn"): string | null {
+  const label = autoDraftKindLabel(kind, locale);
   return label ? `Auto draft · ${label}` : null;
 }
 
@@ -171,18 +192,18 @@ export function isTrackedLinkPlatform(platform: string | null | undefined): bool
 
 /** The honest note shown for platforms where tracking does not
  * apply; null for Meta Page posts (tracking applies there). */
-export function nonTrackedPlatformNote(platform: string | null | undefined): string | null {
+export function nonTrackedPlatformNote(platform: string | null | undefined, locale: UiLocale = "bn"): string | null {
   if (isTrackedLinkPlatform(platform)) return null;
   if (platform === "instagram" || platform === "tiktok" || platform === "youtube") {
-    return "এই platform-এ clickable link যায় না — tracking প্রযোজ্য নয়";
+    return L(locale, "su5NonTrackedNote");
   }
   return null;
 }
 
 /** "৩টি click" — Bengali digits, like the rest of the page. */
-export function formatClicksLabel(clicks: number): string {
+export function formatClicksLabel(clicks: number, locale: UiLocale = "bn"): string {
   const n = Number.isFinite(clicks) ? Math.max(0, Math.floor(clicks)) : 0;
-  return `${n.toLocaleString("bn-BD")}টি click`;
+  return L(locale, "su5Clicks", { count: fmtNumber(locale, n) });
 }
 
 /**
@@ -191,8 +212,11 @@ export function formatClicksLabel(clicks: number): string {
  * is shown rather than an invented zero-revenue line). Revenue
  * uses the existing formatTakaMinor helper.
  */
-export function formatOrdersRevenueLabel(stats: SocialLinkStats): string | null {
+export function formatOrdersRevenueLabel(stats: SocialLinkStats, locale: UiLocale = "bn"): string | null {
   const orders = Number.isFinite(stats.ordersAssociated) ? Math.floor(stats.ordersAssociated) : 0;
   if (orders <= 0) return null;
-  return `${orders.toLocaleString("bn-BD")}টি order · ${formatTakaMinor(stats.revenueAssociatedMinor)} (association, attribution নয়)`;
+  const revenue = locale === "en"
+    ? fmtMoneyMinor(locale, BigInt(Math.trunc(Number(stats.revenueAssociatedMinor) || 0)))
+    : formatTakaMinor(stats.revenueAssociatedMinor);
+  return L(locale, "su5OrdersRevenue", { count: fmtNumber(locale, orders), revenue });
 }

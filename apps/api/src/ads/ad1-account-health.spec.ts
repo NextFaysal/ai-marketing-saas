@@ -323,7 +323,7 @@ describe("AD1 sync health writes (Meta ad-insights + breakdowns)", () => {
     const { integration, account } = seedMetaConnected(db);
     seedMembers(db);
     jest.spyOn(MetaClient.prototype, "getAdInsights").mockRejectedValue(new Error("Invalid OAuth access token"));
-    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed: Invalid OAuth access token");
+    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     const row = db.integrations.find((r: Row) => r.id === integration.id);
     expect(row.status).toBe("ERROR");
     expect(row.lastError).toBe("Invalid OAuth access token");
@@ -346,7 +346,7 @@ describe("AD1 sync health writes (Meta ad-insights + breakdowns)", () => {
     const db = fakeDb();
     const { integration, account } = seedMetaConnected(db);
     jest.spyOn(MetaClient.prototype, "getBreakdownInsights").mockRejectedValue(new Error("Session expired"));
-    await expect(service(db).syncMetaBreakdowns(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta breakdown sync (age_gender) failed: Session expired");
+    await expect(service(db).syncMetaBreakdowns(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaBreakdownSyncFailed" });
     const row = db.integrations.find((r: Row) => r.id === integration.id);
     expect(row.status).toBe("ERROR");
     expect(row.lastError).toBe("Session expired");
@@ -368,7 +368,7 @@ describe("AD1 sync health writes (Meta ad-insights + breakdowns)", () => {
     const db = fakeDb();
     const { integration, account } = seedMetaConnected(db);
     jest.spyOn(MetaClient.prototype, "getCampaignInsights").mockRejectedValue(new Error("Rate limited"));
-    await expect(service(db).syncMetaInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta insights sync failed: Rate limited");
+    await expect(service(db).syncMetaInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaInsightsSyncFailed" });
     const row = db.integrations.find((r: Row) => r.id === integration.id);
     expect(row.status).toBe("ERROR");
     expect(row.lastError).toBe("Rate limited");
@@ -382,7 +382,7 @@ describe("AD1 sync-failure notification", () => {
     seedMembers(db);
     const longError = `Token expired: ${"x".repeat(300)}`;
     jest.spyOn(MetaClient.prototype, "getAdInsights").mockRejectedValue(new Error(longError));
-    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed");
+    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     expect(db.notifications).toHaveLength(2);
     expect(db.notifications.map((n: Row) => n.userId).sort()).toEqual(["admin-1", "owner-1"]);
     const n = db.notifications[0];
@@ -405,9 +405,9 @@ describe("AD1 sync-failure notification", () => {
     seedMembers(db);
     jest.spyOn(MetaClient.prototype, "getAdInsights").mockRejectedValue(new Error("still broken"));
     const svc = service(db);
-    await expect(svc.syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed");
+    await expect(svc.syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     expect(db.notifications).toHaveLength(2);
-    await expect(svc.syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed");
+    await expect(svc.syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     expect(db.notifications).toHaveLength(2);
   });
 
@@ -421,7 +421,7 @@ describe("AD1 sync-failure notification", () => {
       entityId: integration.id, metadata: null, createdAt: new Date(),
     });
     jest.spyOn(MetaClient.prototype, "getAdInsights").mockRejectedValue(new Error("boom"));
-    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed: boom");
+    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     expect(db.notifications).toHaveLength(0);
     const row = db.integrations.find((r: Row) => r.id === integration.id);
     expect(row.status).toBe("ERROR");
@@ -433,7 +433,7 @@ describe("AD1 sync-failure notification", () => {
     seedMembers(db);
     db.agentNotification.create = jest.fn(async () => { throw new Error("notification store down"); });
     jest.spyOn(MetaClient.prototype, "getAdInsights").mockRejectedValue(new Error("Meta is down"));
-    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toThrow("Meta ad-insights sync failed: Meta is down");
+    await expect(service(db).syncMetaAdInsights(ORG, "owner-1", account.id, {})).rejects.toMatchObject({ code: "ads.metaAdInsightsSyncFailed" });
     const row = db.integrations.find((r: Row) => r.id === integration.id);
     expect(row.status).toBe("ERROR");
     expect(row.lastError).toBe("Meta is down");

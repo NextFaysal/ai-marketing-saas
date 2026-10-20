@@ -66,7 +66,7 @@ describe("B2 proration + scheduled changes", () => {
 
   it("a downgrade checkout is refused with a pointer to scheduling", async () => {
     const { svc } = makeSvc({ id: "sub-1", organizationId: "org-1", plan: "GROWTH", status: "ACTIVE", currentPeriodEnd: new Date(NOW + 10 * DAY), createdAt: new Date(NOW) });
-    await expect(svc.createCheckout("org-1", ACTOR, "STARTER", "01712345678")).rejects.toThrow(/scheduled plan change/);
+    await expect(svc.createCheckout("org-1", ACTOR, "STARTER", "01712345678")).rejects.toMatchObject({ code: "payments.downgradeAtPeriodEnd", status: 400 });
   });
 
   it("activation: prorated upgrade starts a fresh period; renewal extends the old end", async () => {
@@ -87,7 +87,7 @@ describe("B2 proration + scheduled changes", () => {
 
   it("schedule + cancel + sweep: FREE lands active, a paid target lands past-due at the new plan", async () => {
     const { svc, p } = makeSvc({ id: "sub-1", organizationId: "org-1", plan: "GROWTH", status: "ACTIVE", currentPeriodEnd: new Date(NOW + 5 * DAY), createdAt: new Date(NOW) });
-    await expect(svc.schedulePlanChange("org-1", "u-1", "AGENCY")).rejects.toThrow(/Only a lower plan/);
+    await expect(svc.schedulePlanChange("org-1", "u-1", "AGENCY")).rejects.toMatchObject({ code: "payments.scheduleDowngradeOnly", status: 400 });
     const set = await svc.schedulePlanChange("org-1", "u-1", "FREE");
     expect(set.pendingPlan).toBe("FREE");
     expect(p.subscription.rows[0].pendingPlan).toBe("FREE");

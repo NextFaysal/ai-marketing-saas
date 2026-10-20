@@ -2,7 +2,9 @@ import { BadRequestException, ForbiddenException, HttpException, Injectable, Not
 import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { ApiException, badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from "../i18n";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 import { estimateTokens } from "../ai/llm/llm.types";
 import { formatMinor } from "@repo/contracts";
 import { SEND_TIME_MIN_EVENTS, segmentSuggestionsFromCounts, summarizeSendTimeEvents } from "./messaging-ai";
@@ -25,13 +27,13 @@ import { rewriteBroadcastLinks, verifyLinkToken, apiPublicUrl } from "./link-tra
 import { issueOpenToken, verifyOpenToken } from "./open-token";
 import { deliveryRecipientKey, groupFailureReasons, abSuggestion } from "./delivery-report";
 import { parseRecurrence, nextOccurrence, Recurrence, RecurrenceValidationError } from "./recurrence";
-import { JOURNEY_PRESETS } from "./journey-presets";
-import { JOURNEY_PRESETS_V2, UNAVAILABLE_JOURNEY_PRESETS } from "./journey-presets-v2";
+import { JOURNEY_PRESETS, journeyPresetForLocale } from "./journey-presets";
+import { JOURNEY_PRESETS_V2, UNAVAILABLE_JOURNEY_PRESETS, journeyPresetV2ForLocale } from "./journey-presets-v2";
 import { composeCheck } from "./compose-check";
 import { composeCheckV2 } from "./compose-check-v2";
 import { aggregateChannelHealth, isHardRecipientFailure, decideBudget, BOUNCE_COMPLAINT_NOTE, BudgetDecision } from "./governance";
 import {
-  ASSOCIATION_LABEL_BN, AUTO_WINNER_MIN_SAMPLE, AUTO_WINNER_RULE_TEXT_BN, AUTO_WINNER_TEST_NAME,
+  ASSOCIATION_LABEL_BN, AUTO_WINNER_MIN_SAMPLE, AUTO_WINNER_RULE_TEXT_BN, AUTO_WINNER_TEST_NAME, autoWinnerRuleTextFor,
   aggregateFunnels, buildAnalyticsCsv, decideAutoWinner, recipientSendTimeFromEvents, subjectQualityScore,
   type BroadcastFunnelShape,
 } from "./analytics";
@@ -55,7 +57,9 @@ import {
   buildUniqueCouponCode, pickRecommendations, renderRecommendationBlock, applyDynamicBlocks,
   UNIQUE_COUPON_VARIABLE,
 } from "./personalization";
-import { FESTIVAL_TEMPLATE_PACKS } from "./festival-templates";
+import { FESTIVAL_TEMPLATE_PACKS, festivalPackForLocale } from "./festival-templates";
+import { validateTemplateVariants, type TemplateVariants } from "./template-variants";
+import { catalogText, normalizeApiLocale, resolveDocumentLocale } from "../i18n/catalog/send-locale";
 import {
   EngagementContact, EngagementThresholds, DEFAULT_ENGAGEMENT_THRESHOLDS,
   ENGAGEMENT_FORMULA_TEXT, PREDICTIVE_SEGMENT_RULES,
@@ -173,17 +177,17 @@ export interface TelegramButton { label: string; url: string }
  * whose message is the client-facing 400 text. */
 export function validateTelegramButtons(raw: unknown): TelegramButton[] | null {
   if (raw === undefined || raw === null) return null;
-  if (!Array.isArray(raw)) throw new Error("telegramButtons must be an array of {label, url} pairs");
+  if (!Array.isArray(raw)) throw badRequest("messaging.telegramButtonsMustBeArrayOfLabel");
   if (raw.length === 0) return null;
-  if (raw.length > 4) throw new Error("telegramButtons may carry at most 4 buttons");
+  if (raw.length > 4) throw badRequest("messaging.telegramButtonsMayCarryAtMost4");
   const out: TelegramButton[] = [];
   for (const b of raw as any[]) {
     const label = String(b?.label ?? "").trim();
     const url = String(b?.url ?? "").trim();
-    if (!label || label.length > 64) throw new Error("Each telegram button needs a label of 1–64 characters");
+    if (!label || label.length > 64) throw badRequest("messaging.eachTelegramButtonNeedsALabelOf");
     let ok = url.length > 0 && url.length <= 2048;
     if (ok) { try { ok = new URL(url).protocol === "https:"; } catch { ok = false; } }
-    if (!ok) throw new Error(`Telegram button "${label}" needs an https URL`);
+    if (!ok) throw badRequest("messaging.telegramButtonNeedsAnHttpsUrl", { label });
     out.push({ label, url });
   }
   return out;
@@ -201,7 +205,7 @@ export function validatePushUrl(raw: unknown): string | null {
   if (raw === undefined || raw === null || String(raw).trim() === "") return null;
   const url = String(raw).trim();
   if (!url.startsWith("/") || url.startsWith("//") || url.length > 500) {
-    throw new Error("pushUrl must be a shop-relative path (e.g. /sale) — external URLs are not allowed for web push");
+    throw badRequest("messaging.pushUrlMustBeAShopRelativePath");
   }
   return url;
 }
@@ -219,7 +223,7 @@ export function validateOnsiteUrl(raw: unknown): string | null {
   if (raw === undefined || raw === null || String(raw).trim() === "") return null;
   const url = String(raw).trim();
   if (!url.startsWith("/") || url.startsWith("//") || url.length > 500) {
-    throw new Error("onsiteUrl must be a shop-relative path (e.g. /sale) — external URLs are not allowed for on-site notifications");
+    throw badRequest("messaging.onsiteUrlMustBeAShopRelativePath");
   }
   return url;
 }
@@ -534,14 +538,14 @@ export interface WorkflowCreatorPort {
  * recipients in the audited sense; they stay available in the
  * Workflows page itself).
  */
-export const JOURNEY_TRIGGERS: { trigger: string; labelBn: string }[] = [
-  { trigger: "order_created", labelBn: "নতুন অর্ডার তৈরি হলে" },
-  { trigger: "order_delivered", labelBn: "অর্ডার ডেলিভারি হলে" },
-  { trigger: "order_cod_confirmed", labelBn: "COD অর্ডার কনফার্ম হলে" },
-  { trigger: "lead_created", labelBn: "নতুন লিড তৈরি হলে" },
-  { trigger: "lead_stage_changed", labelBn: "লিডের স্টেজ বদলালে" },
-  { trigger: "cart_abandoned", labelBn: "কার্ট পরিত্যক্ত হলে (Abandoned Cart)" },
-  { trigger: "inbox_message_received", labelBn: "ইনবক্সে নতুন বার্তা এলে" },
+export const JOURNEY_TRIGGERS: { trigger: string; labelBn: string; labelEn: string }[] = [
+  { trigger: "order_created", labelBn: "নতুন অর্ডার তৈরি হলে", labelEn: "When a new order is created" },
+  { trigger: "order_delivered", labelBn: "অর্ডার ডেলিভারি হলে", labelEn: "When an order is delivered" },
+  { trigger: "order_cod_confirmed", labelBn: "COD অর্ডার কনফার্ম হলে", labelEn: "When a COD order is confirmed" },
+  { trigger: "lead_created", labelBn: "নতুন লিড তৈরি হলে", labelEn: "When a new lead is created" },
+  { trigger: "lead_stage_changed", labelBn: "লিডের স্টেজ বদলালে", labelEn: "When a lead's stage changes" },
+  { trigger: "cart_abandoned", labelBn: "কার্ট পরিত্যক্ত হলে (Abandoned Cart)", labelEn: "When a cart is abandoned (Abandoned Cart)" },
+  { trigger: "inbox_message_received", labelBn: "ইনবক্সে নতুন বার্তা এলে", labelEn: "When a new message arrives in the inbox" },
 ];
 
 /** MX4 — the step types the journey builder may use. A subset
@@ -549,13 +553,13 @@ export const JOURNEY_TRIGGERS: { trigger: string; labelBn: string }[] = [
  * control and tagging. Everything else the engine can do
  * (webhooks, AI, team notifications, …) stays in the Workflows
  * page — a journey is a customer path, not an ops automation. */
-export const JOURNEY_STEP_TYPES: { type: string; labelBn: string }[] = [
-  { type: "wait", labelBn: "অপেক্ষা" },
-  { type: "send_email", labelBn: "ইমেইল পাঠান" },
-  { type: "send_sms", labelBn: "SMS পাঠান" },
-  { type: "condition", labelBn: "শর্ত (মিললে এগিয়ে যান)" },
-  { type: "branch", labelBn: "শাখা (Branch — দুই পথ)" },
-  { type: "add_tag", labelBn: "ট্যাগ যোগ করুন" },
+export const JOURNEY_STEP_TYPES: { type: string; labelBn: string; labelEn: string }[] = [
+  { type: "wait", labelBn: "অপেক্ষা", labelEn: "Wait" },
+  { type: "send_email", labelBn: "ইমেইল পাঠান", labelEn: "Send email" },
+  { type: "send_sms", labelBn: "SMS পাঠান", labelEn: "Send SMS" },
+  { type: "condition", labelBn: "শর্ত (মিললে এগিয়ে যান)", labelEn: "Condition (continue if matched)" },
+  { type: "branch", labelBn: "শাখা (Branch — দুই পথ)", labelEn: "Branch (two paths)" },
+  { type: "add_tag", labelBn: "ট্যাগ যোগ করুন", labelEn: "Add a tag" },
 ];
 
 /** MX4 — step types allowed INSIDE a branch arm in a journey.
@@ -580,13 +584,13 @@ export const JOURNEY_ARM_STEP_TYPES = ["send_email", "send_sms", "add_tag"];
  * rewritten" — see docs/messaging-mx4-acceptance.md), so
  * offering them would advertise a signal that can never fire.
  */
-export const JOURNEY_CONDITION_FIELDS: { field: string; labelBn: string; ops: string[]; kind: "number" | "string" | "boolean" }[] = [
-  { field: "total", labelBn: "অর্ডারের মোট টাকা (Total)", ops: ["eq", "neq", "gt", "gte", "lt", "lte"], kind: "number" },
-  { field: "status", labelBn: "অর্ডারের অবস্থা (Status)", ops: ["eq", "neq"], kind: "string" },
-  { field: "source", labelBn: "উৎস (Source)", ops: ["eq", "neq", "contains"], kind: "string" },
-  { field: "stage", labelBn: "লিডের স্টেজ (Stage)", ops: ["eq", "neq"], kind: "string" },
-  { field: "purchasedSinceEntry", labelBn: "যাত্রা শুরুর পর কেনাকাটা করেছেন", ops: ["eq"], kind: "boolean" },
-  { field: "customerTags", labelBn: "কাস্টমার/লিডের ট্যাগ", ops: ["contains"], kind: "string" },
+export const JOURNEY_CONDITION_FIELDS: { field: string; labelBn: string; labelEn: string; ops: string[]; kind: "number" | "string" | "boolean" }[] = [
+  { field: "total", labelBn: "অর্ডারের মোট টাকা (Total)", labelEn: "Order total (Total)", ops: ["eq", "neq", "gt", "gte", "lt", "lte"], kind: "number" },
+  { field: "status", labelBn: "অর্ডারের অবস্থা (Status)", labelEn: "Order status (Status)", ops: ["eq", "neq"], kind: "string" },
+  { field: "source", labelBn: "উৎস (Source)", labelEn: "Source", ops: ["eq", "neq", "contains"], kind: "string" },
+  { field: "stage", labelBn: "লিডের স্টেজ (Stage)", labelEn: "Lead stage (Stage)", ops: ["eq", "neq"], kind: "string" },
+  { field: "purchasedSinceEntry", labelBn: "যাত্রা শুরুর পর কেনাকাটা করেছেন", labelEn: "Has purchased since the journey started", ops: ["eq"], kind: "boolean" },
+  { field: "customerTags", labelBn: "কাস্টমার/লিডের ট্যাগ", labelEn: "Customer/lead tags", ops: ["contains"], kind: "string" },
 ];
 
 @Injectable()
@@ -698,7 +702,7 @@ export class MessagingService {
       },
       sms: {
         configured: smsPath !== "none",
-        provider: smsGateway ? SMS_GATEWAY_LABELS[smsGateway] : "কোনো SMS Gateway নেই",
+        provider: smsGateway ? SMS_GATEWAY_LABELS[smsGateway] : catalogText("messaging.smsGatewayNone", organizationId ? await resolveDocumentLocale(this.prisma as any, organizationId) : "bn"),
         gateway: smsGateway, path: smsPath,
         tenantConfigured: Boolean(tenantSms), platformConfigured: platformSms,
       },
@@ -706,12 +710,24 @@ export class MessagingService {
   }
 
   // ---------- Templates ----------
-  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
-    if (!["email", "sms"].includes(dto.channel)) throw new BadRequestException("channel must be email or sms");
-    if (dto.channel === "email" && !dto.subject) throw new BadRequestException("Email templates need a subject");
+  /** MB5 (ML14, CD-3): validate an untrusted `variants` value
+   * for template create/update. Returns the normalised variants
+   * (or null for "no variants"); any malformed shape is the
+   * existing catalogued 400. */
+  private assertTemplateVariants(raw: unknown): TemplateVariants | null {
+    try {
+      return validateTemplateVariants(raw);
+    } catch {
+      throw badRequest("messaging.templateVariantsInvalid");
+    }
+  }
+
+  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown; variants?: unknown }) {
+    if (!["email", "sms"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailOrSms");
+    if (dto.channel === "email" && !dto.subject) throw badRequest("messaging.emailTemplatesNeedASubject");
     // MS5: HTML is an email-only part — on sms it is REJECTED with
     // an honest 400, never silently stored or ignored.
-    if (dto.htmlBody && dto.channel !== "email") throw new BadRequestException("htmlBody is only allowed for email templates (SMS has no HTML part)");
+    if (dto.htmlBody && dto.channel !== "email") throw badRequest("messaging.htmlBodyIsOnlyAllowedForEmail");
     // MX7: a block-built email template — the blocks are the
     // source; body/htmlBody are RENDERED from them (brand kit +
     // real catalog rows at this moment) into the same fields the
@@ -722,14 +738,17 @@ export class MessagingService {
     let blocks: EmailBlock[] | null = null;
     let emptySlots: { index: number; type: string; reason: string }[] = [];
     if (dto.blocks !== undefined && dto.blocks !== null) {
-      if (dto.channel !== "email") throw new BadRequestException("blocks are only allowed for email templates (the block builder builds email)");
-      if (dto.body || dto.htmlBody) throw new BadRequestException("With blocks, body/htmlBody are rendered from the blocks — do not send them too");
+      if (dto.channel !== "email") throw badRequest("messaging.blocksAreOnlyAllowedForEmail");
+      if (dto.body || dto.htmlBody) throw badRequest("messaging.withBlocksBodyHtmlBodyAreRendered");
       const rendered = await this.renderBlocksForOrg(organizationId, dto.blocks);
       blocks = rendered.blocks; body = rendered.body; htmlBody = rendered.htmlBody; emptySlots = rendered.emptySlots;
     }
-    if (!blocks && !body) throw new BadRequestException("Template body is required (write one or build with blocks)");
+    if (!blocks && !body) throw badRequest("messaging.templateBodyIsRequiredWriteOne");
+    // MB5 (ML14): per-locale variants are validated on write and
+    // stored verbatim (merchant-authored, never translated).
+    const variants = this.assertTemplateVariants(dto.variants);
     const template = await (this.prisma as any).messageTemplate.create({
-      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body, htmlBody, blocks: blocks ?? undefined, version: 1, createdById: actorId },
+      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body, htmlBody, blocks: blocks ?? undefined, variants: variants ?? undefined, version: 1, createdById: actorId },
     });
     await this.snapshotTemplateVersion(organizationId, actorId, template);
     return blocks ? { ...template, emptySlots } : template;
@@ -822,9 +841,9 @@ export class MessagingService {
   async restoreTemplateVersion(organizationId: string, actorId: string, templateId: string, version: number) {
     const template = await this.getTemplate(organizationId, templateId);
     const table = (this.prisma as any).messageTemplateVersion;
-    if (!table?.findFirst) throw new BadRequestException("Template versioning is not available in this deployment");
+    if (!table?.findFirst) throw badRequest("messaging.templateVersioningIsNotAvailableIn");
     const target = await table.findFirst({ where: { organizationId, templateId, version } });
-    if (!target) throw new NotFoundException("Template version not found");
+    if (!target) throw notFound("messaging.templateVersionNotFound");
     const nextVersion = (template.version ?? 1) + 1;
     const updated = await (this.prisma as any).messageTemplate.update({
       where: { id: templateId },
@@ -852,7 +871,7 @@ export class MessagingService {
 
   async updateContentBlock(organizationId: string, blockId: string, dto: { name?: string; block?: unknown }) {
     const existing = await (this.prisma as any).messagingContentBlock.findFirst({ where: { id: blockId, organizationId } });
-    if (!existing) throw new NotFoundException("Content block not found");
+    if (!existing) throw notFound("messaging.contentBlockNotFound");
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.block !== undefined) {
@@ -865,14 +884,14 @@ export class MessagingService {
 
   async deleteContentBlock(organizationId: string, blockId: string) {
     const existing = await (this.prisma as any).messagingContentBlock.findFirst({ where: { id: blockId, organizationId } });
-    if (!existing) throw new NotFoundException("Content block not found");
+    if (!existing) throw notFound("messaging.contentBlockNotFound");
     await (this.prisma as any).messagingContentBlock.delete({ where: { id: blockId } });
     return { deleted: true };
   }
 
   // ---------- MX7: festival template pack ----------
   listFestivalPacks() {
-    return FESTIVAL_TEMPLATE_PACKS.map((p) => ({ key: p.key, name: p.name, nameBn: p.nameBn, subject: p.subject, blocks: p.blocks }));
+    return FESTIVAL_TEMPLATE_PACKS.map((p) => ({ key: p.key, name: p.name, nameBn: p.nameBn, subject: p.subject, blocks: p.blocks, subjectEn: p.subjectEn, blocksEn: p.blocksEn }));
   }
 
   /** Install one festival design as a REAL MessageTemplate via
@@ -880,9 +899,13 @@ export class MessagingService {
    * real products/discounts in the builder afterwards). */
   async installFestivalPack(organizationId: string, actorId: string, key: string) {
     const pack = FESTIVAL_TEMPLATE_PACKS.find((p) => p.key === key);
-    if (!pack) throw new NotFoundException("Festival template pack not found");
+    if (!pack) throw notFound("messaging.festivalTemplatePackNotFound");
+    // MB4 (D-MB4-8): platform pack content installs in the
+    // org's dashboardLocale; the installed copy is merchant-owned.
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const content = festivalPackForLocale(pack, locale);
     const template = await this.createTemplate(organizationId, actorId, {
-      name: pack.name, channel: "email", subject: pack.subject, body: "", blocks: pack.blocks,
+      name: pack.name, channel: "email", subject: content.subject, body: "", blocks: content.blocks,
     });
     return { pack: pack.key, template };
   }
@@ -896,7 +919,7 @@ export class MessagingService {
   /** MS5: advisory compose warnings (pure compose-check module;
    * never blocks a send). */
   checkCompose(dto: { channel: string; subject?: string; body: string }) {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
     return { warnings: composeCheck(dto) };
   }
 
@@ -936,30 +959,36 @@ export class MessagingService {
 
   async getTemplate(organizationId: string, templateId: string) {
     const template = await (this.prisma as any).messageTemplate.findFirst({ where: { id: templateId, organizationId } });
-    if (!template) throw new NotFoundException("Template not found");
+    if (!template) throw notFound("messaging.templateNotFound");
     return template;
   }
 
-  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
+  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown; variants?: unknown }) {
     const existing = await this.getTemplate(organizationId, templateId);
     // MS5: the EXISTING template's channel decides — htmlBody on
     // a non-email template is an honest 400.
     if (dto.htmlBody !== undefined && existing.channel !== "email") {
-      throw new BadRequestException("htmlBody is only allowed for email templates (SMS has no HTML part)");
+      throw badRequest("messaging.htmlBodyIsOnlyAllowedForEmail");
     }
-    const { blocks: rawBlocks, ...rest } = dto as any;
+    const { blocks: rawBlocks, variants: rawVariants, ...rest } = dto as any;
     const data: Record<string, unknown> = { ...rest };
+    // MB5 (ML14): variants are validated exactly like at create;
+    // an explicit null clears them (the template returns to
+    // authored-text-only in every locale).
+    if (rawVariants !== undefined) {
+      data.variants = this.assertTemplateVariants(rawVariants);
+    }
     let emptySlots: { index: number; type: string; reason: string }[] | undefined;
     // MX7: blocks on update re-render body/htmlBody from the new
     // blocks (explicit body/htmlBody alongside is refused, as at
     // create). Explicit blocks: null detaches the builder source
     // (the template becomes hand-authored; body/htmlBody stay).
     if (rawBlocks !== undefined) {
-      if (existing.channel !== "email") throw new BadRequestException("blocks are only allowed for email templates (the block builder builds email)");
+      if (existing.channel !== "email") throw badRequest("messaging.blocksAreOnlyAllowedForEmail");
       if (rawBlocks === null) {
         data.blocks = null;
       } else {
-        if (dto.body !== undefined || dto.htmlBody !== undefined) throw new BadRequestException("With blocks, body/htmlBody are rendered from the blocks — do not send them too");
+        if (dto.body !== undefined || dto.htmlBody !== undefined) throw badRequest("messaging.withBlocksBodyHtmlBodyAreRendered");
         const rendered = await this.renderBlocksForOrg(organizationId, rawBlocks);
         data.blocks = rendered.blocks; data.body = rendered.body; data.htmlBody = rendered.htmlBody;
         emptySlots = rendered.emptySlots;
@@ -968,7 +997,7 @@ export class MessagingService {
     // MX7 versioning: a CONTENT change (name/subject/body/htmlBody/
     // blocks) bumps the version and snapshots it; a no-op PATCH
     // (nothing actually differs) keeps the version.
-    const contentChanged = ["name", "subject", "body", "htmlBody", "blocks"].some((k) => data[k] !== undefined && JSON.stringify(data[k] ?? null) !== JSON.stringify((existing as any)[k] ?? null));
+    const contentChanged = ["name", "subject", "body", "htmlBody", "blocks", "variants"].some((k) => data[k] !== undefined && JSON.stringify(data[k] ?? null) !== JSON.stringify((existing as any)[k] ?? null));
     if (contentChanged) data.version = (existing.version ?? 1) + 1;
     const updated = await (this.prisma as any).messageTemplate.update({ where: { id: templateId }, data });
     if (contentChanged) {
@@ -1120,7 +1149,7 @@ export class MessagingService {
       return { invalidCount: 0 };
     }
     if (audienceType === "leads_stage") {
-      if (!audienceStage) throw new BadRequestException("audienceStage is required for leads_stage audience");
+      if (!audienceStage) throw badRequest("messaging.audienceStageIsRequiredForLeadsStage");
       await this.scanInChunks((this.prisma as any).lead, { organizationId, stage: audienceStage }, async (rows) => {
         for (const l of rows) {
           if (!hasAddress(l)) continue;
@@ -1131,7 +1160,7 @@ export class MessagingService {
       return { invalidCount: 0 };
     }
     if (audienceType === "segment") {
-      if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
+      if (!audienceSegment) throw badRequest("messaging.audienceSegmentIsRequiredForSegmentAudience");
       const rows = await computeRfm(this.prisma as any, organizationId);
       for (const r of rows) {
         if (r.segment !== audienceSegment) continue;
@@ -1147,7 +1176,7 @@ export class MessagingService {
       return { invalidCount: 0 };
     }
     if (audienceType === "saved") {
-      if (!extras?.audienceSavedId) throw new BadRequestException("audienceSavedId is required for saved audience");
+      if (!extras?.audienceSavedId) throw badRequest("messaging.audienceSavedIdIsRequiredForSavedAudience");
       const saved = await (this.prisma as any).messagingSavedAudience?.findFirst({
         where: { id: extras.audienceSavedId, organizationId },
       }).catch(() => null);
@@ -1155,7 +1184,7 @@ export class MessagingService {
         // Deliberate (MS3): deleting a saved audience a DRAFT still
         // references is allowed — the draft then fails HERE,
         // honestly, instead of silently widening to something else.
-        throw new BadRequestException("Saved audience no longer exists — it may have been deleted. Choose another audience.");
+        throw badRequest("messaging.savedAudienceNoLongerExistsIt");
       }
       const def = this.assertValidDefinition(saved.definition);
       await this.resolveCustomAudienceInChunks(organizationId, channel, def, chunkSize, onChunk);
@@ -1166,7 +1195,7 @@ export class MessagingService {
       for (let i = 0; i < recipients.length; i += chunkSize) await onChunk(recipients.slice(i, i + chunkSize));
       return { invalidCount };
     }
-    throw new BadRequestException("audienceType must be customers, leads_stage, segment, custom, saved or csv");
+    throw badRequest("messaging.audienceTypeMustBeCustomersLeadsStage");
   }
 
   /**
@@ -1205,19 +1234,17 @@ export class MessagingService {
     chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
   ): Promise<{ invalidCount: number }> {
     if (!["push_subscribers", "customers", "segment"].includes(audienceType)) {
-      throw new BadRequestException(
-        `audienceType ${audienceType} is not available for the push channel — push audiences resolve from web push subscriptions (use push_subscribers, customers or segment)`,
-      );
+      throw badRequest("messaging.audienceTypeAudienceTypeIsNotAvailableFor", { audienceType: audienceType });
     }
     let segmentCustomerIds: Set<string> | null = null;
     if (audienceType === "segment") {
-      if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
+      if (!audienceSegment) throw badRequest("messaging.audienceSegmentIsRequiredForSegmentAudience");
       const rows = await computeRfm(this.prisma as any, organizationId);
       segmentCustomerIds = new Set(rows.filter((r) => r.segment === audienceSegment).map((r) => r.customerId));
     }
     const subTable = (this.prisma as any).webPushSubscription;
     if (!subTable || typeof subTable.findMany !== "function") {
-      throw new BadRequestException("Web push subscriptions are not available in this deployment (the web push store is missing)");
+      throw badRequest("messaging.webPushSubscriptionsAreNotAvailable");
     }
     let buffer: Recipient[] = [];
     const emit = async (r: Recipient) => {
@@ -1292,17 +1319,15 @@ export class MessagingService {
     chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
   ): Promise<{ invalidCount: number }> {
     if (audienceType === "custom" || audienceType === "saved" || audienceType === "csv") {
-      throw new BadRequestException(
-        "Custom, saved and CSV audiences are keyed on email/phone addresses and cannot resolve telegram chats. Use the telegram_subscribers, customers, leads_stage or segment audiences for telegram.",
-      );
+      throw badRequest("messaging.customSavedAndCSVAudiencesAre");
     }
     if (audienceType === "leads_stage" && !audienceStage) {
-      throw new BadRequestException("audienceStage is required for the leads_stage audience");
+      throw badRequest("messaging.audienceStageIsRequiredForTheLeads");
     }
     let segmentIds: Set<string> | null = null;
     if (audienceType === "segment") {
       if (!audienceSegment || !RFM_SEGMENTS.includes(audienceSegment as any)) {
-        throw new BadRequestException(`audienceSegment must be one of: ${RFM_SEGMENTS.join(", ")}`);
+        throw badRequest("messaging.audienceSegmentMustBeOneOfRFM", { RFM_SEGMENTSJoin: RFM_SEGMENTS.join(", ") });
       }
       const rfm = await computeRfm(this.prisma as any, organizationId);
       segmentIds = new Set(rfm.filter((r) => r.segment === audienceSegment).map((r) => r.customerId));
@@ -1401,9 +1426,7 @@ export class MessagingService {
     chunkSize: number, onChunk: (recipients: Recipient[]) => Promise<void>,
   ): Promise<{ invalidCount: number }> {
     if (!["customers", "segment"].includes(audienceType)) {
-      throw new BadRequestException(
-        `audienceType ${audienceType} is not available for the onsite channel — on-site notifications reach shop customers only (use customers or segment)`,
-      );
+      throw badRequest("messaging.audienceTypeAudienceTypeIsNotAvailableFor2", { audienceType: audienceType });
     }
     let buffer: Recipient[] = [];
     const emit = async (r: Recipient) => {
@@ -1412,7 +1435,7 @@ export class MessagingService {
     };
     const flush = async () => { if (buffer.length) { const out = buffer; buffer = []; await onChunk(out); } };
     if (audienceType === "segment") {
-      if (!audienceSegment) throw new BadRequestException("audienceSegment is required for segment audience");
+      if (!audienceSegment) throw badRequest("messaging.audienceSegmentIsRequiredForSegmentAudience");
       const rows = await computeRfm(this.prisma as any, organizationId);
       for (const r of rows) {
         if (r.segment !== audienceSegment) continue;
@@ -1531,9 +1554,9 @@ export class MessagingService {
    */
   private async resolveCsvAudience(organizationId: string, channel: string, rawCsv: unknown): Promise<{ recipients: Recipient[]; invalidCount: number }> {
     const addresses = parseAddressList(rawCsv);
-    if (!addresses.length) throw new BadRequestException("audienceCsv has no addresses — paste at least one email address or phone number");
+    if (!addresses.length) throw badRequest("messaging.audienceCsvHasNoAddressesPasteAt");
     if (addresses.length > CSV_AUDIENCE_CAP) {
-      throw new BadRequestException(`CSV audience has ${addresses.length} addresses, over the cap of ${CSV_AUDIENCE_CAP}. Split the list instead of silently truncating it.`);
+      throw badRequest("messaging.cSVAudienceHasAddressesLengthAddressesOver", { addressesLength: addresses.length, CSV_AUDIENCE_CAP: CSV_AUDIENCE_CAP });
     }
     const valid: string[] = [];
     let invalidCount = 0;
@@ -1589,7 +1612,7 @@ export class MessagingService {
 
   async createSavedAudience(organizationId: string, actorId: string, dto: { name: string; definition: unknown }) {
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("A saved audience needs a name");
+    if (!name) throw badRequest("messaging.aSavedAudienceNeedsAName");
     const definition = this.assertValidDefinition(dto.definition);
     const row = await (this.prisma as any).messagingSavedAudience.create({
       data: { organizationId, name, definition, createdById: actorId },
@@ -1606,7 +1629,7 @@ export class MessagingService {
 
   private async getSavedAudienceOrThrow(organizationId: string, audienceId: string) {
     const row = await (this.prisma as any).messagingSavedAudience.findFirst({ where: { id: audienceId, organizationId } });
-    if (!row) throw new NotFoundException("Saved audience not found");
+    if (!row) throw notFound("messaging.savedAudienceNotFound");
     return row;
   }
 
@@ -1615,7 +1638,7 @@ export class MessagingService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("A saved audience needs a name");
+      if (!name) throw badRequest("messaging.aSavedAudienceNeedsAName");
       data.name = name;
     }
     if (dto.definition !== undefined) data.definition = this.assertValidDefinition(dto.definition);
@@ -1713,13 +1736,13 @@ export class MessagingService {
     smsGateway?: string; smsApiKey?: string; smsSenderId?: string; smsApiUrl?: string; priority?: number;
   }) {
     if (!dto.smsGateway || !["sslwireless", "bulksmsbd", "alphasms"].includes(dto.smsGateway)) {
-      throw new BadRequestException("smsGateway must be sslwireless, bulksmsbd or alphasms");
+      throw badRequest("messaging.smsGatewayMustBeSslwirelessBulksmsbdOr");
     }
-    if (!dto.smsSenderId) throw new BadRequestException("An SMS sender ID is required");
-    if (!dto.smsApiKey) throw new BadRequestException("An SMS API key is required");
+    if (!dto.smsSenderId) throw badRequest("messaging.anSMSSenderIDIsRequired");
+    if (!dto.smsApiKey) throw badRequest("messaging.anSMSAPIKeyIsRequired");
     const priority = dto.priority === undefined ? 10 : dto.priority;
     if (!Number.isInteger(priority) || priority < 0 || priority > 1000) {
-      throw new BadRequestException("priority must be an integer between 0 and 1000 (lower sends first)");
+      throw badRequest("messaging.priorityMustBeAnIntegerBetween");
     }
     const row = await (this.prisma as any).messagingSmsGatewayConfig.create({
       data: {
@@ -1739,7 +1762,7 @@ export class MessagingService {
    * it stays updateTenantSms's `clear` path. */
   async removeSmsGateway(organizationId: string, actorId: string, gatewayId: string) {
     const row = await (this.prisma as any).messagingSmsGatewayConfig?.findFirst({ where: { id: gatewayId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("SMS gateway not found");
+    if (!row) throw notFound("messaging.sMSGatewayNotFound");
     await (this.prisma as any).messagingSmsGatewayConfig.delete({ where: { id: row.id } });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.sender_sms_gateway_remove", entityType: "MessagingSmsGatewayConfig", entityId: gatewayId, metadata: { gateway: row.smsGateway } });
     return { deleted: true };
@@ -1795,13 +1818,13 @@ export class MessagingService {
       fromName: dto.fromName ?? existing?.fromName ?? null,
     });
     if (!candidate) {
-      throw new BadRequestException("Tenant SMTP needs at least a host and a From address (and a decryptable stored password, if one is set)");
+      throw badRequest("messaging.tenantSMTPNeedsAtLeastA");
     }
     try {
       if (typeof (this.email as any).verifyTenantSmtp !== "function") throw new Error("Tenant SMTP verification is unavailable");
       await this.email.verifyTenantSmtp(candidate);
     } catch (e: any) {
-      throw new BadRequestException(`SMTP verification failed — nothing was saved: ${e?.message ?? String(e)}`);
+      throw badRequest("messaging.sMTPVerificationFailedNothingWasSaved", { e: e?.message ?? String(e) });
     }
     const row = await this.upsertSenderConfig(organizationId, {
       smtpHost: candidate.host,
@@ -1836,12 +1859,12 @@ export class MessagingService {
     const existing = await this.getSenderConfigRow(organizationId);
     const gateway = dto.smsGateway ?? existing?.smsGateway ?? null;
     if (!gateway || !["sslwireless", "bulksmsbd", "alphasms"].includes(gateway)) {
-      throw new BadRequestException("smsGateway must be sslwireless, bulksmsbd or alphasms");
+      throw badRequest("messaging.smsGatewayMustBeSslwirelessBulksmsbdOr");
     }
     const senderId = dto.smsSenderId ?? existing?.smsSenderId ?? null;
-    if (!senderId) throw new BadRequestException("An SMS sender ID is required");
+    if (!senderId) throw badRequest("messaging.anSMSSenderIDIsRequired");
     const apiKeyEncrypted = dto.smsApiKey ? seal(dto.smsApiKey) : (existing?.smsApiKeyEncrypted ?? null);
-    if (!apiKeyEncrypted) throw new BadRequestException("An SMS API key is required");
+    if (!apiKeyEncrypted) throw badRequest("messaging.anSMSAPIKeyIsRequired");
     const row = await this.upsertSenderConfig(organizationId, {
       smsGateway: gateway,
       smsApiKeyEncrypted: apiKeyEncrypted,
@@ -1865,7 +1888,7 @@ export class MessagingService {
       if (dto[key] !== undefined) {
         const v = dto[key];
         if (v !== null && (!Number.isInteger(v) || (v as number) < 0)) {
-          throw new BadRequestException(`${key} must be a non-negative integer (minor units) or null`);
+          throw badRequest("messaging.keyMustBeANonNegative", { key: key });
         }
         data[key] = v;
       }
@@ -1883,10 +1906,11 @@ export class MessagingService {
    */
   async sendSenderTestEmail(organizationId: string, actorId: string, to: string) {
     const address = String(to ?? "").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new BadRequestException("A valid test recipient email address is required");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw badRequest("messaging.aValidTestRecipientEmailAddress");
     const tenantSmtp = await this.resolveTenantSmtp(organizationId);
-    const subject = "Test email — আপনার প্রেরক সেটিংস পরীক্ষা";
-    const text = "এটি একটি পরীক্ষামূলক ইমেইল। আপনার Messaging প্রেরক সেটিংস সঠিকভাবে কাজ করছে। (This is a test email from your Messaging sender settings.)";
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const subject = catalogText("messaging.testEmailSubject", locale);
+    const text = catalogText("messaging.testEmailText", locale);
     let result: { providerMessageId: string };
     let path: "tenant" | "platform";
     if (tenantSmtp && typeof (this.email as any).sendTenant === "function") {
@@ -1896,7 +1920,7 @@ export class MessagingService {
       result = await this.email.send({ to: address, subject, text });
       path = "platform";
     } else {
-      throw new BadRequestException("No email path is configured for this organization: save your own SMTP settings or ask the platform admin to configure platform SMTP.");
+      throw badRequest("messaging.noEmailPathIsConfiguredFor");
     }
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.sender_test_send", entityType: "MessagingSenderConfig", metadata: { path, to: address, providerMessageId: result.providerMessageId } });
     return { sent: true, path, providerMessageId: result.providerMessageId };
@@ -2020,11 +2044,7 @@ export class MessagingService {
    * queue, schedule or send it refuses with the state named. */
   async assertApprovalAllowsSend(organizationId: string, broadcast: any): Promise<void> {
     if (await this.approvalGateApplies(organizationId, broadcast)) {
-      throw new BadRequestException(
-        broadcast.approvalStatus === "rejected"
-          ? "This broadcast was REJECTED in review and cannot be sent or scheduled. Edit it and submit it for approval again."
-          : "This broadcast is pending approval and cannot be sent or scheduled until a different authorised approver (OWNER/ADMIN) approves it.",
-      );
+      throw badRequest(broadcast.approvalStatus === "rejected" ? "messaging.broadcastRejectedInReviewCannotBe" : "messaging.broadcastPendingApprovalCannotBeSent");
     }
   }
 
@@ -2034,13 +2054,13 @@ export class MessagingService {
   async approveBroadcast(organizationId: string, actorId: string, broadcastId: string, note?: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (broadcast.status !== "pending_approval" || broadcast.approvalStatus !== "pending") {
-      throw new BadRequestException(`This broadcast is not pending approval (status: ${broadcast.status})`);
+      throw badRequest("messaging.thisBroadcastIsNotPendingApproval", { broadcastStatus: broadcast.status });
     }
     if (!(await this.isBroadcastApprover(organizationId, actorId))) {
-      throw new ForbiddenException("Only an OWNER or ADMIN member can approve a broadcast.");
+      throw forbidden("messaging.onlyAnOWNEROrADMINMember");
     }
     if (broadcast.createdById === actorId) {
-      throw new ForbiddenException("Four-eyes rule: the broadcast's creator can never approve their own broadcast — a different approver must decide.");
+      throw forbidden("messaging.fourEyesRuleTheBroadcastS");
     }
     const approvalNote = note !== undefined && note !== null ? String(note).slice(0, 500) : null;
     const nextStatus = broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now() ? "scheduled" : "draft";
@@ -2062,13 +2082,13 @@ export class MessagingService {
   async rejectBroadcast(organizationId: string, actorId: string, broadcastId: string, note?: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (broadcast.status !== "pending_approval" || broadcast.approvalStatus !== "pending") {
-      throw new BadRequestException(`This broadcast is not pending approval (status: ${broadcast.status})`);
+      throw badRequest("messaging.thisBroadcastIsNotPendingApproval", { broadcastStatus: broadcast.status });
     }
     if (!(await this.isBroadcastApprover(organizationId, actorId))) {
-      throw new ForbiddenException("Only an OWNER or ADMIN member can reject a broadcast.");
+      throw forbidden("messaging.onlyAnOWNEROrADMINMember2");
     }
     if (broadcast.createdById === actorId) {
-      throw new ForbiddenException("Four-eyes rule: the broadcast's creator can never reject their own broadcast — a different approver must decide.");
+      throw forbidden("messaging.fourEyesRuleTheBroadcastS2");
     }
     const approvalNote = note !== undefined && note !== null ? String(note).slice(0, 500) : null;
     const updated = await (this.prisma as any).broadcast.update({
@@ -2090,12 +2110,12 @@ export class MessagingService {
   async submitBroadcastForApproval(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     const gov = await this.getGovernanceSetting(organizationId);
-    if (!gov.approvalEnabled) throw new BadRequestException("Broadcast approval is not enabled for this organization (Messaging settings).");
+    if (!gov.approvalEnabled) throw badRequest("messaging.broadcastApprovalIsNotEnabledFor");
     if (broadcast.status !== "draft") {
-      throw new BadRequestException(`Only a draft broadcast can be submitted for approval (this one is ${broadcast.status})`);
+      throw badRequest("messaging.onlyADraftBroadcastCanBe", { broadcastStatus: broadcast.status });
     }
     if (await this.isBroadcastApprover(organizationId, actorId)) {
-      throw new BadRequestException("Approvers (OWNER/ADMIN) do not need approval — their broadcasts are not gated.");
+      throw badRequest("messaging.approversOWNERADMINDoNotNeed");
     }
     const updated = await (this.prisma as any).broadcast.update({
       where: { id: broadcastId },
@@ -2182,7 +2202,7 @@ export class MessagingService {
   async assertBudgetAllowsSend(organizationId: string, broadcast: any, recipientCount: number): Promise<BudgetDecision> {
     const decision = await this.checkBroadcastBudget(organizationId, broadcast, recipientCount);
     if (decision.decision === "block") {
-      throw new BadRequestException(`Budget cap (spend-based, from your entered rates): ${decision.blockReason} Lower the audience, raise the cap in Messaging settings, or remove the cap.`);
+      throw badRequest("messaging.budgetCapSpendBasedFromYour", { blockReason: decision.blockReason });
     }
     return decision;
   }
@@ -2242,7 +2262,7 @@ export class MessagingService {
     channel: string; subject?: string; body: string; htmlBody?: string | null;
     audienceType?: string; audienceStage?: string; audienceSegment?: string;
   } & AudienceExtras) {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
     const setting = await this.getMessagingSetting(organizationId);
     let sampleVars: Record<string, unknown>[] | null = null;
     if (dto.audienceType) {
@@ -2257,9 +2277,10 @@ export class MessagingService {
         if (sample.length) sampleVars = await this.buildSnapshotVars(organizationId, sample);
       } catch { sampleVars = null; }
     }
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
     return composeCheckV2({
       channel: dto.channel, subject: dto.subject, body: dto.body, htmlBody: dto.htmlBody ?? null,
-      linkTrackingEnabled: setting.linkTrackingEnabled, sampleVars, imageAssets: [],
+      linkTrackingEnabled: setting.linkTrackingEnabled, sampleVars, imageAssets: [], locale,
     });
   }
 
@@ -2274,11 +2295,11 @@ export class MessagingService {
 
   async addSeedRecipient(organizationId: string, actorId: string, dto: { channel: string; address: string; label?: string }) {
     if (!["email", "sms", "whatsapp", "telegram"].includes(dto.channel)) {
-      throw new BadRequestException("channel must be email, sms, whatsapp or telegram (push/onsite test sends cannot target a typed address)");
+      throw badRequest("messaging.channelMustBeEmailSmsWhatsapp2");
     }
     const address = this.validatePrefAddress(dto.channel, dto.address);
     const table = (this.prisma as any).messagingSeedRecipient;
-    if (!table?.create) throw new BadRequestException("Seed recipient storage is not available in this deployment yet (migration pending).");
+    if (!table?.create) throw badRequest("messaging.seedRecipientStorageIsNotAvailable");
     const existing = await table.findFirst({ where: { organizationId, channel: dto.channel, address } }).catch(() => null);
     if (existing) return existing;
     const row = await table.create({
@@ -2291,7 +2312,7 @@ export class MessagingService {
   async removeSeedRecipient(organizationId: string, actorId: string, seedId: string) {
     const table = (this.prisma as any).messagingSeedRecipient;
     const row = await table?.findFirst({ where: { id: seedId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Seed recipient not found");
+    if (!row) throw notFound("messaging.seedRecipientNotFound");
     await table.delete({ where: { id: seedId } });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.seed_remove", entityType: "MessagingSeedRecipient", entityId: seedId, metadata: { channel: row.channel, address: row.address } });
     return { deleted: true, id: seedId };
@@ -2302,10 +2323,10 @@ export class MessagingService {
    * machinery). The seed's channel must match the broadcast's. */
   async testSendBroadcastToSeed(organizationId: string, actorId: string, broadcastId: string, seedId: string) {
     const seed = await (this.prisma as any).messagingSeedRecipient?.findFirst({ where: { id: seedId, organizationId } }).catch(() => null);
-    if (!seed) throw new NotFoundException("Seed recipient not found");
+    if (!seed) throw notFound("messaging.seedRecipientNotFound");
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (broadcast.channel !== seed.channel) {
-      throw new BadRequestException(`Seed recipient is a ${seed.channel} address but this broadcast is ${broadcast.channel} — pick a seed of the broadcast's channel.`);
+      throw badRequest("messaging.seedRecipientIsAChannelAddress", { channel: seed.channel, channel2: broadcast.channel });
     }
     return this.testSendBroadcast(organizationId, actorId, broadcastId, seed.address);
   }
@@ -2367,7 +2388,8 @@ export class MessagingService {
   async assertWhatsAppTemplateNotQualityBlocked(organizationId: string, template: { name?: string | null; qualityRating?: string | null; status?: string | null } | null | undefined): Promise<void> {
     if (!template) return;
     const enabled = await this.getWhatsAppQualityGuardEnabled(organizationId);
-    const decision = qualityGuardDecision(enabled, template);
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const decision = qualityGuardDecision(enabled, template, locale);
     if (decision.blocked) throw new BadRequestException(decision.reason);
   }
 
@@ -2507,50 +2529,50 @@ export class MessagingService {
     let quietHoursEnd = stream.quietHoursEnd;
     if (dto.frequencyCapPerDay !== undefined) {
       if (!Number.isInteger(dto.frequencyCapPerDay) || dto.frequencyCapPerDay < 0 || dto.frequencyCapPerDay > 20) {
-        throw new BadRequestException("frequencyCapPerDay must be an integer between 0 and 20 (0 = off)");
+        throw badRequest("messaging.frequencyCapPerDayMustBeAnIntegerBetween");
       }
       frequencyCapPerDay = dto.frequencyCapPerDay;
     }
     if (dto.whatsappOptInRequired !== undefined) {
-      if (typeof dto.whatsappOptInRequired !== "boolean") throw new BadRequestException("whatsappOptInRequired must be a boolean");
+      if (typeof dto.whatsappOptInRequired !== "boolean") throw badRequest("messaging.whatsappOptInRequiredMustBeABoolean");
       whatsappOptInRequired = dto.whatsappOptInRequired;
     }
     if (dto.linkTrackingEnabled !== undefined) {
-      if (typeof dto.linkTrackingEnabled !== "boolean") throw new BadRequestException("linkTrackingEnabled must be a boolean");
+      if (typeof dto.linkTrackingEnabled !== "boolean") throw badRequest("messaging.linkTrackingEnabledMustBeABoolean");
       linkTrackingEnabled = dto.linkTrackingEnabled;
     }
     if (dto.marketingMaxBroadcastsPerSweep !== undefined) {
       if (dto.marketingMaxBroadcastsPerSweep !== null
         && (!Number.isInteger(dto.marketingMaxBroadcastsPerSweep) || dto.marketingMaxBroadcastsPerSweep < 1 || dto.marketingMaxBroadcastsPerSweep > MARKETING_SWEEP_MAX_BROADCASTS_LIMIT)) {
-        throw new BadRequestException(`marketingMaxBroadcastsPerSweep must be null (platform default) or an integer between 1 and ${MARKETING_SWEEP_MAX_BROADCASTS_LIMIT}`);
+        throw badRequest("messaging.marketingMaxBroadcastsPerSweepMustBeNullPlatformDefa", { MARKETING_SWEEP_MAX_BROADCASTS_LIMIT: MARKETING_SWEEP_MAX_BROADCASTS_LIMIT });
       }
       marketingMaxBroadcastsPerSweep = dto.marketingMaxBroadcastsPerSweep;
     }
     if (dto.marketingMaxEntriesPerSweep !== undefined) {
       if (dto.marketingMaxEntriesPerSweep !== null
         && (!Number.isInteger(dto.marketingMaxEntriesPerSweep) || dto.marketingMaxEntriesPerSweep < 1 || dto.marketingMaxEntriesPerSweep > MARKETING_SWEEP_MAX_ENTRIES_LIMIT)) {
-        throw new BadRequestException(`marketingMaxEntriesPerSweep must be null (platform default) or an integer between 1 and ${MARKETING_SWEEP_MAX_ENTRIES_LIMIT}`);
+        throw badRequest("messaging.marketingMaxEntriesPerSweepMustBeNullPlatformDefault", { MARKETING_SWEEP_MAX_ENTRIES_LIMIT: MARKETING_SWEEP_MAX_ENTRIES_LIMIT });
       }
       marketingMaxEntriesPerSweep = dto.marketingMaxEntriesPerSweep;
     }
     if (dto.quietHoursEnabled !== undefined) {
-      if (typeof dto.quietHoursEnabled !== "boolean") throw new BadRequestException("quietHoursEnabled must be a boolean");
+      if (typeof dto.quietHoursEnabled !== "boolean") throw badRequest("messaging.quietHoursEnabledMustBeABoolean");
       quietHoursEnabled = dto.quietHoursEnabled;
     }
     if (dto.quietHoursStart !== undefined) {
       if (dto.quietHoursStart !== null && !isValidHhMm(dto.quietHoursStart)) {
-        throw new BadRequestException("quietHoursStart must be null or a HH:mm time (00:00–23:59)");
+        throw badRequest("messaging.quietHoursStartMustBeNullOrA");
       }
       quietHoursStart = dto.quietHoursStart;
     }
     if (dto.quietHoursEnd !== undefined) {
       if (dto.quietHoursEnd !== null && !isValidHhMm(dto.quietHoursEnd)) {
-        throw new BadRequestException("quietHoursEnd must be null or a HH:mm time (00:00–23:59)");
+        throw badRequest("messaging.quietHoursEndMustBeNullOrA");
       }
       quietHoursEnd = dto.quietHoursEnd;
     }
     if (dto.whatsappQualityGuardEnabled !== undefined) {
-      if (typeof dto.whatsappQualityGuardEnabled !== "boolean") throw new BadRequestException("whatsappQualityGuardEnabled must be a boolean");
+      if (typeof dto.whatsappQualityGuardEnabled !== "boolean") throw badRequest("messaging.whatsappQualityGuardEnabledMustBeABoolean");
       whatsappQualityGuardEnabled = dto.whatsappQualityGuardEnabled;
     }
     // MX11: predictive thresholds — strict integer ranges, the
@@ -2558,7 +2580,7 @@ export class MessagingService {
     const thresholdField = (name: string, value: number | undefined, min: number, max: number, apply: (v: number) => void) => {
       if (value === undefined) return;
       if (!Number.isInteger(value) || value < min || value > max) {
-        throw new BadRequestException(`${name} must be an integer between ${min} and ${max}`);
+        throw badRequest("messaging.nameMustBeAnIntegerBetween", { name: name, min: min, max: max });
       }
       apply(value);
     };
@@ -2574,13 +2596,13 @@ export class MessagingService {
     let broadcastCostCapMinor = governance.broadcastCostCapMinor;
     let monthlySpendCapMinor = governance.monthlySpendCapMinor;
     if (dto.approvalEnabled !== undefined) {
-      if (typeof dto.approvalEnabled !== "boolean") throw new BadRequestException("approvalEnabled must be a boolean");
+      if (typeof dto.approvalEnabled !== "boolean") throw badRequest("messaging.approvalEnabledMustBeABoolean");
       approvalEnabled = dto.approvalEnabled;
     }
     const capField = (name: string, value: number | null | undefined, apply: (v: number | null) => void) => {
       if (value === undefined) return;
       if (value !== null && (!Number.isInteger(value) || value < 1 || value > 1000000000)) {
-        throw new BadRequestException(`${name} must be null (no cap) or a positive integer of minor units`);
+        throw badRequest("messaging.nameMustBeNullNoCap", { name: name });
       }
       apply(value);
     };
@@ -2589,15 +2611,15 @@ export class MessagingService {
     // MX16: auto-winner org switch — a real boolean.
     let abAutoWinnerEnabled = await this.getAbAutoWinnerEnabled(organizationId);
     if (dto.abAutoWinnerEnabled !== undefined) {
-      if (typeof dto.abAutoWinnerEnabled !== "boolean") throw new BadRequestException("abAutoWinnerEnabled must be a boolean");
+      if (typeof dto.abAutoWinnerEnabled !== "boolean") throw badRequest("messaging.abAutoWinnerEnabledMustBeABoolean");
       abAutoWinnerEnabled = dto.abAutoWinnerEnabled;
     }
     if (quietHoursEnabled) {
       if (!quietHoursStart || !quietHoursEnd) {
-        throw new BadRequestException("quietHoursStart and quietHoursEnd are both required to enable quiet hours");
+        throw badRequest("messaging.quietHoursStartAndQuietHoursEndAreBothRequired");
       }
       if (quietHoursStart === quietHoursEnd) {
-        throw new BadRequestException("quietHoursStart and quietHoursEnd must differ (an empty quiet window is not allowed)");
+        throw badRequest("messaging.quietHoursStartAndQuietHoursEndMustDifferAn");
       }
     }
     const data = {
@@ -3133,10 +3155,10 @@ export class MessagingService {
     // held-out count is exactly what a send would hold out.
     holdoutPercent?: number;
   } & AudienceExtras) {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
     if (dto.holdoutPercent !== undefined && dto.holdoutPercent !== null
       && (!Number.isInteger(dto.holdoutPercent) || dto.holdoutPercent < 1 || dto.holdoutPercent > 50)) {
-      throw new BadRequestException("holdoutPercent must be an integer between 1 and 50 (omit it for no holdout)");
+      throw badRequest("messaging.holdoutPercentMustBeAnIntegerBetween");
     }
     const resolved = await this.resolveBroadcastRecipients(organizationId, dto);
     // MX11: preview shows the post-holdout set (what would
@@ -3190,12 +3212,12 @@ export class MessagingService {
     personalization?: unknown;
     sampleSize?: number;
   } & AudienceExtras) {
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
-    if (!dto.body) throw new BadRequestException("Broadcast body is required to preview personalisation");
+    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsOr");
+    if (!dto.body) throw badRequest("messaging.broadcastBodyIsRequiredToPreview");
     const body = dto.body;
     const config = normalizePersonalizationConfig(dto.personalization, dto.channel);
     if (!config?.enabled) {
-      throw new BadRequestException("personalisation is not enabled in this preview request — pass personalization: { enabled: true } (with tier2AiHook: true for AI hooks)");
+      throw badRequest("messaging.personalisationIsNotEnabledInThis");
     }
     assertTier2HookPlaceholder(body, config);
     const resolved = await this.resolveBroadcastRecipients(organizationId, {
@@ -3362,7 +3384,7 @@ export class MessagingService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw new ApiException(ks.aiGloballyPaused ? "messaging.aiPausedPlatformWide" : "messaging.aiDisabledForOrg", undefined, 403);
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -3372,10 +3394,7 @@ export class MessagingService {
       where: { organizationId, feature: MESSAGING_AI_FEATURE, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("messaging.dailyAIGenerationLimitReachedFor", { limit: limit }, 429);
     }
   }
 
@@ -3420,7 +3439,7 @@ export class MessagingService {
    * never handed invented product facts. */
   private async productFactsOrThrow(organizationId: string, productId: string) {
     const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("messaging.productNotFoundInThisOrganization");
     const facts: string[] = [
       `Product name: ${product.name}`,
       `Price: ${formatMinor(BigInt(product.priceMinor), product.currency)}`,
@@ -3454,11 +3473,21 @@ export class MessagingService {
     channel: string; goal: string; productId?: string; audienceHint?: string; language?: string;
   }) {
     if (!["email", "sms"].includes(dto.channel)) {
-      throw new BadRequestException("channel must be email or sms for AI drafts (WhatsApp broadcasts send approved Meta templates only)");
+      throw badRequest("messaging.channelMustBeEmailOrSms2");
     }
     const goal = String(dto.goal ?? "").trim();
-    if (!goal) throw new BadRequestException("goal is required — say what this message should achieve");
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    if (!goal) throw badRequest("messaging.goalIsRequiredSayWhatThis");
+    // MB5 (ML13, CD-8): an explicit dto language still wins;
+    // the DEFAULT now comes from the one owner-facing resolver
+    // (dto → org aiReplyLanguage → org dashboardLocale → the
+    // actor's preferredLocale → bn) instead of a hardcoded bn.
+    const language: "bn" | "en" = (
+      await resolveOwnerLanguageForOrg(this.prisma as any, {
+        organizationId,
+        userId: actorId,
+        dtoLanguage: dto.language,
+      })
+    ).language;
     // Enforcement FIRST (creative-studio discipline): the kill
     // switch / cap run before even the product load.
     await this.checkMessagingAiLimit(organizationId);
@@ -3533,7 +3562,7 @@ export class MessagingService {
       // The provider answered but nothing usable could be
       // parsed: an honest 502 and NOTHING stored — no draft row
       // (there never is one) and no usage record either.
-      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+      throw new ApiException("messaging.theAIResponseCouldNotBe", 502);
     }
     await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
     return { variants: this.withSmsParts(dto.channel, variants), providerLabel: provider.name, isRealLlm: true };
@@ -3572,7 +3601,7 @@ export class MessagingService {
    */
   async draftMessagingSubjects(organizationId: string, actorId: string, dto: { subject: string; goal?: string }) {
     const subject = String(dto.subject ?? "").trim();
-    if (!subject) throw new BadRequestException("subject is required");
+    if (!subject) throw badRequest("messaging.subjectIsRequired");
     await this.checkMessagingAiLimit(organizationId);
     const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
@@ -3614,7 +3643,7 @@ export class MessagingService {
       .map((v) => String(v).trim().slice(0, 200))
       .slice(0, 3);
     if (!variants.length) {
-      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+      throw new ApiException("messaging.theAIResponseCouldNotBe", 502);
     }
     await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
     return { variants, providerLabel: provider.name, isRealLlm: true };
@@ -3645,12 +3674,12 @@ export class MessagingService {
     if (summary.totalEvents < SEND_TIME_MIN_EVENTS) {
       return {
         available: false, totalEvents: summary.totalEvents, minEvents: SEND_TIME_MIN_EVENTS,
-        reason: `গত ৯০ দিনে মোট ${summary.totalEvents}টি Open/Read/Click ইভেন্ট আছে — পাঠানোর সেরা সময়ের নির্ভরযোগ্য পরামর্শের জন্য কমপক্ষে ${SEND_TIME_MIN_EVENTS}টি ইভেন্ট দরকার। আরও কিছু Broadcast পাঠিয়ে আবার দেখুন।`,
+        reason: catalogText("messaging.sendTimeReason", await resolveDocumentLocale(this.prisma as any, organizationId), { events: summary.totalEvents, min: SEND_TIME_MIN_EVENTS }),
       };
     }
     return {
       available: true, totalEvents: summary.totalEvents, bestHours: summary.bestHours,
-      method: "গত ৯০ দিনের আসল Open/Read/Click ইভেন্ট ঢাকার স্থানীয় সময়ের ঘণ্টা অনুযায়ী গোনা হয়েছে। এটি ঐতিহাসিক সম্পর্ক — কোন ঘণ্টায় পাঠালেই বেশি সাড়া মিলবে, এমন গ্যারান্টি নয়।",
+      method: catalogText("messaging.sendTimeMethod", await resolveDocumentLocale(this.prisma as any, organizationId)),
     };
   }
 
@@ -3667,7 +3696,8 @@ export class MessagingService {
     const rows = await computeRfm(this.prisma as any, organizationId);
     const counts: Record<string, number> = {};
     for (const row of rows) counts[row.segment] = (counts[row.segment] ?? 0) + 1;
-    const suggestions = segmentSuggestionsFromCounts(counts);
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const suggestions = segmentSuggestionsFromCounts(counts, locale);
     const setting = await this.getMessagingSetting(organizationId);
     if (setting.whatsappOptInRequired) {
       const optedIn = await (this.prisma as any).messagePreference.count({
@@ -3677,7 +3707,7 @@ export class MessagingService {
         suggestions.push({
           kind: "whatsapp_optin_empty",
           size: 0,
-          reason: "WhatsApp Opt-in আবশ্যক করা আছে, কিন্তু এখনো কোনো প্রাপক Opt-in করেননি — এই অবস্থায় WhatsApp Broadcast পাঠালে সবাই বাদ পড়বেন। আগে Inbox বা দোকান থেকে Opt-in সংগ্রহ করুন।",
+          reason: catalogText("messaging.segmentWhatsappOptInReason", locale),
         });
       }
     }
@@ -3898,16 +3928,17 @@ export class MessagingService {
    * so that is a 502, exactly like an unconfigured provider.
    */
   async draftSegmentFromDescription(organizationId: string, actorId: string, dto: { description: string; entity?: string }) {
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
     const description = String(dto.description ?? "").trim();
-    if (!description) throw new BadRequestException("description is required — describe the segment in your own words");
-    if (description.length > 1000) throw new BadRequestException("description is too long (max 1000 characters)");
+    if (!description) throw badRequest("messaging.descriptionIsRequiredDescribeTheSegment");
+    if (description.length > 1000) throw badRequest("messaging.descriptionIsTooLongMax1000");
     const entity = dto.entity === "leads" ? "leads" : "customers";
     // MS9 guard path, verbatim: kill switch + daily cap BEFORE
     // the provider is even resolved.
     await this.checkMessagingAiLimit(organizationId);
     const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
-      throw new HttpException("AI is not configured for this organization, so a segment draft cannot be generated. Configure an AI provider, or build the audience with the condition builder instead.", 502);
+      throw new ApiException("messaging.aIIsNotConfiguredForThis", 502);
     }
     const { fieldsForEntity } = await import("./audience-rules");
     const fields = fieldsForEntity(entity as any);
@@ -3938,7 +3969,7 @@ export class MessagingService {
         valid: false, draft: null, rawText: String(result.text ?? "").slice(0, 4000),
         errors: ["The AI response was not a JSON audience definition. Edit the raw response into the evaluator format, or describe the segment differently and try again."],
         providerLabel: provider.name, isRealLlm: true,
-        notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+        notice: catalogText("messaging.audienceDraftInvalid", locale),
       };
     }
     try {
@@ -3948,20 +3979,20 @@ export class MessagingService {
           valid: false, draft: parsed, rawText: null,
           errors: [`The draft describes entity "${definition.entity}" but "${entity}" was requested. Edit the draft's entity, or re-run for the other entity.`],
           providerLabel: provider.name, isRealLlm: true,
-          notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+          notice: catalogText("messaging.audienceDraftInvalid", locale),
         };
       }
       return {
         valid: true, draft: definition, rawText: null, errors: [],
         providerLabel: provider.name, isRealLlm: true,
-        notice: "এটি শুধু একটি খসড়া (draft) — এখনো কোনো Audience তৈরি হয়নি। পর্যালোচনা করে \"Saved Audience তৈরি করুন\" চাপলেই কেবল তৈরি হবে।",
+        notice: catalogText("messaging.audienceDraftOk", locale),
       };
     } catch (e) {
       return {
         valid: false, draft: parsed, rawText: null,
         errors: [e instanceof Error ? e.message : "The draft failed audience validation."],
         providerLabel: provider.name, isRealLlm: true,
-        notice: "খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি। ত্রুটি দেখে ঠিক করে তারপর Saved Audience হিসেবে সংরক্ষণ করুন।",
+        notice: catalogText("messaging.audienceDraftInvalid", locale),
       };
     }
   }
@@ -3980,6 +4011,7 @@ export class MessagingService {
    * opt-out is shown in the evidence.
    */
   async listSuppressionSuggestions(organizationId: string) {
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
     const thresholds = await this.getEngagementThresholds(organizationId);
     const map = await this.buildEngagementMap(organizationId);
     const customers = await this.scanChunked((this.prisma as any).customer, { organizationId }).catch(() => []);
@@ -4024,7 +4056,7 @@ export class MessagingService {
     return {
       label: "rule-based estimate",
       thresholds: { unengagedSuppressDays: thresholds.unengagedSuppressDays, unengagedMinSends: thresholds.unengagedMinSends },
-      note: "এগুলো শুধু পরামর্শ — তালিকা দেখলেই কেউ বাদ পড়ে না। Suppression কার্যকর হবে কেবল আপনি নিশ্চিত করে Apply চাপলে, আসল Preference Store-এ Opt-out হিসেবে।",
+      note: catalogText("messaging.suppressionNote", locale),
       suggestions: suggestions.slice(0, 200),
       total: suggestions.length,
     };
@@ -4042,9 +4074,9 @@ export class MessagingService {
   async applySuppressionSuggestions(organizationId: string, actorId: string, dto: {
     channel: string; items: { type: string; id: string }[];
   }) {
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsOr");
     const items = Array.isArray(dto.items) ? dto.items.slice(0, 500) : [];
-    if (!items.length) throw new BadRequestException("items is required — confirm at least one contact to suppress");
+    if (!items.length) throw badRequest("messaging.itemsIsRequiredConfirmAtLeast");
     let applied = 0;
     const skipped: { type: string; id: string; reason: string }[] = [];
     for (const item of items) {
@@ -4220,8 +4252,19 @@ export class MessagingService {
           address: normalizePrefAddress("email", input.recipient.email),
         });
         const url = `${webBaseUrl()}/unsubscribe/${token}`;
-        text += `\n\n—\nএই ইমেইলটি পেতে না চাইলে আনসাবস্ক্রাইব করুন: ${url}`;
-        if (html) html += `<p>—<br>এই ইমেইলটি পেতে না চাইলে <a href="${url}">আনসাবস্ক্রাইব করুন</a></p>`;
+        // MB4 (ML11): the footer renders in the RECIPIENT's
+        // language — CustomerMemory.languagePref for this email
+        // address (mixed → bn), else the org default.
+        let footerLocale = await resolveDocumentLocale(this.prisma as any, organizationId);
+        try {
+          const mem = await (this.prisma as any).customerMemory?.findFirst({
+            where: { organizationId, customerKey: `email:${normalizePrefAddress("email", input.recipient.email)}` },
+            select: { languagePref: true },
+          });
+          if (mem?.languagePref) footerLocale = normalizeApiLocale(mem.languagePref);
+        } catch { /* org default stands */ }
+        text += `\n\n—\n${catalogText("messaging.unsubscribeFooter", footerLocale, { url })}`;
+        if (html) html += `<p>—<br>${catalogText("messaging.unsubscribeFooterHtml", footerLocale, { url })}</p>`;
       } catch { /* no footer without a signing secret */ }
     }
     // MS7: open tracking — a 1×1 pixel at the very end of the
@@ -4536,19 +4579,19 @@ export class MessagingService {
     // stored on BOTH variants; absent = inherit the org switch.
     abAutoWinnerEnabled?: boolean;
   } & AudienceExtras) {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
     // MX11: the holdout percentage is validated AT CREATE —
     // an honest 400, never silently clamped or ignored.
     let holdoutPercent: number | null = null;
     if (dto.holdoutPercent !== undefined && dto.holdoutPercent !== null) {
       if (!Number.isInteger(dto.holdoutPercent) || dto.holdoutPercent < 1 || dto.holdoutPercent > 50) {
-        throw new BadRequestException("holdoutPercent must be an integer between 1 and 50 (omit it for no holdout)");
+        throw badRequest("messaging.holdoutPercentMustBeAnIntegerBetween");
       }
       holdoutPercent = dto.holdoutPercent;
     }
     // MS5: HTML is an email-only part — sms/whatsapp + htmlBody
     // is an honest 400, checked before any channel path runs.
-    if (dto.htmlBody && dto.channel !== "email") throw new BadRequestException("htmlBody is only allowed for email broadcasts (SMS/WhatsApp/Push have no HTML part)");
+    if (dto.htmlBody && dto.channel !== "email") throw badRequest("messaging.htmlBodyIsOnlyAllowedForEmail2");
     // MS6: templateComponents is a WhatsApp-only input — any other
     // channel + templateComponents is an honest 400 (the MS5
     // htmlBody rule), never silently ignored. The shape is
@@ -4562,12 +4605,12 @@ export class MessagingService {
     let cascadeConfig: CascadeConfig | null = null;
     if (dto.cascade != null) {
       try { cascadeConfig = parseCascadeConfig(dto.cascade, dto.channel); }
-      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid cascade config"); }
+      catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid cascade config"); }
       // A cascade INTO whatsapp needs a real approved-template
       // row of this org — checked now, at create, not at send.
       if (cascadeConfig && cascadeConfig.channels.includes("whatsapp") && dto.channel !== "whatsapp" && cascadeConfig.whatsappTemplateId) {
         const waTpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: cascadeConfig.whatsappTemplateId, organizationId } });
-        if (!waTpl) throw new NotFoundException("Cascade WhatsApp template not found in this organization");
+        if (!waTpl) throw notFound("messaging.cascadeWhatsAppTemplateNotFoundIn");
         await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, waTpl);
       }
     }
@@ -4586,15 +4629,15 @@ export class MessagingService {
     //    can express (the resolver re-checks at resolve time).
     let pushUrl: string | null = null;
     if (dto.channel === "push") {
-      if (dto.templateId) throw new BadRequestException("Push broadcasts do not use message templates — the title/body are written directly on the broadcast");
-      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (dto.templateId) throw badRequest("messaging.pushBroadcastsDoNotUseMessage");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw badRequest("messaging.whatsappTemplateIdTemplateComponentsAreOnlyForWhatsA");
       if (!["push_subscribers", "customers", "segment"].includes(dto.audienceType)) {
-        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the push channel — push audiences resolve from web push subscriptions (use push_subscribers, customers or segment)`);
+        throw badRequest("messaging.audienceTypeAudienceTypeIsNotAvailableFor", { audienceType: dto.audienceType });
       }
       try { pushUrl = validatePushUrl(dto.pushUrl); }
-      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
+      catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
     } else if (dto.pushUrl !== undefined && dto.pushUrl !== null && String(dto.pushUrl).trim() !== "") {
-      throw new BadRequestException("pushUrl is only allowed for push broadcasts");
+      throw badRequest("messaging.pushUrlIsOnlyAllowedForPush");
     }
     // MX13: telegram-channel create rules, all honest 400s at
     // create (never discovered mid-send):
@@ -4616,19 +4659,19 @@ export class MessagingService {
     //  - buttons are validated by validateTelegramButtons.
     let telegramButtons: TelegramButton[] | null = null;
     if (dto.channel === "telegram") {
-      if (dto.templateId) throw new BadRequestException("Telegram broadcasts do not use message templates — the message text is written directly on the broadcast");
-      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (dto.templateId) throw badRequest("messaging.telegramBroadcastsDoNotUseMessage");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw badRequest("messaging.whatsappTemplateIdTemplateComponentsAreOnlyForWhatsA");
       if (dto.subject !== undefined && dto.subject !== null && String(dto.subject).trim() !== "") {
-        throw new BadRequestException("Telegram broadcasts have no subject — the message text is the whole message");
+        throw badRequest("messaging.telegramBroadcastsHaveNoSubjectThe");
       }
       if (!["telegram_subscribers", "customers", "leads_stage", "segment"].includes(dto.audienceType)) {
-        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the telegram channel — telegram audiences resolve from the org's Telegram conversations (use telegram_subscribers, customers, leads_stage or segment)`);
+        throw badRequest("messaging.audienceTypeAudienceTypeIsNotAvailableFor3", { audienceType: dto.audienceType });
       }
       try { telegramButtons = validateTelegramButtons(dto.telegramButtons); }
-      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
+      catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
     } else if (dto.telegramButtons !== undefined && dto.telegramButtons !== null
       && !(Array.isArray(dto.telegramButtons) && dto.telegramButtons.length === 0)) {
-      throw new BadRequestException("telegramButtons is only allowed for telegram broadcasts");
+      throw badRequest("messaging.telegramButtonsIsOnlyAllowedForTelegram");
     }
     // MX14: onsite-channel create rules, all honest 400s at
     // create (never discovered mid-send):
@@ -4649,15 +4692,15 @@ export class MessagingService {
     //    MX12 shop-relative rule).
     let onsiteUrl: string | null = null;
     if (dto.channel === "onsite") {
-      if (dto.templateId) throw new BadRequestException("On-site broadcasts do not use message templates — the title/body are written directly on the broadcast");
-      if (dto.whatsappTemplateId || dto.templateComponents) throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+      if (dto.templateId) throw badRequest("messaging.onSiteBroadcastsDoNotUse");
+      if (dto.whatsappTemplateId || dto.templateComponents) throw badRequest("messaging.whatsappTemplateIdTemplateComponentsAreOnlyForWhatsA");
       if (!["customers", "segment"].includes(dto.audienceType)) {
-        throw new BadRequestException(`audienceType ${dto.audienceType} is not available for the onsite channel — on-site notifications reach shop customers only (use customers or segment)`);
+        throw badRequest("messaging.audienceTypeAudienceTypeIsNotAvailableFor2", { audienceType: dto.audienceType });
       }
       try { onsiteUrl = validateOnsiteUrl(dto.onsiteUrl); }
-      catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
+      catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
     } else if (dto.onsiteUrl !== undefined && dto.onsiteUrl !== null && String(dto.onsiteUrl).trim() !== "") {
-      throw new BadRequestException("onsiteUrl is only allowed for onsite broadcasts");
+      throw badRequest("messaging.onsiteUrlIsOnlyAllowedForOnsite");
     }
     // SA-B20 (G2): the personalisation config is shape-validated
     // up front (Tier 2 + WhatsApp is a 400 here — Meta templates
@@ -4674,13 +4717,13 @@ export class MessagingService {
     if (dto.audienceType === "custom") {
       audienceDefinition = this.assertValidDefinition(dto.audienceDefinition);
     } else if (dto.audienceType === "saved") {
-      if (!dto.audienceSavedId) throw new BadRequestException("audienceSavedId is required for saved audience");
+      if (!dto.audienceSavedId) throw badRequest("messaging.audienceSavedIdIsRequiredForSavedAudience");
       audienceSavedId = dto.audienceSavedId;
     } else if (dto.audienceType === "csv") {
       audienceCsv = parseAddressList(dto.audienceCsv);
-      if (!audienceCsv.length) throw new BadRequestException("audienceCsv has no addresses — paste at least one email address or phone number");
+      if (!audienceCsv.length) throw badRequest("messaging.audienceCsvHasNoAddressesPasteAt");
       if (audienceCsv.length > CSV_AUDIENCE_CAP) {
-        throw new BadRequestException(`CSV audience has ${audienceCsv.length} addresses, over the cap of ${CSV_AUDIENCE_CAP}. Split the list instead of silently truncating it.`);
+        throw badRequest("messaging.cSVAudienceHasAudienceCsvLengthAddressesOver", { audienceCsvLength: audienceCsv.length, CSV_AUDIENCE_CAP: CSV_AUDIENCE_CAP });
       }
     }
     // MX8: the personalization config is validated AT CREATE
@@ -4711,14 +4754,14 @@ export class MessagingService {
       // its per-channel content — combining them would silently
       // half-apply, so both are honest 400s at create.
       if (dto.channel === "whatsapp") {
-        throw new BadRequestException("personalization is not available for WhatsApp broadcasts (they send Meta-approved templates, not free-text content)");
+        throw badRequest("messaging.personalizationIsNotAvailableForWhatsApp");
       }
       if (dto.channel === "push") {
         // MX12: the push payload is a length-capped title/body
         // (the base system's rule) — MX8 dynamic blocks append
         // content at send time and could silently overflow the
         // cap, so the combination is refused at create instead.
-        throw new BadRequestException("personalization is not available for push broadcasts (the push payload is a length-capped title/body — dynamic blocks could overflow it)");
+        throw badRequest("messaging.personalizationIsNotAvailableForPush");
       }
       if (dto.channel === "telegram") {
         // MX13: a telegram message is length-capped by the Bot
@@ -4726,7 +4769,7 @@ export class MessagingService {
         // MX8 dynamic blocks append content at send time and
         // could silently overflow it, so the combination is
         // refused at create instead (the MX12 push precedent).
-        throw new BadRequestException("personalization is not available for telegram broadcasts (Telegram caps a message at 4096 characters — dynamic blocks could overflow it)");
+        throw badRequest("messaging.personalizationIsNotAvailableForTelegram");
       }
       if (dto.channel === "onsite") {
         // MX14: an onsite notification is a length-capped
@@ -4735,14 +4778,14 @@ export class MessagingService {
         // append content at send time and could silently
         // overflow them, so the combination is refused at
         // create instead (the MX12/MX13 precedent).
-        throw new BadRequestException("personalization is not available for onsite broadcasts (the notification is a length-capped title/body — dynamic blocks could overflow it)");
+        throw badRequest("messaging.personalizationIsNotAvailableForOnsite");
       }
       if (cascadeConfig) {
-        throw new BadRequestException("personalization cannot be combined with a channel cascade in this version — the cascade owns per-channel content");
+        throw badRequest("messaging.personalizationCannotBeCombinedWithA");
       }
       try { personalizationConfig = parsePersonalizationConfig(dto.personalization); }
       catch (e) {
-        throw new BadRequestException(e instanceof PersonalizationConfigError ? e.message : "Invalid personalization config");
+        if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof PersonalizationConfigError ? e.message : "Invalid personalization config");
       }
       if (personalizationConfig?.segmentBlocks?.length) {
         for (const block of personalizationConfig.segmentBlocks) {
@@ -4750,7 +4793,7 @@ export class MessagingService {
             const saved = await (this.prisma as any).messagingSavedAudience?.findFirst?.({
               where: { id: block.savedAudienceId, organizationId },
             }).catch(() => null);
-            if (!saved) throw new NotFoundException("Segment block saved audience not found in this organization");
+            if (!saved) throw notFound("messaging.segmentBlockSavedAudienceNotFound");
           }
         }
       }
@@ -4765,7 +4808,7 @@ export class MessagingService {
     if (dto.recurrence != null) {
       try { recurrence = parseRecurrence(dto.recurrence); }
       catch (e) {
-        throw new BadRequestException(e instanceof RecurrenceValidationError ? e.message : "Invalid recurrence");
+        if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof RecurrenceValidationError ? e.message : "Invalid recurrence");
       }
       recurrenceGroupId = randomUUID();
     }
@@ -4774,14 +4817,14 @@ export class MessagingService {
     let budgetCapMinor: number | null = null;
     if (dto.budgetCapMinor !== undefined && dto.budgetCapMinor !== null) {
       if (!Number.isInteger(dto.budgetCapMinor) || dto.budgetCapMinor < 1) {
-        throw new BadRequestException("budgetCapMinor must be a positive integer (minor units)");
+        throw badRequest("messaging.budgetCapMinorMustBeAPositiveInteger");
       }
       budgetCapMinor = dto.budgetCapMinor;
     }
     // MX16: the per-pair auto-winner override is a real boolean
     // when given (never silently coerced).
     if (dto.abAutoWinnerEnabled !== undefined && typeof dto.abAutoWinnerEnabled !== "boolean") {
-      throw new BadRequestException("abAutoWinnerEnabled must be a boolean");
+      throw badRequest("messaging.abAutoWinnerEnabledMustBeABoolean");
     }
     // MX15: approval workflow — when the org enabled it and the
     // creator is NOT an approver, the broadcast enters review
@@ -4801,9 +4844,9 @@ export class MessagingService {
       // WhatsApp broadcasts send a registered, Meta-approved template.
       // Free-form marketing messages outside the 24h window are not
       // allowed by Meta, so there is deliberately no body-only path.
-      if (!dto.whatsappTemplateId) throw new BadRequestException("WhatsApp broadcasts need a registered template (whatsappTemplateId)");
+      if (!dto.whatsappTemplateId) throw badRequest("messaging.whatsAppBroadcastsNeedARegisteredTemplate");
       const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.whatsappTemplateId, organizationId } });
-      if (!tpl) throw new NotFoundException("WhatsApp template not found in this organization");
+      if (!tpl) throw notFound("messaging.whatsAppTemplateNotFoundInThis");
       await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tpl);
       body = tpl.bodyText ?? `[WhatsApp template: ${tpl.name}]`;
       const baseWa = {
@@ -4824,9 +4867,9 @@ export class MessagingService {
         personalization: personalization ?? undefined,
       };
       if (dto.abTest) {
-        if (!dto.abWhatsappTemplateId) throw new BadRequestException("A/B WhatsApp broadcasts need a second template (abWhatsappTemplateId)");
+        if (!dto.abWhatsappTemplateId) throw badRequest("messaging.aBWhatsAppBroadcastsNeedA");
         const tplB = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.abWhatsappTemplateId, organizationId } });
-        if (!tplB) throw new NotFoundException("A/B WhatsApp template not found in this organization");
+        if (!tplB) throw notFound("messaging.aBWhatsAppTemplateNotFound");
         await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tplB);
         const abGroupId = randomUUID();
         const a = await (this.prisma as any).broadcast.create({ data: { ...baseWa, name: `${dto.name} (A)`, whatsappTemplateId: tpl.id, body, abVariant: "A", abGroupId } });
@@ -4841,7 +4884,7 @@ export class MessagingService {
     let templateVersion: number | null = null;
     if (dto.templateId) {
       const template = await this.getTemplate(organizationId, dto.templateId);
-      if (template.channel !== dto.channel) throw new BadRequestException("Template channel does not match the broadcast channel");
+      if (template.channel !== dto.channel) throw badRequest("messaging.templateChannelDoesNotMatchThe");
       subject = template.subject; body = template.body; htmlBody = template.htmlBody ?? null;
       // MX7: stamp the version the content is taken from, and —
       // for a block-built template — RE-RENDER the blocks NOW
@@ -4855,8 +4898,8 @@ export class MessagingService {
         body = rendered.body; htmlBody = rendered.htmlBody;
       }
     }
-    if (!body) throw new BadRequestException("Broadcast body is required (write one or choose a template)");
-    if (dto.channel === "email" && !subject) throw new BadRequestException("Email broadcasts need a subject");
+    if (!body) throw badRequest("messaging.broadcastBodyIsRequiredWriteOne");
+    if (dto.channel === "email" && !subject) throw badRequest("messaging.emailBroadcastsNeedASubject");
     if (dto.channel === "push") {
       // MX12: for push, `subject` carries the notification
       // TITLE and `body` the notification text — the exact
@@ -4865,16 +4908,16 @@ export class MessagingService {
       // title ≤ 120, body ≤ 300), enforced here at create so a
       // broadcast can never be stored in a shape the push
       // service would refuse at send time.
-      if (!subject || !String(subject).trim()) throw new BadRequestException("Push broadcasts need a title (subject)");
-      if (String(subject).length > 120) throw new BadRequestException("Push title must be at most 120 characters");
-      if (String(body).length > 300) throw new BadRequestException("Push body must be at most 300 characters");
+      if (!subject || !String(subject).trim()) throw badRequest("messaging.pushBroadcastsNeedATitleSubject");
+      if (String(subject).length > 120) throw badRequest("messaging.pushTitleMustBeAtMost");
+      if (String(body).length > 300) throw badRequest("messaging.pushBodyMustBeAtMost");
     }
     if (dto.channel === "telegram") {
       // MX13: Telegram's own Bot API hard cap — a message text
       // longer than 4096 characters is refused by Telegram at
       // send time, so it is refused here at create instead
       // (the MX12 push-cap precedent).
-      if (String(body).length > 4096) throw new BadRequestException("Telegram message text must be at most 4096 characters (the Bot API limit)");
+      if (String(body).length > 4096) throw badRequest("messaging.telegramMessageTextMustBeAt");
     }
     if (dto.channel === "onsite") {
       // MX14: for onsite, `subject` carries the notification
@@ -4886,9 +4929,9 @@ export class MessagingService {
       // the rule is stated as ours, not a provider's), enforced
       // at create so a stored notification is always renderable
       // as composed.
-      if (!subject || !String(subject).trim()) throw new BadRequestException("On-site broadcasts need a title (subject)");
-      if (String(subject).length > 120) throw new BadRequestException("On-site title must be at most 120 characters");
-      if (String(body).length > 2000) throw new BadRequestException("On-site body must be at most 2000 characters");
+      if (!subject || !String(subject).trim()) throw badRequest("messaging.onSiteBroadcastsNeedATitle");
+      if (String(subject).length > 120) throw badRequest("messaging.onSiteTitleMustBeAt");
+      if (String(body).length > 2000) throw badRequest("messaging.onSiteBodyMustBeAt");
     }
     // SA-B20 (G2): the {{aiHook}} placeholder check against the
     // FINAL bodies (variant B gets the same config, so its body
@@ -4922,7 +4965,7 @@ export class MessagingService {
       personalization: personalization ?? undefined,
     };
     if (dto.abTest) {
-      if (!dto.abBody) throw new BadRequestException("A/B broadcasts need a variant B body (abBody)");
+      if (!dto.abBody) throw badRequest("messaging.aBBroadcastsNeedAVariant");
       const abGroupId = randomUUID();
       // MS5: htmlBody is stored on variant A only — there is no
       // abHtmlBody input, so variant B's htmlBody is null and its
@@ -5014,7 +5057,7 @@ export class MessagingService {
 
   private async getBroadcastOrThrow(organizationId: string, broadcastId: string) {
     const broadcast = await (this.prisma as any).broadcast.findFirst({ where: { id: broadcastId, organizationId } });
-    if (!broadcast) throw new NotFoundException("Broadcast not found");
+    if (!broadcast) throw notFound("messaging.broadcastNotFound");
     return broadcast;
   }
 
@@ -5027,20 +5070,20 @@ export class MessagingService {
    */
   private validateTemplateComponents(channel: string, input: unknown): { headerMediaUrl?: string; headerTextParams?: string[]; buttonParams?: { index: number; subType: "url" | "quick_reply"; text?: string; payload?: string }[] } | null {
     if (input == null) return null;
-    if (channel !== "whatsapp") throw new BadRequestException("templateComponents is only allowed for WhatsApp broadcasts");
+    if (channel !== "whatsapp") throw badRequest("messaging.templateComponentsIsOnlyAllowedForWhatsApp");
     const tc: any = input;
-    if (typeof tc !== "object" || Array.isArray(tc)) throw new BadRequestException("templateComponents must be an object");
+    if (typeof tc !== "object" || Array.isArray(tc)) throw badRequest("messaging.templateComponentsMustBeAnObject");
     if (tc.headerMediaUrl != null && !/^https?:\/\//i.test(String(tc.headerMediaUrl))) {
-      throw new BadRequestException("templateComponents.headerMediaUrl must be an http(s) URL");
+      throw badRequest("messaging.templateComponentsHeaderMediaUrlMustBeAnHttp");
     }
     if (tc.headerTextParams != null && (!Array.isArray(tc.headerTextParams) || tc.headerTextParams.some((v: unknown) => typeof v !== "string"))) {
-      throw new BadRequestException("templateComponents.headerTextParams must be an array of strings");
+      throw badRequest("messaging.templateComponentsHeaderTextParamsMustBeAnArray");
     }
     if (tc.buttonParams != null) {
-      if (!Array.isArray(tc.buttonParams)) throw new BadRequestException("templateComponents.buttonParams must be an array");
+      if (!Array.isArray(tc.buttonParams)) throw badRequest("messaging.templateComponentsButtonParamsMustBeAnArray");
       for (const b of tc.buttonParams as any[]) {
-        if (!b || !Number.isInteger(b.index) || b.index < 0) throw new BadRequestException("templateComponents.buttonParams: index must be an integer ≥ 0");
-        if (b.subType !== "url" && b.subType !== "quick_reply") throw new BadRequestException('templateComponents.buttonParams: subType must be "url" or "quick_reply"');
+        if (!b || !Number.isInteger(b.index) || b.index < 0) throw badRequest("messaging.templateComponentsButtonParamsIndexMustBeAn");
+        if (b.subType !== "url" && b.subType !== "quick_reply") throw badRequest("messaging.templateComponentsButtonParamsSubTypeMustBeUrl");
       }
     }
     return {
@@ -5052,8 +5095,8 @@ export class MessagingService {
 
   private parseFutureScheduledAt(value: string): Date {
     const when = new Date(value);
-    if (Number.isNaN(when.getTime())) throw new BadRequestException("scheduledAt is not a valid date/time");
-    if (when.getTime() <= Date.now()) throw new BadRequestException("scheduledAt must be in the future to schedule a broadcast");
+    if (Number.isNaN(when.getTime())) throw badRequest("messaging.scheduledAtIsNotAValidDate");
+    if (when.getTime() <= Date.now()) throw badRequest("messaging.scheduledAtMustBeInTheFuture");
     return when;
   }
 
@@ -5814,7 +5857,7 @@ export class MessagingService {
     const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (ks.broadcastsPaused) {
-      throw new BadRequestException("Broadcasts are temporarily paused platform-wide by the platform team (incident mode). Try again later.");
+      throw badRequest("messaging.broadcastsAreTemporarilyPausedPlatformWide");
     }
     const baselineCap = Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000);
     const { broadcastCap: max } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: 200, broadcastCap: baselineCap });
@@ -5911,15 +5954,16 @@ export class MessagingService {
 
     if (total === 0) {
       const excluded = resolution.excludedPreviousCount + resolution.excludedSuppressedCount + resolution.excludedFrequencyCount + resolution.excludedNoOptInCount;
-      throw new BadRequestException(resolution.audienceTotal > 0 && excluded > 0
-        ? `Audience is empty after exclusions: ${resolution.audienceTotal} in the audience, ${excluded} excluded (previous recipients ${resolution.excludedPreviousCount}, opted out ${resolution.excludedSuppressedCount}, frequency cap ${resolution.excludedFrequencyCount}, no WhatsApp opt-in ${resolution.excludedNoOptInCount})${heldOutTotal > 0 ? `, ${heldOutTotal} held out (holdout ${broadcast.holdoutPercent}%)` : ""}.`
-        : heldOutTotal > 0
-          ? `Audience is empty after the holdout: ${heldOutTotal} recipients held out (holdout ${broadcast.holdoutPercent}%). Lower the holdout percentage.`
-          : "Audience is empty: no recipients with a usable address for this channel");
+      throw badRequest(
+        resolution.audienceTotal > 0 && excluded > 0
+          ? heldOutTotal > 0 ? "messaging.audienceEmptyAfterExclusionsHeldout" : "messaging.audienceEmptyAfterExclusions"
+          : heldOutTotal > 0 ? "messaging.audienceEmptyAfterHoldout" : "messaging.audienceEmptyNoUsableAddress",
+        { audienceTotal: resolution.audienceTotal, excluded, prev: resolution.excludedPreviousCount, suppressed: resolution.excludedSuppressedCount, freq: resolution.excludedFrequencyCount, noOptIn: resolution.excludedNoOptInCount, heldOut: heldOutTotal, percent: broadcast.holdoutPercent },
+      );
     }
     if (total > max) {
       await this.deleteRecipientRows(broadcastId);
-      throw new BadRequestException(`Audience has ${total} recipients, over the per-send cap of ${max}. Narrow the audience (e.g. a lead stage) instead of silently truncating.`);
+      throw badRequest("messaging.audienceHasTotalRecipientsOverThe", { total: total, max: max });
     }
     const updated = await (this.prisma as any).broadcast.update({
       where: { id: broadcastId },
@@ -5946,7 +5990,7 @@ export class MessagingService {
     // this surfaces as a per-broadcast error in its result,
     // never a silent skip or a send.
     if ((broadcast as any).archivedAt) {
-      throw new BadRequestException("This broadcast is archived — unarchive it to send.");
+      throw badRequest("messaging.thisBroadcastIsArchivedUnarchiveIt");
     }
     // MX15: the approval gate also lives here — prepare is the
     // choke point the sweep, manual sends and retries all share,
@@ -5954,16 +5998,16 @@ export class MessagingService {
     // therefore never sent) by any path.
     await this.assertApprovalAllowsSend(organizationId, broadcast);
     if (broadcast.status === "cancelled") {
-      throw new BadRequestException("This broadcast was cancelled and can never be sent.");
+      throw badRequest("messaging.thisBroadcastWasCancelledAndCan");
     }
     if (broadcast.status === "sent") {
-      throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      throw badRequest("messaging.thisBroadcastWasAlreadySentOr");
     }
     if (broadcast.recipientSnapshot) {
-      throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      throw badRequest("messaging.thisBroadcastWasAlreadySentOr");
     }
     if (broadcast.status === "sending" || broadcast.status === "paused") {
-      throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      throw badRequest("messaging.thisBroadcastWasAlreadySentOr");
     }
     // MS1 schedule rule (locked): a manual send of a broadcast
     // whose schedule is still in the future is REFUSED — cancel
@@ -5972,7 +6016,7 @@ export class MessagingService {
     // sweep prepares due broadcasts with fromSweep, and a due
     // (past) schedule no longer blocks a manual send either.
     if (!opts?.fromSweep && broadcast.status === "scheduled" && broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now()) {
-      throw new BadRequestException(`This broadcast is scheduled for ${new Date(broadcast.scheduledAt).toISOString()}. Cancel the schedule to send it now.`);
+      throw badRequest("messaging.thisBroadcastIsScheduledForToISOString", { toISOString: new Date(broadcast.scheduledAt).toISOString() });
     }
     // MX1 dual path: with the recipient table present, a
     // broadcast that already has recipient rows was already
@@ -5981,7 +6025,7 @@ export class MessagingService {
     // (pre-MX1) everything below is the original snapshot form.
     if (this.recipientTable()) {
       if (await this.hasRecipientRows(broadcastId)) {
-        throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+        throw badRequest("messaging.thisBroadcastWasAlreadySentOr");
       }
       return this.prepareBroadcastTable(organizationId, broadcast, opts);
     }
@@ -6018,20 +6062,21 @@ export class MessagingService {
     const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (ks.broadcastsPaused) {
-      throw new BadRequestException("Broadcasts are temporarily paused platform-wide by the platform team (incident mode). Try again later.");
+      throw badRequest("messaging.broadcastsAreTemporarilyPausedPlatformWide");
     }
     const baselineCap = Number(process.env.BROADCAST_MAX_RECIPIENTS ?? 1000);
     const { broadcastCap: max } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: 200, broadcastCap: baselineCap });
     if (recipients.length === 0) {
       const excluded = resolved.excludedPreviousCount + resolved.excludedSuppressedCount + resolved.excludedFrequencyCount + resolved.excludedNoOptInCount;
-      throw new BadRequestException(resolved.audienceTotal > 0 && excluded > 0
-        ? `Audience is empty after exclusions: ${resolved.audienceTotal} in the audience, ${excluded} excluded (previous recipients ${resolved.excludedPreviousCount}, opted out ${resolved.excludedSuppressedCount}, frequency cap ${resolved.excludedFrequencyCount}, no WhatsApp opt-in ${resolved.excludedNoOptInCount})${heldOutCount > 0 ? `, ${heldOutCount} held out (holdout ${(broadcast as any).holdoutPercent}%)` : ""}.`
-        : heldOutCount > 0
-          ? `Audience is empty after the holdout: ${heldOutCount} recipients held out (holdout ${(broadcast as any).holdoutPercent}%). Lower the holdout percentage.`
-          : "Audience is empty: no recipients with a usable address for this channel");
+      throw badRequest(
+        resolved.audienceTotal > 0 && excluded > 0
+          ? heldOutCount > 0 ? "messaging.audienceEmptyAfterExclusionsHeldout" : "messaging.audienceEmptyAfterExclusions"
+          : heldOutCount > 0 ? "messaging.audienceEmptyAfterHoldout" : "messaging.audienceEmptyNoUsableAddress",
+        { audienceTotal: resolved.audienceTotal, excluded, prev: resolved.excludedPreviousCount, suppressed: resolved.excludedSuppressedCount, freq: resolved.excludedFrequencyCount, noOptIn: resolved.excludedNoOptInCount, heldOut: heldOutCount, percent: (broadcast as any).holdoutPercent },
+      );
     }
     if (recipients.length > max) {
-      throw new BadRequestException(`Audience has ${recipients.length} recipients, over the per-send cap of ${max}. Narrow the audience (e.g. a lead stage) instead of silently truncating.`);
+      throw badRequest("messaging.audienceHasRecipientsLengthRecipientsOverThe", { recipientsLength: recipients.length, max: max });
     }
     // MS5: real personalization vars per recipient, built AFTER
     // resolution + the A/B split (only the recipients who will
@@ -6489,7 +6534,7 @@ export class MessagingService {
       // rows: its recipient set was never recorded (a pre-MS1
       // row stuck mid-send), so there is nothing honest to
       // resume — the historical refusal.
-      throw new BadRequestException("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      throw badRequest("messaging.thisBroadcastWasAlreadySentOr");
     }
     // MX15 — budget gate: on a FRESH send (nothing sent, failed
     // or skipped yet) the estimated cost — org-entered rate ×
@@ -6769,16 +6814,14 @@ export class MessagingService {
     // the sweep/resume paths that reach the engine without
     // passing through here).
     if ((broadcast as any).archivedAt) {
-      throw new BadRequestException("This broadcast is archived — unarchive it to send.");
+      throw badRequest("messaging.thisBroadcastIsArchivedUnarchiveIt");
     }
     // MX15: approval gate (prepareBroadcast re-checks it too).
     await this.assertApprovalAllowsSend(organizationId, broadcast);
     if (!broadcast.recipientSnapshot && !(await this.hasRecipientRows(broadcastId))) {
       broadcast = await this.prepareBroadcast(organizationId, broadcastId);
     } else if (broadcast.status === "sent" || broadcast.status === "cancelled") {
-      throw new BadRequestException(broadcast.status === "cancelled"
-        ? "This broadcast was cancelled and can never be sent."
-        : "This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      throw badRequest(broadcast.status === "cancelled" ? "messaging.thisBroadcastWasCancelledAndCan" : "messaging.thisBroadcastWasAlreadySentOr");
     }
     const result = await this.processBroadcast(organizationId, broadcastId);
     const updated = await this.getBroadcastOrThrow(organizationId, broadcastId);
@@ -6807,19 +6850,19 @@ export class MessagingService {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     // MS10: an archived broadcast refuses scheduling too.
     if ((broadcast as any).archivedAt) {
-      throw new BadRequestException("This broadcast is archived — unarchive it to schedule.");
+      throw badRequest("messaging.thisBroadcastIsArchivedUnarchiveIt2");
     }
     // MX15: a pending/rejected broadcast cannot be scheduled to
     // send either — scheduling IS queueing for the sweep.
     await this.assertApprovalAllowsSend(organizationId, broadcast);
     if (scheduledAt === null) {
-      if (broadcast.status !== "scheduled") throw new BadRequestException("Only a scheduled broadcast has a schedule to cancel");
+      if (broadcast.status !== "scheduled") throw badRequest("messaging.onlyAScheduledBroadcastHasA");
       const updated = await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "draft", scheduledAt: null } });
       await this.audit.log({ organizationId, userId: actorId, action: "broadcast.schedule_cancel", entityType: "Broadcast", entityId: broadcastId, metadata: {} });
       return updated;
     }
     if (broadcast.status !== "draft" && broadcast.status !== "scheduled") {
-      throw new BadRequestException(`Only a draft broadcast can be scheduled (this one is ${broadcast.status})`);
+      throw badRequest("messaging.onlyADraftBroadcastCanBe2", { broadcastStatus: broadcast.status });
     }
     const when = this.parseFutureScheduledAt(scheduledAt);
     const data: Record<string, unknown> = { status: "scheduled", scheduledAt: when };
@@ -6830,7 +6873,7 @@ export class MessagingService {
       } else {
         try { data.recurrence = parseRecurrence(recurrenceInput); }
         catch (e) {
-          throw new BadRequestException(e instanceof RecurrenceValidationError ? e.message : "Invalid recurrence");
+          if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof RecurrenceValidationError ? e.message : "Invalid recurrence");
         }
         data.recurrenceGroupId = (broadcast as any).recurrenceGroupId ?? randomUUID();
       }
@@ -6848,7 +6891,7 @@ export class MessagingService {
   async pauseBroadcast(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (broadcast.status !== "sending" && broadcast.status !== "scheduled") {
-      throw new BadRequestException(`Only a sending or scheduled broadcast can be paused (this one is ${broadcast.status})`);
+      throw badRequest("messaging.onlyASendingOrScheduledBroadcast", { broadcastStatus: broadcast.status });
     }
     const updated = await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "paused" } });
     await this.audit.log({ organizationId, userId: actorId, action: "broadcast.pause", entityType: "Broadcast", entityId: broadcastId, metadata: { from: broadcast.status } });
@@ -6861,7 +6904,7 @@ export class MessagingService {
    * (or, if its time already passed, sends now). */
   async resumeBroadcast(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
-    if (broadcast.status !== "paused") throw new BadRequestException(`Only a paused broadcast can be resumed (this one is ${broadcast.status})`);
+    if (broadcast.status !== "paused") throw badRequest("messaging.onlyAPausedBroadcastCanBe", { broadcastStatus: broadcast.status });
     await this.audit.log({ organizationId, userId: actorId, action: "broadcast.resume", entityType: "Broadcast", entityId: broadcastId, metadata: {} });
     if (!broadcast.recipientSnapshot && !(await this.hasRecipientRows(broadcastId))) {
       if (broadcast.scheduledAt && new Date(broadcast.scheduledAt).getTime() > Date.now()) {
@@ -6883,7 +6926,7 @@ export class MessagingService {
   async cancelBroadcast(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (!["draft", "scheduled", "paused", "sending"].includes(broadcast.status)) {
-      throw new BadRequestException(`A ${broadcast.status} broadcast cannot be cancelled`);
+      throw badRequest("messaging.aBroadcastStatusBroadcastCannotBeCancelled", { broadcastStatus: broadcast.status });
     }
     // MX1: a recipient-table broadcast cancels on its rows —
     // pending rows become skipped ("cancelled") and the counters
@@ -6917,14 +6960,14 @@ export class MessagingService {
   async retryFailedBroadcast(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (!["sent", "partial", "failed"].includes(broadcast.status)) {
-      throw new BadRequestException(`Only a finished broadcast (sent/partial/failed) can retry failures (this one is ${broadcast.status})`);
+      throw badRequest("messaging.onlyAFinishedBroadcastSentPartial", { broadcastStatus: broadcast.status });
     }
     // MX1: a recipient-table broadcast retries on its rows —
     // only failed rows reset to pending; sent rows are never
     // touched, so a retry can never double-send.
     if (await this.hasRecipientRows(broadcastId)) {
       const c = await this.countRecipientsByStatus(broadcastId);
-      if (!c.failed) throw new BadRequestException("This broadcast has no failed recipients to retry");
+      if (!c.failed) throw badRequest("messaging.thisBroadcastHasNoFailedRecipients");
       await this.resetFailedRecipients(broadcastId);
       await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "sending" } });
       await this.audit.log({ organizationId, userId: actorId, action: "broadcast.retry_failed", entityType: "Broadcast", entityId: broadcastId, metadata: { retrying: c.failed } });
@@ -6935,7 +6978,7 @@ export class MessagingService {
     }
     const snapshot: SnapshotEntry[] = Array.isArray(broadcast.recipientSnapshot) ? broadcast.recipientSnapshot : [];
     const failedCount = snapshot.filter((e) => e.status === "failed").length;
-    if (!failedCount) throw new BadRequestException("This broadcast has no failed recipients to retry");
+    if (!failedCount) throw badRequest("messaging.thisBroadcastHasNoFailedRecipients");
     const reset = snapshot.map((e) => (e.status === "failed" ? { ...e, status: "pending" as const } : e));
     await (this.prisma as any).broadcast.update({ where: { id: broadcastId }, data: { status: "sending", recipientSnapshot: reset } });
     await this.audit.log({ organizationId, userId: actorId, action: "broadcast.retry_failed", entityType: "Broadcast", entityId: broadcastId, metadata: { retrying: failedCount } });
@@ -6984,21 +7027,21 @@ export class MessagingService {
   }) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if ((broadcast as any).archivedAt) {
-      throw new BadRequestException("This broadcast is archived — unarchive it before editing.");
+      throw badRequest("messaging.thisBroadcastIsArchivedUnarchiveIt3");
     }
     if (!["draft", "scheduled", "paused", "pending_approval"].includes(broadcast.status)) {
-      throw new BadRequestException(`A ${broadcast.status} broadcast cannot be edited (only draft, scheduled, paused or pending approval)`);
+      throw badRequest("messaging.aBroadcastStatusBroadcastCannotBeEdited", { broadcastStatus: broadcast.status });
     }
     const channel: string = broadcast.channel;
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("Broadcast name is required");
+      if (!name) throw badRequest("messaging.broadcastNameIsRequired");
       data.name = name;
     }
     if (dto.scheduledAt !== undefined) {
       if (broadcast.status === "paused") {
-        throw new BadRequestException("A paused broadcast's schedule cannot be changed here — resume or cancel it instead");
+        throw badRequest("messaging.aPausedBroadcastSScheduleCannot");
       }
       if (dto.scheduledAt === null) {
         if (broadcast.status === "scheduled") {
@@ -7022,11 +7065,11 @@ export class MessagingService {
     }
     if (channel === "whatsapp") {
       if (dto.templateId !== undefined || dto.subject !== undefined || dto.htmlBody !== undefined) {
-        throw new BadRequestException("WhatsApp broadcasts have no subject/htmlBody/templateId — edit the WhatsApp template fields instead");
+        throw badRequest("messaging.whatsAppBroadcastsHaveNoSubjectHtmlBody");
       }
       if (dto.whatsappTemplateId !== undefined && dto.whatsappTemplateId !== broadcast.whatsappTemplateId) {
         const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: dto.whatsappTemplateId, organizationId } });
-        if (!tpl) throw new NotFoundException("WhatsApp template not found in this organization");
+        if (!tpl) throw notFound("messaging.whatsAppTemplateNotFoundInThis");
         await this.assertWhatsAppTemplateNotQualityBlocked(organizationId, tpl);
         data.whatsappTemplateId = tpl.id;
         // Create derives the stored body from the template —
@@ -7035,7 +7078,7 @@ export class MessagingService {
       }
       if (dto.templateParams !== undefined) {
         if (!Array.isArray(dto.templateParams) || dto.templateParams.some((v) => typeof v !== "string")) {
-          throw new BadRequestException("templateParams must be an array of strings");
+          throw badRequest("messaging.templateParamsMustBeAnArrayOf");
         }
         data.templateParams = dto.templateParams;
       }
@@ -7043,44 +7086,44 @@ export class MessagingService {
         data.templateComponents = this.validateTemplateComponents(channel, dto.templateComponents);
       }
       if (dto.body !== undefined) {
-        throw new BadRequestException("WhatsApp broadcast body comes from its template — change the template instead of the body");
+        throw badRequest("messaging.whatsAppBroadcastBodyComesFromIts");
       }
     } else {
       if (dto.whatsappTemplateId !== undefined || dto.templateComponents !== undefined) {
-        throw new BadRequestException("whatsappTemplateId/templateComponents are only for WhatsApp broadcasts");
+        throw badRequest("messaging.whatsappTemplateIdTemplateComponentsAreOnlyForWhatsA");
       }
       // MX12: pushUrl edits — push channel only, same
       // shop-relative rule as create (validatePushUrl); an
       // explicit null clears back to the shop-root default.
       if (dto.pushUrl !== undefined) {
-        if (channel !== "push") throw new BadRequestException("pushUrl is only allowed for push broadcasts");
+        if (channel !== "push") throw badRequest("messaging.pushUrlIsOnlyAllowedForPush");
         try { data.pushUrl = validatePushUrl(dto.pushUrl); }
-        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
+        catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid pushUrl"); }
       }
       if (channel === "push" && dto.templateId !== undefined && dto.templateId !== null) {
-        throw new BadRequestException("Push broadcasts do not use message templates — edit the title/body directly");
+        throw badRequest("messaging.pushBroadcastsDoNotUseMessage2");
       }
       if (channel === "telegram" && dto.templateId !== undefined && dto.templateId !== null) {
-        throw new BadRequestException("Telegram broadcasts do not use message templates — edit the message text directly");
+        throw badRequest("messaging.telegramBroadcastsDoNotUseMessage2");
       }
       if (channel === "onsite" && dto.templateId !== undefined && dto.templateId !== null) {
-        throw new BadRequestException("On-site broadcasts do not use message templates — edit the title/body directly");
+        throw badRequest("messaging.onSiteBroadcastsDoNotUse2");
       }
       // MX14: onsiteUrl edits — onsite channel only, same
       // shop-relative rule as create (validateOnsiteUrl); an
       // explicit null clears back to no link.
       if (dto.onsiteUrl !== undefined) {
-        if (channel !== "onsite") throw new BadRequestException("onsiteUrl is only allowed for onsite broadcasts");
+        if (channel !== "onsite") throw badRequest("messaging.onsiteUrlIsOnlyAllowedForOnsite");
         try { data.onsiteUrl = validateOnsiteUrl(dto.onsiteUrl); }
-        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
+        catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid onsiteUrl"); }
       }
       // MX13: telegramButtons edits — telegram channel only,
       // the same validateTelegramButtons rule as create; an
       // explicit null clears back to a text-only message.
       if (dto.telegramButtons !== undefined) {
-        if (channel !== "telegram") throw new BadRequestException("telegramButtons is only allowed for telegram broadcasts");
+        if (channel !== "telegram") throw badRequest("messaging.telegramButtonsIsOnlyAllowedForTelegram");
         try { data.telegramButtons = validateTelegramButtons(dto.telegramButtons); }
-        catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
+        catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid telegramButtons"); }
       }
       if (dto.templateId !== undefined) {
         if (dto.templateId === null) {
@@ -7089,7 +7132,7 @@ export class MessagingService {
           // Create's exact checks: the template must exist in
           // this org and its channel must match.
           const template = await this.getTemplate(organizationId, dto.templateId);
-          if (template.channel !== channel) throw new BadRequestException("Template channel does not match the broadcast channel");
+          if (template.channel !== channel) throw badRequest("messaging.templateChannelDoesNotMatchThe");
           data.templateId = template.id;
         }
       }
@@ -7097,7 +7140,7 @@ export class MessagingService {
       if (dto.body !== undefined) data.body = dto.body;
       if (dto.htmlBody !== undefined) {
         // MS5's rule, shared with create: HTML is email-only.
-        if (dto.htmlBody && channel !== "email") throw new BadRequestException("htmlBody is only allowed for email broadcasts (SMS/WhatsApp have no HTML part)");
+        if (dto.htmlBody && channel !== "email") throw badRequest("messaging.htmlBodyIsOnlyAllowedForEmail3");
         data.htmlBody = dto.htmlBody;
       }
     }
@@ -7105,30 +7148,30 @@ export class MessagingService {
     // a body is always required, and email always needs a
     // subject — an edit may not hollow a broadcast out.
     const mergedBody = data.body !== undefined ? data.body : broadcast.body;
-    if (!mergedBody) throw new BadRequestException("Broadcast body is required (write one or choose a template)");
+    if (!mergedBody) throw badRequest("messaging.broadcastBodyIsRequiredWriteOne");
     const mergedSubject = data.subject !== undefined ? data.subject : broadcast.subject;
-    if (channel === "email" && !mergedSubject) throw new BadRequestException("Email broadcasts need a subject");
+    if (channel === "email" && !mergedSubject) throw badRequest("messaging.emailBroadcastsNeedASubject");
     if (channel === "push") {
       // MX12: create's push invariants on the MERGED row — a
       // title is always required and the base system's length
       // caps (title ≤ 120, body ≤ 300) always hold.
-      if (!mergedSubject || !String(mergedSubject).trim()) throw new BadRequestException("Push broadcasts need a title (subject)");
-      if (String(mergedSubject).length > 120) throw new BadRequestException("Push title must be at most 120 characters");
-      if (String(mergedBody).length > 300) throw new BadRequestException("Push body must be at most 300 characters");
+      if (!mergedSubject || !String(mergedSubject).trim()) throw badRequest("messaging.pushBroadcastsNeedATitleSubject");
+      if (String(mergedSubject).length > 120) throw badRequest("messaging.pushTitleMustBeAtMost");
+      if (String(mergedBody).length > 300) throw badRequest("messaging.pushBodyMustBeAtMost");
     }
     if (channel === "telegram") {
       // MX13: create's telegram invariants on the MERGED row —
       // the Bot API's 4096-char cap and no subject, always.
-      if (String(mergedBody).length > 4096) throw new BadRequestException("Telegram message text must be at most 4096 characters (the Bot API limit)");
-      if (mergedSubject && String(mergedSubject).trim() !== "") throw new BadRequestException("Telegram broadcasts have no subject — the message text is the whole message");
+      if (String(mergedBody).length > 4096) throw badRequest("messaging.telegramMessageTextMustBeAt");
+      if (mergedSubject && String(mergedSubject).trim() !== "") throw badRequest("messaging.telegramBroadcastsHaveNoSubjectThe");
     }
     if (channel === "onsite") {
       // MX14: create's onsite invariants on the MERGED row — a
       // title is always required and the channel's own caps
       // (title ≤ 120, body ≤ 2000) always hold.
-      if (!mergedSubject || !String(mergedSubject).trim()) throw new BadRequestException("On-site broadcasts need a title (subject)");
-      if (String(mergedSubject).length > 120) throw new BadRequestException("On-site title must be at most 120 characters");
-      if (String(mergedBody).length > 2000) throw new BadRequestException("On-site body must be at most 2000 characters");
+      if (!mergedSubject || !String(mergedSubject).trim()) throw badRequest("messaging.onSiteBroadcastsNeedATitle");
+      if (String(mergedSubject).length > 120) throw badRequest("messaging.onSiteTitleMustBeAt");
+      if (String(mergedBody).length > 2000) throw badRequest("messaging.onSiteBodyMustBeAt");
     }
     // SA-B20 (G2): personalisation edits validate against the
     // MERGED body (create's closing-invariant pattern) — a body
@@ -7220,7 +7263,7 @@ export class MessagingService {
   async deleteBroadcast(organizationId: string, actorId: string, broadcastId: string) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (!["draft", "cancelled"].includes(broadcast.status)) {
-      throw new BadRequestException(`A ${broadcast.status} broadcast cannot be deleted — only draft or cancelled broadcasts can. Archive it instead to keep its delivery history.`);
+      throw badRequest("messaging.aBroadcastStatusBroadcastCannotBeDeleted", { broadcastStatus: broadcast.status });
     }
     await (this.prisma as any).broadcast.delete({ where: { id: broadcastId } });
     await this.audit.log({
@@ -7240,7 +7283,7 @@ export class MessagingService {
   async setBroadcastArchived(organizationId: string, actorId: string, broadcastId: string, archived: boolean) {
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
     if (archived && broadcast.status === "sending") {
-      throw new BadRequestException("A broadcast that is sending cannot be archived — pause it or let it finish first");
+      throw badRequest("messaging.aBroadcastThatIsSendingCannot");
     }
     const updated = await (this.prisma as any).broadcast.update({
       where: { id: broadcastId },
@@ -7368,7 +7411,7 @@ export class MessagingService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { organizationId, provider: "whatsapp", status: "CONNECTED" }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException("No connected WhatsApp integration for this organization");
+    if (!integration?.credential) throw badRequest("messaging.noConnectedWhatsAppIntegrationForThis");
     // CC27: send-time deny re-check. A WhatsApp broadcast resolves
     // to THIS WhatsApp Integration — a connection target — so the
     // CREATING member's deny-list is re-checked here, at send
@@ -7381,10 +7424,10 @@ export class MessagingService {
     // connection targets, so they carry no deny gate (documented
     // in the B12 acceptance; no mapping is invented for them).
     if (denyActorId && await isMemberConnectionDenied(this.prisma as any, organizationId, denyActorId, integration.id)) {
-      throw new ForbiddenException("এই WhatsApp অ্যাকাউন্টে ব্রডকাস্ট পাঠানোর অনুমতি ব্রডকাস্টের লেখককে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংসে তার এই কানেকশনের অনুমতি প্রত্যাহার করা হয়েছে।");
+      throw forbidden("messaging.theAuthorOfThisBroadcastHas");
     }
     const template = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: broadcast.whatsappTemplateId, organizationId } });
-    if (!template) throw new NotFoundException("WhatsApp template not found");
+    if (!template) throw notFound("messaging.whatsAppTemplateNotFound");
     // MX9: send-time quality-guard re-check — the template's
     // synced quality may have dropped after this broadcast was
     // created. The throw lands in the engine's build-error path.
@@ -7680,7 +7723,7 @@ export class MessagingService {
    */
   async performOpenTracking(token: string): Promise<{ ok: boolean }> {
     const payload = verifyOpenToken(token);
-    if (!payload) throw new BadRequestException("এই ট্র্যাকিং পিক্সেলটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    if (!payload) throw badRequest("messaging.thisTrackingPixelIsInvalidOr");
     let lastId: string | undefined;
     for (let guard = 0; guard < 40; guard++) {
       const rows: any[] = await (this.prisma as any).messageDelivery.findMany({
@@ -7926,14 +7969,14 @@ export class MessagingService {
       ab = {
         groupId: broadcast.abGroupId,
         variants,
-        suggestion: abSuggestion({ A: lite.A, B: lite.B }),
+        suggestion: abSuggestion({ A: lite.A, B: lite.B }, await resolveDocumentLocale(this.prisma as any, organizationId)),
         autoWinner: {
           enabled: autoWinnerEnabled,
           winner: decidedRow ? decidedRow.abWinnerVariant : null,
           decidedAt: decidedRow?.abWinnerAt ? new Date(decidedRow.abWinnerAt).toISOString() : null,
           detail: decidedRow?.abWinnerDetail ?? null,
-          rule: AUTO_WINNER_RULE_TEXT_BN,
-          scopeNote: "Auto-winner শুধু Recipient-Table (MX1) পথে কাজ করে; Legacy Snapshot-path Broadcast-এ সিদ্ধান্ত হয় না। Cascade Broadcast-এও হয় না (Cascade নিজে Channel Content নির্ধারণ করে)।",
+          rule: autoWinnerRuleTextFor(await resolveDocumentLocale(this.prisma as any, organizationId)),
+          scopeNote: catalogText("messaging.abScopeNote", await resolveDocumentLocale(this.prisma as any, organizationId)),
         },
       } as any;
     }
@@ -8033,7 +8076,7 @@ export class MessagingService {
   async getComparativeAnalytics(organizationId: string, rangeInput?: { from?: string; to?: string }) {
     let range;
     try { range = parseFinanceRange(rangeInput?.from, rangeInput?.to); }
-    catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid date range"); }
+    catch (e) { if (e instanceof HttpException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid date range"); }
     const rows: any[] = await (this.prisma as any).broadcast.findMany({
       where: { organizationId }, orderBy: { createdAt: "desc" }, take: 500,
     }).catch(() => []);
@@ -8091,6 +8134,7 @@ export class MessagingService {
    * other messaging export. */
   async exportComparativeAnalyticsCsv(organizationId: string, actorId: string, rangeInput?: { from?: string; to?: string }) {
     const analytics = await this.getComparativeAnalytics(organizationId, rangeInput);
+    const csvLocale = await resolveDocumentLocale(this.prisma as any, organizationId);
     const csv = buildAnalyticsCsv({
       range: analytics.range,
       broadcasts: analytics.broadcasts.map((b: any) => ({
@@ -8098,7 +8142,7 @@ export class MessagingService {
         funnel: b.funnel, revenueAssociation: b.revenueAssociation,
       })),
       channels: analytics.channels,
-    });
+    }, csvLocale);
     await this.audit.log({
       organizationId, userId: actorId, action: "messaging.analytics_export", entityType: "Broadcast", entityId: "analytics",
       metadata: { from: analytics.range.from, to: analytics.range.to, broadcasts: analytics.broadcasts.length },
@@ -8186,7 +8230,7 @@ export class MessagingService {
       b: { sent: decision.b.sent, success: decision.b.success, rate: rate(decision.b) },
       z: decision.z, pValue: decision.pValue,
       decidedAt: now.toISOString(),
-      rule: AUTO_WINNER_RULE_TEXT_BN,
+      rule: autoWinnerRuleTextFor(await resolveDocumentLocale(this.prisma as any, organizationId)),
     };
     for (const v of variants) {
       await (this.prisma as any).broadcast.update({
@@ -8214,12 +8258,12 @@ export class MessagingService {
    * that already finished sending cannot be toggled. */
   async setBroadcastAbAutoWinner(organizationId: string, actorId: string, broadcastId: string, enabled: boolean | null) {
     if (enabled !== null && typeof enabled !== "boolean") {
-      throw new BadRequestException("enabled must be true, false, or null (inherit the organization setting)");
+      throw badRequest("messaging.enabledMustBeTrueFalseOr");
     }
     const broadcast = await this.getBroadcastOrThrow(organizationId, broadcastId);
-    if (!broadcast.abGroupId) throw new BadRequestException("This broadcast is not part of an A/B test — there is no auto-winner to toggle.");
+    if (!broadcast.abGroupId) throw badRequest("messaging.thisBroadcastIsNotPartOf");
     if (["sent", "partial", "failed", "cancelled"].includes(String(broadcast.status))) {
-      throw new BadRequestException(`This broadcast already finished (${broadcast.status}) — the auto-winner can no longer be toggled.`);
+      throw badRequest("messaging.thisBroadcastAlreadyFinishedBroadcastStatusThe", { broadcastStatus: broadcast.status });
     }
     const variants: any[] = await (this.prisma as any).broadcast.findMany({
       where: { organizationId, abGroupId: broadcast.abGroupId }, select: { id: true },
@@ -8252,13 +8296,13 @@ export class MessagingService {
     goal: string; channel?: string; audienceHint?: string;
   }) {
     const goal = String(dto.goal ?? "").trim();
-    if (!goal) throw new BadRequestException("goal is required — say what this campaign should achieve");
-    if (goal.length > 1000) throw new BadRequestException("goal is too long (max 1000 characters)");
+    if (!goal) throw badRequest("messaging.goalIsRequiredSayWhatThis2");
+    if (goal.length > 1000) throw badRequest("messaging.goalIsTooLongMax1000");
     const channelHint = dto.channel && ["email", "sms", "whatsapp"].includes(dto.channel) ? dto.channel : null;
     await this.checkMessagingAiLimit(organizationId);
     const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
-      throw new HttpException("AI is not configured for this organization, so a campaign plan cannot be generated. Configure an AI provider, or build the campaign manually in the composer.", 502);
+      throw new ApiException("messaging.aIIsNotConfiguredForThis2", 502);
     }
     const facts: string[] = [`Campaign goal: ${goal}`];
     if (channelHint) facts.push(`Preferred channel hint: ${channelHint}`);
@@ -8291,7 +8335,7 @@ export class MessagingService {
     if (!parsed || !body) {
       // Unusable answer: honest 502, NO usage record, nothing
       // stored (the draftMessagingCopy rule).
-      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+      throw new ApiException("messaging.theAIResponseCouldNotBe", 502);
     }
     await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
     let audienceDefinition: unknown = parsed.audienceDefinition ?? null;
@@ -8338,15 +8382,15 @@ export class MessagingService {
     subject?: string; body: string; targetLanguage: string;
   }) {
     const body = String(dto.body ?? "").trim();
-    if (!body) throw new BadRequestException("body is required — write the message to translate first");
-    if (body.length > 10000) throw new BadRequestException("body is too long to translate (max 10000 characters)");
+    if (!body) throw badRequest("messaging.bodyIsRequiredWriteTheMessage");
+    if (body.length > 10000) throw badRequest("messaging.bodyIsTooLongToTranslate");
     const target = dto.targetLanguage === "en" ? "en" : dto.targetLanguage === "bn" ? "bn" : null;
-    if (!target) throw new BadRequestException('targetLanguage must be "bn" or "en"');
+    if (!target) throw badRequest("messaging.targetLanguageMustBeBnOrEn");
     const subject = dto.subject !== undefined && dto.subject !== null ? String(dto.subject) : null;
     await this.checkMessagingAiLimit(organizationId);
     const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
-      throw new HttpException("আসল AI (LLM) কনফিগার করা হয়নি — Dev Template Adapter অনুবাদ করতে পারে না।", 502);
+      throw new ApiException("messaging.theRealAILLMIsNot", 502);
     }
     const systemPrompt = [
       `You translate marketing message text into ${target === "bn" ? "Bengali (Bangla script)" : "English"}.`,
@@ -8367,7 +8411,7 @@ export class MessagingService {
     try { parsed = JSON.parse(result.text); } catch { parsed = null; }
     const translatedBody = typeof parsed?.body === "string" ? parsed.body.trim() : "";
     if (!translatedBody) {
-      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+      throw new ApiException("messaging.theAIResponseCouldNotBe", 502);
     }
     await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
     return {
@@ -8385,7 +8429,7 @@ export class MessagingService {
    * no AI is involved; the payload labels itself heuristic. */
   scoreSubjectQuality(dto: { subject: string }) {
     const subject = String(dto.subject ?? "");
-    if (!subject.trim()) throw new BadRequestException("subject is required");
+    if (!subject.trim()) throw badRequest("messaging.subjectIsRequired");
     return subjectQualityScore(subject);
   }
 
@@ -8399,9 +8443,9 @@ export class MessagingService {
    * count — never a fabricated time.
    */
   async recipientSendTimeSuggestion(organizationId: string, recipientType: string, recipientId: string) {
-    if (!["customer", "lead"].includes(recipientType)) throw new BadRequestException('recipientType must be "customer" or "lead"');
+    if (!["customer", "lead"].includes(recipientType)) throw badRequest("messaging.recipientTypeMustBeCustomerOrLead");
     const id = String(recipientId ?? "").trim();
-    if (!id) throw new BadRequestException("recipientId is required");
+    if (!id) throw badRequest("messaging.recipientIdIsRequired");
     const recipientKey = `${recipientType}:${id}`;
     const clicks: any[] = await (this.prisma as any).messageLinkClick.findMany({
       where: { organizationId, recipientKey }, select: { createdAt: true }, take: 5000,
@@ -8472,7 +8516,7 @@ export class MessagingService {
       // honest path is the base system's test devices (Web
       // Push panel: register this browser, then test-send
       // there); a fake "test" delivery here would lie.
-      throw new BadRequestException("Push broadcasts cannot be test-sent to a typed address — push reaches browser subscriptions, not addresses. Register a test device in the Web Push panel and test-send from there instead.");
+      throw badRequest("messaging.pushBroadcastsCannotBeTestSent");
     }
     if (broadcast.channel === "onsite") {
       // MX14: an onsite test send cannot target a typed address
@@ -8482,10 +8526,10 @@ export class MessagingService {
       // message that is not a real broadcast. The honest path
       // is a real broadcast to a narrow customers audience
       // (e.g. a segment containing only the test account).
-      throw new BadRequestException("On-site broadcasts cannot be test-sent to a typed address — they appear in a customer's shop account notification center, and a test must not pollute a real customer's center. Send a real broadcast to a narrow customers audience (e.g. a segment with only your test account) instead.");
+      throw badRequest("messaging.onSiteBroadcastsCannotBeTest");
     }
     const to = String(toInput ?? "").trim();
-    if (!to) throw new BadRequestException("A test recipient address is required (to)");
+    if (!to) throw badRequest("messaging.aTestRecipientAddressIsRequired");
     let result: { status: "sent" | "failed" | "skipped"; providerMessageId?: string; error?: string; address: string };
     if (broadcast.channel === "whatsapp") {
       // CC27: a test send is the TESTER's own send through the
@@ -8531,7 +8575,7 @@ export class MessagingService {
   async testSendTemplate(organizationId: string, actorId: string, templateId: string, toInput: string) {
     const template = await this.getTemplate(organizationId, templateId);
     const to = String(toInput ?? "").trim();
-    if (!to) throw new BadRequestException("A test recipient address is required (to)");
+    if (!to) throw badRequest("messaging.aTestRecipientAddressIsRequired");
     const result = await this.sendToRecipient(organizationId, {
       channel: template.channel,
       recipient: MessagingService.testRecipient(template.channel, to),
@@ -8556,7 +8600,7 @@ export class MessagingService {
    */
   async performLinkRedirect(token: string): Promise<{ url: string }> {
     const payload = verifyLinkToken(token);
-    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। মূল বার্তার লিংকটি আবার চেষ্টা করুন।");
+    if (!payload) throw badRequest("messaging.thisLinkIsInvalidOrHas");
     await (this.prisma as any).messageLinkClick.create({
       data: {
         organizationId: payload.orgId, broadcastId: payload.broadcastId,
@@ -8572,7 +8616,7 @@ export class MessagingService {
    * channel. Email must look like an email; phone channels must
    * normalize to a BD number or at least 10 digits. */
   private validatePrefAddress(channel: string, raw: string): string {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
     const address = normalizePrefAddress(channel, raw ?? "");
     if (channel === "onsite") {
       // MX14: an onsite preference address is a CUSTOMER ID —
@@ -8580,14 +8624,14 @@ export class MessagingService {
       // are uuids in this schema; the rule is a non-empty id
       // of at most 100 chars with no whitespace (an id with a
       // space in it can never match a real customer row).
-      if (!address || address.length > 100 || /\s/.test(address)) throw new BadRequestException(`Invalid onsite customer id: ${raw}`);
+      if (!address || address.length > 100 || /\s/.test(address)) throw badRequest("messaging.invalidOnsiteCustomerIdRaw", { raw: raw });
       return address;
     }
     if (channel === "telegram") {
       // MX13: a telegram preference address is a chat id —
       // Telegram's own shape: an integer (user chats positive,
       // group chats negative), at most 20 digits.
-      if (!/^-?\d{1,20}$/.test(address)) throw new BadRequestException(`Invalid Telegram chat id: ${raw}`);
+      if (!/^-?\d{1,20}$/.test(address)) throw badRequest("messaging.invalidTelegramChatIdRaw", { raw: raw });
       return address;
     }
     if (channel === "push") {
@@ -8596,13 +8640,13 @@ export class MessagingService {
       // (an https URL, ≤ 1000 chars) applies verbatim.
       let ok = address.length > 0 && address.length <= 1000;
       if (ok) { try { ok = new URL(address).protocol === "https:"; } catch { ok = false; } }
-      if (!ok) throw new BadRequestException(`Invalid push subscription endpoint: ${raw}`);
+      if (!ok) throw badRequest("messaging.invalidPushSubscriptionEndpointRaw", { raw: raw });
       return address;
     }
     if (channel === "email") {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new BadRequestException(`Invalid email address: ${raw}`);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw badRequest("messaging.invalidEmailAddressRaw", { raw: raw });
     } else if (address.replace(/\D/g, "").length < 10) {
-      throw new BadRequestException(`Invalid phone number: ${raw}`);
+      throw badRequest("messaging.invalidPhoneNumberRaw", { raw: raw });
     }
     return address;
   }
@@ -8620,7 +8664,7 @@ export class MessagingService {
 
   async addPreference(organizationId: string, actorId: string, dto: { channel: string; address: string; status?: string; note?: string }) {
     const status = dto.status ?? "opted_out";
-    if (!["opted_out", "opted_in"].includes(status)) throw new BadRequestException("status must be opted_out or opted_in");
+    if (!["opted_out", "opted_in"].includes(status)) throw badRequest("messaging.statusMustBeOptedOutOr");
     const address = this.validatePrefAddress(dto.channel, dto.address);
     const row = await this.setPreference(organizationId, {
       channel: dto.channel, address, status: status as "opted_out" | "opted_in", source: "manual", note: dto.note ?? null, actor: `user:${actorId}`,
@@ -8631,7 +8675,7 @@ export class MessagingService {
 
   async removePreference(organizationId: string, actorId: string, preferenceId: string) {
     const row = await (this.prisma as any).messagePreference.findFirst({ where: { id: preferenceId, organizationId } });
-    if (!row) throw new NotFoundException("Preference not found");
+    if (!row) throw notFound("messaging.preferenceNotFound");
     await (this.prisma as any).messagePreference.delete({ where: { id: preferenceId } });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.preference_remove", entityType: "MessagePreference", entityId: preferenceId, metadata: { channel: row.channel, address: row.address, status: row.status } });
     return { deleted: true };
@@ -8640,9 +8684,9 @@ export class MessagingService {
   /** Bulk opt-out import: per-row results, never all-or-nothing
    * and never silent — bad rows come back with their error. */
   async importPreferences(organizationId: string, actorId: string, dto: { channel: string; addresses: string[] }) {
-    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms, whatsapp, push, telegram or onsite");
-    if (!Array.isArray(dto.addresses) || dto.addresses.length === 0) throw new BadRequestException("addresses must be a non-empty array");
-    if (dto.addresses.length > 1000) throw new BadRequestException("Import is capped at 1000 addresses per request");
+    if (!["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsWhatsapp");
+    if (!Array.isArray(dto.addresses) || dto.addresses.length === 0) throw badRequest("messaging.addressesMustBeANonEmpty");
+    if (dto.addresses.length > 1000) throw badRequest("messaging.importIsCappedAt1000Addresses");
     let imported = 0;
     const errors: { address: string; error: string }[] = [];
     for (const raw of dto.addresses) {
@@ -8677,7 +8721,7 @@ export class MessagingService {
    * sensitive — the channel and the MASKED address. */
   inspectUnsubscribeToken(token: string) {
     const payload = verifyUnsubscribeToken(token);
-    if (!payload) throw new BadRequestException("এই আনসাবস্ক্রাইব লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। নতুন ইমেইলের লিংক ব্যবহার করুন।");
+    if (!payload) throw badRequest("messaging.thisUnsubscribeLinkIsInvalidOr");
     return {
       valid: true, channel: payload.channel,
       address: payload.channel === "email" ? maskEmailAddress(payload.address) : maskPhoneAddress(payload.address),
@@ -8687,7 +8731,7 @@ export class MessagingService {
   /** POST side: the actual opt-out write (source unsubscribe_link). */
   async performUnsubscribe(token: string) {
     const payload = verifyUnsubscribeToken(token);
-    if (!payload) throw new BadRequestException("এই আনসাবস্ক্রাইব লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। নতুন ইমেইলের লিংক ব্যবহার করুন।");
+    if (!payload) throw badRequest("messaging.thisUnsubscribeLinkIsInvalidOr");
     await this.setPreference(payload.orgId, {
       channel: payload.channel, address: payload.address, status: "opted_out", source: "unsubscribe_link", actor: "public",
     });
@@ -8712,7 +8756,7 @@ export class MessagingService {
   private validateOptInChannels(raw: unknown): string[] {
     const channels = Array.isArray(raw) ? raw.map(String) : [];
     const out = channels.filter((c) => ["email", "sms", "whatsapp"].includes(c));
-    if (!out.length || out.length !== channels.length) throw new BadRequestException("channels must be a non-empty subset of email, sms, whatsapp");
+    if (!out.length || out.length !== channels.length) throw badRequest("messaging.channelsMustBeANonEmpty");
     return [...new Set(out)];
   }
 
@@ -8722,17 +8766,17 @@ export class MessagingService {
    * MX6 keyword-campaign rule (inbound dispatch order is
    * STOP/START → opt-in keyword → campaign rules). */
   private async assertOptInKeywordFree(organizationId: string, keyword: string, excludeFormId?: string) {
-    if (isReservedKeyword(normalizeKeywordText(keyword))) throw new BadRequestException(`"${keyword}" is a reserved keyword (STOP/START set) and can never be an opt-in keyword.`);
+    if (isReservedKeyword(normalizeKeywordText(keyword))) throw badRequest("messaging.keywordIsAReservedKeywordSTOP", { keyword: keyword });
     const forms: any[] = await (this.optInFormTable()?.findMany({ where: { organizationId, enabled: true } }) ?? Promise.resolve([])).catch(() => []);
     if (forms.some((f) => f.id !== excludeFormId && f.keyword && normalizeKeywordText(f.keyword) === normalizeKeywordText(keyword))) {
-      throw new BadRequestException(`Keyword "${keyword}" is already used by another opt-in form.`);
+      throw badRequest("messaging.keywordKeywordIsAlreadyUsedBy", { keyword: keyword });
     }
     const ruleTable = this.keywordRuleTable();
     if (ruleTable) {
       const rules: any[] = await ruleTable.findMany({ where: { organizationId, enabled: true } }).catch(() => []);
       const claimed = rules.some((r) => (r.keyword && normalizeKeywordText(r.keyword) === normalizeKeywordText(keyword))
         || (Array.isArray(r.pollOptions) && r.pollOptions.some((o: any) => Array.isArray(o?.keywords) && o.keywords.some((k: string) => normalizeKeywordText(k) === normalizeKeywordText(keyword)))));
-      if (claimed) throw new BadRequestException(`Keyword "${keyword}" is already claimed by a keyword campaign rule.`);
+      if (claimed) throw badRequest("messaging.keywordKeywordIsAlreadyClaimedBy", { keyword: keyword });
     }
   }
 
@@ -8752,19 +8796,19 @@ export class MessagingService {
     topic?: string; doubleOptIn?: boolean; successMessage?: string; popup?: unknown; keyword?: string;
   }) {
     const t = this.optInFormTable();
-    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    if (!t) throw badRequest("messaging.optInFormsAreNotAvailable");
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("name is required");
+    if (!name) throw badRequest("messaging.nameIsRequired");
     const channels = this.validateOptInChannels(dto.channels);
     const slug = this.slugifyOptIn(dto.slug || name);
-    if (!slug) throw new BadRequestException("slug must contain letters or digits");
+    if (!slug) throw badRequest("messaging.slugMustContainLettersOrDigits");
     const existing = await t.findFirst({ where: { organizationId, slug } }).catch(() => null);
-    if (existing) throw new BadRequestException(`An opt-in form with slug "${slug}" already exists in this organization.`);
+    if (existing) throw badRequest("messaging.anOptInFormWithSlug", { slug: slug });
     const doubleOptIn = dto.doubleOptIn !== false;
     const keyword = dto.keyword ? normalizeKeywordText(dto.keyword) : null;
     if (keyword) await this.assertOptInKeywordFree(organizationId, keyword);
     if (doubleOptIn && !channels.includes("email") && !keyword) {
-      throw new BadRequestException("Double opt-in needs a confirmation path: include the email channel (confirmation link) or set a WhatsApp opt-in keyword.");
+      throw badRequest("messaging.doubleOptInNeedsAConfirmation");
     }
     const row = await t.create({
       data: {
@@ -8784,9 +8828,9 @@ export class MessagingService {
     doubleOptIn?: boolean; successMessage?: string; popup?: unknown; keyword?: string | null; enabled?: boolean;
   }) {
     const t = this.optInFormTable();
-    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    if (!t) throw badRequest("messaging.optInFormsAreNotAvailable");
     const row = await t.findFirst({ where: { id: formId, organizationId } });
-    if (!row) throw new NotFoundException("Opt-in form not found");
+    if (!row) throw notFound("messaging.optInFormNotFound");
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = String(dto.name).trim();
     if (dto.headline !== undefined) data.headline = dto.headline;
@@ -8806,7 +8850,7 @@ export class MessagingService {
     const doubleOptIn = (data.doubleOptIn as boolean | undefined) ?? row.doubleOptIn;
     const keyword = (data.keyword as string | null | undefined) ?? row.keyword;
     if (doubleOptIn && !channels.includes("email") && !keyword) {
-      throw new BadRequestException("Double opt-in needs a confirmation path: include the email channel (confirmation link) or set a WhatsApp opt-in keyword.");
+      throw badRequest("messaging.doubleOptInNeedsAConfirmation");
     }
     const updated = await t.update({ where: { id: formId }, data });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.optin_form_update", entityType: "MessagingOptInForm", entityId: formId, metadata: {} });
@@ -8815,9 +8859,9 @@ export class MessagingService {
 
   async deleteOptInForm(organizationId: string, actorId: string, formId: string) {
     const t = this.optInFormTable();
-    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    if (!t) throw badRequest("messaging.optInFormsAreNotAvailable");
     const row = await t.findFirst({ where: { id: formId, organizationId } });
-    if (!row) throw new NotFoundException("Opt-in form not found");
+    if (!row) throw notFound("messaging.optInFormNotFound");
     await t.delete({ where: { id: formId } });
     await this.audit.log({ organizationId, userId: actorId, action: "messaging.optin_form_delete", entityType: "MessagingOptInForm", entityId: formId, metadata: { slug: row.slug } });
     return { deleted: true };
@@ -8828,9 +8872,9 @@ export class MessagingService {
    * external shortening or tracking service. */
   async getOptInFormQr(organizationId: string, formId: string): Promise<{ url: string; dataUrl: string }> {
     const t = this.optInFormTable();
-    if (!t) throw new BadRequestException("Opt-in forms are not available (database migration pending).");
+    if (!t) throw badRequest("messaging.optInFormsAreNotAvailable");
     const row = await t.findFirst({ where: { id: formId, organizationId } });
-    if (!row) throw new NotFoundException("Opt-in form not found");
+    if (!row) throw notFound("messaging.optInFormNotFound");
     const url = this.optInJoinUrl(organizationId, row.slug);
     const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 320 });
     return { url, dataUrl };
@@ -8839,9 +8883,9 @@ export class MessagingService {
   /** The public form view: config only — never any subscriber data. */
   async getPublicOptInForm(organizationId: string, slug: string) {
     const t = this.optInFormTable();
-    if (!t) throw new NotFoundException("Form not found");
+    if (!t) throw notFound("messaging.formNotFound");
     const form = await t.findFirst({ where: { organizationId, slug, enabled: true } }).catch(() => null);
-    if (!form) throw new NotFoundException("Form not found");
+    if (!form) throw notFound("messaging.formNotFound");
     const org = await (this.prisma as any).organization?.findUnique({ where: { id: organizationId }, select: { name: true } }).catch(() => null);
     return {
       name: form.name, slug: form.slug, headline: form.headline, description: form.description,
@@ -8876,19 +8920,19 @@ export class MessagingService {
    */
   async submitOptInForm(organizationId: string, slug: string, dto: { name?: string; email?: string; phone?: string }) {
     const t = this.optInFormTable();
-    if (!t) throw new NotFoundException("Form not found");
+    if (!t) throw notFound("messaging.formNotFound");
     const form = await t.findFirst({ where: { organizationId, slug, enabled: true } }).catch(() => null);
-    if (!form) throw new NotFoundException("Form not found");
+    if (!form) throw notFound("messaging.formNotFound");
     const channels: string[] = Array.isArray(form.channels) ? form.channels : [];
     const email = String(dto.email ?? "").trim().toLowerCase();
     const phoneRaw = String(dto.phone ?? "").trim();
     if (channels.includes("email")) {
-      if (!email) throw new BadRequestException("Email is required");
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException("Invalid email address");
+      if (!email) throw badRequest("messaging.emailIsRequired");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw badRequest("messaging.invalidEmailAddress");
     }
     if (channels.some((c) => c === "sms" || c === "whatsapp")) {
-      if (!phoneRaw) throw new BadRequestException("Phone is required");
-      if ((normalizeBdPhone(phoneRaw) ?? phoneRaw.replace(/\D/g, "")).replace(/\D/g, "").length < 10) throw new BadRequestException("Invalid phone number");
+      if (!phoneRaw) throw badRequest("messaging.phoneIsRequired");
+      if ((normalizeBdPhone(phoneRaw) ?? phoneRaw.replace(/\D/g, "")).replace(/\D/g, "").length < 10) throw badRequest("messaging.invalidPhoneNumber");
     }
     const found = await this.findContactByAddress(organizationId, email, phoneRaw);
     let recipientType: "customer" | "lead";
@@ -8952,7 +8996,7 @@ export class MessagingService {
 
   inspectOptInToken(token: string) {
     const payload = verifyOptInToken(token);
-    if (!payload) throw new BadRequestException("এই নিশ্চিতকরণ লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। আবার সাইন আপ করুন।");
+    if (!payload) throw badRequest("messaging.thisConfirmationLinkIsInvalidOr");
     return { valid: true, channel: payload.channel, address: payload.channel === "email" ? maskEmailAddress(payload.address) : maskPhoneAddress(payload.address) };
   }
 
@@ -8962,11 +9006,11 @@ export class MessagingService {
    * one confirmation. An opted_out row is never flipped. */
   async confirmOptIn(token: string) {
     const payload = verifyOptInToken(token);
-    if (!payload) throw new BadRequestException("এই নিশ্চিতকরণ লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ। আবার সাইন আপ করুন।");
+    if (!payload) throw badRequest("messaging.thisConfirmationLinkIsInvalidOr");
     const row = await (this.prisma as any).messagePreference.findFirst({
       where: { organizationId: payload.orgId, channel: payload.channel, address: payload.address },
     }).catch(() => null);
-    if (!row) throw new BadRequestException("এই সাবস্ক্রিপশনের কোনো রেকর্ড পাওয়া যায়নি।");
+    if (!row) throw badRequest("messaging.noRecordWasFoundForThis");
     if (row.status === "opted_out") return { ok: true, message: "আপনি এই ঠিকানায় আনসাবস্ক্রাইব করেছেন — সেটি বহাল আছে।" };
     if (row.status === "opted_in") return { ok: true, message: "আপনার সাবস্ক্রিপশন আগেই নিশ্চিত হয়েছে। ধন্যবাদ!" };
     await this.setPreference(payload.orgId, {
@@ -9033,7 +9077,7 @@ export class MessagingService {
 
   async getPreferenceCenter(token: string) {
     const payload = verifyPreferenceToken(token);
-    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    if (!payload) throw badRequest("messaging.thisLinkIsInvalidOrHas2");
     const contact = await this.resolvePreferenceContact(payload.orgId, payload);
     const rows = await this.preferenceRowsForContact(payload.orgId, contact);
     const formTopics: any[] = await (this.optInFormTable()?.findMany({ where: { organizationId: payload.orgId } }) ?? Promise.resolve([])).catch(() => []);
@@ -9057,11 +9101,11 @@ export class MessagingService {
 
   async updatePreferenceCenter(token: string, dto: { channels?: Record<string, boolean>; topics?: string[] | null; maxPerDay?: number | null }) {
     const payload = verifyPreferenceToken(token);
-    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    if (!payload) throw badRequest("messaging.thisLinkIsInvalidOrHas2");
     const organizationId = payload.orgId;
     const contact = await this.resolvePreferenceContact(organizationId, payload);
     if (dto.maxPerDay !== undefined && dto.maxPerDay !== null && (!Number.isInteger(dto.maxPerDay) || dto.maxPerDay < 0 || dto.maxPerDay > 20)) {
-      throw new BadRequestException("maxPerDay must be an integer between 0 and 20, or null");
+      throw badRequest("messaging.maxPerDayMustBeAnIntegerBetween");
     }
     if (dto.channels) {
       for (const [channel, on] of Object.entries(dto.channels)) {
@@ -9098,7 +9142,7 @@ export class MessagingService {
    * the center adds choice, never friction to opting out. */
   async unsubscribeAllFromCenter(token: string) {
     const payload = verifyPreferenceToken(token);
-    if (!payload) throw new BadRequestException("এই লিংকটি অবৈধ বা মেয়াদোত্তীর্ণ।");
+    if (!payload) throw badRequest("messaging.thisLinkIsInvalidOrHas2");
     const contact = await this.resolvePreferenceContact(payload.orgId, payload);
     for (const channel of ["email", "sms", "whatsapp"]) {
       const raw = channel === "email" ? contact.email : contact.phone;
@@ -9115,7 +9159,7 @@ export class MessagingService {
    * address (dashboard use + inclusion in org-sent mail). */
   async issuePreferenceCenterLink(organizationId: string, actorId: string, dto: { channel: string; address: string }) {
     const channel = dto.channel;
-    if (!["email", "sms", "whatsapp"].includes(channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!["email", "sms", "whatsapp"].includes(channel)) throw badRequest("messaging.channelMustBeEmailSmsOr");
     const address = this.validatePrefAddress(channel, dto.address);
     const pref = await (this.prisma as any).messagePreference.findFirst({ where: { organizationId, channel, address } }).catch(() => null);
     const found = await this.findContactByAddress(organizationId, channel === "email" ? address : "", channel === "email" ? "" : address);
@@ -9147,17 +9191,17 @@ export class MessagingService {
    * BEFORE any contact exists; commit reads it back verbatim. */
   async previewCsvImport(organizationId: string, actorId: string, dto: { channel: string; csv: string; mapping: CsvImportMapping }) {
     const table = (this.prisma as any).messagingCsvImport;
-    if (!table || typeof table.create !== "function") throw new BadRequestException("CSV import is not available (database migration pending).");
-    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
+    if (!table || typeof table.create !== "function") throw badRequest("messaging.cSVImportIsNotAvailableDatabase");
+    if (!["email", "sms", "whatsapp"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailSmsOr");
     const { headers, records } = parseContactsCsv(dto.csv ?? "");
-    if (!headers.length) throw new BadRequestException("CSV must have a header row");
-    if (!records.length) throw new BadRequestException("CSV has no data rows");
-    if (records.length > 5000) throw new BadRequestException("CSV import is capped at 5000 rows per file");
+    if (!headers.length) throw badRequest("messaging.cSVMustHaveAHeaderRow");
+    if (!records.length) throw badRequest("messaging.cSVHasNoDataRows");
+    if (records.length > 5000) throw badRequest("messaging.cSVImportIsCappedAt5000");
     const mapping = dto.mapping ?? {};
-    if (dto.channel === "email" && !mapping.email) throw new BadRequestException("Map the email column for an email import");
-    if (dto.channel !== "email" && !mapping.phone) throw new BadRequestException("Map the phone column for a phone-channel import");
+    if (dto.channel === "email" && !mapping.email) throw badRequest("messaging.mapTheEmailColumnForAn");
+    if (dto.channel !== "email" && !mapping.phone) throw badRequest("messaging.mapThePhoneColumnForA");
     for (const key of ["name", "email", "phone"] as const) {
-      if (mapping[key] && !headers.includes(mapping[key]!)) throw new BadRequestException(`Mapped column "${mapping[key]}" is not in the CSV header (${headers.join(", ")})`);
+      if (mapping[key] && !headers.includes(mapping[key]!)) throw badRequest("messaging.mappedColumnKeyIsNotIn", { key: mapping[key], headersJoin: headers.join(", ") });
     }
     const existing = await this.existingAddressSet(organizationId, dto.channel);
     const result = classifyCsvRows({ records, mapping, channel: dto.channel, existingAddresses: existing });
@@ -9180,10 +9224,10 @@ export class MessagingService {
    * address stays opted_out (supreme) and is counted, not hidden. */
   async commitCsvImport(organizationId: string, actorId: string, importId: string) {
     const table = (this.prisma as any).messagingCsvImport;
-    if (!table) throw new BadRequestException("CSV import is not available (database migration pending).");
+    if (!table) throw badRequest("messaging.cSVImportIsNotAvailableDatabase");
     const row = await table.findFirst({ where: { id: importId, organizationId } });
-    if (!row) throw new NotFoundException("Import not found");
-    if (row.status === "committed") throw new BadRequestException("This import was already committed — preview again for a new import.");
+    if (!row) throw notFound("messaging.importNotFound");
+    if (row.status === "committed") throw badRequest("messaging.thisImportWasAlreadyCommittedPreview");
     const outcomes: any[] = Array.isArray(row.report) ? row.report : [];
     let imported = 0, suppressedOptOut = 0;
     const errors: { row: number; error: string }[] = [];
@@ -9217,9 +9261,9 @@ export class MessagingService {
 
   async getCsvImport(organizationId: string, importId: string) {
     const table = (this.prisma as any).messagingCsvImport;
-    if (!table) throw new BadRequestException("CSV import is not available (database migration pending).");
+    if (!table) throw badRequest("messaging.cSVImportIsNotAvailableDatabase");
     const row = await table.findFirst({ where: { id: importId, organizationId } });
-    if (!row) throw new NotFoundException("Import not found");
+    if (!row) throw notFound("messaging.importNotFound");
     return row;
   }
 
@@ -9364,7 +9408,7 @@ export class MessagingService {
     const rules = this.keywordRuleTable();
     const hits = this.keywordHitTable();
     if (!rules || !hits) {
-      throw new BadRequestException("Keyword campaigns are not available in this deployment (the MX6 tables are missing — the migration has not run).");
+      throw badRequest("messaging.keywordCampaignsAreNotAvailableIn");
     }
     return { rules, hits };
   }
@@ -9407,17 +9451,13 @@ export class MessagingService {
   private async validateKeywordRule(organizationId: string, dto: any, excludeRuleId?: string) {
     const { rules } = this.requireKeywordTables();
     const name = String(dto?.name ?? "").trim();
-    if (!name) throw new BadRequestException("A keyword rule needs a name");
-    if (name.length > 120) throw new BadRequestException("Rule name is too long (max 120 characters)");
+    if (!name) throw badRequest("messaging.aKeywordRuleNeedsAName");
+    if (name.length > 120) throw badRequest("messaging.ruleNameIsTooLongMax");
     const kind = String(dto?.kind ?? "");
-    if (!["keyword", "poll"].includes(kind)) throw new BadRequestException('kind must be "keyword" or "poll"');
+    if (!["keyword", "poll"].includes(kind)) throw badRequest("messaging.kindMustBeKeywordOrPoll");
     const channel = String(dto?.channel ?? "whatsapp").trim() || "whatsapp";
     if (channel !== "whatsapp") {
-      throw new BadRequestException(
-        `Keyword campaigns are WhatsApp-only in this version: channel "${channel}" has no inbound message path into messaging ` +
-        (channel === "sms" ? "(there is no SMS inbound path anywhere in this system), " : channel === "email" ? "(email replies are not hooked into messaging), " : "")
-        + "so a rule on it could never fire.",
-      );
+      throw badRequest("messaging.keywordCampaignsAreWhatsAppOnlyIn", { channel: channel });
     }
 
     let keyword: string | null = null;
@@ -9429,67 +9469,65 @@ export class MessagingService {
 
     if (kind === "keyword") {
       if (dto?.pollOptions !== undefined && dto?.pollOptions !== null) {
-        throw new BadRequestException("pollOptions belong to poll rules — a keyword rule matches its single keyword");
+        throw badRequest("messaging.pollOptionsBelongToPollRulesA");
       }
       keyword = String(dto?.keyword ?? "").trim();
-      if (!keyword) throw new BadRequestException("keyword is required for a keyword rule");
-      if (keyword.length > 100) throw new BadRequestException("Keyword is too long (max 100 characters)");
+      if (!keyword) throw badRequest("messaging.keywordIsRequiredForAKeyword");
+      if (keyword.length > 100) throw badRequest("messaging.keywordIsTooLongMax100");
       const normalizedKeyword = normalizeKeywordText(keyword);
       if (isReservedKeyword(normalizedKeyword)) {
-        throw new BadRequestException(
-          `"${keyword}" is a reserved keyword (STOP/START set) — opt-out/opt-in handling owns it exclusively and a campaign rule can never claim it.`,
-        );
+        throw badRequest("messaging.keywordIsAReservedKeywordSTOP2", { keyword: keyword });
       }
       ownKeywords.push(normalizedKeyword);
 
       tag = String(dto?.tag ?? "").trim() || null;
-      if (tag && tag.length > 80) throw new BadRequestException("Tag is too long (max 80 characters)");
+      if (tag && tag.length > 80) throw badRequest("messaging.tagIsTooLongMax80");
       const targets: string[] = Array.isArray(dto?.applyTagTo) ? [...new Set<string>(dto.applyTagTo.map((t: unknown) => String(t)))] : [];
       for (const t of targets) {
         if (!["customer", "lead", "conversation"].includes(t)) {
-          throw new BadRequestException(`applyTagTo may only contain customer, lead or conversation — got "${t}"`);
+          throw badRequest("messaging.applyTagToMayOnlyContainCustomerLead", { t: t });
         }
       }
-      if (tag && targets.length === 0) throw new BadRequestException("applyTagTo must name at least one of customer, lead, conversation when a tag is set");
-      if (!tag && targets.length > 0) throw new BadRequestException("A tag value is required when applyTagTo is set");
+      if (tag && targets.length === 0) throw badRequest("messaging.applyTagToMustNameAtLeastOne");
+      if (!tag && targets.length > 0) throw badRequest("messaging.aTagValueIsRequiredWhen");
       applyTagTo = tag ? targets : null;
 
       autoReplyText = String(dto?.autoReplyText ?? "").trim() || null;
-      if (autoReplyText && autoReplyText.length > 1000) throw new BadRequestException("Auto-reply text is too long (max 1000 characters)");
+      if (autoReplyText && autoReplyText.length > 1000) throw badRequest("messaging.autoReplyTextIsTooLong");
       if (!tag && !autoReplyText) {
-        throw new BadRequestException("A keyword rule needs at least one action — a tag or an auto-reply text. A rule that does nothing is not saved.");
+        throw badRequest("messaging.aKeywordRuleNeedsAtLeast");
       }
     } else {
       if (dto?.keyword !== undefined && dto?.keyword !== null && String(dto.keyword).trim()) {
-        throw new BadRequestException("Poll rules match through their options' keywords — the rule-level keyword must be empty");
+        throw badRequest("messaging.pollRulesMatchThroughTheirOptions");
       }
       if (String(dto?.tag ?? "").trim() || (Array.isArray(dto?.applyTagTo) && dto.applyTagTo.length) || String(dto?.autoReplyText ?? "").trim()) {
-        throw new BadRequestException("Poll rules only record votes in this version — tags and auto-replies are not applied for polls");
+        throw badRequest("messaging.pollRulesOnlyRecordVotesIn");
       }
       const rawOptions: any[] = Array.isArray(dto?.pollOptions) ? dto.pollOptions : [];
       if (rawOptions.length < 2 || rawOptions.length > 6) {
-        throw new BadRequestException("A poll needs 2 to 6 options");
+        throw badRequest("messaging.aPollNeeds2To6");
       }
       const seenKeys = new Set<string>();
       const seenKeywords = new Map<string, string>();
       pollOptions = rawOptions.map((opt: any, i: number) => {
         const key = String(opt?.key ?? "").trim() || `opt${i + 1}`;
-        if (seenKeys.has(key)) throw new BadRequestException(`Poll option keys must be unique — "${key}" appears twice`);
+        if (seenKeys.has(key)) throw badRequest("messaging.pollOptionKeysMustBeUnique", { key: key });
         seenKeys.add(key);
         const label = String(opt?.label ?? "").trim();
-        if (!label) throw new BadRequestException(`Poll option "${key}" needs a label`);
+        if (!label) throw badRequest("messaging.pollOptionKeyNeedsALabel", { key: key });
         const keywords = (Array.isArray(opt?.keywords) ? opt.keywords : [])
           .map((k: unknown) => String(k ?? "").trim()).filter(Boolean);
-        if (keywords.length === 0) throw new BadRequestException(`Poll option "${label}" needs at least one keyword`);
+        if (keywords.length === 0) throw badRequest("messaging.pollOptionLabelNeedsAtLeast", { label: label });
         for (const k of keywords) {
-          if (k.length > 100) throw new BadRequestException(`Poll keyword "${k}" is too long (max 100 characters)`);
+          if (k.length > 100) throw badRequest("messaging.pollKeywordKIsTooLong", { k: k });
           const nk = normalizeKeywordText(k);
           if (isReservedKeyword(nk)) {
-            throw new BadRequestException(`"${k}" is a reserved keyword (STOP/START set) — opt-out/opt-in handling owns it exclusively and a poll option can never claim it.`);
+            throw badRequest("messaging.kIsAReservedKeywordSTOP", { k: k });
           }
           const prior = seenKeywords.get(nk);
           if (prior !== undefined) {
-            throw new BadRequestException(`Poll keyword "${k}" is claimed by more than one option ("${prior}" and "${label}") — a keyword can only vote for one option`);
+            throw badRequest("messaging.pollKeywordKIsClaimedBy", { k: k, prior: prior, label: label });
           }
           seenKeywords.set(nk, label);
           ownKeywords.push(nk);
@@ -9507,7 +9545,7 @@ export class MessagingService {
       const claimed = new Set(this.claimedKeywordsOf(other));
       for (const nk of ownKeywords) {
         if (claimed.has(nk)) {
-          throw new BadRequestException(`Keyword "${nk}" is already claimed by the enabled rule "${other.name}" — disable or edit that rule first.`);
+          throw badRequest("messaging.keywordNkIsAlreadyClaimedBy", { nk: nk, name: other.name });
         }
       }
     }
@@ -9534,7 +9572,7 @@ export class MessagingService {
   private async getKeywordRuleOrThrow(organizationId: string, ruleId: string) {
     const { rules } = this.requireKeywordTables();
     const row = await rules.findFirst({ where: { id: ruleId, organizationId } });
-    if (!row) throw new NotFoundException("Keyword rule not found");
+    if (!row) throw notFound("messaging.keywordRuleNotFound");
     return row;
   }
 
@@ -9607,7 +9645,7 @@ export class MessagingService {
   async getKeywordPollTally(organizationId: string, ruleId: string) {
     const { hits } = this.requireKeywordTables();
     const rule = await this.getKeywordRuleOrThrow(organizationId, ruleId);
-    if (rule.kind !== "poll") throw new BadRequestException("Tally is only available for poll rules");
+    if (rule.kind !== "poll") throw badRequest("messaging.tallyIsOnlyAvailableForPoll");
     const rows: any[] = await hits.findMany({
       where: { organizationId, ruleId, pollOptionKey: { not: null } },
       orderBy: { createdAt: "asc" },
@@ -9781,11 +9819,11 @@ export class MessagingService {
   async classifyKeywordHit(organizationId: string, actorId: string, hitId: string) {
     const { hits } = this.requireKeywordTables();
     const hit = await hits.findFirst({ where: { id: hitId, organizationId } });
-    if (!hit) throw new NotFoundException("Keyword hit not found");
+    if (!hit) throw notFound("messaging.keywordHitNotFound");
     await this.checkMessagingAiLimit(organizationId);
     const provider = await this.messagingAiProvider(organizationId);
     if (!provider.isRealLlm) {
-      throw new HttpException("আসল AI (LLM) কনফিগার করা হয়নি — Dev Template Adapter গ্রাহকের রিপ্লাই শ্রেণিবদ্ধ করতে পারে না।", 502);
+      throw new ApiException("messaging.theRealAILLMIsNot2", 502);
     }
     const labels = MessagingService.KEYWORD_HIT_LABELS;
     const systemPrompt = [
@@ -9810,7 +9848,7 @@ export class MessagingService {
     if (!labels.includes(label)) {
       // Unparseable / off-vocabulary answer: honest 502, no
       // suggestion stored, no usage recorded (the MS9 rule).
-      throw new HttpException("AI উত্তর বোঝা যায়নি — আবার চেষ্টা করুন।", 502);
+      throw new ApiException("messaging.theAIResponseCouldNotBe", 502);
     }
     await this.recordMessagingAiUsage(organizationId, actorId, provider.name, result.model, result.inputTokens, result.outputTokens, result.tokensEstimated);
     const updated = await hits.update({
@@ -9838,12 +9876,12 @@ export class MessagingService {
   async applyKeywordHitLabel(organizationId: string, actorId: string, hitId: string, decision: string) {
     const { hits } = this.requireKeywordTables();
     if (!["confirm", "dismiss"].includes(decision)) {
-      throw new BadRequestException('decision must be "confirm" or "dismiss"');
+      throw badRequest("messaging.decisionMustBeConfirmOrDismiss");
     }
     const hit = await hits.findFirst({ where: { id: hitId, organizationId } });
-    if (!hit) throw new NotFoundException("Keyword hit not found");
+    if (!hit) throw notFound("messaging.keywordHitNotFound");
     if (hit.classifyStatus !== "suggested" || !hit.suggestedLabel) {
-      throw new BadRequestException("There is no pending AI suggestion on this hit — classify it first.");
+      throw badRequest("messaging.thereIsNoPendingAISuggestion");
     }
     if (decision === "dismiss") {
       const updated = await hits.update({ where: { id: hit.id }, data: { classifyStatus: "dismissed" } });
@@ -9884,17 +9922,18 @@ export class MessagingService {
    * their full template list instead of a single template. */
   listJourneyPresets() {
     const v1 = JOURNEY_PRESETS.map((p) => ({
-      key: p.key, name: p.name, descriptionBn: p.descriptionBn, flow: p.flow,
-      trigger: p.trigger, channel: p.channel, templateName: p.template.name,
+      key: p.key, name: p.name, descriptionBn: p.descriptionBn, descriptionEn: p.descriptionEn, flow: p.flow, flowEn: p.flowEn,
+      trigger: p.trigger, channel: p.channel, templateName: p.template.name, templateNameEn: p.templateEn.name,
       version: 1 as const, stepsCount: p.steps("template-id").length,
     }));
     const v2 = JOURNEY_PRESETS_V2.map((p) => {
       const dummyIds = Object.fromEntries(p.templates.map((t) => [t.slot, "template-id"]));
       return {
-        key: p.key, name: p.name, descriptionBn: p.descriptionBn, flow: p.flow,
+        key: p.key, name: p.name, descriptionBn: p.descriptionBn, descriptionEn: p.descriptionEn, flow: p.flow, flowEn: p.flowEn,
         trigger: p.trigger, version: 2 as const, stepsCount: p.steps(dummyIds).length,
         channels: [...new Set(p.templates.map((t) => t.channel))],
         templates: p.templates.map((t) => ({ slot: t.slot, channel: t.channel, name: t.name })),
+        templatesEn: p.templatesEn.map((t) => ({ slot: t.slot, channel: t.channel, name: t.name })),
         exitOnPurchase: p.exitOnPurchase === true,
       };
     });
@@ -9929,15 +9968,18 @@ export class MessagingService {
   async installJourneyPreset(organizationId: string, actorId: string, key: string, dto?: { name?: string }) {
     const preset = JOURNEY_PRESETS.find((p) => p.key === key);
     const presetV2 = preset ? undefined : JOURNEY_PRESETS_V2.find((p) => p.key === key);
-    if (!preset && !presetV2) throw new NotFoundException("Journey preset not found");
+    if (!preset && !presetV2) throw notFound("messaging.journeyPresetNotFound");
     if (!this.workflowCreator) {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     if (presetV2) return this.installJourneyPresetV2(organizationId, actorId, presetV2, dto);
+    // MB4 (D-MB4-8): preset content installs in the org locale.
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const localized = journeyPresetForLocale(preset!, locale);
     const template = await this.createTemplate(organizationId, actorId, {
-      name: preset!.template.name, channel: preset!.channel,
-      ...(preset!.template.subject ? { subject: preset!.template.subject } : {}),
-      body: preset!.template.body,
+      name: localized.template.name, channel: preset!.channel,
+      ...(localized.template.subject ? { subject: localized.template.subject } : {}),
+      body: localized.template.body,
     });
     const workflow = await this.workflowCreator.create(organizationId, actorId, {
       name: dto?.name?.trim() || preset!.name,
@@ -9986,7 +10028,10 @@ export class MessagingService {
     const creator = this.workflowCreator!;
     const templates: any[] = [];
     const ids: Record<string, string> = {};
-    for (const t of preset.templates) {
+    // MB4 (D-MB4-8): preset content installs in the org locale.
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
+    const localizedTemplates = journeyPresetV2ForLocale(preset, locale).templates;
+    for (const t of localizedTemplates) {
       const row = await this.createTemplate(organizationId, actorId, {
         name: t.name, channel: t.channel,
         ...(t.subject ? { subject: t.subject } : {}),
@@ -10028,7 +10073,7 @@ export class MessagingService {
    * journey endpoint shares (installJourneyPreset precedent). */
   private requireWorkflowCreator(): WorkflowCreatorPort {
     if (!this.workflowCreator) {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     return this.workflowCreator;
   }
@@ -10050,41 +10095,41 @@ export class MessagingService {
    * time; a journey authored against the wrong channel should
    * fail at save, not at 2am in a run). */
   private async validateJourneySteps(organizationId: string, steps: unknown, inArm = false): Promise<void> {
-    if (!Array.isArray(steps)) throw new BadRequestException("Journey steps must be an array");
-    if (!inArm && steps.length === 0) throw new BadRequestException("A journey needs at least one step");
+    if (!Array.isArray(steps)) throw badRequest("messaging.journeyStepsMustBeAnArray");
+    if (!inArm && steps.length === 0) throw badRequest("messaging.aJourneyNeedsAtLeastOne");
     const allowed = inArm ? JOURNEY_ARM_STEP_TYPES : JOURNEY_STEP_TYPES.map((t) => t.type);
     for (const step of steps as any[]) {
-      if (!step || typeof step !== "object") throw new BadRequestException("Each journey step must be an object");
+      if (!step || typeof step !== "object") throw badRequest("messaging.eachJourneyStepMustBeAn");
       if (!allowed.includes(step.type)) {
         throw new BadRequestException(inArm
           ? `Branch arms in a journey may only contain send_email, send_sms or add_tag steps — got ${String(step.type)}`
           : `Journey steps may only use ${JOURNEY_STEP_TYPES.map((t) => t.type).join(", ")} — got ${String(step.type)}`);
       }
       if (step.type === "send_email" || step.type === "send_sms") {
-        if (!step.templateId) throw new BadRequestException(`${step.type} steps need a templateId`);
+        if (!step.templateId) throw badRequest("messaging.typeStepsNeedATemplateId", { type: step.type });
         const template = await this.getTemplate(organizationId, step.templateId);
         const want = step.type === "send_email" ? "email" : "sms";
         if (template.channel !== want) {
-          throw new BadRequestException(`Template channel (${template.channel}) does not match step (${want})`);
+          throw badRequest("messaging.templateChannelChannelDoesNotMatch", { channel: template.channel, want: want });
         }
       }
       if (step.type === "wait" && (!Number(step.minutes) || Number(step.minutes) < 1 || Number(step.minutes) > 43200)) {
-        throw new BadRequestException("wait steps need minutes between 1 and 43200 (30 days)");
+        throw badRequest("messaging.waitStepsNeedMinutesBetween1");
       }
       if ((step.type === "condition" || step.type === "branch") && (!step.field || !step.op)) {
-        throw new BadRequestException(`${step.type} steps need a field and an operator`);
+        throw badRequest("messaging.typeStepsNeedAFieldAnd", { type: step.type });
       }
       if (step.type === "add_tag") {
-        if (!step.tag) throw new BadRequestException("add_tag steps need a tag");
+        if (!step.tag) throw badRequest("messaging.addTagStepsNeedATag");
         if (step.target !== undefined && !["lead", "conversation"].includes(step.target)) {
-          throw new BadRequestException("add_tag steps need a target (lead | conversation)");
+          throw badRequest("messaging.addTagStepsNeedATarget");
         }
       }
       if (step.type === "branch") {
         const thenSteps = Array.isArray(step.then) ? step.then : [];
         const elseSteps = Array.isArray(step.else) ? step.else : [];
         if (thenSteps.length + elseSteps.length === 0) {
-          throw new BadRequestException("branch steps need at least one sub-step in an arm");
+          throw badRequest("messaging.branchStepsNeedAtLeastOne");
         }
         await this.validateJourneySteps(organizationId, thenSteps, true);
         await this.validateJourneySteps(organizationId, elseSteps, true);
@@ -10098,10 +10143,10 @@ export class MessagingService {
    * (evaluateConditions semantics), never a fabricated pass. */
   private validateJourneyConditions(conditions: unknown): void {
     if (conditions === undefined || conditions === null) return;
-    if (!Array.isArray(conditions)) throw new BadRequestException("conditions must be an array of {field, op, value}");
+    if (!Array.isArray(conditions)) throw badRequest("messaging.conditionsMustBeAnArrayOf");
     for (const c of conditions as any[]) {
       if (!c || typeof c !== "object" || !c.field || !c.op) {
-        throw new BadRequestException("Each condition needs a field and an operator");
+        throw badRequest("messaging.eachConditionNeedsAFieldAnd");
       }
     }
   }
@@ -10129,7 +10174,7 @@ export class MessagingService {
   async listJourneys(organizationId: string) {
     const creator = this.requireWorkflowCreator();
     if (typeof creator.list !== "function") {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     const all = await creator.list(organizationId);
     const journeys = (Array.isArray(all) ? all : []).filter((w: any) => w.journey != null);
@@ -10149,11 +10194,11 @@ export class MessagingService {
   private async findJourneyOrThrow(organizationId: string, workflowId: string) {
     const creator = this.requireWorkflowCreator();
     if (typeof creator.list !== "function") {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     const all = await creator.list(organizationId);
     const workflow = (Array.isArray(all) ? all : []).find((w: any) => w.id === workflowId);
-    if (!workflow || workflow.journey == null) throw new NotFoundException("Journey not found");
+    if (!workflow || workflow.journey == null) throw notFound("messaging.journeyNotFound");
     return { creator, workflow };
   }
 
@@ -10169,12 +10214,12 @@ export class MessagingService {
   }) {
     const creator = this.requireWorkflowCreator();
     if (typeof creator.create !== "function" || typeof creator.update !== "function") {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("A journey needs a name");
+    if (!name) throw badRequest("messaging.aJourneyNeedsAName");
     if (!JOURNEY_TRIGGERS.some((t) => t.trigger === dto.trigger)) {
-      throw new BadRequestException(`Trigger ${String(dto.trigger)} cannot start a messaging journey — its context cannot resolve a recipient`);
+      throw badRequest("messaging.triggerTriggerCannotStartAMessaging", { trigger: String(dto.trigger) });
     }
     this.validateJourneyConditions(dto.conditions);
     await this.validateJourneySteps(organizationId, dto.steps);
@@ -10301,17 +10346,17 @@ export class MessagingService {
   }) {
     const { creator, workflow } = await this.findJourneyOrThrow(organizationId, workflowId);
     if (typeof creator.update !== "function") {
-      throw new BadRequestException("Workflow engine is not available in this deployment");
+      throw badRequest("messaging.workflowEngineIsNotAvailableIn");
     }
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("A journey needs a name");
+      if (!name) throw badRequest("messaging.aJourneyNeedsAName");
       data.name = name;
     }
     if (dto.trigger !== undefined) {
       if (!JOURNEY_TRIGGERS.some((t) => t.trigger === dto.trigger)) {
-        throw new BadRequestException(`Trigger ${String(dto.trigger)} cannot start a messaging journey — its context cannot resolve a recipient`);
+        throw badRequest("messaging.triggerTriggerCannotStartAMessaging", { trigger: String(dto.trigger) });
       }
       data.trigger = dto.trigger;
     }
@@ -10324,7 +10369,7 @@ export class MessagingService {
       data.steps = dto.steps;
     }
     if (dto.enabled !== undefined) {
-      if (typeof dto.enabled !== "boolean") throw new BadRequestException("enabled must be a boolean");
+      if (typeof dto.enabled !== "boolean") throw badRequest("messaging.enabledMustBeABoolean");
       data.enabled = dto.enabled;
     }
     if (dto.exitOnPurchase !== undefined) {

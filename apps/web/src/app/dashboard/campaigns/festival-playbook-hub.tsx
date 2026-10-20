@@ -8,7 +8,10 @@ import {
   type FestivalKey,
   type FestivalPlaybook,
   calculateCourierCutoff,
+  festivalPlaybookForLocale,
 } from "@/lib/festival-playbook";
+import { fmtDate, fmtMoney, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface AdAccount {
   id: string;
@@ -22,9 +25,10 @@ interface FestivalPlaybookHubProps {
 }
 
 export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPlaybookHubProps) {
+  const { t, locale } = useLocale();
   const router = useRouter();
   const [selectedFestivalKey, setSelectedFestivalKey] = useState<FestivalKey>("eid_ul_fitr");
-  const playbook: FestivalPlaybook = FESTIVAL_PLAYBOOKS[selectedFestivalKey];
+  const playbook: FestivalPlaybook = festivalPlaybookForLocale(FESTIVAL_PLAYBOOKS[selectedFestivalKey], locale);
 
   // Courier Cutoff Interactive State
   const defaultDate = new Date();
@@ -48,7 +52,9 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
     playbook.name,
     targetDate,
     playbook.courierLeadDaysOutsideDhaka,
-    playbook.courierLeadDaysInsideDhaka
+    playbook.courierLeadDaysInsideDhaka,
+    new Date(),
+    locale
   );
 
   // Handle switching festival
@@ -79,11 +85,11 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
   async function handleLaunchDraft() {
     const orgId = getOrganizationId();
     if (!orgId) {
-      setError("সংগঠন শনাক্ত করা যায়নি");
+      setError(t("ads.festNoOrg"));
       return;
     }
     if (!selectedAccountId) {
-      setError("অনুগ্রহ করে একটি Meta Ad Account নির্বাচন করুন");
+      setError(t("ads.festSelectAccount"));
       return;
     }
 
@@ -107,13 +113,13 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
         }
       );
 
-      setNotice(`ক্যাম্পেইন ড্রাফট তৈরি হয়েছে: "${res.name}"। বিল্ডারে রিডাইরেক্ট করা হচ্ছে...`);
+      setNotice(t("ads.festDraftCreated", { name: res.name }));
       onCampaignCreated?.();
       setTimeout(() => {
         router.push(`/dashboard/campaign-builder?planId=${res.id}`);
       }, 1200);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ড্রাফট তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("ads.festDraftError"));
     } finally {
       setBusy(false);
     }
@@ -130,20 +136,20 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
                 🎉
               </span>
               <h2 className="text-xl font-black text-slate-900">
-                উৎসব ও ফ্ল্যাশ-সেল ক্যাম্পেইন প্লেবুক (BD Special)
+                {t("ads.festTitle")}
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-600 max-w-2xl">
-              বাংলাদেশি ই-কমার্সের ৭টি শীর্ষ উৎসবের সম্পূর্ণ মিডিয়া বাইং স্ট্র্যাটেজি, পর্যায়ভিত্তিক বাজেট বণ্টন, কুরিয়ার কাট-অফ ডেডলাইন এবং রেডিমেড বাংলা অ্যাড কপি।
+              {t("ads.festIntro")}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-slate-700 border border-amber-200 shadow-xs">
-              🇧🇩 ৭টি স্থানীয় উৎসব
+              {t("ads.festFestivalsBadge")}
             </span>
             <span className="rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-slate-700 border border-amber-200 shadow-xs">
-              🚚 কুরিয়ার কাট-অফ রেডি
+              {t("ads.festCutoffBadge")}
             </span>
           </div>
         </div>
@@ -163,11 +169,11 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
       {/* Festival Selector Grid */}
       <div>
         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2.5">
-          ১. উৎসব বা বিশেষ ক্যাম্পেইন বেছে নিন:
+          {t("ads.festPickLabel")}
         </label>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {(Object.keys(FESTIVAL_PLAYBOOKS) as FestivalKey[]).map((key) => {
-            const p = FESTIVAL_PLAYBOOKS[key];
+            const p = festivalPlaybookForLocale(FESTIVAL_PLAYBOOKS[key], locale);
             const isSelected = selectedFestivalKey === key;
             return (
               <button
@@ -210,7 +216,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
               </div>
 
               <div className="text-right">
-                <span className="text-[11px] font-bold text-slate-400 block">প্রত্যাশিত AOV</span>
+                <span className="text-[11px] font-bold text-slate-400 block">{t("ads.festExpectedAov")}</span>
                 <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
                   {playbook.targetAovRange}
                 </span>
@@ -219,7 +225,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
 
             {/* Target Niches */}
             <div>
-              <p className="text-xs font-bold text-slate-700 mb-1.5">সেরা ক্যাটাগরি ও প্রোডাক্ট:</p>
+              <p className="text-xs font-bold text-slate-700 mb-1.5">{t("ads.festNichesLabel")}</p>
               <div className="flex flex-wrap gap-1.5">
                 {playbook.targetNiches.map((n, i) => (
                   <span
@@ -235,8 +241,8 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
             {/* Budget Allocation Strategy Bar */}
             <div className="pt-3 border-t border-slate-100 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                <span>📊 প্রস্তাবিত মিডিয়া বাইং বাজেট বণ্টন:</span>
-                <span className="text-amber-700">দৈনিক ৳{dailyBudget.toLocaleString()}</span>
+                <span>{t("ads.festBudgetSplit")}</span>
+                <span className="text-amber-700">{t("ads.festDailyBudget", { amount: fmtMoney(locale, dailyBudget) })}</span>
               </div>
 
               <div className="h-4 w-full rounded-full overflow-hidden flex bg-slate-100 border border-slate-200">
@@ -266,15 +272,15 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
               <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 pt-1">
                 <span className="flex items-center gap-1">
                   <span className="h-2.5 w-2.5 rounded-full bg-indigo-500 inline-block" />
-                  নতুন ট্র্যাফিক ও কনভার্সন ({playbook.budgetSplit.prospectingPercent}%)
+                  {t("ads.festSplitProspecting", { pct: fmtNumber(locale, playbook.budgetSplit.prospectingPercent) })}
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="h-2.5 w-2.5 rounded-full bg-amber-500 inline-block" />
-                  ভিডিও ও রিলস এঙ্গেজমেন্ট ({playbook.budgetSplit.engagementPercent}%)
+                  {t("ads.festSplitEngagement", { pct: fmtNumber(locale, playbook.budgetSplit.engagementPercent) })}
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 inline-block" />
-                  রিটার্গেটিং ও কাট-অফ পুশ ({playbook.budgetSplit.retargetingPercent}%)
+                  {t("ads.festSplitRetargeting", { pct: fmtNumber(locale, playbook.budgetSplit.retargetingPercent) })}
                 </span>
               </div>
             </div>
@@ -283,7 +289,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
           {/* Phased Roadmap Timeline */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
             <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
-              <span>📅</span> ক্যাম্পেইন এক্সিকিউশন টাইমলাইন ও ধাপসমূহ ({playbook.phases.length}টি ফেজ)
+              <span>📅</span> {t("ads.festTimelineTitle", { count: fmtNumber(locale, playbook.phases.length) })}
             </h4>
 
             <div className="space-y-3">
@@ -294,7 +300,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
                 >
                   <div className="flex items-center justify-between">
                     <span className="rounded-md bg-amber-100 text-amber-900 px-2 py-0.5 text-xs font-black">
-                      ফেজ {phase.phaseNumber}: {phase.name}
+                      {t("ads.festPhase", { n: fmtNumber(locale, phase.phaseNumber), name: phase.name })}
                     </span>
                     <span className="text-[11px] font-bold text-slate-500">
                       ⏱️ {phase.durationLabel}
@@ -302,7 +308,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
                   </div>
                   <p className="text-xs text-slate-800 font-semibold">{phase.strategy}</p>
                   <div className="rounded-lg bg-white p-2 border border-slate-200 text-[11px] text-slate-600">
-                    <strong className="text-slate-900">বিজ্ঞাপনের মেসেজ/হুক:</strong> &ldquo;{phase.adAngle}&rdquo;
+                    <strong className="text-slate-900">{t("ads.festHookLabel")}</strong> &ldquo;{phase.adAngle}&rdquo;
                   </div>
                 </div>
               ))}
@@ -312,7 +318,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
           {/* Pre-tested High CTR Bengali Copy Formulas */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
             <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
-              <span>✍️</span> রেডিমেড হাই-কনভার্সন বাংলা অ্যাড কপি ও ফর্মুলা
+              <span>✍️</span> {t("ads.festCopiesTitle")}
             </h4>
 
             <div className="space-y-4">
@@ -330,19 +336,19 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
                       }
                       className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-slate-700 border border-slate-300 shadow-xs hover:bg-slate-100 transition"
                     >
-                      {copiedIndex === idx ? "✓ কপি হয়েছে!" : "📋 কপি করুন"}
+                      {copiedIndex === idx ? t("ads.festCopied") : t("ads.festCopy")}
                     </button>
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-[11px] font-bold text-slate-500">হেডলাইন (Headline):</p>
+                    <p className="text-[11px] font-bold text-slate-500">{t("ads.festHeadlineLabel")}</p>
                     <p className="text-xs font-bold text-slate-900 bg-white p-2 rounded-lg border border-slate-200">
                       {copy.headline}
                     </p>
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-[11px] font-bold text-slate-500">প্রাইমারি টেক্সট (Primary Text):</p>
+                    <p className="text-[11px] font-bold text-slate-500">{t("ads.festPrimaryLabel")}</p>
                     <p className="text-xs text-slate-700 bg-white p-2.5 rounded-lg border border-slate-200 whitespace-pre-line leading-relaxed">
                       {copy.primaryText}
                     </p>
@@ -350,7 +356,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
 
                   <div className="flex items-center justify-between text-[11px] pt-1">
                     <span className="text-slate-500">
-                      অফার টাইপ: <strong className="text-amber-800">{copy.offerFormula}</strong>
+                      {t("ads.festOfferType")} <strong className="text-amber-800">{copy.offerFormula}</strong>
                     </span>
                     <span className="rounded bg-indigo-50 px-2 py-0.5 font-mono text-indigo-700 font-bold">
                       CTA: {copy.callToAction}
@@ -370,17 +376,17 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
               <span className="text-xl">🚚</span>
               <div>
                 <h4 className="text-xs font-black text-rose-950 uppercase tracking-wider">
-                  কুরিয়ার কাট-অফ ক্যালকুলেটর
+                  {t("ads.festCutoffTitle")}
                 </h4>
                 <p className="text-[11px] text-rose-800">
-                  উৎসবের আগে পার্সেল পৌঁছানোর সঠিক ডেডলাইন
+                  {t("ads.festCutoffSub")}
                 </p>
               </div>
             </div>
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                উৎসবের আনুমানিক মূল তারিখ:
+                {t("ads.festDateLabel")}
               </label>
               <input
                 type="date"
@@ -394,43 +400,37 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
             <div className="space-y-2 pt-1">
               <div className="rounded-xl border border-rose-200 bg-white p-3 space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-800">📦 ঢাকার বাইরে শেষ বুকিং:</span>
+                  <span className="font-bold text-slate-800">{t("ads.festOutsideBooking")}</span>
                   <span
                     className={`font-black ${
                       cutoffResult.isOutsideDeadlinePassed ? "text-rose-600" : "text-emerald-700"
                     }`}
                   >
                     {cutoffResult.isOutsideDeadlinePassed
-                      ? "সময় শেষ!"
-                      : `${cutoffResult.daysRemainingOutside} দিন বাকি`}
+                      ? t("ads.festTimeUp")
+                      : t("ads.festDaysLeft", { days: fmtNumber(locale, cutoffResult.daysRemainingOutside) })}
                   </span>
                 </div>
                 <p className="text-[11px] font-mono text-slate-500">
-                  {cutoffResult.outsideDhakaDeadline.toLocaleDateString("bn-BD", {
-                    month: "long",
-                    day: "numeric",
-                  })}
+                  {fmtDate(locale, cutoffResult.outsideDhakaDeadline)}
                 </p>
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-1">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-800">🛵 ঢাকা সিটি শেষ বুকিং:</span>
+                  <span className="font-bold text-slate-800">{t("ads.festInsideBooking")}</span>
                   <span
                     className={`font-black ${
                       cutoffResult.isInsideDeadlinePassed ? "text-rose-600" : "text-emerald-700"
                     }`}
                   >
                     {cutoffResult.isInsideDeadlinePassed
-                      ? "সময় শেষ!"
-                      : `${cutoffResult.daysRemainingInside} দিন বাকি`}
+                      ? t("ads.festTimeUp")
+                      : t("ads.festDaysLeft", { days: fmtNumber(locale, cutoffResult.daysRemainingInside) })}
                   </span>
                 </div>
                 <p className="text-[11px] font-mono text-slate-500">
-                  {cutoffResult.insideDhakaDeadline.toLocaleDateString("bn-BD", {
-                    month: "long",
-                    day: "numeric",
-                  })}
+                  {fmtDate(locale, cutoffResult.insideDhakaDeadline)}
                 </p>
               </div>
             </div>
@@ -439,14 +439,14 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
             <div className="rounded-xl bg-rose-100/60 p-3 space-y-1.5 border border-rose-200">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase text-rose-900">
-                  উৎসবের আর্জেন্সি বিজ্ঞাপন টেক্সট:
+                  {t("ads.festUrgencyLabel")}
                 </span>
                 <button
                   type="button"
                   onClick={() => copyText(cutoffResult.urgencyAdCopy)}
                   className="text-[11px] font-bold text-rose-800 underline"
                 >
-                  {copiedCutoff ? "কপি হয়েছে!" : "কপি"}
+                  {copiedCutoff ? t("ads.festCopiedShort") : t("ads.festCopyShort")}
                 </button>
               </div>
               <p className="text-[11px] text-rose-950 font-medium leading-relaxed">
@@ -458,19 +458,19 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
           {/* 1-Click Launch Campaign Draft */}
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
             <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-              <span>🚀</span> ১-ক্লিকে ক্যাম্পেইন ড্রাফট শুরু
+              <span>🚀</span> {t("ads.festLaunchTitle")}
             </h4>
             <p className="text-[11px] text-slate-500">
-              এই উৎসবের স্ট্র্যাটেজি অনুযায়ী সরাসরি ক্যাম্পেইন তৈরি করে বিল্ডারে নিয়ে যাবে।
+              {t("ads.festLaunchDesc")}
             </p>
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                Meta Ad Account নির্বাচন করুন
+                {t("ads.festAccountLabel")}
               </label>
               {accounts.length === 0 ? (
                 <p className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded-lg">
-                  কোনো Meta Ad Account যুক্ত নেই।
+                  {t("ads.festNoAccount")}
                 </p>
               ) : (
                 <select
@@ -489,7 +489,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                দৈনিক ক্যাম্পেইন বাজেট (BDT ৳)
+                {t("ads.festBudgetLabel")}
               </label>
               <input
                 type="number"
@@ -507,7 +507,7 @@ export function FestivalPlaybookHub({ accounts, onCampaignCreated }: FestivalPla
               onClick={handleLaunchDraft}
               className="w-full rounded-xl bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 p-3 text-xs font-black text-white shadow-md hover:opacity-95 transition disabled:opacity-50"
             >
-              {busy ? "প্ল্যান তৈরি হচ্ছে..." : "🚀 ক্যাম্পেইন ড্রাফট তৈরি ও শুরু করুন"}
+              {busy ? t("ads.festCreating") : t("ads.festLaunch")}
             </button>
           </div>
         </div>

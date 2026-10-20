@@ -175,7 +175,7 @@ describe("EC12 Woo webhook secret rotation", () => {
       credential: { encryptedData: encryptJson({ accessToken: "shpat_x", apiSecret: "s" }) },
     });
     const svc = new IntegrationsService(prisma as any, audit);
-    await expect(svc.rotateWooWebhookSecret("org-1", "user-1", "int-shop")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.rotateWooWebhookSecret("org-1", "user-1", "int-shop")).rejects.toMatchObject({ code: "integrations.webhookSecretRotationIsOnlyAvailable" });
   });
 });
 
@@ -249,7 +249,7 @@ describe("EC12 disconnect purge policy", () => {
     seedDisconnect(prisma);
     const svc = new IntegrationsService(prisma as any, audit);
     await expect(svc.disconnect("org-1", "user-1", "int-woo", { purgeMappings: true, actorRole: "ADMIN" }))
-      .rejects.toBeInstanceOf(ForbiddenException);
+      .rejects.toMatchObject({ code: "integrations.onlyTheOrganizationOwnerCanPurge" });
     expect(prisma.integration.rows[0].status).toBe("CONNECTED");
     expect(prisma.integrationCredential.rows).toHaveLength(1);
     expect(prisma.storeListing.rows).toHaveLength(2);

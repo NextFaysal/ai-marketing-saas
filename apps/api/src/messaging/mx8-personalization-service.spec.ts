@@ -265,16 +265,16 @@ describe("MX8 create-time validation", () => {
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "whatsapp", whatsappTemplateId: "wa1", audienceType: "customers",
       personalization: { uniqueCoupon: { kind: "percent", value: 10 } },
-    })).rejects.toThrow(/not available for WhatsApp/);
+    })).rejects.toMatchObject({ code: "messaging.personalizationIsNotAvailableForWhatsApp" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "email", subject: "s", body: "b", audienceType: "customers",
       cascade: { enabled: true, channels: ["email", "sms"] },
       personalization: { uniqueCoupon: { kind: "percent", value: 10 } },
-    })).rejects.toThrow(/cannot be combined with a channel cascade/);
+    })).rejects.toMatchObject({ code: "messaging.personalizationCannotBeCombinedWithA" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "email", subject: "s", body: "b", audienceType: "customers",
       personalization: { segmentBlocks: [{ savedAudienceId: "missing", body: "hi" }] },
-    })).rejects.toThrow(/saved audience not found/);
+    })).rejects.toMatchObject({ code: "messaging.segmentBlockSavedAudienceNotFound" });
   });
 
   it("stores the validated config on the broadcast row", async () => {

@@ -16,6 +16,9 @@
  * without a component harness — same pattern as
  * social-post-insights / social-composer.
  */
+import { intlLocaleOf, normalizeUiLocale, type UiLocale } from "@repo/contracts";
+import { socialBn, socialEn } from "./i18n/social";
+
 
 // ---------------------------------------------------------------------------
 // API contract types (GET /organizations/:orgId/social/insights/*)
@@ -90,14 +93,15 @@ export function bnDigits(value: number | string): string {
   return String(value).replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
 }
 
-/** bn-BD locale number formatting, e.g. 1234 → "১,২৩৪". */
-export function formatBnNumber(value: number, maximumFractionDigits = 0): string {
-  return value.toLocaleString("bn-BD", { maximumFractionDigits });
+/** Locale number formatting (bn-BD style by default), e.g. 1234 → "১,২৩৪". */
+export function formatBnNumber(value: number, maximumFractionDigits = 0, locale: UiLocale = "bn"): string {
+  return new Intl.NumberFormat(intlLocaleOf(normalizeUiLocale(locale)), { maximumFractionDigits }).format(value);
 }
 
 const MONTH_NAMES_BN = [
-  "জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
-  "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর",
+  socialBn.zzSocAnMonth01, socialBn.zzSocAnMonth02, socialBn.zzSocAnMonth03, socialBn.zzSocAnMonth04,
+  socialBn.zzSocAnMonth05, socialBn.zzSocAnMonth06, socialBn.zzSocAnMonth07, socialBn.zzSocAnMonth08,
+  socialBn.zzSocAnMonth09, socialBn.zzSocAnMonth10, socialBn.zzSocAnMonth11, socialBn.zzSocAnMonth12,
 ] as const;
 
 function parseDay(day: string): { y: number; m: number; d: number } | null {
@@ -110,10 +114,13 @@ function parseDay(day: string): { y: number; m: number; d: number } | null {
   return { y, m, d };
 }
 
-/** Short Bengali label for a "YYYY-MM-DD" day, e.g. "১৩ অক্টোবর". Falls back to the raw day. */
-export function dayLabelBn(day: string): string {
+/** Short label for a "YYYY-MM-DD" day, e.g. "১৩ অক্টোবর" / "13 October". Falls back to the raw day. */
+export function dayLabelBn(day: string, locale: UiLocale = "bn"): string {
   const parsed = parseDay(day);
   if (!parsed) return day;
+  if (locale === "en") {
+    return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "long" }).format(new Date(parsed.y, parsed.m - 1, parsed.d));
+  }
   return `${bnDigits(parsed.d)} ${MONTH_NAMES_BN[parsed.m - 1]}`;
 }
 
@@ -131,7 +138,7 @@ export interface TimeseriesBar {
   label: string;
 }
 
-export function timeseriesBars(series: SocialTimeseriesDay[] | null | undefined): TimeseriesBar[] {
+export function timeseriesBars(series: SocialTimeseriesDay[] | null | undefined, locale: UiLocale = "bn"): TimeseriesBar[] {
   if (!Array.isArray(series)) return [];
   const totals = series.map((entry) => {
     const total = entry?.engagement?.total;
@@ -146,7 +153,7 @@ export function timeseriesBars(series: SocialTimeseriesDay[] | null | undefined)
       engagementTotal,
       posts: typeof postsRaw === "number" && Number.isFinite(postsRaw) ? postsRaw : 0,
       heightPct: max > 0 ? (engagementTotal / max) * 100 : 0,
-      label: dayLabelBn(entry.day),
+      label: dayLabelBn(entry.day, locale),
     };
   });
 }
@@ -156,15 +163,22 @@ export function timeseriesBars(series: SocialTimeseriesDay[] | null | undefined)
 // ---------------------------------------------------------------------------
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
-  text: "লেখা মাত্র",
-  photo: "ছবি",
-  carousel: "ক্যারোসেল",
-  video: "ভিডিও",
+  text: socialBn.zzSocAnTypeText,
+  photo: socialBn.zzSocAnTypePhoto,
+  carousel: socialBn.zzSocAnTypeCarousel,
+  video: socialBn.zzSocAnTypeVideo,
 };
 
-/** Bengali label for a content type; an unknown type falls back to its raw value. */
-export function contentTypeLabel(type: string): string {
-  return CONTENT_TYPE_LABELS[type] ?? type;
+const CONTENT_TYPE_LABELS_EN: Record<string, string> = {
+  text: socialEn.zzSocAnTypeText,
+  photo: socialEn.zzSocAnTypePhoto,
+  carousel: socialEn.zzSocAnTypeCarousel,
+  video: socialEn.zzSocAnTypeVideo,
+};
+
+/** Label for a content type; an unknown type falls back to its raw value. */
+export function contentTypeLabel(type: string, locale: UiLocale = "bn"): string {
+  return (locale === "en" ? CONTENT_TYPE_LABELS_EN[type] : CONTENT_TYPE_LABELS[type]) ?? type;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,12 +231,15 @@ export function currentMonthValue(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/** "YYYY-MM" → Bengali month name + year, e.g. "2026-10" → "অক্টোবর ২০২৬". Invalid input is returned as-is. */
-export function monthLabelBn(month: string): string {
+/** "YYYY-MM" → month name + year, e.g. "2026-10" → "অক্টোবর ২০২৬" / "October 2026". Invalid input is returned as-is. */
+export function monthLabelBn(month: string, locale: UiLocale = "bn"): string {
   const match = /^(\d{4})-(\d{2})$/.exec(month ?? "");
   if (!match) return month;
   const m = Number(match[2]);
   if (m < 1 || m > 12) return month;
+  if (locale === "en") {
+    return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date(Number(match[1]), m - 1, 1));
+  }
   return `${MONTH_NAMES_BN[m - 1]} ${bnDigits(match[1])}`;
 }
 

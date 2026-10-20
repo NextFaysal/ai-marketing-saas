@@ -1,43 +1,58 @@
 /**
  * Campaign Status, Objectives, and Presentation Helpers.
+ * ML6 (W-D): records carry additive `labelEn`/`descriptionEn`
+ * companions (D7); the getters take `locale` (default "bn",
+ * byte-identical to the original labels).
+ * F3-γ: every label/description is now sourced from the
+ * `analytics` i18n namespace (`zzCampStatus*` / `zzCampObj*`
+ * keys); the record shape and bn bytes are unchanged.
  */
+import type { UiLocale } from "@repo/contracts";
+import { analyticsBn, analyticsEn } from "./i18n/analytics";
 
 export const CAMPAIGN_STATUS_META: Record<
   string,
-  { label: string; badgeCls: string; icon: string }
+  { label: string; labelEn: string; badgeCls: string; icon: string }
 > = {
   draft: {
-    label: "Draft (খসড়া)",
+    label: analyticsBn.zzCampStatusDraft,
+    labelEn: analyticsEn.zzCampStatusDraft,
     badgeCls: "bg-slate-100 text-slate-700 border-slate-200",
     icon: "📝",
   },
   pending_approval: {
-    label: "অনুমোদনের অপেক্ষায়",
+    label: analyticsBn.zzCampStatusPendingApproval,
+    labelEn: analyticsEn.zzCampStatusPendingApproval,
     badgeCls: "bg-amber-100 text-amber-800 border-amber-300",
     icon: "⏳",
   },
   approved: {
-    label: "অনুমোদিত (Publish প্রস্তুত)",
+    label: analyticsBn.zzCampStatusApproved,
+    labelEn: analyticsEn.zzCampStatusApproved,
     badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-300",
     icon: "✓",
   },
   rejected: {
-    label: "প্রত্যাখ্যাত (রিজেক্টেড)",
+    label: analyticsBn.zzCampStatusRejected,
+    labelEn: analyticsEn.zzCampStatusRejected,
     badgeCls: "bg-rose-100 text-rose-800 border-rose-300",
     icon: "✕",
   },
   publishing: {
-    label: "প্রকাশ হচ্ছে (Publishing)",
+    label: analyticsBn.zzCampStatusPublishing,
+    labelEn: analyticsEn.zzCampStatusPublishing,
     badgeCls: "bg-purple-100 text-purple-800 border-purple-300",
     icon: "🚀",
   },
   published: {
-    label: "Meta তে প্রকাশিত",
+    label: analyticsBn.zzCampStatusPublished,
+    labelEn: analyticsEn.zzCampStatusPublished,
     badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-300",
     icon: "🌐",
   },
   publish_failed: {
-    label: "প্রকাশ ব্যর্থ (Retryable)",
+    label: analyticsBn.zzCampStatusPublishFailed,
+    labelEn: analyticsEn.zzCampStatusPublishFailed,
     badgeCls: "bg-red-100 text-red-800 border-red-300",
     icon: "⚠️",
   },
@@ -45,51 +60,65 @@ export const CAMPAIGN_STATUS_META: Record<
 
 export const CAMPAIGN_OBJECTIVES: Record<
   string,
-  { label: string; icon: string; description: string }
+  { label: string; labelEn: string; icon: string; description: string; descriptionEn: string }
 > = {
   OUTCOME_SALES: {
-    label: "বিক্রয় ও কনভার্সন (Sales)",
+    label: analyticsBn.zzCampObjSales,
+    labelEn: analyticsEn.zzCampObjSales,
     icon: "🛍️",
-    description: "ওয়েবসাইটে সরাসরি অর্ডার ও চেকআউট বৃদ্ধি",
+    description: analyticsBn.zzCampObjSalesDesc,
+    descriptionEn: analyticsEn.zzCampObjSalesDesc,
   },
   OUTCOME_LEADS: {
-    label: "লিড জেনারেশন (Leads)",
+    label: analyticsBn.zzCampObjLeads,
+    labelEn: analyticsEn.zzCampObjLeads,
     icon: "👥",
-    description: "গ্রাহকের যোগাযোগের তথ্য ও ইনকোয়ারি সংগ্রহ",
+    description: analyticsBn.zzCampObjLeadsDesc,
+    descriptionEn: analyticsEn.zzCampObjLeadsDesc,
   },
   OUTCOME_ENGAGEMENT: {
-    label: "এনগেজমেন্ট ও মেসেজ (Engagement)",
+    label: analyticsBn.zzCampObjEngagement,
+    labelEn: analyticsEn.zzCampObjEngagement,
     icon: "💬",
-    description: "মেসেঞ্জার, হোয়াটসঅ্যাপ ও পোস্টে সাড়া",
+    description: analyticsBn.zzCampObjEngagementDesc,
+    descriptionEn: analyticsEn.zzCampObjEngagementDesc,
   },
   OUTCOME_TRAFFIC: {
-    label: "ওয়েবসাইট ট্র্যাফিক (Traffic)",
+    label: analyticsBn.zzCampObjTraffic,
+    labelEn: analyticsEn.zzCampObjTraffic,
     icon: "🌐",
-    description: "ওয়েবসাইট বা ল্যান্ডিং পেজে ভিজিটর আনা",
+    description: analyticsBn.zzCampObjTrafficDesc,
+    descriptionEn: analyticsEn.zzCampObjTrafficDesc,
   },
   OUTCOME_AWARENESS: {
-    label: "ব্র্যান্ড পরিচিতি (Awareness)",
+    label: analyticsBn.zzCampObjAwareness,
+    labelEn: analyticsEn.zzCampObjAwareness,
     icon: "📢",
-    description: "সর্বোচ্চ সংখ্যক মানুষের কাছে ব্র্যান্ড পৌঁছানো",
+    description: analyticsBn.zzCampObjAwarenessDesc,
+    descriptionEn: analyticsEn.zzCampObjAwarenessDesc,
   },
 };
 
-export function getCampaignStatusBadge(status: string) {
-  return (
-    CAMPAIGN_STATUS_META[status] ?? {
+export function getCampaignStatusBadge(status: string, locale: UiLocale = "bn") {
+  const meta = CAMPAIGN_STATUS_META[status];
+  if (!meta) {
+    return {
       label: status,
       badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
       icon: "•",
-    }
-  );
+    };
+  }
+  return locale === "en" ? { ...meta, label: meta.labelEn } : meta;
 }
 
-export function getCampaignObjectiveMeta(objective: string) {
-  return (
-    CAMPAIGN_OBJECTIVES[objective] ?? {
+export function getCampaignObjectiveMeta(objective: string, locale: UiLocale = "bn") {
+  const meta = CAMPAIGN_OBJECTIVES[objective];
+  if (!meta) {
+    return {
       label: objective,
       icon: "🎯",
-      description: "ক্যাম্পেইন অবজেক্টিভ",
-    }
-  );
+      description: locale === "en" ? analyticsEn.zzCampObjFallbackDesc : analyticsBn.zzCampObjFallbackDesc,
+    };
+  }
+  return locale === "en" ? { ...meta, label: meta.labelEn, description: meta.descriptionEn } : meta;
 }

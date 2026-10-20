@@ -177,7 +177,7 @@ describe("SA-B10 Action Engine — pipeline through real service paths", () => {
     const spy = jest.spyOn(s.inbox, "updateConversation");
     const res: any = await s.engine.propose(ORG, "close_conversation", { conversationId: "conv-1" }, { proposedBy: "staff", actorUserId: OWNER });
     await s.engine.approve(ORG, OWNER, res.proposal.id);
-    await expect(s.engine.approve(ORG, OWNER, res.proposal.id)).rejects.toThrow(/already decided/);
+    await expect(s.engine.approve(ORG, OWNER, res.proposal.id)).rejects.toMatchObject({ code: "ai.thisActionProposalWasAlreadyDecided2" });
     const again: any = await s.engine.execute(ORG, OWNER, res.proposal.id);
     expect(again.ok).toBe(true);
     expect(again.noop).toBe(true);
@@ -193,7 +193,7 @@ describe("SA-B10 Action Engine — pipeline through real service paths", () => {
     expect(rejected.status).toBe("rejected");
     const exec: any = await s.engine.execute(ORG, OWNER, res.proposal.id);
     expect(exec).toMatchObject({ ok: false, reason: "proposal_rejected" });
-    await expect(s.engine.approve(ORG, OWNER, res.proposal.id)).rejects.toThrow(/already decided/);
+    await expect(s.engine.approve(ORG, OWNER, res.proposal.id)).rejects.toMatchObject({ code: "ai.thisActionProposalWasAlreadyDecided2" });
     expect(s.conversations[0].status).toBe("open");
   });
 });
@@ -329,18 +329,18 @@ describe("SA-B10 Action Engine — isolation + validation + catalog integrity", 
   it("cross-org: org B cannot approve, reject, execute or list org A's proposal", async () => {
     const s = setup();
     const res: any = await s.engine.propose(ORG, "close_conversation", { conversationId: "conv-1" }, { proposedBy: "staff", actorUserId: OWNER });
-    await expect(s.engine.approve(ORG_B, "owner-b", res.proposal.id)).rejects.toThrow(/not found/i);
-    await expect(s.engine.reject(ORG_B, "owner-b", res.proposal.id)).rejects.toThrow(/not found/i);
-    await expect(s.engine.execute(ORG_B, "owner-b", res.proposal.id)).rejects.toThrow(/not found/i);
+    await expect(s.engine.approve(ORG_B, "owner-b", res.proposal.id)).rejects.toMatchObject({ code: "ai.actionProposalNotFound" });
+    await expect(s.engine.reject(ORG_B, "owner-b", res.proposal.id)).rejects.toMatchObject({ code: "ai.actionProposalNotFound" });
+    await expect(s.engine.execute(ORG_B, "owner-b", res.proposal.id)).rejects.toMatchObject({ code: "ai.actionProposalNotFound" });
     expect(await s.engine.listProposals(ORG_B)).toHaveLength(0);
     expect(s.proposals[0].status).toBe("proposed"); // untouched
   });
 
   it("validation: unknown action, missing target, foreign target, already-closed target", async () => {
     const s = setup();
-    await expect(s.engine.propose(ORG, "no_such_action", {}, { proposedBy: "staff", actorUserId: OWNER })).rejects.toThrow(/Unknown catalog action/);
-    await expect(s.engine.propose(ORG, "close_conversation", {}, { proposedBy: "staff", actorUserId: OWNER })).rejects.toThrow(/conversationId is required/);
-    await expect(s.engine.propose(ORG, "close_conversation", { conversationId: "conv-b" }, { proposedBy: "staff", actorUserId: OWNER })).rejects.toThrow(/not found/i);
+    await expect(s.engine.propose(ORG, "no_such_action", {}, { proposedBy: "staff", actorUserId: OWNER })).rejects.toMatchObject({ code: "ai.unknownCatalogAction2" });
+    await expect(s.engine.propose(ORG, "close_conversation", {}, { proposedBy: "staff", actorUserId: OWNER })).rejects.toMatchObject({ code: "ai.isRequired" });
+    await expect(s.engine.propose(ORG, "close_conversation", { conversationId: "conv-b" }, { proposedBy: "staff", actorUserId: OWNER })).rejects.toMatchObject({ code: "ai.conversationNotFoundInThisOrganization" });
     s.conversations[0].status = "closed";
     await expect(s.engine.propose(ORG, "close_conversation", { conversationId: "conv-1" }, { proposedBy: "staff", actorUserId: OWNER })).rejects.toThrow(/ইতিমধ্যে বন্ধ/);
   });

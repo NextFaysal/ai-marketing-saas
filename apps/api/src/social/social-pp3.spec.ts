@@ -219,8 +219,8 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld();
     seedProduct(w.prisma, { id: "prod-other", organizationId: "org-OTHER" });
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-other").catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
-    expect(err.message).toContain("Product not found in this organization");
+    expect(err).toMatchObject({ code: "social.productNotFoundInThisOrganization" });
+    expect(err.message).toContain("এই organization-এ product পাওয়া যায়নি");
     expect(w.fetchFn).not.toHaveBeenCalled();
     expect(w.resolveHost).not.toHaveBeenCalled();
   });
@@ -231,7 +231,7 @@ describe("SocialImportService.importForProduct", () => {
     seedProduct(w.prisma, { id: "prod-blank", imageUrl: "   " });
     for (const id of ["prod-null", "prod-blank"]) {
       const err = await w.importer.importForProduct(ORG, ACTOR, id).catch((e) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toMatchObject({ code: "social.thisProductHasNoImageUrl" });
       expect(err.message).toContain("কোনো ছবির URL নেই");
     }
     expect(w.fetchFn).not.toHaveBeenCalled();
@@ -242,7 +242,7 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld();
     seedProduct(w.prisma, { imageUrl: "http://cdn.example.com/img/panjabi.png" });
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlMustStartWith" });
     expect(err.message).toContain("https://");
     expect(w.resolveHost).not.toHaveBeenCalled();
     expect(w.fetchFn).not.toHaveBeenCalled();
@@ -253,10 +253,10 @@ describe("SocialImportService.importForProduct", () => {
     seedProduct(w.prisma, { id: "prod-cred", imageUrl: "https://user:pass@cdn.example.com/x.png" });
     seedProduct(w.prisma, { id: "prod-port", imageUrl: "https://cdn.example.com:8443/x.png" });
     const credErr = await w.importer.importForProduct(ORG, ACTOR, "prod-cred").catch((e) => e);
-    expect(credErr).toBeInstanceOf(BadRequestException);
+    expect(credErr).toMatchObject({ code: "social.theImageUrlCannotContainA" });
     expect(credErr.message).toContain("username/password");
     const portErr = await w.importer.importForProduct(ORG, ACTOR, "prod-port").catch((e) => e);
-    expect(portErr).toBeInstanceOf(BadRequestException);
+    expect(portErr).toMatchObject({ code: "social.onlyPort443WorksInThe" });
     expect(portErr.message).toContain("8443");
     expect(w.resolveHost).not.toHaveBeenCalled();
     expect(w.fetchFn).not.toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld({ "cdn.example.com": [PUBLIC_IP, "192.168.1.10"] });
     seedProduct(w.prisma);
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlPointsToA" });
     expect(err.message).toContain("private/internal");
     expect(w.fetchFn).not.toHaveBeenCalled();
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
@@ -276,7 +276,7 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld();
     seedProduct(w.prisma, { imageUrl: "https://192.168.1.5/img/x.png" });
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlPointsToA" });
     expect(err.message).toContain("private/internal");
     expect(w.resolveHost).toHaveBeenCalledWith("192.168.1.5");
     expect(w.fetchFn).not.toHaveBeenCalled();
@@ -286,7 +286,7 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld({ "cdn.example.com": ["::1"] });
     seedProduct(w.prisma);
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlPointsToA" });
     expect(err.message).toContain("private/internal");
     expect(w.fetchFn).not.toHaveBeenCalled();
   });
@@ -295,14 +295,14 @@ describe("SocialImportService.importForProduct", () => {
     const w = makeWorld({ "cdn.example.com": [] });
     seedProduct(w.prisma);
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.noAddressWasFoundForThe" });
     expect(w.fetchFn).not.toHaveBeenCalled();
 
     const w2 = makeWorld();
     seedProduct(w2.prisma);
     w2.importer.resolveHost = jest.fn(async () => { throw new Error("getaddrinfo ENOTFOUND cdn.example.com"); });
     const err2 = await w2.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err2).toBeInstanceOf(BadRequestException);
+    expect(err2).toMatchObject({ code: "social.theImageUrlSHostCould" });
     expect(err2.message).toContain("ENOTFOUND");
     expect(w2.fetchFn).not.toHaveBeenCalled();
   });
@@ -336,7 +336,7 @@ describe("SocialImportService.importForProduct", () => {
       throw new Error(`must never fetch: ${url}`);
     });
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlPointsToA" });
     expect(err.message).toContain("private/internal");
     expect(w.fetchFn).toHaveBeenCalledTimes(1); // only the first, public hop
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
@@ -348,7 +348,7 @@ describe("SocialImportService.importForProduct", () => {
     w.fetchFn.mockImplementation(async () =>
       stubResponse({ status: 302, headers: { location: "https://cdn.example.com/loop.png" } }));
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theUrlRedirectedTooManyTimes" });
     expect(err.message).toContain("redirect");
     expect(w.fetchFn).toHaveBeenCalledTimes(4);
   });
@@ -358,7 +358,7 @@ describe("SocialImportService.importForProduct", () => {
     seedProduct(w.prisma);
     w.fetchFn.mockImplementation(async () => stubResponse({ status: 404, body: Buffer.from("not found") }));
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.noResponseWasReceivedFromThe" });
     expect(err.message).toContain("(HTTP 404)");
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
   });
@@ -368,7 +368,7 @@ describe("SocialImportService.importForProduct", () => {
     seedProduct(w.prisma);
     w.fetchFn.mockImplementation(async () => { throw new Error("socket hang up verbatim-fixture"); });
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theFileCouldNotBeFetched" });
     expect(err.message).toContain("socket hang up verbatim-fixture");
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
   });
@@ -379,7 +379,7 @@ describe("SocialImportService.importForProduct", () => {
     w.fetchFn.mockImplementation(async () =>
       stubResponse({ body: Buffer.from("<!DOCTYPE html><html><body>not an image</body></html>") }));
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.noImageWasFoundAtThis" });
     expect(err.message).toContain("ছবি পাওয়া যায়নি");
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
   });
@@ -390,7 +390,7 @@ describe("SocialImportService.importForProduct", () => {
     w.fetchFn.mockImplementation(async () =>
       stubResponse({ body: Buffer.from("%PDF-1.7 fake pdf body") }));
     const err = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.noImageWasFoundAtThis" });
     expect(err.message).toContain("application/pdf");
     expect(w.prisma.mediaAsset.rows).toHaveLength(0);
   });
@@ -456,7 +456,7 @@ describe("Template auto-import (SocialImageService.createTemplateImage)", () => 
   it("import failure (private IP) → the importer's Bengali error surfaces VERBATIM and NO poster is created", async () => {
     const w = templateWorld({ "cdn.example.com": ["10.0.0.9"] });
     const err = await w.imageSvc.createTemplateImage(ORG, ACTOR, { productId: "prod-1", headline: "ঈদ অফার" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theImageUrlPointsToA" });
     // Verbatim: the same call made directly on the importer
     // produces the identical message — nothing was wrapped.
     const direct = await w.importer.importForProduct(ORG, ACTOR, "prod-1").catch((e) => e);

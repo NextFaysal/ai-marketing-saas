@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ReviewsService, parseReviewRating } from "./reviews.service";
 import { ProactiveService } from "../ai/proactive.service";
 import { JOB_TEMPLATES, JOB_TYPES } from "../automation/automation.service";
@@ -227,10 +228,10 @@ describe("CX12b public link page", () => {
       },
     });
     expect(reviews[0].source).toBe("link");
-    await expect(svc.submitPublicReview(token, { rating: 5 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.submitPublicReview(token, { rating: 9 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.publicReview("nope")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.submitPublicReview("nope", { rating: 3 })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.submitPublicReview(token, { rating: 5 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.submitPublicReview(token, { rating: 9 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.publicReview("nope")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.submitPublicReview("nope", { rating: 3 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("listReviews is org-scoped, filterable, and resolves order/customer labels", async () => {
@@ -266,7 +267,10 @@ describe("CX12b (12e) daily report email copy", () => {
         findMany: async () => [],
         create: async ({ data }: any) => { notifications.push(data); return data; },
       },
-      user: { findMany: async () => [{ id: "u-owner", email: "owner@example.com" }] },
+      // MB5: ProactiveService resolves the briefing language
+      // through resolveOwnerLanguageForOrg (user rung via
+      // findUnique) — the stub models that read as "no user row".
+      user: { findMany: async () => [{ id: "u-owner", email: "owner@example.com" }], findUnique: async () => null },
     };
     const tools = {
       execute: async () => ({ orders: 3, revenue: "৳ ৩,০০০", adSpend: "৳ ৫০০", contributionProfit: "৳ ৯০০", contributionMarginPercent: 30, cogsCoveragePercent: 100 }),

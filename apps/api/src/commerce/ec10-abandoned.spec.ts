@@ -374,7 +374,7 @@ describe("EC10 sendStoreRecovery", () => {
 
   it("foreign checkout id → NotFound", async () => {
     const { service } = sendSetup(async () => ({ providerMessageId: "msg-1" }));
-    await expect(service.sendStoreRecovery("org-2", "user-1", "chk-1")).rejects.toThrow("not found");
+    await expect(service.sendStoreRecovery("org-2", "user-1", "chk-1")).rejects.toMatchObject({ code: "commerce.abandonedCheckoutNotFoundInOrg", status: 404 });
   });
 
   it("generates WhatsApp recovery data with clean phone and discount message", async () => {

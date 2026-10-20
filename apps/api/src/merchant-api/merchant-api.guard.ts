@@ -1,13 +1,12 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
-  UnauthorizedException,
 } from "@nestjs/common";
 import { MerchantApiService } from "./merchant-api.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { assertWithinApiDailyLimit, incrementApiUsage } from "../common/api-usage";
+import { forbidden, unauthorized } from "../i18n/api-exception";
 
 export interface MerchantApiContext {
   orgId: string;
@@ -23,7 +22,7 @@ export interface MerchantApiContext {
 export function requireScope(req: any, scope: string): void {
   const scopes: string[] = Array.isArray(req?.merchantApi?.scopes) ? req.merchantApi.scopes : [];
   if (!scopes.includes(scope)) {
-    throw new ForbiddenException(`এই কী-তে প্রয়োজনীয় অনুমতি (scope) নেই: ${scope}`);
+    throw forbidden("merchantApi.thisKeyDoesNotHaveThe", { scope: scope });
   }
 }
 
@@ -56,10 +55,10 @@ export class MerchantApiKeyGuard implements CanActivate {
       token = headers["x-merchant-api-key"].trim();
     }
     if (!token) {
-      throw new UnauthorizedException("Merchant API key required (Authorization: Bearer <key> or x-merchant-api-key)");
+      throw unauthorized("merchantApi.merchantApiKeyRequiredAuthorizationBearer");
     }
     const auth = await this.keys.authenticate(token);
-    if (!auth) throw new UnauthorizedException("Invalid or revoked merchant API key");
+    if (!auth) throw unauthorized("merchantApi.invalidOrRevokedMerchantApiKey");
 
     await assertWithinApiDailyLimit(this.prisma as any, auth.organizationId);
     void incrementApiUsage(this.prisma as any, auth.organizationId);

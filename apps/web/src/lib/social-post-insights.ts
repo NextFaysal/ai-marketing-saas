@@ -11,6 +11,8 @@
  * Kept pure (no React, no fetch) so the behaviour is unit-testable
  * without a component harness — same pattern as social-post-filters.
  */
+import type { UiLocale } from "@repo/contracts";
+
 
 import type { SocialPost } from "./social-post-filters";
 import type { AutoDraftKind } from "./social-posts-su5";
@@ -143,22 +145,22 @@ export interface SummaryMetricRow {
 }
 
 /** Display order + Bengali labels for every known insight metric. */
-const METRIC_DEFS: { key: string; chipLabel: string; totalLabel: string }[] = [
-  { key: "reactions", chipLabel: "👍 রিঅ্যাকশন", totalLabel: "মোট রিঅ্যাকশন" },
-  { key: "likeCount", chipLabel: "👍 পছন্দ", totalLabel: "মোট পছন্দ" },
-  { key: "comments", chipLabel: "💬 মন্তব্য", totalLabel: "মোট মন্তব্য" },
-  { key: "commentsCount", chipLabel: "💬 মন্তব্য", totalLabel: "মোট মন্তব্য" },
-  { key: "shares", chipLabel: "↗️ শেয়ার", totalLabel: "মোট শেয়ার" },
-  { key: "impressions", chipLabel: "👁️ মোট দেখা", totalLabel: "মোট দেখা" },
-  { key: "reach", chipLabel: "পৌঁছেছে", totalLabel: "মোট পৌঁছেছে" },
-  { key: "saved", chipLabel: "সেভ", totalLabel: "মোট সেভ" },
-  { key: "plays", chipLabel: "প্লে", totalLabel: "মোট প্লে" },
+const METRIC_DEFS: { key: string; chipLabel: string; totalLabel: string; chipLabelEn: string; totalLabelEn: string }[] = [
+  { key: "reactions", chipLabel: "👍 রিঅ্যাকশন", totalLabel: "মোট রিঅ্যাকশন", chipLabelEn: "👍 Reactions", totalLabelEn: "Total reactions" },
+  { key: "likeCount", chipLabel: "👍 পছন্দ", totalLabel: "মোট পছন্দ", chipLabelEn: "👍 Likes", totalLabelEn: "Total likes" },
+  { key: "comments", chipLabel: "💬 মন্তব্য", totalLabel: "মোট মন্তব্য", chipLabelEn: "💬 Comments", totalLabelEn: "Total comments" },
+  { key: "commentsCount", chipLabel: "💬 মন্তব্য", totalLabel: "মোট মন্তব্য", chipLabelEn: "💬 Comments", totalLabelEn: "Total comments" },
+  { key: "shares", chipLabel: "↗️ শেয়ার", totalLabel: "মোট শেয়ার", chipLabelEn: "↗️ Shares", totalLabelEn: "Total shares" },
+  { key: "impressions", chipLabel: "👁️ মোট দেখা", totalLabel: "মোট দেখা", chipLabelEn: "👁️ Total views", totalLabelEn: "Total views" },
+  { key: "reach", chipLabel: "পৌঁছেছে", totalLabel: "মোট পৌঁছেছে", chipLabelEn: "Reached", totalLabelEn: "Total reached" },
+  { key: "saved", chipLabel: "সেভ", totalLabel: "মোট সেভ", chipLabelEn: "Saved", totalLabelEn: "Total saved" },
+  { key: "plays", chipLabel: "প্লে", totalLabel: "মোট প্লে", chipLabelEn: "Plays", totalLabelEn: "Total plays" },
   // SN7: Threads-native metrics (shares above is shared).
-  { key: "views", chipLabel: "👁️ ভিউ", totalLabel: "মোট ভিউ" },
-  { key: "likes", chipLabel: "❤️ লাইক", totalLabel: "মোট লাইক" },
-  { key: "replies", chipLabel: "💬 রিপ্লাই", totalLabel: "মোট রিপ্লাই" },
-  { key: "reposts", chipLabel: "🔁 রিপোস্ট", totalLabel: "মোট রিপোস্ট" },
-  { key: "quotes", chipLabel: "❝ কোট", totalLabel: "মোট কোট" },
+  { key: "views", chipLabel: "👁️ ভিউ", totalLabel: "মোট ভিউ", chipLabelEn: "👁️ Views", totalLabelEn: "Total views" },
+  { key: "likes", chipLabel: "❤️ লাইক", totalLabel: "মোট লাইক", chipLabelEn: "❤️ Likes", totalLabelEn: "Total likes" },
+  { key: "replies", chipLabel: "💬 রিপ্লাই", totalLabel: "মোট রিপ্লাই", chipLabelEn: "💬 Replies", totalLabelEn: "Total replies" },
+  { key: "reposts", chipLabel: "🔁 রিপোস্ট", totalLabel: "মোট রিপোস্ট", chipLabelEn: "🔁 Reposts", totalLabelEn: "Total reposts" },
+  { key: "quotes", chipLabel: "❝ কোট", totalLabel: "মোট কোট", chipLabelEn: "❝ Quotes", totalLabelEn: "Total quotes" },
 ];
 
 /**
@@ -166,14 +168,14 @@ const METRIC_DEFS: { key: string; chipLabel: string; totalLabel: string }[] = [
  * present (a real number, including a real 0), in display order.
  * Absent keys are skipped — never rendered as 0.
  */
-export function insightChips(insights: SocialPostInsights | null | undefined): InsightChip[] {
+export function insightChips(insights: SocialPostInsights | null | undefined, locale: UiLocale = "bn"): InsightChip[] {
   if (!insights) return [];
   const record = insights as unknown as Record<string, unknown>;
   const chips: InsightChip[] = [];
   for (const def of METRIC_DEFS) {
     const value = record[def.key];
     if (typeof value === "number" && Number.isFinite(value)) {
-      chips.push({ key: def.key, label: def.chipLabel, value });
+      chips.push({ key: def.key, label: locale === "en" ? def.chipLabelEn : def.chipLabel, value });
     }
   }
   return chips;
@@ -185,8 +187,10 @@ export function hasInsights(insights: SocialPostInsights | null | undefined): bo
 
 /** SN10: the display label for one metric key (the chip label the
  * rest of the page uses); unknown keys show as their raw key. */
-export function insightMetricLabel(key: string): string {
-  return METRIC_DEFS.find((d) => d.key === key)?.chipLabel ?? key;
+export function insightMetricLabel(key: string, locale: UiLocale = "bn"): string {
+  const def = METRIC_DEFS.find((d) => d.key === key);
+  if (!def) return key;
+  return locale === "en" ? def.chipLabelEn : def.chipLabel;
 }
 
 /**
@@ -194,14 +198,14 @@ export function insightMetricLabel(key: string): string {
  * then any unknown keys the API sent (labelled by their raw key so
  * nothing is silently dropped).
  */
-export function summaryMetricRows(totals: Record<string, { total: number; posts: number }> | null | undefined): SummaryMetricRow[] {
+export function summaryMetricRows(totals: Record<string, { total: number; posts: number }> | null | undefined, locale: UiLocale = "bn"): SummaryMetricRow[] {
   if (!totals) return [];
   const rows: SummaryMetricRow[] = [];
   const seen = new Set<string>();
   for (const def of METRIC_DEFS) {
     const entry = totals[def.key];
     if (entry && typeof entry.total === "number") {
-      rows.push({ key: def.key, label: def.totalLabel, total: entry.total, posts: entry.posts });
+      rows.push({ key: def.key, label: locale === "en" ? def.totalLabelEn : def.totalLabel, total: entry.total, posts: entry.posts });
       seen.add(def.key);
     }
   }
@@ -216,13 +220,21 @@ export function summaryMetricRows(totals: Record<string, { total: number; posts:
 /** Bengali weekday names, index 0 = Sunday … 6 = Saturday (matches the API's bestTime.weekday). */
 export const WEEKDAY_NAMES_BN = ["রবিবার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"] as const;
 
-export function weekdayNameBn(weekday: number): string {
+export function weekdayNameBn(weekday: number, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    if (weekday < 0 || weekday > 6) return "";
+    // 2024-01-07 was a Sunday.
+    return new Intl.DateTimeFormat("en-IN", { weekday: "long" }).format(new Date(2024, 0, 7 + weekday));
+  }
   return WEEKDAY_NAMES_BN[weekday] ?? "";
 }
 
 /** 0–23 hour → Bengali day-part + 12-hour label, e.g. 20 → "রাত ৮টা", 0 → "রাত ১২টা". */
-export function formatHourBn(hour: number): string {
+export function formatHourBn(hour: number, locale: UiLocale = "bn"): string {
   const h = ((hour % 24) + 24) % 24;
+  if (locale === "en") {
+    return new Intl.DateTimeFormat("en-IN", { hour: "numeric", hour12: true }).format(new Date(2024, 0, 1, h));
+  }
   const period = h < 4 ? "রাত" : h < 6 ? "ভোর" : h < 12 ? "সকাল" : h < 15 ? "দুপুর" : h < 18 ? "বিকেল" : h < 20 ? "সন্ধ্যা" : "রাত";
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${period} ${h12.toLocaleString("bn-BD")}টা`;

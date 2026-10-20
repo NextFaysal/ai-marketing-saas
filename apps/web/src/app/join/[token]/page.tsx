@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiFetch, getToken } from "@/lib/api";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 /**
  * ORG10 (Organization Next OB3) — public join page for a
@@ -66,7 +69,7 @@ export default function JoinPage() {
       setMessage("");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অনুরোধ পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : t.join.submitFailed);
     } finally { setBusy(false); }
   }
 
@@ -76,51 +79,48 @@ export default function JoinPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
       <div className="card w-full max-w-md p-6">
-        <h1 className="mb-2 text-xl font-bold">টিমে যোগ দিন</h1>
+        <h1 className="mb-2 text-xl font-bold">{t.join.title}</h1>
         {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
         {invalid ? (
           <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            এই লিংকটি সঠিক নয় অথবা আর সক্রিয় নেই। প্রতিষ্ঠানের OWNER/ADMIN এর কাছ থেকে নতুন লিংক নিন।
+            {t.join.invalidLink}
           </div>
         ) : myReq?.status === "APPROVED" ? (
           <div className="space-y-3">
             <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">
-              অভিনন্দন! আপনার অনুরোধ অনুমোদিত হয়েছে — আপনি এখন <b>{mine?.organizationName}</b> এর সদস্য।
+              {t.join.approvedPrefix}<b>{mine?.organizationName}</b>{t.join.approvedSuffix}
             </div>
-            <a className="btn-primary block text-center" href="/dashboard">ড্যাশবোর্ডে যান</a>
+            <a className="btn-primary block text-center" href="/dashboard">{t.join.goDashboard}</a>
           </div>
         ) : myReq?.status === "PENDING" ? (
           <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            ⏳ আপনার যোগদানের অনুরোধ <b>{mine?.organizationName}</b> এর কাছে <b>অপেক্ষমাণ</b> আছে।
-            OWNER/ADMIN অনুমোদন করলেই আপনি সদস্য হয়ে যাবেন — এই একই লিংক আবার খুললে অবস্থা দেখতে পাবেন।
+            {t.join.pendingPrefix}<b>{mine?.organizationName}</b>{t.join.pendingMid}<b>{t.join.pendingBold}</b>{t.join.pendingSuffix}
           </div>
         ) : !loggedIn ? (
-          !info ? <p className="text-sm text-slate-500">লিংক যাচাই হচ্ছে…</p> : (
+          !info ? <p className="text-sm text-slate-500">{t.join.verifyingLink}</p> : (
             <div className="space-y-3">
               <p className="text-sm text-slate-700">
-                <b>{info.organizationName}</b> আপনাকে <b>{info.role}</b> ভূমিকায় টিমে যোগ দেওয়ার জন্য আমন্ত্রণ জানিয়েছে।
+                <b>{info.organizationName}</b>{t.join.invitedPrefix}<b>{info.role}</b>{t.join.invitedSuffix}
               </p>
               <p className="text-sm text-slate-600">
-                অনুরোধ পাঠাতে প্রথমে লগইন করুন — অ্যাকাউন্ট না থাকলে রেজিস্টার করুন। তারপর এই একই লিংক আবার খুললেই অনুরোধ পাঠাতে পারবেন।
-                আপনার অনুরোধ প্রতিষ্ঠানের OWNER/ADMIN অনুমোদন করার পরই আপনি সদস্য হবেন।
+                {t.join.loginHelp}
               </p>
-              <a className="btn-primary block text-center" href="/login">লগইন করুন</a>
-              <a className="btn-secondary block text-center" href="/register">নতুন অ্যাকাউন্ট (রেজিস্টার)</a>
+              <a className="btn-primary block text-center" href="/login">{t.join.loginButton}</a>
+              <a className="btn-secondary block text-center" href="/register">{t.join.registerButton}</a>
             </div>
           )
         ) : !info && !mine ? (
-          <p className="text-sm text-slate-500">লিংক যাচাই হচ্ছে…</p>
+          <p className="text-sm text-slate-500">{t.join.verifyingLink}</p>
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-slate-700">
-              <b>{(info ?? mine)?.organizationName}</b> এ <b>{(info ?? mine)?.role}</b> ভূমিকায় যোগ দিতে অনুরোধ পাঠান।
-              অনুমোদনের পরই আপনি সদস্য হবেন।
+              <b>{(info ?? mine)?.organizationName}</b>{t.join.requestPrefix}<b>{(info ?? mine)?.role}</b>{t.join.requestSuffix}
             </p>
             {myReq?.status === "REJECTED" ? (
               <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-                আপনার আগের অনুরোধটি ফিরিয়ে দেওয়া হয়েছে।
-                {myReq.rejectReason ? <> কারণ: {myReq.rejectReason}</> : null}
-                {linkOpen ? " চাইলে আবার অনুরোধ পাঠাতে পারেন।" : " এই লিংকটি এখন আর সক্রিয় নেই।"}
+                {t.join.rejectedText}
+                {myReq.rejectReason ? <>{t.join.rejectReasonPrefix}{myReq.rejectReason}</> : null}
+                {linkOpen ? t.join.rejectedAgainOpen : t.join.rejectedLinkClosed}
               </div>
             ) : null}
             {linkOpen ? (
@@ -129,16 +129,17 @@ export default function JoinPage() {
                   className="input w-full"
                   rows={3}
                   maxLength={500}
-                  placeholder="চাইলে একটি ছোট বার্তা লিখুন (যেমন: আপনি কোন কাজে যোগ দিতে চান) — ঐচ্ছিক"
+                  placeholder={t.join.messagePlaceholder}
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                 />
                 <button className="btn-primary w-full" disabled={busy} onClick={submit}>
-                  {busy ? "অপেক্ষা করুন…" : "যোগদানের অনুরোধ পাঠান"}
+                  {busy ? t.join.pleaseWait : t.join.sendRequest}
                 </button>
               </>
             ) : myReq?.status !== "REJECTED" ? (
-              <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">এই লিংকটি এখন আর নতুন অনুরোধ নিচ্ছে না।</div>
+              <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t.join.linkClosed}</div>
+
             ) : null}
           </div>
         )}

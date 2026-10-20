@@ -441,7 +441,7 @@ describe("MX16 service — auto-winner on the chunked send path", () => {
     await svc.setBroadcastAbAutoWinner("org-1", "owner-1", "bc-a", null);
     expect(tables.broadcast.rows.every((r: any) => r.abAutoWinnerEnabled === null)).toBe(true);
     for (const r of tables.broadcast.rows) r.status = "sent";
-    await expect(svc.setBroadcastAbAutoWinner("org-1", "owner-1", "bc-a", true)).rejects.toThrow(/already finished/);
+    await expect(svc.setBroadcastAbAutoWinner("org-1", "owner-1", "bc-a", true)).rejects.toMatchObject({ code: "messaging.thisBroadcastAlreadyFinishedBroadcastStatusThe" });
   });
 });
 

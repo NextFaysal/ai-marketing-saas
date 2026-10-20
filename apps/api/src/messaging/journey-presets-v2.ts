@@ -63,6 +63,13 @@ export interface JourneyPresetV2 {
   flow: string;
   trigger: string;
   templates: JourneyPresetV2Template[];
+  /** MB4 (D-MB4-8): en companions of the platform-authored
+   * preset content; install picks one locale (org
+   * dashboardLocale), installed copies are merchant-owned
+   * afterwards (D-MB4-5). */
+  descriptionEn: string;
+  flowEn: string;
+  templatesEn: JourneyPresetV2Template[];
   /** Build the engine steps from the created template ids, by slot. */
   steps: (ids: Record<string, string>) => Record<string, unknown>[];
   /** MX4 journey meta: exit the journey when the customer buys. */
@@ -84,6 +91,15 @@ export const PRESET_VARIABLE_ALLOWLIST: Record<string, string[]> = {
   anniversary_due: ["name"],
   browse_abandoned: ["name", "itemsSummary"],
 };
+
+/** The preset's installable content in one locale. */
+export function journeyPresetV2ForLocale(preset: JourneyPresetV2, locale: "bn" | "en"): {
+  description: string; flow: string; templates: JourneyPresetV2Template[];
+} {
+  return locale === "en"
+    ? { description: preset.descriptionEn, flow: preset.flowEn, templates: preset.templatesEn }
+    : { description: preset.descriptionBn, flow: preset.flow, templates: preset.templates };
+}
 
 /** The triggers a v2 preset may use — each one audited above. */
 export const PRESET_V2_TRIGGERS = Object.keys(PRESET_VARIABLE_ALLOWLIST);
@@ -115,6 +131,28 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         body: "আসসালামু আলাইকুম {{name}},\n\nআপনি ঠিক কোন পণ্যটি খুঁজছেন, তা জানালে আমরা সেটির সর্বশেষ দাম ও স্টকের খবর জানিয়ে দিতে পারি। এই ইমেইলেই জবাব দিন — কোনো চাপ নেই, শুধু সাহায্য করার চেষ্টা।\n\nধন্যবাদ!",
       },
     ],
+        descriptionEn: "Sends a welcome email when a new lead arrives, usage tips the next day, and an offer/question email 2 days later — 3 separate templates in total.",
+    flowEn: "New lead → welcome email → wait 1 day → tips email → wait 2 days → offer email",
+    templatesEn: [
+      {
+        slot: "welcome", channel: "email",
+        name: "Journey v2: Welcome (Email 1)",
+        subject: "Welcome, {{name}}!",
+        body: "Hello {{name}},\n\nThank you for joining us! If you have any questions about what you are interested in, just reply to this email — we are ready to help.\n\nBest wishes,\nTeam",
+      },
+      {
+        slot: "tips", channel: "email",
+        name: "Journey v2: Getting-started tips (Email 2)",
+        subject: "{{name}}, easy tips to get started",
+        body: "Hello {{name}},\n\nYou joined us yesterday — a few tips to make starting easy:\n\n1) Browse our product list first and note the ones you like.\n2) If you are unsure about a product, reply and ask — price, delivery, everything.\n3) Giving the correct phone number at order time makes delivery faster.\n\nThank you!",
+      },
+      {
+        slot: "offer", channel: "email",
+        name: "Journey v2: Offer / question (Email 3)",
+        subject: "{{name}}, a question for you",
+        body: "Hello {{name}},\n\nIf you tell us exactly which product you are looking for, we can share its latest price and stock news. Just reply to this email — no pressure, we are only trying to help.\n\nThank you!",
+      },
+    ],
     steps: (ids) => [
       { type: "send_email", templateId: ids.welcome },
       { type: "wait", minutes: 1440 },
@@ -139,6 +177,20 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         slot: "review", channel: "sms",
         name: "Journey v2: অভিজ্ঞতা জানতে চাওয়া (SMS)",
         body: "আসসালামু আলাইকুম {{name}}, অর্ডার {{orderNumber}}-এর পণ্যটি ব্যবহার করে কেমন লাগছে? এই নম্বরেই জবাব দিয়ে আপনার অভিজ্ঞতা জানালে আমরা কৃতজ্ঞ থাকব।",
+      },
+    ],
+        descriptionEn: "Sends a care SMS 1 hour after delivery (did everything arrive properly?), then another SMS 2 days later asking about the experience. A longer version of the MS8 single-step review preset. (No review link — a per-order review token is not in the workflow context, so a direct reply is asked for.)",
+    flowEn: "Order delivered → wait 1 hour → care SMS → wait 2 days → review-ask SMS",
+    templatesEn: [
+      {
+        slot: "care", channel: "sms",
+        name: "Journey v2: Post-delivery care (SMS)",
+        body: "Hello {{name}}, your order {{orderNumber}} has been delivered. Did you receive everything properly? If there is any problem, reply to this number — we will fix it.",
+      },
+      {
+        slot: "review", channel: "sms",
+        name: "Journey v2: Experience ask (SMS)",
+        body: "Hello {{name}}, how are you finding the product from order {{orderNumber}}? We would be grateful if you reply to this number with your experience.",
       },
     ],
     steps: (ids) => [
@@ -166,6 +218,21 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         name: "Journey v2: Replenishment (ইমেইল)",
         subject: "{{name}}, আবার অর্ডার করার সময় হলো?",
         body: "আসসালামু আলাইকুম {{name}},\n\nআপনার আগের অর্ডার {{orderNumber}}-এর পর বেশ কিছুদিন কেটে গেছে — পণ্যটি শেষ হয়ে থাকলে আবার অর্ডার করতে এই ইমেইলেই জবাব দিন, অথবা আমাদের দোকানে ঘুরে আসুন।\n\nধন্যবাদ!",
+      },
+    ],
+        descriptionEn: "Reminds the buyer to buy again with an SMS 21 days after delivery and an email 7 days after that. Caution: 21 days is a fixed default interval — it is NOT calculated from per-product usage/exhaustion data (no such data exists in the system); edit the journey's waits to match your product's lifespan. If the customer orders in between, the journey ends by itself (Exit on Purchase).",
+    flowEn: "Order delivered → wait 21 days → SMS → wait 7 days → email (journey ends if they buy in between)",
+    templatesEn: [
+      {
+        slot: "sms", channel: "sms",
+        name: "Journey v2: Replenishment (SMS)",
+        body: "Hello {{name}}, the product from your order {{orderNumber}} is probably running low. If you need it again, just reply to this number and we will arrange the order.",
+      },
+      {
+        slot: "email", channel: "email",
+        name: "Journey v2: Replenishment (Email)",
+        subject: "{{name}}, is it time to order again?",
+        body: "Hello {{name}},\n\nQuite a few days have passed since your last order {{orderNumber}} — if the product has run out, reply to this email to order again, or visit our shop.\n\nThank you!",
       },
     ],
     steps: (ids) => [
@@ -196,6 +263,21 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         body: "আসসালামু আলাইকুম {{name}}, অনেকদিন হলো আপনার অর্ডার পাইনি। আবার কিছু লাগলে এই নম্বরে জবাব দিন — সাহায্য করতে প্রস্তুত আছি।",
       },
     ],
+        descriptionEn: "Scans for customers whose last order was a set number of days ago (default 60 days — changeable in the journey conditions) and sends them a win-back email and an SMS 3 days later. If the customer orders in between, the journey ends by itself (Exit on Purchase). The same customer is not re-entered into this journey within 90 days.",
+    flowEn: "Scan: last order 60+ days ago → win-back email → wait 3 days → SMS (journey ends if they buy in between)",
+    templatesEn: [
+      {
+        slot: "email", channel: "email",
+        name: "Journey v2: Win-back (Email)",
+        subject: "{{name}}, we miss you!",
+        body: "Hello {{name}},\n\nWe have not received an order from you for a long time ({{inactiveDays}} days) — we hope you are well. If you need anything again, reply to this email; we will share the latest products and prices.\n\nHoping to see you again,\nTeam",
+      },
+      {
+        slot: "sms", channel: "sms",
+        name: "Journey v2: Win-back (SMS)",
+        body: "Hello {{name}}, it has been a long time since your last order. If you need anything again, reply to this number — we are ready to help.",
+      },
+    ],
     steps: (ids) => [
       { type: "send_email", templateId: ids.email },
       { type: "wait", minutes: 4320 },
@@ -215,6 +297,16 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         name: "Journey v2: বার্ষিকী শুভেচ্ছা (ইমেইল)",
         subject: "শুভ বার্ষিকী, {{name}}!",
         body: "আসসালামু আলাইকুম {{name}},\n\nআজ আপনার আমাদের সঙ্গে যুক্ত হওয়ার বার্ষিকী — এতদিন পাশে থাকার জন্য আন্তরিক ধন্যবাদ! কোনো প্রয়োজন হলে এই ইমেইলেই জবাব দিন।\n\nশুভেচ্ছান্তে,\nটিম",
+      },
+    ],
+        descriptionEn: "Sends a greeting email when the month/day of the customer record's creation (createdAt) comes round again — that is, the anniversary of the customer's account/first contact; no birthday or other anniversary date exists in the schema. It is sent only for records at least 300 days old, and the same customer is not re-entered within 300 days. Dates are matched in Asia/Dhaka time (the same rule as the Schedule trigger).",
+    flowEn: "Scan: createdAt month/day is today (Asia/Dhaka) → greeting email",
+    templatesEn: [
+      {
+        slot: "email", channel: "email",
+        name: "Journey v2: Anniversary greeting (Email)",
+        subject: "Happy anniversary, {{name}}!",
+        body: "Hello {{name}},\n\nToday is the anniversary of you joining us — heartfelt thanks for staying with us all this time! If you need anything, just reply to this email.\n\nBest wishes,\nTeam",
       },
     ],
     steps: (ids) => [
@@ -238,6 +330,21 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
         slot: "sms", channel: "sms",
         name: "Journey v2: Browse Abandoned (SMS)",
         body: "{{name}}, আপনি যে পণ্যগুলো দেখেছিলেন ({{itemsSummary}}) সেগুলো এখনো পাওয়া যাচ্ছে। অর্ডার করতে এই নম্বরে জবাব দিন।",
+      },
+    ],
+        descriptionEn: "Sends an email 24 hours after the last view, and an SMS 2 days later, to known visitors (with an identified email/phone) who viewed products but did not add to cart or buy. Those who added to cart are in cart recovery — they are not captured here again. Unidentified visitors have no address to send to, so they are not captured.",
+    flowEn: "Scan: viewed products, no cart/purchase, last view 24+ hours ago → email → wait 2 days → SMS",
+    templatesEn: [
+      {
+        slot: "email", channel: "email",
+        name: "Journey v2: Browse Abandoned (Email)",
+        subject: "{{name}}, the products you viewed are still available",
+        body: "Hello {{name}},\n\nYou recently viewed these products: {{itemsSummary}}. If you have questions about any of them or want to order, just reply to this email — we will help.\n\nThank you!",
+      },
+      {
+        slot: "sms", channel: "sms",
+        name: "Journey v2: Browse Abandoned (SMS)",
+        body: "{{name}}, the products you viewed ({{itemsSummary}}) are still available. Reply to this number to order.",
       },
     ],
     steps: (ids) => [
@@ -265,10 +372,11 @@ export const JOURNEY_PRESETS_V2: JourneyPresetV2[] = [
  * therefore fire for nobody in most orgs — a preset that cannot
  * run is worse than none (MS8 precedent).
  */
-export const UNAVAILABLE_JOURNEY_PRESETS: { key: string; name: string; reasonBn: string }[] = [
+export const UNAVAILABLE_JOURNEY_PRESETS: { key: string; name: string; reasonBn: string; reasonEn: string }[] = [
   {
     key: "birthday",
     name: "জন্মদিনের শুভেচ্ছা (Birthday)",
     reasonBn: "তৈরি করা যায়নি: Customer ও Lead — কারোরই জন্মতারিখ (date of birth) ফিল্ড নেই, তাই জন্মদিন জানার কোনো নির্ভরযোগ্য উপায় সিস্টেমে নেই। কাস্টম ফিল্ডে জন্মতারিখ রাখলেও তার কী (key) প্রতিটি প্রতিষ্ঠানের নিজের বানানো — সিস্টেম-প্রিসেট তার উপর নির্ভর করতে পারে না।",
+    reasonEn: "Not built: neither Customer nor Lead has a date-of-birth field, so there is no reliable way in the system to know a birthday. Even if a date of birth is kept in a custom field, its key is each organization's own creation — a system preset cannot rely on it.",
   },
 ];

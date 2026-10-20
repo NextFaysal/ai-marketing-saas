@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC22 — Courier auto-selection rules.
@@ -44,30 +45,30 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** Validate a conditions object; every violation is a 400 that NAMES the field (Bengali-first). */
 export function validateConditions(conditions: unknown): Record<string, unknown> {
   if (!isPlainObject(conditions)) {
-    throw new BadRequestException("conditions একটি অবজেক্ট হতে হবে");
+    throw badRequest("courier.conditionsMustBeObject");
   }
   const c = conditions as Record<string, unknown>;
 
   if (c.districts !== undefined) {
     if (!Array.isArray(c.districts) || c.districts.some((d) => typeof d !== "string" || d.trim() === "")) {
-      throw new BadRequestException("conditions.districts অবশ্যই জেলার নামের তালিকা (খালি নয় এমন স্ট্রিং) হতে হবে");
+      throw badRequest("courier.conditionsDistrictsInvalid");
     }
   }
   for (const field of ["minWeightGrams", "maxWeightGrams"] as const) {
     if (c[field] !== undefined && (!Number.isInteger(c[field]) || (c[field] as number) <= 0)) {
-      throw new BadRequestException(`conditions.${field} অবশ্যই ধনাত্মক পূর্ণসংখ্যা (গ্রাম) হতে হবে`);
+      throw badRequest("courier.conditionsWeightInvalid", { field: field });
     }
   }
   if (
     c.minWeightGrams !== undefined && c.maxWeightGrams !== undefined &&
     (c.minWeightGrams as number) > (c.maxWeightGrams as number)
   ) {
-    throw new BadRequestException("conditions.minWeightGrams, maxWeightGrams-এর চেয়ে বড় হতে পারে না");
+    throw badRequest("courier.conditionsWeightOrder");
   }
   for (const field of ["minOrderMinor", "maxOrderMinor"] as const) {
     if (c[field] !== undefined) {
       if (typeof c[field] !== "string" || !/^\d+$/.test(c[field] as string)) {
-        throw new BadRequestException(`conditions.${field} অবশ্যই ০ বা তার বেশি একটি দশমিক স্ট্রিং (পয়সায়) হতে হবে`);
+        throw badRequest("courier.conditionsAmountInvalid", { field: field });
       }
     }
   }
@@ -75,10 +76,10 @@ export function validateConditions(conditions: unknown): Record<string, unknown>
     c.minOrderMinor !== undefined && c.maxOrderMinor !== undefined &&
     BigInt(c.minOrderMinor as string) > BigInt(c.maxOrderMinor as string)
   ) {
-    throw new BadRequestException("conditions.minOrderMinor, maxOrderMinor-এর চেয়ে বড় হতে পারে না");
+    throw badRequest("courier.conditionsAmountOrder");
   }
   if (c.paymentType !== undefined && !["cod", "prepaid", "any"].includes(c.paymentType as string)) {
-    throw new BadRequestException('conditions.paymentType অবশ্যই "cod", "prepaid" অথবা "any" হতে হবে');
+    throw badRequest("courier.conditionsPaymentTypeInvalid");
   }
   return c;
 }
@@ -95,9 +96,9 @@ export class CourierRulesService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: courierAccountId, organizationId },
     });
-    if (!integration) throw new NotFoundException("কুরিয়ার অ্যাকাউন্টটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!integration) throw notFound("courier.courierAccountNotFoundInOrg");
     if (!COURIER_PROVIDERS.includes(integration.provider)) {
-      throw new BadRequestException("এটি কোনো কুরিয়ার অ্যাকাউন্ট নয়");
+      throw badRequest("courier.notACourierAccount");
     }
     return integration;
   }
@@ -106,7 +107,7 @@ export class CourierRulesService {
     const rule = await (this.prisma as any).courierRule.findFirst({
       where: { id: ruleId, organizationId },
     });
-    if (!rule) throw new NotFoundException("কুরিয়ার নিয়মটি পাওয়া যায়নি");
+    if (!rule) throw notFound("courier.courierRuleNotFound");
     return rule;
   }
 
@@ -119,11 +120,11 @@ export class CourierRulesService {
 
   async create(organizationId: string, actorId: string, dto: CourierRuleDto) {
     const name = dto.name?.trim();
-    if (!name) throw new BadRequestException("name দরকার — নিয়মের একটি নাম দিন");
+    if (!name) throw badRequest("courier.ruleNameNeeded");
     const conditions = validateConditions(dto.conditions);
-    if (!dto.courierAccountId) throw new BadRequestException("courierAccountId দরকার — কোন কুরিয়ার অ্যাকাউন্টে যাবে বেছে নিন");
+    if (!dto.courierAccountId) throw badRequest("courier.ruleAccountNeeded");
     if (dto.priority !== undefined && !Number.isInteger(dto.priority)) {
-      throw new BadRequestException("priority অবশ্যই পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("courier.priorityMustBeInteger");
     }
     const integration = await this.courierAccountOrThrow(organizationId, dto.courierAccountId);
     const rule = await (this.prisma as any).courierRule.create({
@@ -151,7 +152,7 @@ export class CourierRulesService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException("name খালি হতে পারে না");
+      if (!name) throw badRequest("courier.ruleNameEmpty");
       data.name = name;
     }
     if (dto.conditions !== undefined) data.conditions = validateConditions(dto.conditions);
@@ -161,7 +162,7 @@ export class CourierRulesService {
       data.provider = integration.provider;
     }
     if (dto.priority !== undefined) {
-      if (!Number.isInteger(dto.priority)) throw new BadRequestException("priority অবশ্যই পূর্ণসংখ্যা হতে হবে");
+      if (!Number.isInteger(dto.priority)) throw badRequest("courier.priorityMustBeInteger");
       data.priority = dto.priority;
     }
     if (dto.active !== undefined) data.active = Boolean(dto.active);
@@ -286,7 +287,7 @@ export class CourierRulesService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const facts = await this.factsForOrder(organizationId, order);
     const match = await this.evaluate(organizationId, facts);
     if (!match) {

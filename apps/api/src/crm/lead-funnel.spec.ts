@@ -166,10 +166,10 @@ describe("CRM C6 — lead funnel report", () => {
 
   it("validates days: integer 1..365 only", async () => {
     const svc = new LeadsService(fakePrisma() as any);
-    await expect(svc.funnel("org-1", 0, NOW)).rejects.toThrow("between 1 and 365");
-    await expect(svc.funnel("org-1", 366, NOW)).rejects.toThrow("between 1 and 365");
-    await expect(svc.funnel("org-1", "abc", NOW)).rejects.toThrow("between 1 and 365");
-    await expect(svc.funnel("org-1", 30.5, NOW)).rejects.toThrow("between 1 and 365");
+    await expect(svc.funnel("org-1", 0, NOW)).rejects.toMatchObject({ code: "crm.daysMustBeAnIntegerBetween" });
+    await expect(svc.funnel("org-1", 366, NOW)).rejects.toMatchObject({ code: "crm.daysMustBeAnIntegerBetween" });
+    await expect(svc.funnel("org-1", "abc", NOW)).rejects.toMatchObject({ code: "crm.daysMustBeAnIntegerBetween" });
+    await expect(svc.funnel("org-1", 30.5, NOW)).rejects.toMatchObject({ code: "crm.daysMustBeAnIntegerBetween" });
     await expect(svc.funnel("org-1", "90", NOW)).resolves.toMatchObject({ days: 90 });
   });
 });

@@ -1,9 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AnalyticsService } from "../analytics/analytics.service";
 import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { ToolsService } from "./tools.service";
 import { formatMinor } from "@repo/contracts";
+import { badRequest, notFound } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
 
 export type ReportType = "daily" | "weekly" | "monthly";
 export type ReportLanguage = "bn" | "en";
@@ -79,8 +81,16 @@ export class ReportsService {
 
   async generate(organizationId: string, actorId: string, input: { type?: ReportType; date?: string; language?: ReportLanguage }) {
     const type: ReportType = input.type ?? "daily";
-    if (!["daily", "weekly", "monthly"].includes(type)) throw new BadRequestException("type must be daily, weekly or monthly");
-    const language: ReportLanguage = input.language ?? "bn";
+    if (!["daily", "weekly", "monthly"].includes(type)) throw badRequest("ai.typeMustBeDailyWeeklyOr");
+    // MB5 (ML13, CD-8 #16): an explicit input.language still
+    // wins (dto rung); absent, the default comes from the shared
+    // OWNER chain (aiReplyLanguage → dashboardLocale → acting
+    // user's preferredLocale → bn) instead of a hardcoded "bn".
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: actorId,
+      dtoLanguage: input.language ?? null,
+    });
     const data = await this.buildData(organizationId, type, input.date);
     const provider = await providerForOrg(this.llm, organizationId);
 
@@ -173,7 +183,7 @@ export class ReportsService {
 
   async getOne(organizationId: string, reportId: string) {
     const report = await (this.prisma as any).aIReport.findFirst({ where: { id: reportId, organizationId } });
-    if (!report) throw new NotFoundException("Report not found in this organization");
+    if (!report) throw notFound("ai.reportNotFoundInThisOrganization");
     const recommendations = await (this.prisma as any).aIRecommendation.findMany({ where: { reportId }, orderBy: { createdAt: "asc" } });
     return { ...this.toPublic(report), recommendations };
   }
@@ -185,9 +195,9 @@ export class ReportsService {
   }
 
   async updateRecommendation(organizationId: string, id: string, status: string) {
-    if (!["open", "done", "dismissed"].includes(status)) throw new BadRequestException("Invalid status");
+    if (!["open", "done", "dismissed"].includes(status)) throw badRequest("ai.invalidStatus");
     const rec = await (this.prisma as any).aIRecommendation.findFirst({ where: { id, organizationId } });
-    if (!rec) throw new NotFoundException("Recommendation not found");
+    if (!rec) throw notFound("ai.recommendationNotFound");
     return (this.prisma as any).aIRecommendation.update({ where: { id }, data: { status } });
   }
 

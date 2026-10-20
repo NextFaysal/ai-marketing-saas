@@ -128,7 +128,7 @@ describe("MS4 tenant SMTP verify-before-save", () => {
     await expect(svc.updateTenantEmail("org-1", "owner", {
       smtpHost: "mail.shop.example", smtpPort: 587, smtpUser: "shop@example.com",
       smtpPass: "wrong-pass", fromAddress: "hello@shop.example",
-    })).rejects.toThrow(/SMTP verification failed — nothing was saved: 535 5\.7\.8 Authentication failed/);
+    })).rejects.toMatchObject({ code: "messaging.sMTPVerificationFailedNothingWasSaved" });
     expect(tables.messagingSenderConfig.rows).toHaveLength(0);
   });
 
@@ -234,7 +234,7 @@ describe("MS4 safe view never leaks secrets", () => {
   it("updateTenantSms validates the gateway and stores the key sealed", async () => {
     const { svc, tables } = build();
     await expect(svc.updateTenantSms("org-1", "owner", { smsGateway: "carrier-pigeon", smsApiKey: "k", smsSenderId: "S" }))
-      .rejects.toThrow(/smsGateway must be/);
+      .rejects.toMatchObject({ code: "messaging.smsGatewayMustBeSslwirelessBulksmsbdOr" });
     const view: any = await svc.updateTenantSms("org-1", "owner", { smsGateway: "bulksmsbd", smsApiKey: "tenant-sms-key-123", smsSenderId: "MyShop" });
     expect(view.sms.tenantConfigured).toBe(true);
     expect(tables.messagingSenderConfig.rows[0].smsApiKeyEncrypted).not.toContain("tenant-sms-key-123");
@@ -256,8 +256,8 @@ describe("MS4 test send", () => {
     const result: any = await a.svc.sendSenderTestEmail("org-1", "owner", "owner@example.com");
     expect(result.path).toBe("platform");
     const b = build({ platformEmail: false });
-    await expect(b.svc.sendSenderTestEmail("org-1", "owner", "owner@example.com")).rejects.toThrow(/No email path is configured/);
-    await expect(a.svc.sendSenderTestEmail("org-1", "owner", "not-an-email")).rejects.toThrow(/valid test recipient/);
+    await expect(b.svc.sendSenderTestEmail("org-1", "owner", "owner@example.com")).rejects.toMatchObject({ code: "messaging.noEmailPathIsConfiguredFor" });
+    await expect(a.svc.sendSenderTestEmail("org-1", "owner", "not-an-email")).rejects.toMatchObject({ code: "messaging.aValidTestRecipientEmailAddress" });
   });
 });
 
@@ -474,7 +474,7 @@ describe("MS4 cost estimate in preview", () => {
 
   it("rates endpoint validates non-negative integers", async () => {
     const { svc } = build();
-    await expect(svc.updateSenderRates("org-1", "owner", { smsCostPerPartMinor: -5 })).rejects.toThrow(/non-negative integer/);
+    await expect(svc.updateSenderRates("org-1", "owner", { smsCostPerPartMinor: -5 })).rejects.toMatchObject({ code: "messaging.keyMustBeANonNegative" });
     const view: any = await svc.updateSenderRates("org-1", "owner", { smsCostPerPartMinor: 150 });
     expect(view.rates.smsCostPerPartMinor).toBe(150);
   });

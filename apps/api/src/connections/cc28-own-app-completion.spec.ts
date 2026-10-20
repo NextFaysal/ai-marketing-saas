@@ -3,6 +3,7 @@ process.env.JWT_SECRET = "cc28-spec-secret";
 process.env.API_PUBLIC_URL = "https://api.example.test";
 
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ConnectionsService } from "./connections.service";
 import { GoogleConnectService } from "./google-connect.service";
 import { SocialOAuthService } from "../social/social-oauth.service";
@@ -190,7 +191,7 @@ describe("CC28 app configs — google + linkedin honesty", () => {
 
   it("an unknown platform is still refused", async () => {
     const { svc } = build();
-    await expect(svc.putAppConfig(ORG, USER, "snapchat", { appId: "x", appSecret: "y" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.putAppConfig(ORG, USER, "snapchat", { appId: "x", appSecret: "y" })).rejects.toBeInstanceOf(ApiException);
   });
 });
 

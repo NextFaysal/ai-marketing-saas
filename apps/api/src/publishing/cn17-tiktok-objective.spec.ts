@@ -97,7 +97,7 @@ describe("CN17 — publishTikTok objective (draft path only)", () => {
 
   it("WEB_CONVERSIONS without pixel/event refuses BEFORE any platform call", async () => {
     const svc = new PublishingService(prismaTikTok(), audit);
-    await expect(svc.publishTikTok("org-1", "u-1", { ...baseDto, objectiveType: "WEB_CONVERSIONS" })).rejects.toThrow(/pixelId and an optimizationEvent/);
+    await expect(svc.publishTikTok("org-1", "u-1", { ...baseDto, objectiveType: "WEB_CONVERSIONS" })).rejects.toMatchObject({ code: "publishing.tiktokWebConversionsNeedsAPixelid" });
     expect(calls.length).toBe(0);
   });
 
@@ -109,7 +109,7 @@ describe("CN17 — publishTikTok objective (draft path only)", () => {
 
   it("an unknown objective refuses", async () => {
     const svc = new PublishingService(prismaTikTok(), audit);
-    await expect(svc.publishTikTok("org-1", "u-1", { ...baseDto, objectiveType: "APP_PROMOTION" })).rejects.toThrow(/Unsupported TikTok objective/);
+    await expect(svc.publishTikTok("org-1", "u-1", { ...baseDto, objectiveType: "APP_PROMOTION" })).rejects.toMatchObject({ code: "publishing.unsupportedTiktokObjectiveForThisFlow" });
     expect(calls.length).toBe(0);
   });
 });

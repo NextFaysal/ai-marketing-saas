@@ -77,6 +77,6 @@ describe("M66 streamFor token binding", () => {
 
   it("an invalid token is refused before any stream exists", async () => {
     const { svc } = service();
-    await expect(svc.streamFor("wc_key", "someone-elses-token")).rejects.toThrow(/Invalid chat session token/);
+    await expect(svc.streamFor("wc_key", "someone-elses-token")).rejects.toMatchObject({ code: "inbox.invalidChatSessionToken" });
   });
 });

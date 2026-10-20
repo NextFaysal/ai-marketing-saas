@@ -201,6 +201,6 @@ describe("CA2 CampaignsService.generateVideo (script discipline)", () => {
   it("creatives service absent → honest refusal", async () => {
     const { svc } = buildCampaigns({ getProvider: () => new DevTemplateProvider() }, undefined);
     await expect(svc.generateVideo(ORG, ACTOR, "plan-1", { productId: "prod-1" }))
-      .rejects.toThrow("AI video generation is not available in this context");
+      .rejects.toMatchObject({ code: "campaigns.aiVideoGenerationIsNotAvailable" });
   });
 });

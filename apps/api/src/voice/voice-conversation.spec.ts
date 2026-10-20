@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { BadRequestException, HttpException, NotFoundException } from "@nestjs/common";
+import { HttpException } from "@nestjs/common";
 import { VoiceService } from "./voice.service";
 import { VoiceConversationService } from "./voice-conversation.service";
 
@@ -231,13 +231,13 @@ describe("VoiceConversationService — NF3 AI Voice Agent", () => {
   describe("startConversation guards", () => {
     it("refuses when settings.enabled=false", async () => {
       const h = setup({ settings: { enabled: false } });
-      await expect(startCall(h)).rejects.toThrow(BadRequestException);
+      await expect(startCall(h)).rejects.toMatchObject({ code: "voice.agentNotEnabled" });
       expect(h.calls.length).toBe(0);
     });
 
     it("refuses when conversationAgentEnabled=false", async () => {
       const h = setup({ settings: { conversationAgentEnabled: false } });
-      await expect(startCall(h)).rejects.toThrow(BadRequestException);
+      await expect(startCall(h)).rejects.toMatchObject({ code: "voice.agentNotEnabled" });
       expect(h.calls.length).toBe(0);
     });
 
@@ -259,7 +259,7 @@ describe("VoiceConversationService — NF3 AI Voice Agent", () => {
         { id: "c2", organizationId: "org-1", orderId: "order-1" },
         { id: "c3", organizationId: "org-1", orderId: "order-1" },
       );
-      await expect(startCall(h)).rejects.toThrow(BadRequestException);
+      await expect(startCall(h)).rejects.toMatchObject({ code: "voice.maxAttemptsReached" });
     });
   });
 
@@ -402,8 +402,8 @@ describe("VoiceConversationService — NF3 AI Voice Agent", () => {
       const { call } = await startCall(h);
       await expect(
         h.service.handleCustomerTurn("org-2", call.id, "staff-9", "হ্যাঁ"),
-      ).rejects.toThrow(NotFoundException);
-      await expect(h.service.getConversation("org-2", call.id)).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ code: "voice.callRecordNotFound" });
+      await expect(h.service.getConversation("org-2", call.id)).rejects.toMatchObject({ code: "voice.callRecordNotFound" });
       const ok = await h.service.getConversation("org-1", call.id);
       expect(ok.turns.length).toBeGreaterThan(0);
       expect(ok.mode).toBe("simulation");
@@ -489,7 +489,7 @@ describe("VoiceConversationService — NF3 AI Voice Agent", () => {
       const { call } = await startCall(h);
       await expect(
         h.service.handleRelayMessage("org-1", call.id, { type: "setup" }),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toMatchObject({ code: "voice.relayNotConfigured" });
     });
   });
 

@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { API_URL } from "@/lib/api";
 import { themeOf, type ShopThemeId } from "@/lib/shop-theme";
 import {
@@ -31,9 +32,11 @@ import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
 export function ShopSocialProof({
   orgSlug,
   themeId,
+  locale = "bn",
 }: {
   orgSlug: string;
   themeId?: ShopThemeId | string;
+  locale?: ShopLocale | string;
 }) {
   const [item, setItem] = useState<SocialProofItem | null>(null);
   const [visible, setVisible] = useState(false);
@@ -203,7 +206,7 @@ export function ShopSocialProof({
       <button
         type="button"
         onClick={dismiss}
-        aria-label="বন্ধ করুন"
+        aria-label={shopT(locale).shopWidgets.close}
         className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full text-sm font-bold ${
           dark ? "text-slate-300 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-100"
         }`}

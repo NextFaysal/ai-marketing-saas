@@ -72,7 +72,7 @@ describe("RP2 custom reports", () => {
     const created = await s.create("org", "u1", { name: "Weekly ads", dimension: "platform", metrics: ["spend"], recipients: ["a@b.co", "not-an-email"] });
     expect(created.recipients).toEqual(["a@b.co"]);
     await expect(s.create("org", "u1", { name: "x", dimension: "platform", metrics: ["revenue"] })).rejects.toThrow(/পাওয়া যায়/);
-    await expect(s.get("other-org", created.id)).rejects.toThrow(/not found/i);
+    await expect(s.get("other-org", created.id)).rejects.toMatchObject({ code: "reports.savedReportNotFound" });
     const run = await s.runSaved("org", created.id);
     expect(run.dimension).toBe("platform");
   });

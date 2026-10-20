@@ -1,4 +1,5 @@
 import { UnauthorizedException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { hashSync } from "bcryptjs";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "../common/jwt-auth.guard";
@@ -82,13 +83,13 @@ describe("GB6 login events + session issuance", () => {
 
   it("login failure writes success:false with the attempted email — and never the password", async () => {
     const { svc, events, sessions } = makeAuth();
-    await expect(svc.login({ email: "tenant@x.com", password: "wrongpass" } as any, "5.6.7.8")).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.login({ email: "tenant@x.com", password: "wrongpass" } as any, "5.6.7.8")).rejects.toBeInstanceOf(ApiException);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ userId: "u-1", email: "tenant@x.com", success: false });
     expect(JSON.stringify(events[0])).not.toContain("wrongpass");
     expect(sessions).toHaveLength(0);
 
-    await expect(svc.login({ email: "ghost@x.com", password: "whatever1" } as any)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.login({ email: "ghost@x.com", password: "whatever1" } as any)).rejects.toBeInstanceOf(ApiException);
     expect(events[1]).toMatchObject({ userId: null, email: "ghost@x.com", success: false });
   });
 
@@ -111,7 +112,7 @@ describe("GB6 login events + session issuance", () => {
     const challenge = issueAdminToken({ purpose: "totp-challenge", sub: "u-1", tv: 0 }, 5);
 
     const wrong = totp(secret) === "000000" ? "000001" : "000000";
-    await expect(svc.verifyTotpLogin(challenge, wrong)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.verifyTotpLogin(challenge, wrong)).rejects.toBeInstanceOf(ApiException);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ userId: "u-1", success: false });
 
@@ -131,7 +132,7 @@ describe("GB6 login events + session issuance", () => {
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ success: true, email: "tenant@x.com" });
 
-    await expect(svc.revokeMySession("u-1", "sess-of-someone-else")).rejects.toThrow(/not found/);
+    await expect(svc.revokeMySession("u-1", "sess-of-someone-else")).rejects.toMatchObject({ code: "auth.sessionNotFound", status: 404 });
     await expect(svc.revokeMySession("u-1", sessions[0].id)).resolves.toMatchObject({ ok: true, alreadyRevoked: false });
     await expect(svc.mySessions("u-1")).resolves.toHaveLength(0);
   });
@@ -143,14 +144,14 @@ describe("GB6 JwtAuthGuard session check", () => {
     sessions.push({ id: "sess-rev", userId: "u-1", createdAt: new Date(), lastSeenAt: new Date(), revokedAt: new Date() });
     const guard = new JwtAuthGuard(jwt, reflector, p);
     const { ctx } = guardCtx(JSON.stringify({ sub: "u-1", email: "tenant@x.com", sid: "sess-rev" }));
-    await expect(guard.canActivate(ctx)).rejects.toThrow(/Session has been revoked/);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ code: "common.sessionRevoked", status: 401 });
   });
 
   it("a token whose session row is gone is a 401; a lookup error is not", async () => {
     const { p, jwt } = makeAuth();
     const guard = new JwtAuthGuard(jwt, reflector, p);
     const gone = guardCtx(JSON.stringify({ sub: "u-1", email: "tenant@x.com", sid: "sess-missing" }));
-    await expect(guard.canActivate(gone.ctx)).rejects.toThrow(/Session has been revoked/);
+    await expect(guard.canActivate(gone.ctx)).rejects.toMatchObject({ code: "common.sessionRevoked", status: 401 });
 
     const brokenPrisma: any = { userSession: { findUnique: async () => { throw new Error("db down"); } } };
     const tolerant = new JwtAuthGuard(jwt, reflector, brokenPrisma);

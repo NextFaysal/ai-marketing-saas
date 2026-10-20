@@ -1,8 +1,10 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import type { SocialPageCtx } from "./shared";
-import { PLATFORM_LABELS, ACCOUNT_STATUS_META, MAX_MEDIA, MediaThumb, formatMb, AccountAvatar, PlatformDot } from "./shared";
+import { PLATFORM_LABELS, ACCOUNT_STATUS_META, MAX_MEDIA, MediaThumb, formatMb, AccountAvatar, PlatformDot, metaLabel } from "./shared";
 import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequency } from "@/lib/social-composer";
+import { fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * SU11 — the composer card (SU1/SU2/SU3/SU4/SU8 composer sections). Pure move from the former single-file page:
@@ -17,6 +19,7 @@ import { buildPlatformPreview, isFirstCommentApplicable, type RecurrenceFrequenc
  * list empties and stay as they are.
  */
 export function ComposerPanel({ c }: { c: SocialPageCtx }) {
+  const { t, locale } = useLocale();
   const { accountSelected, accounts, aiCount, aiHashtags, aiImageProductId, aiImagePrompt, aiLanguage, aiNotice, aiProductId, aiProducts, aiScript, aiTopic, aiVariants, applyHashtagSet, assets, attachMedia, busy, caption, composerTargets, contentPlan, coverAssetId, createTemplatePoster, editingPostId, firstCommentText, generateAiCopy, generateAiImage, generateAiScript, generateContentPlan, hashtagInsights, hashtagSetName, hashtagSets, imageStatus, importError, importProductId, importProductImage, inputCls, isStory, linkUrl, loadAssets, loadMediaFolders, materializeContentPlan, mediaLimits, planAccountId, planFocus, planMonth, planPillars, planSelectedItems, platformModes, posts, recurrenceFrequency, recurrenceInterval, resetComposer, saveDraft, saveHashtagSet, scriptProductId, scriptTopic, selectedHashtags, selectedMedia, setAccountSelected, setAiCount, setAiImageProductId, setAiImagePrompt, setAiLanguage, setAiProductId, setAiTopic, setCaption, setCoverAssetId, setFirstCommentText, setHashtagSetName, setImportError, setImportProductId, setIsStory, setLinkUrl, setPlanAccountId, setPlanFocus, setPlanMonth, setPlanPillars, setPlanSelectedItems, setRecurrenceFrequency, setRecurrenceInterval, setScriptProductId, setScriptTopic, setSelectedMedia, setShowLibrary, setTemplateAssetId, setTemplateHeadline, setTemplateProductId, setTemplateSubtext, setVariantOverrides, setYtCategoryId, setYtIsShort, setYtTagsInput, setYtTitle, setYtPlaylistId, showAiPanel, showFirstCommentInput, showLibrary, templateAssetId, templateHeadline, templatePoster, templateProductId, templateSubtext, toggleAiPanel, toggleHashtag, uploadMedia, useAiCaption, variantOverrides, ytCategoryId, ytIsShort, ytTagsInput, ytTitle, ytPlaylistId, ytPlaylists, ytPlaylistsAccountId, loadYouTubePlaylists, csvImportResults, importPostsCsv, aiPlatformVariants, aiVariantDropped, translations, generatePlatformVariants, applyPlatformVariant, translateComposerText, } = c;
 
   // SN1: the YouTube target in this composer session (if any) —
@@ -51,120 +54,120 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
       <div className="soc-section-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
-            <span className="soc-step-num">১</span>
-            <div className="font-semibold">{editingPostId ? "✏️ Draft সম্পাদনা" : "✍️ নতুন পোস্ট"}</div>
+            <span className="soc-step-num">{fmtNumber(locale, 1)}</span>
+            <div className="font-semibold">{editingPostId ? t("social.cpEditDraft") : t("social.cpNewPost")}</div>
           </div>
           {editingPostId ? (
-            <button className="btn-secondary btn-sm" onClick={resetComposer}>সম্পাদনা বাতিল করুন</button>
+            <button className="btn-secondary btn-sm" onClick={resetComposer}>{t("social.cpCancelEdit")}</button>
           ) : null}
         </div>
 
-        <label className="block text-sm">ক্যাপশন
-          <textarea className={inputCls} rows={5} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="পোস্টে যা লিখতে চান..." />
+        <label className="block text-sm">{t("social.cpCaption")}
+          <textarea className={inputCls} rows={5} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder={t("social.cpCaptionPlaceholder")} />
         </label>
         <div className="-mt-2 flex flex-wrap items-center justify-between gap-2">
           {/* SN4: caption translation — the result is only shown;
               it replaces the caption when the user taps বসান. */}
           <span className="flex flex-wrap gap-1.5">
             <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200 disabled:opacity-50" disabled={busy !== "" || !caption.trim()} onClick={() => translateComposerText("caption", caption, "en")}>
-              {busy === "ai-translate-caption" ? "অনুবাদ হচ্ছে..." : "🌐 English-এ অনুবাদ"}
+              {busy === "ai-translate-caption" ? t("social.cpTranslating") : t("social.cpTranslateToEn")}
             </button>
             <button type="button" className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200 disabled:opacity-50" disabled={busy !== "" || !caption.trim()} onClick={() => translateComposerText("caption", caption, "bn")}>
-              {busy === "ai-translate-caption" ? "অনুবাদ হচ্ছে..." : "🌐 বাংলায় অনুবাদ"}
+              {busy === "ai-translate-caption" ? t("social.cpTranslating") : t("social.cpTranslateToBn")}
             </button>
           </span>
-          <span className="text-xs text-slate-400">{caption.length} অক্ষর</span>
+          <span className="text-xs text-slate-400">{t("social.cpChars", { count: fmtNumber(locale, caption.length) })}</span>
         </div>
         {translations["caption"] ? (
           <div className="space-y-1.5 rounded-xl bg-slate-50 p-3">
-            <div className="text-xs font-medium text-slate-500">{translations["caption"].targetLang === "en" ? "English অনুবাদ" : "বাংলা অনুবাদ"}</div>
+            <div className="text-xs font-medium text-slate-500">{translations["caption"].targetLang === "en" ? t("social.cpTranslationEn") : t("social.cpTranslationBn")}</div>
             <p className="whitespace-pre-wrap text-sm text-slate-700">{translations["caption"].text}</p>
-            <button type="button" className="btn-secondary btn-sm" onClick={() => setCaption(translations["caption"].text)}>এই অনুবাদ ক্যাপশনে বসান</button>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => setCaption(translations["caption"].text)}>{t("social.cpUseTranslationCaption")}</button>
           </div>
         ) : null}
 
-        <label className="block text-sm">লিংক URL (ঐচ্ছিক)
+        <label className="block text-sm">{t("social.cpLinkUrl")}
           <input className={inputCls} value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://..." />
         </label>
 
         {/* SU1: first comment — only when a Meta Page / Instagram account is selected */}
         {showFirstCommentInput ? (
           <div className="space-y-1">
-            <label className="block text-sm">প্রথম কমেন্ট (ঐচ্ছিক)
-              <textarea className={inputCls} rows={2} value={firstCommentText} onChange={(e) => setFirstCommentText(e.target.value)} placeholder="পোস্ট প্রকাশের পরপরই এই মন্তব্যটি নিজে থেকে যোগ হবে" />
+            <label className="block text-sm">{t("social.cpFirstComment")}
+              <textarea className={inputCls} rows={2} value={firstCommentText} onChange={(e) => setFirstCommentText(e.target.value)} placeholder={t("social.cpFirstCommentPlaceholder")} />
             </label>
-            <p className="text-xs text-slate-400">প্রথম কমেন্ট শুধু Facebook Page ও Instagram-এ যায় — TikTok/YouTube-এ প্রথম কমেন্ট যায় না।</p>
+            <p className="text-xs text-slate-400">{t("social.cpFirstCommentNote")}</p>
           </div>
         ) : null}
 
         {/* SU2: recurrence for a recurring series */}
         <div className="flex flex-wrap items-end gap-3">
-          <label className="block text-sm">পুনরাবৃত্তি (Recurrence)
+          <label className="block text-sm">{t("social.cpRecurrence")}
             <select className={inputCls} value={recurrenceFrequency} onChange={(e) => setRecurrenceFrequency(e.target.value as RecurrenceFrequency | "")}>
-              <option value="">নেই</option>
-              <option value="daily">প্রতিদিন (Daily)</option>
-              <option value="weekly">প্রতি সপ্তাহে (Weekly)</option>
-              <option value="monthly">প্রতি মাসে (Monthly)</option>
+              <option value="">{t("social.cpNone")}</option>
+              <option value="daily">{t("social.cpDaily")}</option>
+              <option value="weekly">{t("social.cpWeekly")}</option>
+              <option value="monthly">{t("social.cpMonthly")}</option>
             </select>
           </label>
-          <label className="block text-sm">ব্যবধান (Interval)
+          <label className="block text-sm">{t("social.cpInterval")}
             <input type="number" min={1} className={`${inputCls} w-28`} value={recurrenceInterval}
               disabled={!recurrenceFrequency}
               onChange={(e) => setRecurrenceInterval(Math.max(1, Number(e.target.value) || 1))} />
           </label>
           {recurrenceFrequency ? (
-            <p className="pb-2 text-xs text-slate-500">এই পোস্টটি একটি পুনরাবৃত্ত সিরিজের অংশ হবে — ব্যবধান {recurrenceInterval.toLocaleString("bn-BD")} করে।</p>
+            <p className="pb-2 text-xs text-slate-500">{t("social.cpRecurrenceNote", { interval: fmtNumber(locale, recurrenceInterval) })}</p>
           ) : null}
         </div>
 
         {/* SU8: optional YouTube / Story platform fields */}
         <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-          <div className="text-sm font-semibold">▶️ YouTube / Cover / Story (ঐচ্ছিক)</div>
-          <p className="text-xs text-slate-400">এই ঘরগুলো শুধু সংশ্লিষ্ট platform-এর পোস্টে ব্যবহৃত হয় — খালি রাখলে আগের মতোই পোস্ট হবে। Cover ছবিটি YouTube thumbnail হিসেবেও বসে, Facebook Page video-র cover হিসেবেও বসে।</p>
+          <div className="text-sm font-semibold">{t("social.cpYtSection")}</div>
+          <p className="text-xs text-slate-400">{t("social.cpYtSectionNote")}</p>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="block min-w-[220px] flex-1 text-sm">YouTube শিরোনাম (ঐচ্ছিক)
-              <input className={inputCls} value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder="খালি রাখলে ক্যাপশনের প্রথম লাইন" />
+            <label className="block min-w-[220px] flex-1 text-sm">{t("social.cpYtTitle")}
+              <input className={inputCls} value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder={t("social.cpYtTitlePlaceholder")} />
             </label>
-            <label className="block text-sm">YouTube Category ID (ঐচ্ছিক)
-              <input className={`${inputCls} w-36`} value={ytCategoryId} onChange={(e) => setYtCategoryId(e.target.value)} placeholder="যেমন: 22" />
+            <label className="block text-sm">{t("social.cpYtCategory")}
+              <input className={`${inputCls} w-36`} value={ytCategoryId} onChange={(e) => setYtCategoryId(e.target.value)} placeholder={t("social.cpExample22")} />
             </label>
-            <label className="block min-w-[220px] flex-1 text-sm">Cover ছবি — YouTube thumbnail / Facebook video cover (ঐচ্ছিক)
+            <label className="block min-w-[220px] flex-1 text-sm">{t("social.cpCoverLabel")}
               <select className={inputCls} value={coverAssetId} onChange={(e) => setCoverAssetId(e.target.value)}>
-                <option value="">কোনো Cover নয়</option>
+                <option value="">{t("social.cpNoCover")}</option>
                 {assets.filter((a) => a.kind === "image").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </label>
           </div>
-          <label className="block text-sm">YouTube Tags (কমা দিয়ে, ঐচ্ছিক)
-            <input className={inputCls} value={ytTagsInput} onChange={(e) => setYtTagsInput(e.target.value)} placeholder="যেমন: ঈদ, অফার, শাড়ি" />
+          <label className="block text-sm">{t("social.cpYtTags")}
+            <input className={inputCls} value={ytTagsInput} onChange={(e) => setYtTagsInput(e.target.value)} placeholder={t("social.cpYtTagsPlaceholder")} />
           </label>
           {ytTarget ? (
-            <label className="block text-sm">YouTube Playlist (ঐচ্ছিক)
+            <label className="block text-sm">{t("social.cpYtPlaylist")}
               <select className={inputCls} value={ytPlaylistId} onChange={(e) => setYtPlaylistId(e.target.value)}>
-                <option value="">কোনো playlist নয়</option>
+                <option value="">{t("social.cpNoPlaylist")}</option>
                 {ytPlaylistId && !ytPlaylists.some((pl) => pl.id === ytPlaylistId) ? (
-                  <option value={ytPlaylistId}>বর্তমান playlist ({ytPlaylistId})</option>
+                  <option value={ytPlaylistId}>{t("social.cpCurrentPlaylist", { id: ytPlaylistId })}</option>
                 ) : null}
                 {ytPlaylists.map((pl) => <option key={pl.id} value={pl.id}>{pl.title}</option>)}
               </select>
               {busy === "yt-playlists" ? (
-                <span className="text-xs text-slate-400">Playlist লোড হচ্ছে…</span>
+                <span className="text-xs text-slate-400">{t("social.cpPlaylistLoading")}</span>
               ) : ytPlaylistsAccountId === ytTarget.id && ytPlaylists.length === 0 ? (
-                <span className="text-xs text-slate-400">এই channel-এ কোনো playlist পাওয়া যায়নি।</span>
+                <span className="text-xs text-slate-400">{t("social.cpNoPlaylists")}</span>
               ) : (
-                <span className="text-xs text-slate-400">ভিডিওটি publish হওয়ার পর এই playlist-এ যোগ হবে।</span>
+                <span className="text-xs text-slate-400">{t("social.cpPlaylistNote")}</span>
               )}
             </label>
           ) : null}
           <div className="flex flex-wrap gap-4">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input type="checkbox" checked={ytIsShort} onChange={(e) => setYtIsShort(e.target.checked)} />
-              <span>YouTube Shorts হিসেবে প্রকাশ</span>
+              <span>{t("social.cpYtShorts")}</span>
             </label>
             {composerTargets.some((a) => a.platform === "meta_page") ? (
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input type="checkbox" checked={isStory} onChange={(e) => setIsStory(e.target.checked)} />
-                <span>Facebook Story হিসেবে প্রকাশ</span>
+                <span>{t("social.cpFbStory")}</span>
               </label>
             ) : null}
           </div>
@@ -173,43 +176,43 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
         {/* SP3 AI copy panel */}
         <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
           <button type="button" className="flex w-full items-center justify-between text-left font-semibold" onClick={toggleAiPanel}>
-            <span>✨ AI দিয়ে Caption</span>
-            <span className="text-xs text-slate-500">{showAiPanel ? "লুকান ▲" : "খুলুন ▼"}</span>
+            <span>{t("social.cpAiCaptionTitle")}</span>
+            <span className="text-xs text-slate-500">{showAiPanel ? t("social.cpHide") : t("social.cpShow")}</span>
           </button>
           {showAiPanel ? (
             <div className="space-y-3">
               <div className="flex flex-wrap items-end gap-2">
-                <label className="block min-w-[200px] flex-1 text-sm">Product (ঐচ্ছিক)
+                <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpProductOptional")}
                   <select className={inputCls} value={aiProductId} onChange={(e) => setAiProductId(e.target.value)}>
-                    <option value="">কোনো Product নয়</option>
+                    <option value="">{t("social.cpNoProduct")}</option>
                     {aiProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                <label className="block min-w-[200px] flex-1 text-sm">বিষয় / Topic (ঐচ্ছিক)
-                  <input className={inputCls} value={aiTopic} onChange={(e) => setAiTopic(e.target.value)} placeholder="যেমন: ঈদ কালেকশন লঞ্চ" />
+                <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpTopicOptional")}
+                  <input className={inputCls} value={aiTopic} onChange={(e) => setAiTopic(e.target.value)} placeholder={t("social.cpTopicPlaceholder")} />
                 </label>
-                <label className="block text-sm">ভাষা
+                <label className="block text-sm">{t("social.cpLanguage")}
                   <select className={inputCls} value={aiLanguage} onChange={(e) => setAiLanguage(e.target.value as "bn" | "en")}>
-                    <option value="bn">বাংলা</option>
+                    <option value="bn">{t("social.cpLangBn")}</option>
                     <option value="en">English</option>
                   </select>
                 </label>
-                <label className="block text-sm">সংখ্যা
+                <label className="block text-sm">{t("social.cpCount")}
                   <select className={inputCls} value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
                     {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </label>
                 <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generateAiCopy}>
-                  {busy === "ai-generate" ? "তৈরি হচ্ছে..." : "✨ Caption তৈরি করুন"}
+                  {busy === "ai-generate" ? t("social.cpGenerating") : t("social.cpGenerateCaption")}
                 </button>
               </div>
-              <p className="text-xs text-slate-400">AI শুধু আপনার Product-এর আসল তথ্য ও Business Brain-এর তথ্য ব্যবহার করে — দাম বা অফার বানিয়ে দেবে না। Product না বেছে নিলে একটি Topic লিখতে হবে।</p>
+              <p className="text-xs text-slate-400">{t("social.cpAiGroundingNote")}</p>
 
               {aiNotice ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{aiNotice}</p> : null}
 
               {aiHashtags.length > 0 ? (
                 <div className="space-y-1.5">
-                  <div className="text-sm font-medium">প্রস্তাবিত Hashtag (বেছে নিন)</div>
+                  <div className="text-sm font-medium">{t("social.cpSuggestedHashtags")}</div>
                   <div className="flex flex-wrap gap-1.5">
                     {aiHashtags.map((tag) => {
                       const active = selectedHashtags.includes(tag);
@@ -230,17 +233,17 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                     <div key={i} className="space-y-2 rounded-xl bg-white p-3">
                       <p className="whitespace-pre-wrap text-sm text-slate-700">{v.caption}</p>
                       {v.policy.status === "pass" ? (
-                        <span className="inline-block rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✅ Policy Check: Pass</span>
+                        <span className="inline-block rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{t("social.cpPolicyPass")}</span>
                       ) : (
                         <div className="space-y-1">
-                          <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">⚠️ Flagged</span>
+                          <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">{t("social.cpFlagged")}</span>
                           {v.policy.findings.map((f, j) => (
                             <p key={j} className="text-xs text-amber-800">{f.explanation}</p>
                           ))}
                         </div>
                       )}
                       <div>
-                        <button type="button" className="btn-secondary btn-sm" onClick={() => useAiCaption(v)}>এই Caption ব্যবহার করুন</button>
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => useAiCaption(v)}>{t("social.cpUseCaption")}</button>
                       </div>
                     </div>
                   ))}
@@ -253,13 +256,13 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                   when the user taps বসান. Nothing is saved. */}
               {!editingPostId ? (
                 <div className="space-y-2 border-t border-indigo-100 pt-3">
-                  <div className="text-sm font-medium">📱 Platform অনুযায়ী Variant</div>
-                  <p className="text-xs text-slate-400">মূল ক্যাপশনটাকেই AI প্রতিটি বেছে-নেওয়া platform-এর ধরন অনুযায়ী সাজিয়ে দেবে — নতুন দাম বা তথ্য যোগ হবে না। ফলাফল শুধু দেখানো হয়; “বসান” চাপলে সংশ্লিষ্ট অ্যাকাউন্টের Variant ঘরে যাবে।</p>
+                  <div className="text-sm font-medium">{t("social.cpPlatformVariants")}</div>
+                  <p className="text-xs text-slate-400">{t("social.cpPlatformVariantsNote")}</p>
                   <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generatePlatformVariants}>
-                    {busy === "ai-variants" ? "তৈরি হচ্ছে..." : "📱 Platform Variant বানান"}
+                    {busy === "ai-variants" ? t("social.cpGenerating") : t("social.cpMakeVariants")}
                   </button>
                   {aiVariantDropped > 0 ? (
-                    <p className="text-xs text-amber-700">{aiVariantDropped.toLocaleString("bn-BD")}টি variant যাচাইয়ে বাদ গেছে (মূল লেখায় নেই এমন সংখ্যা ছিল)।</p>
+                    <p className="text-xs text-amber-700">{t("social.cpVariantsDropped", { count: fmtNumber(locale, aiVariantDropped) })}</p>
                   ) : null}
                   {aiPlatformVariants.length > 0 ? (
                     <div className="space-y-2">
@@ -271,18 +274,18 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                               <PlatformDot platform={v.platform} />
                               <span className="badge-slate">{PLATFORM_LABELS[v.platform] ?? v.platform}</span>
                               {v.policy.status === "pass" ? (
-                                <span className="inline-block rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">✅ Policy Check: Pass</span>
+                                <span className="inline-block rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{t("social.cpPolicyPass")}</span>
                               ) : (
-                                <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">⚠️ Flagged</span>
+                                <span className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">{t("social.cpFlagged")}</span>
                               )}
                             </div>
                             <p className="whitespace-pre-wrap text-sm text-slate-700">{v.caption}</p>
                             {targets.length > 0 ? (
                               <button type="button" className="btn-secondary btn-sm" onClick={() => applyPlatformVariant(v.platform, v.caption)}>
-                                {targets.map((a) => a.name).join(", ")} — এই অ্যাকাউন্টের Variant-এ বসান
+                                {t("social.cpApplyVariant", { names: targets.map((a) => a.name).join(", ") })}
                               </button>
                             ) : (
-                              <p className="text-xs text-slate-400">এই platform-এর কোনো অ্যাকাউন্ট এখন বেছে নেওয়া নেই।</p>
+                              <p className="text-xs text-slate-400">{t("social.cpNoAccountForPlatform")}</p>
                             )}
                           </div>
                         );
@@ -294,74 +297,74 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
 
               {/* Hashtag sets */}
               <div className="space-y-2 border-t border-indigo-100 pt-3">
-                <div className="text-sm font-medium">সংরক্ষিত Hashtag Set</div>
+                <div className="text-sm font-medium">{t("social.cpSavedHashtagSets")}</div>
                 {hashtagSets.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {hashtagSets.map((s) => (
                       <button key={s.id} type="button" onClick={() => applyHashtagSet(s)}
                         className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
-                        title={s.tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")}>
+                        title={s.tags.map((tag) => `#${tag.replace(/^#/, "")}`).join(" ")}>
                         {s.name} ({s.tags.length})
                       </button>
                     ))}
                   </div>
                 ) : (
                   <div className="soc-empty-sm">
-                    <p className="text-xs text-slate-400">এখনো কোনো Hashtag Set সংরক্ষণ করা হয়নি।</p>
+                    <p className="text-xs text-slate-400">{t("social.cpNoHashtagSets")}</p>
                   </div>
                 )}
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="block min-w-[200px] flex-1 text-sm">Set-এর নাম
-                    <input className={inputCls} value={hashtagSetName} onChange={(e) => setHashtagSetName(e.target.value)} placeholder="যেমন: ঈদ সেট" />
+                  <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpSetName")}
+                    <input className={inputCls} value={hashtagSetName} onChange={(e) => setHashtagSetName(e.target.value)} placeholder={t("social.cpSetNamePlaceholder")} />
                   </label>
                   <button type="button" className="btn-secondary disabled:opacity-50" disabled={busy !== ""} onClick={saveHashtagSet}>
-                    {busy === "ai-save-set" ? "সংরক্ষণ হচ্ছে..." : "💾 Set হিসেবে সংরক্ষণ"}
+                    {busy === "ai-save-set" ? t("social.cpSaving") : t("social.cpSaveAsSet")}
                   </button>
                 </div>
-                <p className="text-xs text-slate-400">বর্তমানে বেছে নেওয়া Hashtagগুলো ({selectedHashtags.length}টি) এই Set-এ সংরক্ষণ হবে।</p>
+                <p className="text-xs text-slate-400">{t("social.cpSetSaveNote", { count: fmtNumber(locale, selectedHashtags.length) })}</p>
               </div>
 
               {/* SU4: hashtag advice from the org's own published data */}
               <div className="space-y-2 border-t border-indigo-100 pt-3">
-                <div className="text-sm font-medium">Hashtag পরামর্শ (নিজের data থেকে)</div>
+                <div className="text-sm font-medium">{t("social.cpHashtagAdvice")}</div>
                 {hashtagInsights && hashtagInsights.postsConsidered > 0 && hashtagInsights.tags.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {hashtagInsights.tags.map((t) => {
-                      const normalized = t.tag.startsWith("#") ? t.tag : `#${t.tag}`;
+                    {hashtagInsights.tags.map((ht) => {
+                      const normalized = ht.tag.startsWith("#") ? ht.tag : `#${ht.tag}`;
                       const active = selectedHashtags.includes(normalized);
                       return (
-                        <button key={t.tag} type="button" onClick={() => toggleHashtag(normalized)}
+                        <button key={ht.tag} type="button" onClick={() => toggleHashtag(normalized)}
                           className={`rounded-full px-2.5 py-1 text-xs font-medium ${active ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                          {normalized} · গড় engagement {t.avgEngagement.toLocaleString("bn-BD")} · {t.posts.toLocaleString("bn-BD")}টি post
+                          {t("social.cpTagStats", { tag: normalized, avg: fmtNumber(locale, ht.avgEngagement), posts: fmtNumber(locale, ht.posts) })}
                         </button>
                       );
                     })}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500">এখনো যথেষ্ট published post-এর data নেই — post publish ও insights এলে এখানে নিজের সেরা hashtag দেখা যাবে।</p>
+                  <p className="text-xs text-slate-500">{t("social.cpNoHashtagData")}</p>
                 )}
               </div>
 
               {/* SU4: monthly content plan */}
               <div className="space-y-3 border-t border-indigo-100 pt-3">
-                <div className="text-sm font-medium">📅 মাসের Content Plan</div>
+                <div className="text-sm font-medium">{t("social.cpContentPlan")}</div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="block text-sm">মাস
+                  <label className="block text-sm">{t("social.cpMonth")}
                     <input type="month" className={inputCls} value={planMonth} onChange={(e) => setPlanMonth(e.target.value)} />
                   </label>
-                  <label className="block min-w-[180px] flex-1 text-sm">Pillars (কমা দিয়ে)
-                    <input className={inputCls} value={planPillars} onChange={(e) => setPlanPillars(e.target.value)} placeholder="যেমন: পণ্য পরিচিতি, গ্রাহকের গল্প, অফার" />
+                  <label className="block min-w-[180px] flex-1 text-sm">{t("social.cpPillars")}
+                    <input className={inputCls} value={planPillars} onChange={(e) => setPlanPillars(e.target.value)} placeholder={t("social.cpPillarsPlaceholder")} />
                   </label>
-                  <label className="block min-w-[180px] flex-1 text-sm">Focus (ঐচ্ছিক)
-                    <input className={inputCls} value={planFocus} onChange={(e) => setPlanFocus(e.target.value)} placeholder="যেমন: ঈদ কালেকশন" />
+                  <label className="block min-w-[180px] flex-1 text-sm">{t("social.cpFocus")}
+                    <input className={inputCls} value={planFocus} onChange={(e) => setPlanFocus(e.target.value)} placeholder={t("social.cpFocusPlaceholder")} />
                   </label>
                   <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generateContentPlan}>
-                    {busy === "ai-plan" ? "তৈরি হচ্ছে..." : "📅 Plan তৈরি করুন"}
+                    {busy === "ai-plan" ? t("social.cpGenerating") : t("social.cpMakePlan")}
                   </button>
                 </div>
                 {contentPlan ? (
                   <div className="space-y-2">
-                    <p className="text-xs text-slate-500">Plan: {contentPlan.month} · অবস্থা: {contentPlan.status} · Pillars: {contentPlan.pillars.join(", ") || "—"}</p>
+                    <p className="text-xs text-slate-500">{t("social.cpPlanMeta", { month: contentPlan.month, status: contentPlan.status, pillars: contentPlan.pillars.join(", ") || "—" })}</p>
                     <div className="space-y-2">
                       {contentPlan.items.map((item, i) => (
                         <div key={i} className="flex items-start gap-2 rounded-xl bg-white p-3">
@@ -369,51 +372,51 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                             onChange={(e) => setPlanSelectedItems((s) => ({ ...s, [i]: e.target.checked }))} />
                           <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5 text-sm">
-                              <span className="font-medium">{item.day.toLocaleString("bn-BD")} তারিখ</span>
+                              <span className="font-medium">{t("social.cpPlanDay", { day: fmtNumber(locale, item.day) })}</span>
                               <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700">{item.pillar}</span>
                               {item.productName ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{item.productName}</span> : null}
-                              {item.materializedPostId ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ draft তৈরি হয়েছে</span> : null}
+                              {item.materializedPostId ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">{t("social.cpDraftCreated")}</span> : null}
                             </div>
                             <p className="whitespace-pre-wrap text-sm text-slate-700">{item.caption}</p>
-                            {item.mediaIdea ? <p className="text-xs text-slate-500">মিডিয়া আইডিয়া: {item.mediaIdea}</p> : null}
+                            {item.mediaIdea ? <p className="text-xs text-slate-500">{t("social.cpMediaIdea", { idea: item.mediaIdea })}</p> : null}
                           </div>
                         </div>
                       ))}
                     </div>
                     <div className="flex flex-wrap items-end gap-2">
-                      <label className="block min-w-[200px] flex-1 text-sm">Draft-এর অ্যাকাউন্ট
+                      <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpDraftAccount")}
                         <select className={inputCls} value={planAccountId} onChange={(e) => setPlanAccountId(e.target.value)}>
-                          <option value="">অ্যাকাউন্ট বেছে নিন</option>
+                          <option value="">{t("social.cpChooseAccount")}</option>
                           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} ({PLATFORM_LABELS[a.platform] ?? a.platform})</option>)}
                         </select>
                       </label>
                       <button type="button" className="btn-secondary disabled:opacity-50" disabled={busy !== ""} onClick={materializeContentPlan}>
-                        {busy === "ai-plan-materialize" ? "Draft তৈরি হচ্ছে..." : "বাছাই করা item দিয়ে Draft বানান"}
+                        {busy === "ai-plan-materialize" ? t("social.cpDraftCreating") : t("social.cpMakeDrafts")}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="soc-empty-sm">
-                    <p className="text-xs text-slate-400">এখনো কোনো Content Plan নেই — উপরে মাস বেছে Plan তৈরি করুন।</p>
+                    <p className="text-xs text-slate-400">{t("social.cpNoPlan")}</p>
                   </div>
                 )}
               </div>
 
               {/* SU4: Reel / Short script */}
               <div className="space-y-3 border-t border-indigo-100 pt-3">
-                <div className="text-sm font-medium">🎬 Reel/Short Script</div>
+                <div className="text-sm font-medium">{t("social.cpScriptTitle")}</div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="block min-w-[200px] flex-1 text-sm">বিষয় / Topic
-                    <input className={inputCls} value={scriptTopic} onChange={(e) => setScriptTopic(e.target.value)} placeholder="যেমন: নতুন শাড়ি কালেকশনের ঝলক" />
+                  <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpTopic")}
+                    <input className={inputCls} value={scriptTopic} onChange={(e) => setScriptTopic(e.target.value)} placeholder={t("social.cpScriptTopicPlaceholder")} />
                   </label>
-                  <label className="block min-w-[180px] flex-1 text-sm">Product (ঐচ্ছিক)
+                  <label className="block min-w-[180px] flex-1 text-sm">{t("social.cpProductOptional")}
                     <select className={inputCls} value={scriptProductId} onChange={(e) => setScriptProductId(e.target.value)}>
-                      <option value="">কোনো Product নয়</option>
+                      <option value="">{t("social.cpNoProduct")}</option>
                       {aiProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </label>
                   <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generateAiScript}>
-                    {busy === "ai-script" ? "তৈরি হচ্ছে..." : "🎬 Script তৈরি করুন"}
+                    {busy === "ai-script" ? t("social.cpGenerating") : t("social.cpMakeScript")}
                   </button>
                 </div>
                 {aiScript ? (
@@ -421,7 +424,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                     <p className="text-base font-semibold text-slate-800">{aiScript.hook}</p>
                     {aiScript.onScreenText.length > 0 ? (
                       <div>
-                        <div className="text-sm font-medium">পর্দায় দেখানো লেখা (On-screen text)</div>
+                        <div className="text-sm font-medium">{t("social.cpOnScreenText")}</div>
                         <ul className="list-inside list-disc text-sm text-slate-700">
                           {aiScript.onScreenText.map((line, i) => <li key={i}>{line}</li>)}
                         </ul>
@@ -429,7 +432,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                     ) : null}
                     {aiScript.shotList.length > 0 ? (
                       <div>
-                        <div className="text-sm font-medium">Shot তালিকা</div>
+                        <div className="text-sm font-medium">{t("social.cpShotList")}</div>
                         <ol className="list-inside list-decimal text-sm text-slate-700">
                           {aiScript.shotList.map((shot, i) => <li key={i}>{shot}</li>)}
                         </ol>
@@ -437,9 +440,9 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                     ) : null}
                     {aiScript.captionDraft ? (
                       <div className="space-y-1">
-                        <div className="text-sm font-medium">Caption খসড়া</div>
+                        <div className="text-sm font-medium">{t("social.cpCaptionDraft")}</div>
                         <p className="whitespace-pre-wrap text-sm text-slate-700">{aiScript.captionDraft}</p>
-                        <button type="button" className="btn-secondary btn-sm" onClick={() => setCaption(aiScript.captionDraft)}>Caption হিসেবে ব্যবহার করুন</button>
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => setCaption(aiScript.captionDraft)}>{t("social.cpUseAsCaption")}</button>
                       </div>
                     ) : null}
                   </div>
@@ -454,8 +457,8 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
       {/* SD3 Step 2 — Media */}
       <div className="soc-section-card">
         <div className="flex items-center gap-2.5">
-          <span className="soc-step-num">২</span>
-          <div className="text-sm font-semibold">মিডিয়া (সর্বোচ্চ {MAX_MEDIA}টি)</div>
+          <span className="soc-step-num">{fmtNumber(locale, 2)}</span>
+          <div className="text-sm font-semibold">{t("social.cpMediaMax", { max: fmtNumber(locale, MAX_MEDIA) })}</div>
         </div>
         <div className="space-y-3">
           <div
@@ -469,7 +472,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
               {selectedMedia.map((m) => (
                 <div key={m.assetId} className="relative">
                   <MediaThumb assetId={m.assetId} kind={m.kind} className="h-20 w-20 rounded-lg object-cover" />
-                  <button type="button" aria-label={`${m.name ?? "মিডিয়া"} সরান`}
+                  <button type="button" aria-label={t("social.cpRemoveMediaAria", { name: m.name ?? t("social.cpMediaFallback") })}
                     className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[11px] font-bold text-white shadow"
                     onClick={() => setSelectedMedia((prev) => prev.filter((x) => x.assetId !== m.assetId))}>✕</button>
                   {m.name ? <div className="mt-0.5 w-20 truncate text-xs text-slate-400" title={m.name}>{m.name}</div> : null}
@@ -477,96 +480,96 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-400">এখনো কোনো মিডিয়া যোগ হয়নি — শুধু লেখার পোস্টও Draft করা যায়।</p>
+            <p className="text-sm text-slate-400">{t("social.cpNoMedia")}</p>
           )}
           <div className="flex flex-wrap items-center gap-2">
             <label className={`btn-secondary btn-sm cursor-pointer ${busy !== "" ? "pointer-events-none opacity-50" : ""}`}>
-              {busy === "upload" ? "আপলোড হচ্ছে..." : "⬆ নতুন ফাইল আপলোড"}
+              {busy === "upload" ? t("social.cpUploading") : t("social.cpUploadNew")}
               <input type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadMedia(f); }} />
             </label>
             <button type="button" className="btn-secondary btn-sm" onClick={() => { setShowLibrary((s) => !s); if (!showLibrary) { loadAssets().catch(() => undefined); loadMediaFolders().catch(() => undefined); } }}>
-              🖼️ মিডিয়া লাইব্রেরি {showLibrary ? "লুকান" : "থেকে বেছে নিন"}
+              {t("social.cpMediaLibraryToggle", { state: showLibrary ? t("social.cpLibHide") : t("social.cpLibPick") })}
             </button>
           </div>
           </div>
-          <p className="text-xs text-slate-400">ছবি সর্বোচ্চ {formatMb(mediaLimits?.imageMaxBytes ?? 2_100_000)} · ভিডিও সর্বোচ্চ {formatMb(mediaLimits?.videoMaxBytes ?? 268_435_456)} — ভিডিও সরাসরি স্ট্রিম হয়ে আপলোড হয়, বড় ফাইলও চলবে।</p>
+          <p className="text-xs text-slate-400">{t("social.cpMediaLimits", { image: formatMb(mediaLimits?.imageMaxBytes ?? 2_100_000, locale), video: formatMb(mediaLimits?.videoMaxBytes ?? 268_435_456, locale) })}</p>
           {/* PP3: Product থেকে ছবি import */}
           <div className="space-y-2 rounded-xl border border-slate-200 p-3">
-            <div className="text-sm font-medium">🛍️ Product থেকে ছবি</div>
+            <div className="text-sm font-medium">{t("social.cpProductImage")}</div>
             <div className="flex flex-wrap items-end gap-2">
-              <label className="block min-w-[200px] flex-1 text-sm">Product বেছে নিন
+              <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpChooseProduct")}
                 <select className={inputCls} value={importProductId} onChange={(e) => { setImportProductId(e.target.value); setImportError(""); }}>
-                  <option value="">Product বেছে নিন</option>
+                  <option value="">{t("social.cpChooseProduct")}</option>
                   {aiProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
               <button type="button" className="btn-secondary disabled:opacity-50" disabled={busy !== "" || !importProductId} onClick={importProductImage}>
-                {busy === "import-media" ? "Import হচ্ছে..." : "ছবি Import করুন"}
+                {busy === "import-media" ? t("social.cpImporting") : t("social.cpImportImage")}
               </button>
             </div>
             {importError ? <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{importError}</p> : null}
-            <p className="text-xs text-slate-400">Product-এর ছবি তার URL থেকে Media Library-তে import হয়ে এই Post-এ যোগ হবে। একই ছবি আগেই import করা থাকলে নতুন করে আনা হয় না — আগেরটাই ব্যবহার হয়।</p>
+            <p className="text-xs text-slate-400">{t("social.cpProductImageNote")}</p>
           </div>
           {/* SP4: AI image generation */}
           <div className="space-y-3 rounded-xl border border-violet-100 bg-violet-50/40 p-4">
-            <div className="font-semibold">🤖 AI ছবি</div>
+            <div className="font-semibold">{t("social.cpAiImage")}</div>
             {imageStatus && !imageStatus.configured ? (
-              <p className="text-sm text-slate-500">AI ছবি তৈরির provider configure করা নেই — Admin Panel → Platform Config-এ সেট করুন, অথবা Template Poster ব্যবহার করুন।</p>
+              <p className="text-sm text-slate-500">{t("social.cpAiImageNotConfigured")}</p>
             ) : (
               <div className="space-y-3">
-                <label className="block text-sm">ছবির বর্ণনা (Prompt)
-                  <textarea className={inputCls} rows={3} value={aiImagePrompt} onChange={(e) => setAiImagePrompt(e.target.value)} placeholder="যেমন: লাল পাঞ্জাবি পরা মডেল, স্টুডিও আলো, ঈদের আবহ" />
+                <label className="block text-sm">{t("social.cpImagePrompt")}
+                  <textarea className={inputCls} rows={3} value={aiImagePrompt} onChange={(e) => setAiImagePrompt(e.target.value)} placeholder={t("social.cpImagePromptPlaceholder")} />
                 </label>
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="block min-w-[200px] flex-1 text-sm">Product (ঐচ্ছিক — নাম ও Category Prompt-এ যোগ হবে)
+                  <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpProductForPrompt")}
                     <select className={inputCls} value={aiImageProductId} onChange={(e) => setAiImageProductId(e.target.value)}>
-                      <option value="">কোনো Product নয়</option>
+                      <option value="">{t("social.cpNoProduct")}</option>
                       {aiProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </label>
                   <button type="button" className="btn-ai" disabled={busy !== ""} onClick={generateAiImage}>
-                    {busy === "ai-image" ? "তৈরি হচ্ছে..." : "ছবি তৈরি করুন"}
+                    {busy === "ai-image" ? t("social.cpGenerating") : t("social.cpMakeImage")}
                   </button>
                 </div>
-                <p className="text-xs text-slate-400">তৈরি হওয়া ছবি সরাসরি এই Post-এর জন্য বেছে নেওয়া হবে এবং Media Library-তেও থাকবে।</p>
+                <p className="text-xs text-slate-400">{t("social.cpAiImageNote")}</p>
               </div>
             )}
           </div>
 
           {/* SP4: template poster composer */}
           <div className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/40 p-4">
-            <div className="font-semibold">🎨 Template Poster</div>
+            <div className="font-semibold">{t("social.cpTemplatePoster")}</div>
             <div className="flex flex-wrap items-end gap-2">
-              <label className="block min-w-[200px] flex-1 text-sm">ছবি (Media Library থেকে{templateProductId ? " — Product বাছলে ঐচ্ছিক" : ""})
+              <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpTemplateImage")}{templateProductId ? t("social.cpTemplateImageSuffix") : ""}
                 <select className={inputCls} value={templateAssetId} onChange={(e) => setTemplateAssetId(e.target.value)}>
-                  <option value="">ছবি বেছে নিন</option>
+                  <option value="">{t("social.cpChooseImage")}</option>
                   {assets.filter((a) => a.kind === "image").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </label>
-              <label className="block min-w-[200px] flex-1 text-sm">Product (ঐচ্ছিক)
+              <label className="block min-w-[200px] flex-1 text-sm">{t("social.cpProductOptional")}
                 <select className={inputCls} value={templateProductId} onChange={(e) => setTemplateProductId(e.target.value)}>
-                  <option value="">কোনো Product নয়</option>
+                  <option value="">{t("social.cpNoProduct")}</option>
                   {aiProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
             </div>
-            <p className="text-xs text-teal-700">Product বাছলে তার ছবি নিজে থেকে import হয়ে যাবে — আলাদা করে Library থেকে ছবি না বাছলেও Poster তৈরি হবে।</p>
+            <p className="text-xs text-teal-700">{t("social.cpTemplateProductNote")}</p>
             <label className="block text-sm">Headline
-              <input className={inputCls} value={templateHeadline} onChange={(e) => setTemplateHeadline(e.target.value)} placeholder="যেমন: ঈদ অফার" maxLength={120} />
+              <input className={inputCls} value={templateHeadline} onChange={(e) => setTemplateHeadline(e.target.value)} placeholder={t("social.cpHeadlinePlaceholder")} maxLength={120} />
             </label>
-            <label className="block text-sm">Subtext (ঐচ্ছিক)
-              <input className={inputCls} value={templateSubtext} onChange={(e) => setTemplateSubtext(e.target.value)} placeholder="খালি রাখলে Product-এর আসল দাম বসবে" maxLength={160} />
+            <label className="block text-sm">{t("social.cpSubtext")}
+              <input className={inputCls} value={templateSubtext} onChange={(e) => setTemplateSubtext(e.target.value)} placeholder={t("social.cpSubtextPlaceholder")} maxLength={160} />
             </label>
             <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== ""} onClick={createTemplatePoster}>
-              {busy === "template-image" ? "তৈরি হচ্ছে..." : "Poster তৈরি করুন"}
+              {busy === "template-image" ? t("social.cpGenerating") : t("social.cpMakePoster")}
             </button>
-            <p className="text-xs text-slate-400">Posterটি SVG ফরম্যাটে তৈরি হয় — Browser-এ দেখা ও Download করা যায়।</p>
+            <p className="text-xs text-slate-400">{t("social.cpPosterNote")}</p>
             {templatePoster ? (
               <div className="flex flex-wrap items-center gap-3">
                 <MediaThumb assetId={templatePoster.id} kind="image" className="h-24 w-24 rounded-lg object-cover" />
                 <div className="space-y-1">
                   <div className="text-sm font-medium">{templatePoster.name}</div>
-                  <button type="button" className="btn-secondary btn-sm" onClick={() => attachMedia({ assetId: templatePoster.id, kind: templatePoster.kind, name: templatePoster.name })}>Post-এ ব্যবহার করুন</button>
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => attachMedia({ assetId: templatePoster.id, kind: templatePoster.kind, name: templatePoster.name })}>{t("social.cpUseInPost")}</button>
                 </div>
               </div>
             ) : null}
@@ -578,13 +581,13 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
       {/* SD3 Step 3 — Accounts & variants */}
       <div className="soc-section-card">
         <div className="flex items-center gap-2.5">
-          <span className="soc-step-num">৩</span>
-          <div className="text-sm font-semibold">কোন অ্যাকাউন্টের জন্য{editingPostId ? "" : " (একাধিক বেছে নেওয়া যায়)"}</div>
+          <span className="soc-step-num">{fmtNumber(locale, 3)}</span>
+          <div className="text-sm font-semibold">{t("social.cpAccountsFor")}{editingPostId ? "" : t("social.cpAccountsMulti")}</div>
         </div>
         <div className="space-y-2">
           {accounts.length === 0 ? (
             <div className="soc-empty-sm">
-              <p className="text-sm text-slate-400">আগে উপরে একটি অ্যাকাউন্ট যুক্ত করুন।</p>
+              <p className="text-sm text-slate-400">{t("social.cpConnectFirst")}</p>
             </div>
           ) : accounts.map((a) => {
             const usable = a.status === "connected";
@@ -599,29 +602,29 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                 {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <span className="text-xs text-slate-500">@{a.username}</span> : null}
                 {!usable ? (
                   <span className="text-xs text-red-600">
-                    ({ACCOUNT_STATUS_META[a.status]?.label ?? a.status}{a.lastError ? ` — ${a.lastError}` : ""})
+                    ({metaLabel(ACCOUNT_STATUS_META[a.status], t, a.status)}{a.lastError ? ` — ${a.lastError}` : ""})
                   </span>
                 ) : null}
               </label>
             );
           })}
-          {editingPostId ? <p className="text-xs text-slate-400">সম্পাদনার সময় অ্যাকাউন্ট বদলানো যায় না — Draftটি যেই অ্যাকাউন্টের, সেটিতেই থাকবে।</p> : null}
+          {editingPostId ? <p className="text-xs text-slate-400">{t("social.cpEditAccountLocked")}</p> : null}
           {!editingPostId && accounts.some((a) => (a.platform === "tiktok" || a.platform === "youtube") && a.status === "connected" && accountSelected[a.id]) ? (
             <p className="rounded-lg bg-violet-50 p-2.5 text-xs text-violet-800">
-              🎬 TikTok/YouTube বেছে নিয়েছেন — এই প্ল্যাটফর্মগুলোতে শুধু <strong>ঠিক একটি Video</strong> পোস্ট করা যায়। ছবি বা একাধিক মিডিয়া থাকলে TikTok/YouTube-এর পোস্ট শিডিউল/প্রকাশের সময় আটকে যাবে (Meta-র পোস্টে সমস্যা হবে না)।
+              {t("social.cpTiktokYtNoteA")}<strong>{t("social.cpExactlyOneVideo")}</strong>{t("social.cpTiktokYtNoteB")}
               {accounts.some((a) => a.platform === "tiktok" && a.status === "connected" && accountSelected[a.id]) && platformModes && !platformModes.tiktok.audited
-                ? " TikTok Inbox mode-এ ক্যাপশন সাথে যায় না — Creator-কে app-এ ক্যাপশন লিখতে হবে।"
+                ? t("social.cpTiktokInboxSuffix")
                 : null}
             </p>
           ) : null}
           {!editingPostId && accounts.some((a) => a.platform === "telegram" && a.status === "connected" && accountSelected[a.id]) ? (
             <p className="rounded-lg bg-sky-50 p-2.5 text-xs text-sky-800">
-              ✈️ Telegram বেছে নিয়েছেন — শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>১০টি মিডিয়ার Media Group</strong> পাঠানো যায়। মিডিয়ার ক্যাপশন ১০২৪ অক্ষরের বেশি হলে পুরো লেখাটি আলাদা মেসেজ হিসেবে ঠিক পরেই যাবে। First Comment Telegram-এ পাঠানো হয় না (Discussion Group-এর পথ আলাদা)।
+              {t("social.cpTelegramNoteA")}<strong>{t("social.cpTenMedia")}</strong>{t("social.cpTelegramNoteB")}
             </p>
           ) : null}
           {!editingPostId && accounts.some((a) => a.platform === "threads" && a.status === "connected" && accountSelected[a.id]) ? (
             <p className="rounded-lg bg-slate-100 p-2.5 text-xs text-slate-700">
-              🧵 Threads বেছে নিয়েছেন — ক্যাপশন সর্বোচ্চ <strong>৫০০ অক্ষর</strong>; শুধু লেখা, একটি ছবি/ভিডিও, অথবা সর্বোচ্চ <strong>২০টি মিডিয়ার Carousel</strong> পোস্ট করা যায়। First Comment Threads-এ পাঠানো হয় না।
+              {t("social.cpThreadsNoteA")}<strong>{t("social.cp500Chars")}</strong>{t("social.cpThreadsNoteB")}<strong>{t("social.cp20Media")}</strong>{t("social.cpThreadsNoteC")}
             </p>
           ) : null}
         </div>
@@ -632,8 +635,8 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
             be invisible and uneditable). */}
         {!editingPostId && (composerTargets.length > 1 || composerTargets.some((a) => ((variantOverrides[a.id]?.caption ?? "").trim() || (variantOverrides[a.id]?.firstCommentText ?? "").trim()))) ? (
           <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-            <div className="text-sm font-semibold">প্রতি অ্যাকাউন্টের আলাদা রূপ (Variant)</div>
-            <p className="text-xs text-slate-400">কোনো ঘর খালি রাখলে সেই অ্যাকাউন্টের জন্য উপরের মূল ক্যাপশন / প্রথম কমেন্টই ব্যবহার হবে।</p>
+            <div className="text-sm font-semibold">{t("social.cpVariantTitle")}</div>
+            <p className="text-xs text-slate-400">{t("social.cpVariantNote")}</p>
             {composerTargets.map((a) => (
               <div key={a.id} className="space-y-2 rounded-lg bg-slate-50 p-3">
                 <div className="flex flex-wrap items-center gap-1.5 text-sm">
@@ -641,11 +644,11 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                   <span className="font-medium">{a.name}</span>
                   <span className="badge-slate">{PLATFORM_LABELS[a.platform] ?? a.platform}</span>
                 </div>
-                <label className="block text-xs text-slate-500">ক্যাপশন Override (ঐচ্ছিক)
+                <label className="block text-xs text-slate-500">{t("social.cpCaptionOverride")}
                   <textarea className="input mt-1" rows={2}
                     value={variantOverrides[a.id]?.caption ?? ""}
                     onChange={(e) => setVariantOverrides((s) => ({ ...s, [a.id]: { ...s[a.id], caption: e.target.value } }))}
-                    placeholder="খালি রাখলে মূল ক্যাপশন" />
+                    placeholder={t("social.cpCaptionOverridePlaceholder")} />
                 </label>
                 {/* SN4: translate this account's effective caption
                     (its override, or the main caption when the
@@ -654,28 +657,28 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                   <button type="button" className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 disabled:opacity-50"
                     disabled={busy !== ""}
                     onClick={() => translateComposerText(`variant-${a.id}`, (variantOverrides[a.id]?.caption ?? "").trim() || caption, "en")}>
-                    {busy === `ai-translate-variant-${a.id}` ? "অনুবাদ হচ্ছে..." : "🌐 English-এ অনুবাদ"}
+                    {busy === `ai-translate-variant-${a.id}` ? t("social.cpTranslating") : t("social.cpTranslateToEn")}
                   </button>
                   <button type="button" className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 disabled:opacity-50"
                     disabled={busy !== ""}
                     onClick={() => translateComposerText(`variant-${a.id}`, (variantOverrides[a.id]?.caption ?? "").trim() || caption, "bn")}>
-                    {busy === `ai-translate-variant-${a.id}` ? "অনুবাদ হচ্ছে..." : "🌐 বাংলায় অনুবাদ"}
+                    {busy === `ai-translate-variant-${a.id}` ? t("social.cpTranslating") : t("social.cpTranslateToBn")}
                   </button>
                 </div>
                 {translations[`variant-${a.id}`] ? (
                   <div className="space-y-1.5 rounded-lg bg-white p-2.5">
                     <p className="whitespace-pre-wrap text-xs text-slate-700">{translations[`variant-${a.id}`].text}</p>
                     <button type="button" className="btn-secondary btn-sm" onClick={() => setVariantOverrides((s) => ({ ...s, [a.id]: { ...s[a.id], caption: translations[`variant-${a.id}`].text } }))}>
-                      এই অনুবাদ Variant-এ বসান
+                      {t("social.cpUseTranslationVariant")}
                     </button>
                   </div>
                 ) : null}
                 {isFirstCommentApplicable(a.platform) ? (
-                  <label className="block text-xs text-slate-500">প্রথম কমেন্ট Override (ঐচ্ছিক)
+                  <label className="block text-xs text-slate-500">{t("social.cpFirstCommentOverride")}
                     <input className="input mt-1"
                       value={variantOverrides[a.id]?.firstCommentText ?? ""}
                       onChange={(e) => setVariantOverrides((s) => ({ ...s, [a.id]: { ...s[a.id], firstCommentText: e.target.value } }))}
-                      placeholder="খালি রাখলে মূল প্রথম কমেন্ট" />
+                      placeholder={t("social.cpFirstCommentOverridePlaceholder")} />
                   </label>
                 ) : null}
               </div>
@@ -693,7 +696,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
       {composerTargets.length > 0 ? (
         <div className="min-w-0 lg:sticky lg:top-[148px]">
           <div className="soc-section-card">
-            <div className="text-sm font-semibold">👀 Platform Preview</div>
+            <div className="text-sm font-semibold">{t("social.cpPreviewTitle")}</div>
             <div className="grid gap-3">
               {composerTargets.map((a) => {
                 const override = variantOverrides[a.id];
@@ -704,7 +707,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                   linkUrl: linkUrl.trim() || null,
                   mediaKinds: selectedMedia.map((m) => m.kind),
                   firstCommentText: effectiveFirstComment,
-                });
+                }, locale);
                 return (
                   <div key={a.id} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -714,10 +717,10 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                       <span className="badge-brand">{preview.mediaSummary}</span>
                     </div>
                     {preview.title ? <p className="text-sm font-semibold text-slate-800">{preview.title}</p> : null}
-                    <p className="whitespace-pre-wrap text-sm text-slate-700 line-clamp-4">{preview.description ?? preview.captionShown}{(preview.description ?? preview.captionShown) ? "" : <span className="text-slate-400">(ক্যাপশন নেই)</span>}</p>
+                    <p className="whitespace-pre-wrap text-sm text-slate-700 line-clamp-4">{preview.description ?? preview.captionShown}{(preview.description ?? preview.captionShown) ? "" : <span className="text-slate-400">{t("social.cpNoCaption")}</span>}</p>
                     {linkUrl.trim() ? <p className="truncate text-xs text-indigo-600">{linkUrl.trim()}</p> : null}
                     {preview.firstCommentShown ? (
-                      <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-600">💬 প্রথম কমেন্ট: {preview.firstCommentShown}</p>
+                      <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-600">{t("social.cpFirstCommentShown", { text: preview.firstCommentShown })}</p>
                     ) : null}
                     {/* SD3: the SAME pre-flight warnings, shown as a
                         checklist — ✗ per failing rule, one ✓ line
@@ -733,7 +736,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
                       </ul>
                     ) : (
                       <p className="flex items-center gap-1.5 rounded-lg bg-green-50 px-2 py-1.5 text-xs font-medium text-green-700">
-                        <span aria-hidden="true">✓</span> প্রকাশের জন্য প্রস্তুত
+                        <span aria-hidden="true">✓</span> {t("social.cpReady")}
                       </p>
                     )}
                   </div>
@@ -750,30 +753,30 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
           sticky action bar below). */}
       <div className="soc-section-card">
         <div className="flex items-center gap-2.5">
-          <span className="soc-step-num">৪</span>
-          <div className="text-sm font-semibold">সংরক্ষণ</div>
+          <span className="soc-step-num">{fmtNumber(locale, 4)}</span>
+          <div className="text-sm font-semibold">{t("social.cpSaveSection")}</div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button className="btn-primary disabled:opacity-50" disabled={busy !== ""} onClick={saveDraft}>
-            {busy === "save" ? "সংরক্ষণ হচ্ছে..." : editingPostId ? "পরিবর্তন সংরক্ষণ করুন" : "Draft সংরক্ষণ করুন"}
+            {busy === "save" ? t("social.cpSaving") : editingPostId ? t("social.cpSaveChanges") : t("social.cpSaveDraft")}
           </button>
-          <p className="text-xs text-slate-400">Draft সংরক্ষণের পর নিচের তালিকা থেকে পোস্ট শিডিউল করতে বা এখনই প্রকাশ করতে পারবেন।</p>
+          <p className="text-xs text-slate-400">{t("social.cpSaveNote")}</p>
         </div>
 
         {/* SU11: CSV bulk draft import */}
         <div className="space-y-2 border-t border-slate-100 pt-4">
-          <div className="text-sm font-semibold">📥 CSV দিয়ে Bulk Draft Import</div>
-          <p className="text-xs text-slate-400">CSV-তে caption কলাম আবশ্যক; accountId, linkUrl, scheduledAt ঐচ্ছিক কলাম। প্রতিটি সফল সারি Draft হিসেবে তৈরি হয় — scheduledAt থাকলেও v1-এ পোস্টটি Draft-ই থাকে, শিডিউল হয় না। সর্বোচ্চ ২০০ সারি।</p>
+          <div className="text-sm font-semibold">{t("social.cpCsvTitle")}</div>
+          <p className="text-xs text-slate-400">{t("social.cpCsvNote")}</p>
           <label className={`btn-secondary btn-sm cursor-pointer ${busy !== "" ? "pointer-events-none opacity-50" : ""}`}>
-            {busy === "csv-import" ? "Import হচ্ছে..." : "⬆ CSV ফাইল বেছে নিন"}
+            {busy === "csv-import" ? t("social.cpImporting") : t("social.cpCsvPick")}
             <input type="file" accept=".csv,text/csv,text/plain" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void importPostsCsv(file); }} />
           </label>
           {csvImportResults ? (
             <div className="space-y-1">
-              <p className="text-sm text-slate-700">{csvImportResults.created.toLocaleString("bn-BD")}টি Draft তৈরি হয়েছে, {csvImportResults.failed.toLocaleString("bn-BD")}টি সারি ব্যর্থ।</p>
+              <p className="text-sm text-slate-700">{t("social.cpCsvSummary", { created: fmtNumber(locale, csvImportResults.created), failed: fmtNumber(locale, csvImportResults.failed) })}</p>
               {csvImportResults.results.map((r) => (
                 <p key={r.row} className={`text-xs ${r.ok ? "text-green-700" : "text-red-600"}`}>
-                  সারি {r.row.toLocaleString("bn-BD")}: {r.ok ? "✅ Draft তৈরি হয়েছে" : `❌ ${r.error ?? "ব্যর্থ"}`}
+                  {t("social.cpCsvRow", { row: fmtNumber(locale, r.row) })}{r.ok ? t("social.cpCsvRowOk") : `❌ ${r.error ?? t("social.cpCsvRowFail")}`}
                 </p>
               ))}
             </div>
@@ -789,7 +792,7 @@ export function ComposerPanel({ c }: { c: SocialPageCtx }) {
           handler, so the bar honestly carries only Save. */}
       <div className="soc-action-bar">
         <button type="button" className="btn-primary min-h-[44px] w-full disabled:opacity-50" disabled={busy !== ""} onClick={saveDraft}>
-          {busy === "save" ? "সংরক্ষণ হচ্ছে..." : editingPostId ? "পরিবর্তন সংরক্ষণ করুন" : "Draft সংরক্ষণ করুন"}
+          {busy === "save" ? t("social.cpSaving") : editingPostId ? t("social.cpSaveChanges") : t("social.cpSaveDraft")}
         </button>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { hashShopSecret } from "./shop-auth.util";
 import { DEFAULT_DEPOSIT_NOTE } from "../fraud/deposit";
@@ -237,7 +238,7 @@ describe("AB4 shop checkout — stamps + field answers", () => {
     const token = await cartReady(svc);
     await expect(svc.checkout("shop-one", dto(token, {
       fieldAnswers: { nope: "x" },
-    }) as any)).rejects.toBeInstanceOf(BadRequestException);
+    }) as any)).rejects.toBeInstanceOf(ApiException);
     expect(integrations.upsertOrder).not.toHaveBeenCalled();
     expect(prisma.order.rows).toHaveLength(0);
   });

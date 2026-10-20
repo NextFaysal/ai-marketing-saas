@@ -4,7 +4,7 @@ import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { smsSegments } from "@/lib/sms-segments";
 import { couponSnippetHtml, couponSnippetText } from "@/lib/composer-blocks";
-import { BLOCK_LABELS_BN, cleanBlock, moveBlock, newEmailBlock, type EmailBlock, type EmailBlockType } from "@/lib/email-blocks";
+import { blockLabelsFor, cleanBlock, moveBlock, newEmailBlock, type EmailBlock, type EmailBlockType } from "@/lib/email-blocks";
 import dynamic from "next/dynamic";
 import { EmptyState } from "@repo/ui";
 
@@ -12,6 +12,40 @@ const FestivalBlastHub = dynamic(
   () => import("./FestivalBlastHub").then((m) => m.FestivalBlastHub),
   { ssr: false }
 );
+import { useLocale } from "@/lib/i18n/provider";
+import { messagingBn, messagingEn } from "@/lib/i18n/messaging";
+import { fmtNumber, fmtMoney, fmtMoneyMinor, fmtDate, fmtDateTime } from "@repo/contracts";
+
+const MD = (locale?: string) => (locale === "en" ? messagingEn : messagingBn);
+type MsgKey = keyof typeof messagingBn;
+const JOURNEY_STEP_KEY: Record<string, MsgKey> = { wait: "msgStepWait", send_email: "msgStepEmail", send_sms: "msgStepSms", condition: "msgStepCondition", branch: "msgStepBranch", add_tag: "msgStepTag" };
+function journeyStepLabelsFor(locale: string): Record<string, string> {
+  const out: Record<string, string> = { ...JOURNEY_STEP_LABEL };
+  for (const [k, key] of Object.entries(JOURNEY_STEP_KEY)) out[k] = MD(locale)[key];
+  return out;
+}
+const JOURNEY_ADDABLE_KEY: Record<string, MsgKey> = { wait: "msgStepWaitShort", send_email: "msgStepEmailShort", send_sms: "msgStepSmsShort", condition: "msgStepConditionShort", branch: "msgStepBranchShort", add_tag: "msgStepTagShort" };
+function journeyAddableFor(locale: string): typeof JOURNEY_ADDABLE {
+  return JOURNEY_ADDABLE.map((a) => (JOURNEY_ADDABLE_KEY[a.type] ? { ...a, label: MD(locale)[JOURNEY_ADDABLE_KEY[a.type]] } : a));
+}
+const FIELD_LABEL_KEY: Record<string, MsgKey> = { source: "msgFieldSource", created_days_ago: "msgFieldCreatedDays", has_email: "msgFieldHasEmail", has_phone: "msgFieldHasPhone", custom_field: "msgFieldCustom", engagement_score: "msgFieldEngagement", predictive_segment: "msgFieldPredictive", orders_count: "msgFieldOrderCount", total_spent_minor: "msgFieldTotalSpent", last_order_days_ago: "msgFieldLastOrderDays", address_key: "msgFieldAddressPart", tag: "msgFieldTag", value_minor: "msgFieldLeadValue" };
+function fieldDefsFor(defs: FieldDef[], locale: string): FieldDef[] {
+  return defs.map((d) => (FIELD_LABEL_KEY[d.field] ? { ...d, label: MD(locale)[FIELD_LABEL_KEY[d.field]] } : d));
+}
+const OP_KEY: Record<string, MsgKey> = { eq: "msgOpEq", neq: "msgOpNeq", gt: "msgOpGt", gte: "msgOpGte", lt: "msgOpLt", lte: "msgOpLte", contains: "msgOpContains" };
+function opLabelsFor(locale: string): Record<string, string> {
+  const out: Record<string, string> = { ...OP_LABEL };
+  for (const [k, key] of Object.entries(OP_KEY)) out[k] = MD(locale)[key];
+  return out;
+}
+function predictiveLabelsFor(locale: string): Record<string, string> {
+  const suffix = MD(locale).msgRuleEstimateSuffix;
+  return { churn_risk: `Churn Risk ${suffix}`, likely_to_buy: `Likely to Buy ${suffix}`, high_ltv: `High LTV ${suffix}` };
+}
+const TAB_LABEL_KEY: Record<string, MsgKey> = { campaigns: "msgTabCampaigns", templates: "msgTabTemplates", channels: "msgTabWhatsApp", growth: "msgTabGrowth", insights: "msgTabAnalytics", settings: "msgTabSender" };
+function msgTabsFor(locale: string) {
+  return MSG_TABS.map((tb) => (TAB_LABEL_KEY[tb.id] ? { ...tb, label: MD(locale)[TAB_LABEL_KEY[tb.id]] } : tb));
+}
 
 interface Template { id: string; name: string; channel: string; subject?: string | null; body: string; htmlBody?: string | null; blocks?: EmailBlock[] | null; version?: number }
 // MX7: builder support shapes (brand kit comes from Org Settings
@@ -239,6 +273,10 @@ const MSG_TABS = [
 type MsgTab = (typeof MSG_TABS)[number]["id"];
 
 export default function MessagingPage() {
+  const { t: tr, locale } = useLocale();
+  const JOURNEY_STEP_LABEL_L = journeyStepLabelsFor(locale);
+  const OP_LABEL_L = opLabelsFor(locale);
+  const PREDICTIVE_LABEL_L = predictiveLabelsFor(locale);
   const [tab, setTab] = useState<MsgTab>("campaigns");
   const [templates, setTemplates] = useState<Template[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
@@ -313,7 +351,7 @@ export default function MessagingPage() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const composerFormRef = useRef<HTMLFormElement>(null);
-  const [storeInfo, setStoreInfo] = useState({ name: "আমাদের শপ", url: "https://yourshop.com" });
+  const [storeInfo, setStoreInfo] = useState({ name: tr("messaging.msgOurShop"), url: "https://yourshop.com" });
 
   const handleApplyFestivalTemplate = (data: {
     name: string;
@@ -331,7 +369,7 @@ export default function MessagingPage() {
       audienceType: data.audienceSegment ? "segment" : prev.audienceType,
       audienceSegment: data.audienceSegment || prev.audienceSegment,
     }));
-    setNotice(`উৎসব ক্যাম্পেইন "${data.name}" ব্রডকাস্ট কম্পোজারে সফলভাবে লোড করা হয়েছে!`);
+    setNotice(tr("messaging.msgFestivalLoaded", { name: data.name }));
     composerFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   // MS1: per-row schedule inputs (datetime-local values).
@@ -497,7 +535,7 @@ export default function MessagingPage() {
           if (org) {
             const origin = typeof window !== "undefined" ? window.location.origin : "https://app.nextcommerce.com";
             const url = org.customDomain ? `https://${org.customDomain}` : (org.slug ? `${origin}/shop/${org.slug}` : "https://yourshop.com");
-            setStoreInfo({ name: org.name || "আমাদের শপ", url });
+            setStoreInfo({ name: org.name || tr("messaging.msgOurShop"), url });
           }
         })
         .catch(() => undefined);
@@ -541,7 +579,7 @@ export default function MessagingPage() {
     params.delete("prefill");
     const qs = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
-    setNotice("Social Posts থেকে ক্যাপশনটি খসড়া হিসেবে বসানো হয়েছে — পাঠানোর আগে দেখে নিন।");
+    setNotice(tr("messaging.msgCaptionDrafted"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -602,7 +640,7 @@ export default function MessagingPage() {
       kwEditId ? `/organizations/${orgId}/messaging/keyword-rules/${kwEditId}` : `/organizations/${orgId}/messaging/keyword-rules`,
       { method: kwEditId ? "PATCH" : "POST", body: JSON.stringify(body) },
     ));
-    if (res) { resetKwForm(); setNotice(kwEditId ? "ক্যাম্পেইন নিয়ম হালনাগাদ হয়েছে।" : "ক্যাম্পেইন নিয়ম তৈরি হয়েছে।"); await load(); }
+    if (res) { resetKwForm(); setNotice(kwEditId ? tr("messaging.msgRuleUpdated") : tr("messaging.msgRuleCreated")); await load(); }
   }
 
   async function toggleKwRule(r: KeywordRule) {
@@ -613,9 +651,9 @@ export default function MessagingPage() {
 
   async function deleteKwRule(r: KeywordRule) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${r.name}" নিয়মটি স্থায়ীভাবে মুছে যাবে — নিশ্চিত?`)) return;
+    if (!window.confirm(tr("messaging.msgRuleDeleteConfirm", { name: r.name }))) return;
     const res = await wrap(`kw-del-${r.id}`, () => apiFetch(`/organizations/${orgId}/messaging/keyword-rules/${r.id}`, { method: "DELETE" }));
-    if (res) { setNotice("ক্যাম্পেইন নিয়ম মোছা হয়েছে।"); await load(); }
+    if (res) { setNotice(tr("messaging.msgRuleDeleted")); await load(); }
   }
 
   async function loadKwTally(ruleId: string) {
@@ -627,13 +665,13 @@ export default function MessagingPage() {
   async function classifyKwHit(h: KeywordHit) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const res = await wrap(`kw-classify-${h.id}`, () => apiFetch(`/organizations/${orgId}/messaging/keyword-hits/${h.id}/classify`, { method: "POST", body: JSON.stringify({}) }));
-    if (res) { setNotice("AI পরামর্শ এসেছে — নিচে দেখে নিশ্চিত বা বাতিল করুন। কিছুই এখনো প্রয়োগ হয়নি।"); await reloadKwHits(); }
+    if (res) { setNotice(tr("messaging.msgAiAdviceArrived")); await reloadKwHits(); }
   }
 
   async function applyKwHitLabel(h: KeywordHit, decision: "confirm" | "dismiss") {
     const orgId = getOrganizationId(); if (!orgId) return;
     const res = await wrap(`kw-label-${h.id}`, () => apiFetch(`/organizations/${orgId}/messaging/keyword-hits/${h.id}/apply-label`, { method: "POST", body: JSON.stringify({ decision }) }));
-    if (res) { setNotice(decision === "confirm" ? "লেবেল নিশ্চিত করা হয়েছে।" : "পরামর্শ বাতিল করা হয়েছে।"); await reloadKwHits(); }
+    if (res) { setNotice(decision === "confirm" ? tr("messaging.msgLabelConfirmed") : tr("messaging.msgAdviceDiscarded")); await reloadKwHits(); }
   }
 
   // MS3: the builder rows → an API audience definition. Values
@@ -641,7 +679,7 @@ export default function MessagingPage() {
   // booleans); the server validates strictly and its 400 shows
   // verbatim, so a bad row can never silently change meaning.
   function buildDefinition() {
-    const defs = condEntity === "customers" ? CUSTOMER_FIELD_DEFS : LEAD_FIELD_DEFS;
+    const defs = condEntity === "customers" ? fieldDefsFor(CUSTOMER_FIELD_DEFS, locale) : fieldDefsFor(LEAD_FIELD_DEFS, locale);
     const conditions = condRows.map((r) => {
       const def = defs.find((d) => d.field === r.field) ?? defs[0];
       const cond: Record<string, unknown> = { field: r.field, op: r.op };
@@ -701,20 +739,20 @@ export default function MessagingPage() {
   async function saveNlDraftAsAudience() {
     const orgId = getOrganizationId(); if (!orgId || !nlName.trim() || !nlDraftJson.trim()) return;
     let definition: unknown;
-    try { definition = JSON.parse(nlDraftJson); } catch { setNotice("❌ খসড়া JSON হিসেবে পড়া যাচ্ছে না — ঠিক করে আবার চেষ্টা করুন। কিছুই তৈরি হয়নি।"); return; }
+    try { definition = JSON.parse(nlDraftJson); } catch { setNotice(tr("messaging.msgDraftJsonInvalid")); return; }
     const r = await wrap("ai-segment-save", () => apiFetch<SavedAudience>(`/organizations/${orgId}/messaging/audiences`, { method: "POST", body: JSON.stringify({ name: nlName.trim(), definition }) }));
-    if (r) { setNotice(`Saved Audience "${r.name}" তৈরি হয়েছে (AI খসড়া থেকে, আপনার নিশ্চিতকরণে)।`); setNlName(""); await load(); }
+    if (r) { setNotice(tr("messaging.msgSavedAudienceCreated", { name: r.name })); setNlName(""); await load(); }
   }
   // MX11: apply the suppression suggestions for one channel —
   // the explicit human action; writes real opt-outs server-side.
   async function applySuppression() {
     const orgId = getOrganizationId(); if (!orgId || !suppression || suppression.suggestions.length === 0) return;
-    if (!window.confirm(`${suppression.suggestions.length} জনকে ${suppressChannel} চ্যানেলে Opt-out করবেন? এটি আসল Preference Store-এ লেখা হবে এবং Consent ইতিহাসে রেকর্ড থাকবে।`)) return;
+    if (!window.confirm(tr("messaging.msgSuppressConfirm", { count: fmtNumber(locale, suppression.suggestions.length), channel: suppressChannel }))) return;
     const r = await wrap("suppression-apply", () => apiFetch<{ applied: number; skipped: { reason: string }[] }>(`/organizations/${orgId}/messaging/suppression-suggestions/apply`, {
       method: "POST", body: JSON.stringify({ channel: suppressChannel, items: suppression.suggestions.map((s) => ({ type: s.type, id: s.id })) }),
     }));
     if (r) {
-      setNotice(`Suppression প্রয়োগ হয়েছে: ${r.applied} জন Opt-out, ${r.skipped.length} জন বাদ (আগেই Opt-out / ঠিকানা নেই)।`);
+      setNotice(tr("messaging.msgSuppressApplied", { applied: fmtNumber(locale, r.applied), skipped: fmtNumber(locale, r.skipped.length) }));
       const s = await apiFetch<SuppressionResult>(`/organizations/${orgId}/messaging/suppression-suggestions`).catch(() => null);
       if (s) setSuppression(s);
       await load();
@@ -767,17 +805,17 @@ export default function MessagingPage() {
     const orgId = getOrganizationId(); if (!orgId || !to.trim()) return;
     const setResult = kind === "broadcast" ? setBcTestResults : setTplTestResults;
     const r = await wrap(`test-${kind}-${id}`, () => apiFetch<TestSendResult>(`/organizations/${orgId}/messaging/${kind === "broadcast" ? "broadcasts" : "templates"}/${id}/test-send`, { method: "POST", body: JSON.stringify({ to: to.trim() }) }));
-    if (r) setResult((s) => ({ ...s, [id]: r.status === "sent" ? `✅ টেস্ট পাঠানো হয়েছে (${r.address})${r.providerMessageId ? ` · Provider ID: ${r.providerMessageId}` : ""}` : `❌ ব্যর্থ: ${r.error ?? "অজানা ত্রুটি"}` }));
+    if (r) setResult((s) => ({ ...s, [id]: r.status === "sent" ? tr("messaging.msgTestSent", { address: r.address }) + (r.providerMessageId ? ` · Provider ID: ${r.providerMessageId}` : "") : tr("messaging.msgTestFailed", { error: r.error ?? "Unknown error" }) }));
   }
 
   // MS6: Meta status badge for a WhatsApp template row. A null
   // status means the row was never verified against Meta.
   function waStatusBadge(t: WaTemplate) {
-    if (!t.status) return <span className="rounded bg-slate-200 px-2 py-0.5 text-xs">শুধু লোকাল — Meta-তে যাচাই হয়নি</span>;
-    if (t.status === "APPROVED") return <span className="badge-green">✅ Meta অনুমোদিত</span>;
-    if (t.status === "PENDING") return <span className="badge-amber">⏳ Meta-তে অপেক্ষমাণ</span>;
-    if (t.status === "REJECTED") return <span className="badge-red">❌ Meta প্রত্যাখ্যান করেছে</span>;
-    if (t.status === "NOT_ON_META") return <span className="rounded bg-slate-300 px-2 py-0.5 text-xs">Meta-তে আর নেই</span>;
+    if (!t.status) return <span className="rounded bg-slate-200 px-2 py-0.5 text-xs">{tr("messaging.msgTplLocalOnly")}</span>;
+    if (t.status === "APPROVED") return <span className="badge-green">{tr("messaging.msgTplMetaApproved")}</span>;
+    if (t.status === "PENDING") return <span className="badge-amber">{tr("messaging.msgTplMetaPending")}</span>;
+    if (t.status === "REJECTED") return <span className="badge-red">{tr("messaging.msgTplMetaRejected")}</span>;
+    if (t.status === "NOT_ON_META") return <span className="rounded bg-slate-300 px-2 py-0.5 text-xs">{tr("messaging.msgTplMetaGone")}</span>;
     return <span className="rounded bg-slate-200 px-2 py-0.5 text-xs">{t.status}</span>;
   }
 
@@ -788,7 +826,7 @@ export default function MessagingPage() {
     const res = await wrap(`${action}-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${orgId}/messaging/broadcasts/${b.id}/${action}`, {
       method: "POST", ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     }));
-    if (res) { setNotice(noticeText ?? `Broadcast "${b.name}": ${action} সম্পন্ন হয়েছে।`); await load(); }
+    if (res) { setNotice(noticeText ?? tr("messaging.msgBroadcastActionDone", { name: b.name, action })); await load(); }
   }
 
   // MS2: opted_out CSV export (raw fetch — apiFetch parses JSON).
@@ -798,7 +836,7 @@ export default function MessagingPage() {
       const res = await fetch(`${API_URL}/organizations/${orgId}/messaging/preferences/export`, {
         headers: { Authorization: `Bearer ${getToken() ?? ""}` },
       });
-      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? "Export ব্যর্থ হয়েছে"); }
+      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? tr("messaging.msgExportFailed")); }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -829,7 +867,7 @@ export default function MessagingPage() {
         popup: { enabled: growthDraft.popupEnabled, delaySeconds: Number(growthDraft.popupDelay) || 0 },
       }),
     }));
-    if (r) { setNotice(`🌱 Opt-in Form "${r.name}" তৈরি হয়েছে — Join URL: ${r.joinUrl}`); setGrowthDraft({ name: "", channels: ["email"], topic: "", keyword: "", doubleOptIn: true, popupEnabled: false, popupDelay: "10", headline: "" }); await loadGrowth(); }
+    if (r) { setNotice(tr("messaging.msgOptinCreated", { name: r.name, url: r.joinUrl })); setGrowthDraft({ name: "", channels: ["email"], topic: "", keyword: "", doubleOptIn: true, popupEnabled: false, popupDelay: "10", headline: "" }); await loadGrowth(); }
   }
 
   async function toggleGrowthQr(f: OptInForm) {
@@ -841,9 +879,9 @@ export default function MessagingPage() {
 
   async function deleteGrowthForm(f: OptInForm) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`Opt-in Form "${f.name}" মুছবেন? আগের সাইনআপের Lead/Preference থেকে যাবে।`)) return;
+    if (!window.confirm(tr("messaging.msgOptinDeleteConfirm", { name: f.name }))) return;
     const r = await wrap(`growth-del-${f.id}`, () => apiFetch(`/organizations/${orgId}/messaging/optin-forms/${f.id}`, { method: "DELETE" }));
-    if (r) { setNotice("Opt-in Form মোছা হয়েছে।"); await loadGrowth(); }
+    if (r) { setNotice(tr("messaging.msgOptinDeleted")); await loadGrowth(); }
   }
 
   async function issuePrefLink() {
@@ -869,14 +907,14 @@ export default function MessagingPage() {
   async function commitCsvWiz() {
     const orgId = getOrganizationId(); if (!orgId || !csvWiz.preview) return;
     const r = await wrap("csv-commit", () => apiFetch<{ imported: number; suppressedOptOut: number; errors: { row: number; error: string }[] }>(`/organizations/${orgId}/messaging/csv-import/${csvWiz.preview!.importId}/commit`, { method: "POST", body: JSON.stringify({}) }));
-    if (r) { setCsvWiz((s) => ({ ...s, committed: `${r.imported}টি Lead Import হয়েছে${r.suppressedOptOut ? ` (এর মধ্যে ${r.suppressedOptOut}টি Opt-out থাকায় Consent বদলায়নি)` : ""}${r.errors.length ? ` · ${r.errors.length}টি ব্যর্থ` : ""}` })); setNotice("📥 CSV Import সম্পন্ন — শুধু Clean Row-গুলো এসেছে।"); }
+    if (r) { setCsvWiz((s) => ({ ...s, committed: tr("messaging.msgCsvImportedFull", { count: fmtNumber(locale, r.imported) }) + (r.suppressedOptOut ? ` (${tr("messaging.msgCsvOptOutNote", { count: fmtNumber(locale, r.suppressedOptOut) })})` : "") + (r.errors.length ? ` · ${tr("messaging.msgCsvFailedSuffix", { count: fmtNumber(locale, r.errors.length) })}` : "") })); setNotice(tr("messaging.msgCsvDone")); }
   }
 
   async function downloadCsvReport() {
     const orgId = getOrganizationId(); if (!orgId || !csvWiz.preview) return;
     await wrap("csv-report", async () => {
       const res = await fetch(`${API_URL}/organizations/${orgId}/messaging/csv-import/${csvWiz.preview!.importId}/report.csv`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      if (!res.ok) throw new Error("রিপোর্ট ডাউনলোড ব্যর্থ হয়েছে");
+      if (!res.ok) throw new Error(tr("messaging.msgReportDownloadFailed"));
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "csv-import-hygiene.csv"; a.click(); URL.revokeObjectURL(url);
       return true;
@@ -887,7 +925,7 @@ export default function MessagingPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap("consent-export", async () => {
       const res = await fetch(`${API_URL}/organizations/${orgId}/messaging/consent-events/export`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      if (!res.ok) throw new Error("Consent Export ব্যর্থ হয়েছে");
+      if (!res.ok) throw new Error(tr("messaging.msgConsentExportFailed"));
       const blob = await res.blob(); const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "consent-events.csv"; a.click(); URL.revokeObjectURL(url);
       return true;
@@ -895,13 +933,13 @@ export default function MessagingPage() {
   }
 
   // MS8: human-readable recurrence summary for rows + the form.
-  const WEEKDAY_LABELS = ["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"];
+  const WEEKDAY_LABELS = [tr("messaging.msgDaySun"), tr("messaging.msgDayMon"), tr("messaging.msgDayTue"), tr("messaging.msgDayWed"), tr("messaging.msgDayThu"), tr("messaging.msgDayFri"), tr("messaging.msgDaySat")];
   function recurrenceText(rec: Recurrence): string {
     const base = rec.freq === "daily"
-      ? rec.interval > 1 ? `প্রতি ${rec.interval} দিনে` : "প্রতিদিন"
-      : rec.interval > 1 ? `প্রতি ${rec.interval} সপ্তাহে` : "প্রতি সপ্তাহে";
+      ? rec.interval > 1 ? tr("messaging.msgEveryDays", { n: fmtNumber(locale, rec.interval) }) : tr("messaging.msgDaily")
+      : rec.interval > 1 ? tr("messaging.msgEveryWeeks", { n: fmtNumber(locale, rec.interval) }) : tr("messaging.msgWeekly");
     const days = rec.freq === "weekly" && rec.weekdays?.length ? ` (${rec.weekdays.map((d) => WEEKDAY_LABELS[d]).join(", ")})` : "";
-    const end = rec.endsAt ? ` · শেষ: ${new Date(rec.endsAt).toLocaleDateString()}` : "";
+    const end = rec.endsAt ? ` · ${tr("messaging.msgEndsLine")} ${fmtDate(locale, rec.endsAt)}` : "";
     return `${base}${days}${end}`;
   }
 
@@ -941,7 +979,7 @@ export default function MessagingPage() {
       const res = await fetch(`${API_URL}/organizations/${orgId}/messaging/broadcasts/${broadcastId}/deliveries/export`, {
         headers: { Authorization: `Bearer ${getToken() ?? ""}` },
       });
-      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? "Export ব্যর্থ হয়েছে"); }
+      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? tr("messaging.msgExportFailed")); }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -962,11 +1000,11 @@ export default function MessagingPage() {
         // MX5: v2 presets install as MX4 journeys — the review,
         // enable toggle and per-step reports all live in the
         // Journeys section below on THIS page.
-        const tplText = r.templates?.length ? `${r.templates.length}টি Template (${r.templates.map((t) => `"${t.name}"`).join(", ")})` : `Template "${r.template.name}"`;
-        setJourneyResults((s) => ({ ...s, [p.key]: `✅ ইনস্টল হয়েছে — ${tplText} ও Journey "${r.workflow.name}" (ID: ${r.workflow.id}) তৈরি হয়েছে। Journey-টি বন্ধ (disabled) অবস্থায় আছে — নিচের Journeys অংশে পর্যালোচনা করে Enable করুন; ধাপভিত্তিক রিপোর্টও সেখানেই পাবেন।` }));
+        const tplText = r.templates?.length ? tr("messaging.msgTemplatesInstalled", { count: fmtNumber(locale, r.templates.length) }) + ` (${r.templates.map((t) => `"${t.name}"`).join(", ")})` : `Template "${r.template.name}"`;
+        setJourneyResults((s) => ({ ...s, [p.key]: tr("messaging.msgInstallDoneTplJourney", { templates: tplText, name: r.workflow.name, id: r.workflow.id }) }));
         void loadJourneys();
       } else {
-        setJourneyResults((s) => ({ ...s, [p.key]: `✅ ইনস্টল হয়েছে — Workflow "${r.workflow.name}" (ID: ${r.workflow.id}) ও Template "${r.template.name}" তৈরি হয়েছে। Workflow-টি বন্ধ (disabled) অবস্থায় আছে — চালু করতে Workflows পেজে গিয়ে পর্যালোচনা করে Enable করুন।` }));
+        setJourneyResults((s) => ({ ...s, [p.key]: tr("messaging.msgInstallDoneWfTpl", { wname: r.workflow.name, wid: r.workflow.id, tname: r.template.name }) }));
       }
     }
   }
@@ -983,9 +1021,9 @@ export default function MessagingPage() {
     // they are not in the meta list — label them here instead of
     // showing the raw engine name.
     const SCAN_LABELS: Record<string, string> = {
-      winback_due: "স্ক্যান: নিষ্ক্রিয় কাস্টমার (Win-back)",
-      anniversary_due: "স্ক্যান: কাস্টমার বার্ষিকী",
-      browse_abandoned: "স্ক্যান: পণ্য দেখে না-কেনা (Browse)",
+      winback_due: tr("messaging.msgScanWinback"),
+      anniversary_due: tr("messaging.msgScanAnniversary"),
+      browse_abandoned: tr("messaging.msgScanBrowse"),
     };
     return journeyMeta?.triggers.find((t) => t.trigger === trigger)?.labelBn ?? SCAN_LABELS[trigger] ?? trigger;
   }
@@ -1070,17 +1108,17 @@ export default function MessagingPage() {
     };
     if (journeyDraft.id) {
       const r = await wrap(`journey-save-${journeyDraft.id}`, () => apiFetch<{ workflow: Journey; note: string }>(`/organizations/${orgId}/messaging/journeys/${journeyDraft.id}`, { method: "PATCH", body: JSON.stringify(payload) }));
-      if (r) { setNotice(`Journey "${r.workflow.name}" হালনাগাদ হয়েছে। ${r.note}`); setJourneyDraft(null); await loadJourneys(); }
+      if (r) { setNotice(tr("messaging.msgJourneyUpdated", { name: r.workflow.name, note: r.note })); setJourneyDraft(null); await loadJourneys(); }
     } else {
       const r = await wrap("journey-create", () => apiFetch<{ workflow: Journey; note: string }>(`/organizations/${orgId}/messaging/journeys`, { method: "POST", body: JSON.stringify(payload) }));
-      if (r) { setNotice(`Journey "${r.workflow.name}" তৈরি হয়েছে। ${r.note}`); setJourneyDraft(null); await loadJourneys(); await load(); }
+      if (r) { setNotice(tr("messaging.msgJourneyCreated", { name: r.workflow.name, note: r.note })); setJourneyDraft(null); await loadJourneys(); await load(); }
     }
   }
 
   async function toggleJourneyEnabled(j: Journey) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`journey-toggle-${j.id}`, () => apiFetch(`/organizations/${orgId}/messaging/journeys/${j.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !j.enabled }) }));
-    if (r) { setNotice(`Journey "${j.name}" ${j.enabled ? "বন্ধ" : "চালু"} করা হয়েছে।`); await loadJourneys(); }
+    if (r) { setNotice(tr("messaging.msgJourneyToggled", { name: j.name, state: j.enabled ? tr("messaging.msgStateOff") : tr("messaging.msgStateOn") })); await loadJourneys(); }
   }
 
   async function toggleJourneyDetail(j: Journey) {
@@ -1094,14 +1132,14 @@ export default function MessagingPage() {
   // and branch-arm sub-cards; `patch` writes back by position).
   function journeyStepFields(step: JourneyStep, patch: (p: Partial<JourneyStep>) => void) {
     if (step.type === "wait") {
-      return <label className="block text-sm">অপেক্ষা (মিনিট)<input type="number" min={1} max={43200} className={inputCls} value={step.minutes ?? 60} onChange={(e) => patch({ minutes: Number(e.target.value) })} /></label>;
+      return <label className="block text-sm">{tr("messaging.msgWaitMinutes")}<input type="number" min={1} max={43200} className={inputCls} value={step.minutes ?? 60} onChange={(e) => patch({ minutes: Number(e.target.value) })} /></label>;
     }
     if (step.type === "send_email" || step.type === "send_sms") {
       const channel = step.type === "send_email" ? "email" : "sms";
       return (
         <label className="block text-sm">Template
           <select className={inputCls} value={step.templateId ?? ""} onChange={(e) => patch({ templateId: e.target.value })}>
-            <option value="">— Template বেছে নিন —</option>
+            <option value="">{tr("messaging.msgPickTemplate")}</option>
             {templates.filter((t) => t.channel === channel).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </label>
@@ -1112,23 +1150,21 @@ export default function MessagingPage() {
       const f = fields.find((x) => x.field === step.field) ?? fields[0];
       return (
         <div className="grid gap-2 sm:grid-cols-3">
-          <label className="block text-sm">ফিল্ড
-            <select className={inputCls} value={step.field ?? ""} onChange={(e) => { const nf = fields.find((x) => x.field === e.target.value); patch({ field: e.target.value, op: nf?.ops[0] ?? "eq" }); }}>
+          <label className="block text-sm">{tr("messaging.msgFieldLabel")}<select className={inputCls} value={step.field ?? ""} onChange={(e) => { const nf = fields.find((x) => x.field === e.target.value); patch({ field: e.target.value, op: nf?.ops[0] ?? "eq" }); }}>
               {fields.map((x) => <option key={x.field} value={x.field}>{x.labelBn}</option>)}
             </select>
           </label>
-          <label className="block text-sm">অপারেটর
-            <select className={inputCls} value={step.op ?? "eq"} onChange={(e) => patch({ op: e.target.value })}>
-              {(f?.ops ?? ["eq"]).map((op) => <option key={op} value={op}>{OP_LABEL[op] ?? op}</option>)}
+          <label className="block text-sm">{tr("messaging.msgOperatorLabel")}<select className={inputCls} value={step.op ?? "eq"} onChange={(e) => patch({ op: e.target.value })}>
+              {(f?.ops ?? ["eq"]).map((op) => <option key={op} value={op}>{OP_LABEL_L[op] ?? op}</option>)}
             </select>
           </label>
-          <label className="block text-sm">মান
+          <label className="block text-sm">{tr("messaging.msgZValueLabel")}
             {f?.kind === "boolean" ? (
               <select className={inputCls} value={String(step.value ?? "true")} onChange={(e) => patch({ value: e.target.value })}>
-                <option value="true">হ্যাঁ (true)</option><option value="false">না (false)</option>
+                <option value="true">{tr("messaging.msgYesTrue")}</option><option value="false">{tr("messaging.msgNoFalse")}</option>
               </select>
             ) : (
-              <input className={inputCls} value={String(step.value ?? "")} onChange={(e) => patch({ value: e.target.value })} placeholder={f?.kind === "number" ? "যেমন: 1000" : "মান লিখুন"} />
+              <input className={inputCls} value={String(step.value ?? "")} onChange={(e) => patch({ value: e.target.value })} placeholder={f?.kind === "number" ? tr("messaging.msgEx1000") : tr("messaging.msgValuePlaceholder")} />
             )}
           </label>
         </div>
@@ -1137,10 +1173,9 @@ export default function MessagingPage() {
     if (step.type === "add_tag") {
       return (
         <div className="grid gap-2 sm:grid-cols-2">
-          <label className="block text-sm">ট্যাগ<input className={inputCls} value={step.tag ?? ""} onChange={(e) => patch({ tag: e.target.value })} placeholder="যেমন: আগ্রহী, vip" /></label>
-          <label className="block text-sm">কার উপর
-            <select className={inputCls} value={step.target ?? "lead"} onChange={(e) => patch({ target: e.target.value })}>
-              <option value="lead">লিড (Lead)</option><option value="conversation">কথোপকথন (Conversation)</option>
+          <label className="block text-sm">{tr("messaging.msgFieldTag")}<input className={inputCls} value={step.tag ?? ""} onChange={(e) => patch({ tag: e.target.value })} placeholder={tr("messaging.msgTagPlaceholder")} /></label>
+          <label className="block text-sm">{tr("messaging.msgOnWhomLabel")}<select className={inputCls} value={step.target ?? "lead"} onChange={(e) => patch({ target: e.target.value })}>
+              <option value="lead">{tr("messaging.msgLeadOption")}</option><option value="conversation">{tr("messaging.msgConversationOption")}</option>
             </select>
           </label>
         </div>
@@ -1188,7 +1223,7 @@ export default function MessagingPage() {
       if (analyticsRange.from) qs.set("from", analyticsRange.from);
       if (analyticsRange.to) qs.set("to", analyticsRange.to);
       const res = await fetch(`${API_URL}/organizations/${orgId}/messaging/analytics/export.csv${qs.toString() ? `?${qs.toString()}` : ""}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? "Export ব্যর্থ হয়েছে"); }
+      if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? tr("messaging.msgExportFailed")); }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1201,7 +1236,7 @@ export default function MessagingPage() {
   async function setAbAutoWinner(b: Broadcast, enabled: boolean | null) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const res = await wrap(`abw-${b.id}`, () => apiFetch<{ enabled: boolean }>(`/organizations/${orgId}/messaging/broadcasts/${b.id}/ab-auto-winner`, { method: "POST", body: JSON.stringify({ enabled }) }));
-    if (res) { setNotice(`Broadcast "${b.name}": 🏆 A/B স্বয়ংক্রিয় জয়ী ${res.enabled ? "চালু করা হয়েছে" : "বন্ধ করা হয়েছে"}।`); await load(); if (reports[b.id]) { const r = await apiFetch<BroadcastReport>(`/organizations/${orgId}/messaging/broadcasts/${b.id}/report`).catch(() => null); if (r) setReports((st) => ({ ...st, [b.id]: r })); } }
+    if (res) { setNotice(tr("messaging.msgAbWinnerNotice", { name: b.name, state: res.enabled ? tr("messaging.msgAbWinnerOn") : tr("messaging.msgAbWinnerOff") })); await load(); if (reports[b.id]) { const r = await apiFetch<BroadcastReport>(`/organizations/${orgId}/messaging/broadcasts/${b.id}/report`).catch(() => null); if (r) setReports((st) => ({ ...st, [b.id]: r })); } }
   }
   // MX16: campaign planner — proposal only; every piece is used
   // by an explicit click below, nothing is created automatically.
@@ -1227,9 +1262,9 @@ export default function MessagingPage() {
   }
 
   function applyAiVariant(v: AiDraftVariant) {
-    if ((bcForm.body.trim() || bcForm.subject.trim()) && !window.confirm("বর্তমান Subject/Body বদলে এই খসড়াটি বসবে — নিশ্চিত?")) return;
+    if ((bcForm.body.trim() || bcForm.subject.trim()) && !window.confirm(tr("messaging.msgApplyDraftConfirm"))) return;
     setBcForm((f) => ({ ...f, ...(v.subject !== undefined ? { subject: v.subject } : {}), body: v.body }));
-    setNotice("AI খসড়াটি ফর্মে বসানো হয়েছে — পাঠানোর আগে নিজে দেখে নিন। খসড়াটি কোথাও সংরক্ষিত হয়নি।");
+    setNotice(tr("messaging.msgAiDraftApplied"));
   }
 
   // MS10: broadcast management (edit / clone / delete / archive).
@@ -1283,26 +1318,26 @@ export default function MessagingPage() {
       payload.scheduledAt = bcEditForm.scheduledAt ? new Date(bcEditForm.scheduledAt).toISOString() : null;
     }
     const r = await wrap(`bc-edit-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${orgId}/messaging/broadcasts/${b.id}`, { method: "PATCH", body: JSON.stringify(payload) }));
-    if (r) { setBcEditId(null); setNotice(`Broadcast "${r.name}" হালনাগাদ হয়েছে।`); await load(); }
+    if (r) { setBcEditId(null); setNotice(tr("messaging.msgBroadcastUpdated", { name: r.name })); await load(); }
   }
 
   async function cloneBc(b: Broadcast) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`bc-clone-${b.id}`, () => apiFetch<Broadcast & { cloneNote?: string }>(`/organizations/${orgId}/messaging/broadcasts/${b.id}/clone`, { method: "POST" }));
-    if (r) { setNotice(`কপি তৈরি হয়েছে: "${r.name}" (Draft)।${r.cloneNote ? ` ${r.cloneNote}` : ""}`); await load(); }
+    if (r) { setNotice(tr("messaging.msgBroadcastCloned", { name: r.name }) + (r.cloneNote ? ` ${r.cloneNote}` : "")); await load(); }
   }
 
   async function deleteBc(b: Broadcast) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${b.name}" স্থায়ীভাবে মুছে যাবে — নিশ্চিত?`)) return;
+    if (!window.confirm(tr("messaging.msgBroadcastDeleteConfirm", { name: b.name }))) return;
     const r = await wrap(`bc-delete-${b.id}`, () => apiFetch(`/organizations/${orgId}/messaging/broadcasts/${b.id}`, { method: "DELETE" }));
-    if (r) { setNotice(`Broadcast "${b.name}" মুছে ফেলা হয়েছে।`); await load(); }
+    if (r) { setNotice(tr("messaging.msgBroadcastDeleted", { name: b.name })); await load(); }
   }
 
   async function archiveBc(b: Broadcast, archived: boolean) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`bc-archive-${b.id}`, () => apiFetch(`/organizations/${orgId}/messaging/broadcasts/${b.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" }));
-    if (r) { setNotice(archived ? `Broadcast "${b.name}" আর্কাইভ করা হয়েছে — তালিকা থেকে লুকানো ও পাঠানো বন্ধ থাকবে।` : `Broadcast "${b.name}" আর্কাইভ থেকে ফিরিয়ে আনা হয়েছে।`); await load(); }
+    if (r) { setNotice(archived ? tr("messaging.msgBroadcastArchived", { name: b.name }) : tr("messaging.msgBroadcastUnarchived", { name: b.name })); await load(); }
   }
 
   // MS10: template management (the API already had PATCH/DELETE;
@@ -1311,16 +1346,16 @@ export default function MessagingPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`tpl-dup-${t.id}`, () => apiFetch(`/organizations/${orgId}/messaging/templates`, {
       method: "POST",
-      body: JSON.stringify({ name: `${t.name} (কপি)`, channel: t.channel, subject: t.channel === "email" ? (t.subject ?? undefined) : undefined, body: t.body, htmlBody: t.channel === "email" && t.htmlBody ? t.htmlBody : undefined }),
+      body: JSON.stringify({ name: `${t.name} ${tr("messaging.msgCopySuffix")}`, channel: t.channel, subject: t.channel === "email" ? (t.subject ?? undefined) : undefined, body: t.body, htmlBody: t.channel === "email" && t.htmlBody ? t.htmlBody : undefined }),
     }));
-    if (r) { setNotice(`Template "${t.name}"-এর কপি তৈরি হয়েছে।`); await load(); }
+    if (r) { setNotice(tr("messaging.msgTemplateCopied", { name: t.name })); await load(); }
   }
 
   async function deleteTemplateRow(t: Template) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`Template "${t.name}" স্থায়ীভাবে মুছে যাবে — নিশ্চিত?`)) return;
+    if (!window.confirm(tr("messaging.msgTemplateDeleteConfirm", { name: t.name }))) return;
     const r = await wrap(`tpl-del-${t.id}`, () => apiFetch(`/organizations/${orgId}/messaging/templates/${t.id}`, { method: "DELETE" }));
-    if (r) { setNotice(`Template "${t.name}" মুছে ফেলা হয়েছে।`); await load(); }
+    if (r) { setNotice(tr("messaging.msgTemplateDeleted", { name: t.name })); await load(); }
   }
 
   // ---------- MX7: email builder ----------
@@ -1347,8 +1382,8 @@ export default function MessagingPage() {
       : apiFetch<Template & { emptySlots?: BlocksPreview["emptySlots"] }>(`/organizations/${orgId}/messaging/templates`, { method: "POST", body: JSON.stringify({ ...payload, channel: "email" }) }));
     if (r) {
       setNotice(r.emptySlots?.length
-        ? `Template সংরক্ষিত হয়েছে — তবে ${r.emptySlots.length}টি স্লট খালি আছে (পণ্য/কুপন বাছাই করা হয়নি বা পাওয়া যায়নি), সেগুলো ফাঁকাই যাবে।`
-        : "🧱 বিল্ডার Template সংরক্ষিত হয়েছে।");
+        ? tr("messaging.msgTemplateSavedEmptySlots", { count: fmtNumber(locale, r.emptySlots.length) })
+        : tr("messaging.msgBuilderTemplateSaved"));
       setBuilder(null); await load();
     }
   }
@@ -1357,17 +1392,17 @@ export default function MessagingPage() {
     const r = await wrap("cb-create", () => apiFetch(`/organizations/${orgId}/messaging/content-blocks`, {
       method: "POST", body: JSON.stringify({ name: cbName.trim(), block: cleanBlock(block) }),
     }));
-    if (r) { setCbName(""); setNotice("📚 ব্লকটি Content Library-তে সংরক্ষিত হয়েছে।"); await load(); }
+    if (r) { setCbName(""); setNotice(tr("messaging.msgBlockSavedLibrary")); await load(); }
   }
   async function deleteContentBlockRow(cb: ContentBlock) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`cb-del-${cb.id}`, () => apiFetch(`/organizations/${orgId}/messaging/content-blocks/${cb.id}`, { method: "DELETE" }));
-    if (r) { setNotice("Content Block মোছা হয়েছে।"); await load(); }
+    if (r) { setNotice(tr("messaging.msgContentBlockDeleted")); await load(); }
   }
   async function installPack(pack: FestivalPack) {
     const orgId = getOrganizationId(); if (!orgId) return;
     const r = await wrap(`pack-${pack.key}`, () => apiFetch<{ template: Template }>(`/organizations/${orgId}/messaging/template-packs/${pack.key}/install`, { method: "POST", body: JSON.stringify({}) }));
-    if (r) { setNotice(`🎉 "${pack.nameBn}" Template তৈরি হয়েছে — পণ্য/কুপন স্লট খালি আছে; বিল্ডারে আসল পণ্য/ডিসকাউন্ট বেছে নিন।`); await load(); }
+    if (r) { setNotice(tr("messaging.msgPackTemplateCreated", { name: locale === "en" ? pack.name : pack.nameBn })); await load(); }
   }
   async function toggleVersions(t: Template) {
     const orgId = getOrganizationId(); if (!orgId) return;
@@ -1377,9 +1412,9 @@ export default function MessagingPage() {
   }
   async function restoreVersion(t: Template, version: number) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`Version ${version} ফিরিয়ে আনবেন? বর্তমান কনটেন্ট নতুন Version হিসেবে ইতিহাসে থেকে যাবে।`)) return;
+    if (!window.confirm(tr("messaging.msgRestoreVersionConfirm", { version: fmtNumber(locale, version) }))) return;
     const r = await wrap(`tpl-restore-${t.id}-${version}`, () => apiFetch(`/organizations/${orgId}/messaging/templates/${t.id}/versions/${version}/restore`, { method: "POST", body: JSON.stringify({}) }));
-    if (r) { setNotice(`Template "${t.name}"-এর Version ${version} ফিরিয়ে আনা হয়েছে (নতুন Version হিসেবে)।`); setTplVersions((s) => { const n = { ...s }; delete n[t.id]; return n; }); await load(); }
+    if (r) { setNotice(tr("messaging.msgVersionRestored", { name: t.name, version: fmtNumber(locale, version) })); setTplVersions((s) => { const n = { ...s }; delete n[t.id]; return n; }); await load(); }
   }
 
   async function saveTplEdit(t: Template) {
@@ -1388,7 +1423,7 @@ export default function MessagingPage() {
       method: "PATCH",
       body: JSON.stringify({ name: tplEdit.name, subject: t.channel === "email" ? (tplEdit.subject || null) : undefined, body: tplEdit.body, htmlBody: t.channel === "email" ? (tplEdit.htmlBody || null) : undefined }),
     }));
-    if (r) { setTplEdit(null); setNotice(`Template "${tplEdit.name}" হালনাগাদ হয়েছে।`); await load(); }
+    if (r) { setTplEdit(null); setNotice(tr("messaging.msgTemplateUpdated", { name: tplEdit.name })); await load(); }
   }
 
   const inputCls = "input mt-1";
@@ -1399,15 +1434,15 @@ export default function MessagingPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-[26px] font-bold leading-tight tracking-tight text-white">💬 Messaging</h1>
-            <p className="mt-1 max-w-2xl text-sm text-white/85">Email ও SMS Broadcast — নিজের SMTP/Gateway থাকলে তা দিয়েই, নাহলে প্ল্যাটফর্মেরটি দিয়ে। কোনো বার্তা Sent ধরা হয় শুধুমাত্র Provider নিশ্চিত করলে, প্রতিটি বার্তার Delivery রেকর্ড থাকে।</p>
+            <p className="mt-1 max-w-2xl text-sm text-white/85">{tr("messaging.msgIntro")}</p>
           </div>
-          <button type="button" className="msg-hero-cta" onClick={() => setTab("campaigns")}>+ নতুন Broadcast</button>
+          <button type="button" className="msg-hero-cta" onClick={() => setTab("campaigns")}>{tr("messaging.msgZNewBroadcast")}</button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <span className="msg-kpi">🧩 Templates <strong>{templates.length}</strong></span>
-          <span className="msg-kpi">📣 Broadcasts (লোড) <strong>{broadcasts.length}</strong></span>
-          <span className="msg-kpi">🛡️ অনুমোদনের অপেক্ষায় <strong>{approvals.length}</strong></span>
-          <span className="msg-kpi">💬 Keyword নিয়ম <strong>{kwRules.length}</strong></span>
+          <span className="msg-kpi">{tr("messaging.msgBroadcastsLoaded")}<strong>{broadcasts.length}</strong></span>
+          <span className="msg-kpi">{tr("messaging.msgPendingApprovalTab")}<strong>{approvals.length}</strong></span>
+          <span className="msg-kpi">{tr("messaging.msgKeywordRulesTab")}<strong>{kwRules.length}</strong></span>
           <span className="msg-kpi">🧭 Journeys <strong>{journeys.length}</strong></span>
         </div>
       </div>
@@ -1415,8 +1450,8 @@ export default function MessagingPage() {
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="msg-tabbar">
-        <div className="view-switch msg-tabs" role="tablist" aria-label="Messaging বিভাগ">
-          {MSG_TABS.map((t) => (
+        <div className="view-switch msg-tabs" role="tablist" aria-label={tr("messaging.msgSectionTitle")}>
+          {msgTabsFor(locale).map((t) => (
             <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`view-switch-btn whitespace-nowrap ${tab === t.id ? "view-switch-btn-active" : ""}`}>{t.icon} {t.label}</button>
           ))}
         </div>
@@ -1426,13 +1461,13 @@ export default function MessagingPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className={`rounded-xl border p-4 text-sm ${status.email.configured ? "bg-green-50" : "bg-amber-50"}`}>
             <span className="font-semibold">Email (SMTP):</span> {status.email.configured
-              ? status.email.path === "tenant" ? "আপনার নিজের SMTP দিয়ে পাঠানো হবে (প্রেরক সেটিংসে দেওয়া)।" : "প্ল্যাটফর্ম SMTP দিয়ে পাঠানো হবে। নিজের SMTP বসালে সেটাই ব্যবহৃত হবে।"
-              : "কনফিগার করা নেই — নিচের প্রেরক সেটিংসে নিজের SMTP বসান, অথবা প্ল্যাটফর্ম অ্যাডমিনকে SMTP কনফিগার করতে বলুন।"}
+              ? status.email.path === "tenant" ? tr("messaging.msgOwnSmtp") : tr("messaging.msgPlatformSmtp")
+              : tr("messaging.msgSmtpNotConfigured")}
           </div>
           <div className={`rounded-xl border p-4 text-sm ${status.sms.configured ? "bg-green-50" : "bg-amber-50"}`}>
             <span className="font-semibold">SMS ({status.sms.provider}):</span> {status.sms.configured
-              ? status.sms.path === "tenant" ? "আপনার নিজের Gateway দিয়ে পাঠানো হবে (প্রেরক সেটিংসে দেওয়া)।" : "প্ল্যাটফর্ম Gateway (SSL Wireless) দিয়ে পাঠানো হবে। নিজের Gateway বসালে সেটাই ব্যবহৃত হবে।"
-              : "কনফিগার করা নেই — নিচের প্রেরক সেটিংসে নিজের SMS Gateway বসান, অথবা প্ল্যাটফর্ম অ্যাডমিনকে কনফিগার করতে বলুন।"}
+              ? status.sms.path === "tenant" ? tr("messaging.msgOwnGateway") : tr("messaging.msgPlatformGateway")
+              : tr("messaging.msgGatewayNotConfigured")}
           </div>
         </div>
       ) : null}
@@ -1448,49 +1483,49 @@ export default function MessagingPage() {
       <div className="space-y-3 card p-5 msg-section">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="font-semibold">Templates ({templates.length})</div>
-          <input className="input w-64 py-1 text-sm" placeholder="Template খুঁজুন (নাম/বিষয়/লেখা)" value={tplSearch} onChange={(e) => setTplSearch(e.target.value)} />
+          <input className="input w-64 py-1 text-sm" placeholder={tr("messaging.msgTemplateSearchPlaceholder")} value={tplSearch} onChange={(e) => setTplSearch(e.target.value)} />
         </div>
-        <p className="text-[11px] text-slate-400 -mt-1">অনুসন্ধানটি লোড করা তালিকার মধ্যেই হয় (সার্ভার অনুসন্ধান নয়) — সব Template একসঙ্গেই লোড করা থাকে।</p>
+        <p className="text-[11px] text-slate-400 -mt-1">{tr("messaging.msgTemplateSearchNote")}</p>
         {templates.filter((t) => { const q = tplSearch.trim().toLowerCase(); if (!q) return true; return [t.name, t.subject ?? "", t.body].join(" ").toLowerCase().includes(q); }).map((t) => (
           <div key={t.id} className="rounded-lg bg-slate-50 p-3 text-sm">
-            <div className="flex items-center justify-between"><span className="font-medium">{t.name}</span><span className="flex gap-1"><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{t.channel}</span>{t.htmlBody ? <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">HTML আছে</span> : null}</span></div>
+            <div className="flex items-center justify-between"><span className="font-medium">{t.name}</span><span className="flex gap-1"><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{t.channel}</span>{t.htmlBody ? <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">{tr("messaging.msgHasHtml")}</span> : null}</span></div>
             {t.subject ? <div className="text-slate-600">Subject: {t.subject}</div> : null}
             <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{t.body}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
-              <input className="input w-64" placeholder={t.channel === "email" ? "টেস্ট পাঠানোর ইমেইল" : "টেস্ট পাঠানোর ফোন নম্বর"} value={tplTestInputs[t.id] ?? ""} onChange={(e) => setTplTestInputs((s) => ({ ...s, [t.id]: e.target.value }))} />
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(tplTestInputs[t.id] ?? "").trim()} onClick={() => runTestSend("template", t.id, tplTestInputs[t.id] ?? "")}>{busy === `test-template-${t.id}` ? "পাঠানো হচ্ছে..." : "🧪 টেস্ট পাঠান"}</button>
+              <input className="input w-64" placeholder={t.channel === "email" ? tr("messaging.msgTestEmailPlaceholder") : tr("messaging.msgTestPhonePlaceholder")} value={tplTestInputs[t.id] ?? ""} onChange={(e) => setTplTestInputs((s) => ({ ...s, [t.id]: e.target.value }))} />
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(tplTestInputs[t.id] ?? "").trim()} onClick={() => runTestSend("template", t.id, tplTestInputs[t.id] ?? "")}>{busy === `test-template-${t.id}` ? tr("messaging.msgSending") : tr("messaging.msgTestSendBtn")}</button>
               {tplTestResults[t.id] ? <span className="text-xs">{tplTestResults[t.id]}</span> : null}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => setTplEdit(tplEdit?.id === t.id ? null : { id: t.id, name: t.name, subject: t.subject ?? "", body: t.body, htmlBody: t.htmlBody ?? "" })}>{tplEdit?.id === t.id ? "সম্পাদনা বন্ধ করুন" : "✏️ সম্পাদনা"}</button>
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => duplicateTemplate(t)}>📄 কপি (Duplicate)</button>
-              {t.channel === "email" ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => openBuilder(t)}>🧱 বিল্ডারে খুলুন</button> : null}
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => setTplEdit(tplEdit?.id === t.id ? null : { id: t.id, name: t.name, subject: t.subject ?? "", body: t.body, htmlBody: t.htmlBody ?? "" })}>{tplEdit?.id === t.id ? tr("messaging.msgEditClose") : tr("messaging.msgEditBtn")}</button>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => duplicateTemplate(t)}>{tr("messaging.msgDuplicate")}</button>
+              {t.channel === "email" ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => openBuilder(t)}>{tr("messaging.msgOpenInBuilder")}</button> : null}
               <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleVersions(t)}>🕘 Version {t.version ?? 1}</button>
-              <button type="button" className="rounded-lg border border-red-300 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteTemplateRow(t)}>মুছুন</button>
-              <span className="text-[11px] text-slate-400">মুছতে OWNER/ADMIN ভূমিকা লাগে — অন্য ভূমিকায় সার্ভারের ত্রুটিই দেখানো হবে।</span>
+              <button type="button" className="rounded-lg border border-red-300 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteTemplateRow(t)}>{tr("messaging.msgDelete")}</button>
+              <span className="text-[11px] text-slate-400">{tr("messaging.msgDeleteRoleNote")}</span>
             </div>
             {tplVersions[t.id] ? (
               <div className="mt-2 grid gap-1.5 rounded-lg border bg-white p-3 text-xs">
-                <div className="font-semibold">Version ইতিহাস (নতুন আগে) — Restore করলে পুরোনো কনটেন্ট নতুন Version হয়ে ফিরে আসে, ইতিহাস মোছে না।</div>
-                {tplVersions[t.id].length === 0 ? <p className="text-slate-500">কোনো Version স্ন্যাপশট পাওয়া যায়নি (MX7-এর আগের Template হলে প্রথম সম্পাদনায় তৈরি হবে)।</p> : tplVersions[t.id].map((v) => (
+                <div className="font-semibold">{tr("messaging.msgVersionHistoryNote")}</div>
+                {tplVersions[t.id].length === 0 ? <p className="text-slate-500">{tr("messaging.msgNoVersions")}</p> : tplVersions[t.id].map((v) => (
                   <div key={v.id} className="flex flex-wrap items-center gap-2 border-t pt-1.5">
                     <span className="font-semibold">v{v.version}</span>
-                    <span className="text-slate-500">{new Date(v.createdAt).toLocaleString("bn-BD")}</span>
+                    <span className="text-slate-500">{fmtDateTime(locale, v.createdAt)}</span>
                     <span className="min-w-0 flex-1 truncate text-slate-600">{v.subject ? `Subject: ${v.subject} · ` : ""}{v.body.slice(0, 90)}</span>
-                    {v.version !== (t.version ?? 1) ? <button type="button" className="rounded border px-2 py-0.5 font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => restoreVersion(t, v.version)}>Restore</button> : <span className="rounded bg-green-100 px-2 py-0.5 text-green-700">বর্তমান</span>}
+                    {v.version !== (t.version ?? 1) ? <button type="button" className="rounded border px-2 py-0.5 font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => restoreVersion(t, v.version)}>Restore</button> : <span className="rounded bg-green-100 px-2 py-0.5 text-green-700">{tr("messaging.msgCurrent")}</span>}
                   </div>
                 ))}
               </div>
             ) : null}
             {tplEdit?.id === t.id ? (
               <div className="mt-2 grid gap-2 rounded-lg border bg-white p-3">
-                <label className="block text-sm">নাম<input className={inputCls} value={tplEdit.name} onChange={(e) => setTplEdit({ ...tplEdit, name: e.target.value })} /></label>
+                <label className="block text-sm">{tr("messaging.msgNameLabel")}<input className={inputCls} value={tplEdit.name} onChange={(e) => setTplEdit({ ...tplEdit, name: e.target.value })} /></label>
                 {t.channel === "email" ? <label className="block text-sm">Subject<input className={inputCls} value={tplEdit.subject} onChange={(e) => setTplEdit({ ...tplEdit, subject: e.target.value })} /></label> : null}
                 <label className="block text-sm">Body (Text)<textarea className={inputCls} rows={3} value={tplEdit.body} onChange={(e) => setTplEdit({ ...tplEdit, body: e.target.value })} /></label>
-                {t.channel === "email" ? <label className="block text-sm">HTML Body (ঐচ্ছিক — খালি রাখলে HTML অংশ থাকবে না)<textarea className={inputCls} rows={3} value={tplEdit.htmlBody} onChange={(e) => setTplEdit({ ...tplEdit, htmlBody: e.target.value })} /></label> : null}
+                {t.channel === "email" ? <label className="block text-sm">{tr("messaging.msgHtmlBodyOptional")}<textarea className={inputCls} rows={3} value={tplEdit.htmlBody} onChange={(e) => setTplEdit({ ...tplEdit, htmlBody: e.target.value })} /></label> : null}
                 <div className="flex gap-2">
-                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => saveTplEdit(t)}>{busy === `tpl-edit-${t.id}` ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}</button>
-                  <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setTplEdit(null)}>বাতিল</button>
+                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => saveTplEdit(t)}>{busy === `tpl-edit-${t.id}` ? tr("messaging.msgSaving") : tr("messaging.msgSave")}</button>
+                  <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setTplEdit(null)}>{tr("messaging.msgCancel")}</button>
                 </div>
               </div>
             ) : null}
@@ -1501,23 +1536,23 @@ export default function MessagingPage() {
           const res = await wrap("tpl", () => apiFetch(`/organizations/${orgId}/messaging/templates`, { method: "POST", body: JSON.stringify({ ...tplForm, subject: tplForm.channel === "email" ? tplForm.subject : undefined, htmlBody: tplForm.channel === "email" && tplForm.htmlBody ? tplForm.htmlBody : undefined }) }));
           if (res) { setTplForm({ name: "", channel: "email", subject: "", body: "", htmlBody: "" }); await load(); }
         }}>
-          <label className="block text-sm">Template এর নাম<input className={inputCls} value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} required /></label>
+          <label className="block text-sm">{tr("messaging.msgTemplateNameLabel")}<input className={inputCls} value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} required /></label>
           <label className="block text-sm">Channel
             <select className={inputCls} value={tplForm.channel} onChange={(e) => setTplForm({ ...tplForm, channel: e.target.value })}>
               <option value="email">Email</option><option value="sms">SMS</option>
             </select>
           </label>
           {tplForm.channel === "email" ? <label className="block text-sm lg:col-span-2">Subject<input className={inputCls} value={tplForm.subject} onChange={(e) => setTplForm({ ...tplForm, subject: e.target.value })} required /></label> : null}
-          <label className="block text-sm lg:col-span-2">Body (Text) — Broadcast-এ &#123;&#123;name&#125;&#125;, &#123;&#123;lastOrderNumber&#125;&#125; এর মতো Variable আসল মানে নিয়ে বসে (নিচের Broadcast ফর্মে পুরো তালিকা আছে); Workflow-তে ইভেন্টের তথ্য অনুযায়ী মেলে<textarea className={inputCls} rows={3} value={tplForm.body} onChange={(e) => setTplForm({ ...tplForm, body: e.target.value })} required /></label>
+          <label className="block text-sm lg:col-span-2">{tr("messaging.msgBodyTextLabel")}<textarea className={inputCls} rows={3} value={tplForm.body} onChange={(e) => setTplForm({ ...tplForm, body: e.target.value })} required /></label>
           {tplForm.channel === "email" ? (<>
-            <label className="block text-sm lg:col-span-2">HTML Body (ঐচ্ছিক) — দিলে ইমেইল HTML হিসেবে যাবে (Text Body Fallback থাকবেই); HTML যেমন লিখবেন তেমনই পাঠানো হয়, তাই শুধু নিজের বিশ্বস্ত HTML বসান<textarea className={inputCls} rows={4} value={tplForm.htmlBody} onChange={(e) => setTplForm({ ...tplForm, htmlBody: e.target.value })} placeholder="<p>হ্যালো {{name}}, ...</p>" /></label>
+            <label className="block text-sm lg:col-span-2">{tr("messaging.msgHtmlBodyLabelLong")}<textarea className={inputCls} rows={4} value={tplForm.htmlBody} onChange={(e) => setTplForm({ ...tplForm, htmlBody: e.target.value })} placeholder={`<p>${tr("messaging.msgHelloPlaceholder")}</p>`} /></label>
             {tplForm.htmlBody ? <div className="lg:col-span-2">
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setTplHtmlPreview((v) => !v)}>{tplHtmlPreview ? "প্রিভিউ লুকান" : "👁️ HTML প্রিভিউ (Sandbox)"}</button>
-              {tplHtmlPreview ? <iframe title="Template HTML প্রিভিউ" sandbox="" srcDoc={tplForm.htmlBody} className="mt-2 h-64 w-full rounded-lg border bg-white" /> : null}
-              <p className="mt-1 text-[11px] text-slate-400">প্রিভিউ Sandbox-এ চলে — কোনো Script চলবে না। Variable (&#123;&#123;...&#125;&#125;) প্রিভিউতে যেমন আছে তেমনই দেখায়; পাঠানোর সময় আসল মানে বসে।</p>
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setTplHtmlPreview((v) => !v)}>{tplHtmlPreview ? tr("messaging.msgHidePreview") : tr("messaging.msgHtmlPreviewBtn")}</button>
+              {tplHtmlPreview ? <iframe title={tr("messaging.msgTemplateHtmlPreview")} sandbox="" srcDoc={tplForm.htmlBody} className="mt-2 h-64 w-full rounded-lg border bg-white" /> : null}
+              <p className="mt-1 text-[11px] text-slate-400">{tr("messaging.msgPreviewSandboxNote")}</p>
             </div> : null}
           </>) : null}
-          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>Template তৈরি করুন</button>
+          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgCreateTemplate")}</button>
         </form>
       </div>
       </>) : null}
@@ -1525,46 +1560,44 @@ export default function MessagingPage() {
       {tab === "templates" ? (<>
       <div className="space-y-3 card p-5 msg-section">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">🧱 Email Builder ও Content Library (MX7)</div>
-          <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={() => openBuilder()}>+ নতুন Builder Template</button>
+          <div className="font-semibold">{tr("messaging.msgBuilderSectionTitle")}</div>
+          <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={() => openBuilder()}>{tr("messaging.msgNewBuilderTemplate")}</button>
         </div>
         <p className="text-xs text-slate-500">
-          ব্লক টেনে সাজিয়ে (বা ↑/↓ দিয়ে) ইমেইল বানান — লেখা, ছবি, বাটন, পণ্য, কুপন, বিভাজক। পণ্য/কুপন স্লটে আসল ক্যাটালগ পণ্য ও আসল ডিসকাউন্ট বসে; স্লট খালি থাকলে সেই অংশ ফাঁকাই যায় — কোনো নমুনা পণ্য/দাম বসে না।
-          Brand Kit (লোগো, রঙ, ফন্ট) আসে Organization Settings-এর ব্র্যান্ডিং থেকে{brandKit ? `: ${brandKit.brandName ?? "নাম নেই"}${brandKit.primaryColor ? ` · ${brandKit.primaryColor}` : ""}${brandKit.font ? ` · ফন্ট: ${brandKit.font}` : ""}` : ""} — Settings-এ বদলালে শুধু নতুন করে বানানো/পাঠানো ইমেইলে আসবে, আগের পাঠানো বার্তা বদলায় না।
+          {tr("messaging.msgBuilderIntro")}
+          {tr("messaging.msgZBrandKitFrom")}{brandKit ? `: ${brandKit.brandName ?? tr("messaging.msgNoName")}${brandKit.primaryColor ? ` · ${brandKit.primaryColor}` : ""}${brandKit.font ? ` · ${tr("messaging.msgZFontLabel")}: ${brandKit.font}` : ""}` : ""} {tr("messaging.msgZBrandKitNote")}
         </p>
 
         {festivalPacks.length ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-600">🎉 উৎসবের Template Pack:</span>
+            <span className="text-xs font-semibold text-slate-600">{tr("messaging.msgFestivalPacksTitle")}</span>
             {festivalPacks.map((p) => (
-              <button key={p.key} type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => installPack(p)}>{busy === `pack-${p.key}` ? "তৈরি হচ্ছে..." : p.nameBn}</button>
+              <button key={p.key} type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => installPack(p)}>{busy === `pack-${p.key}` ? tr("messaging.msgCreating") : p.nameBn}</button>
             ))}
-            <span className="text-[11px] text-slate-400">Pack ইনস্টল হলে Template তৈরি হয় — পণ্য/কুপন স্লট খালি থাকে, বিল্ডারে আসল পণ্য/ডিসকাউন্ট বেছে নিতে হয়।</span>
+            <span className="text-[11px] text-slate-400">{tr("messaging.msgPackNote")}</span>
           </div>
         ) : null}
 
         {builder ? (
           <div className="space-y-3 rounded-lg border bg-white p-3">
             <div className="grid gap-2 lg:grid-cols-2">
-              <label className="block text-sm">Template এর নাম<input className={inputCls} value={builder.name} onChange={(e) => setBuilder({ ...builder, name: e.target.value })} /></label>
+              <label className="block text-sm">{tr("messaging.msgTemplateNameLabel")}<input className={inputCls} value={builder.name} onChange={(e) => setBuilder({ ...builder, name: e.target.value })} /></label>
               <label className="block text-sm">Subject<input className={inputCls} value={builder.subject} onChange={(e) => setBuilder({ ...builder, subject: e.target.value })} /></label>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {(Object.keys(BLOCK_LABELS_BN) as EmailBlockType[]).map((type) => (
-                <button key={type} type="button" className="rounded-lg border px-2.5 py-1 text-xs font-semibold" onClick={() => setBuilder({ ...builder, blocks: [...builder.blocks, newEmailBlock(type)] })}>+ {BLOCK_LABELS_BN[type]}</button>
+              {(Object.keys(blockLabelsFor(locale)) as EmailBlockType[]).map((type) => (
+                <button key={type} type="button" className="rounded-lg border px-2.5 py-1 text-xs font-semibold" onClick={() => setBuilder({ ...builder, blocks: [...builder.blocks, newEmailBlock(type)] })}>+ {blockLabelsFor(locale)[type]}</button>
               ))}
               <span className="ml-1 flex items-center gap-1 text-xs text-slate-500">
-                <input className="input w-44 py-1 text-xs" placeholder="Library-তে রাখার নাম" value={cbName} onChange={(e) => setCbName(e.target.value)} />
-                (নিচে প্রতিটি ব্লকে 📚 বাটনে সেই ব্লক Library-তে যাবে)
-              </span>
+                <input className="input w-44 py-1 text-xs" placeholder={tr("messaging.msgLibraryNameLabel")} value={cbName} onChange={(e) => setCbName(e.target.value)} />{tr("messaging.msgLibraryNote")}</span>
             </div>
             {contentBlocks.length ? (
               <div className="flex flex-wrap gap-1.5">
                 <span className="text-xs font-semibold text-slate-600">📚 Content Library:</span>
                 {contentBlocks.map((cb) => (
                   <span key={cb.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs">
-                    <button type="button" className="font-semibold" title="Builder-এ যোগ করুন" onClick={() => setBuilder({ ...builder, blocks: [...builder.blocks, { ...cb.data }] })}>{cb.name} ({BLOCK_LABELS_BN[cb.kind as EmailBlockType] ?? cb.kind})</button>
-                    <button type="button" className="text-red-600" title="মুছুন" onClick={() => deleteContentBlockRow(cb)}>✕</button>
+                    <button type="button" className="font-semibold" title={tr("messaging.msgAddToBuilder")} onClick={() => setBuilder({ ...builder, blocks: [...builder.blocks, { ...cb.data }] })}>{cb.name} ({blockLabelsFor(locale)[cb.kind as EmailBlockType] ?? cb.kind})</button>
+                    <button type="button" className="text-red-600" title={tr("messaging.msgDelete")} onClick={() => deleteContentBlockRow(cb)}>✕</button>
                   </span>
                 ))}
               </div>
@@ -1577,53 +1610,51 @@ export default function MessagingPage() {
                   onDrop={() => { if (dragIdx !== null) setBuilder({ ...builder, blocks: moveBlock(builder.blocks, dragIdx, i) }); setDragIdx(null); }}
                   className="rounded-lg border bg-slate-50 p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <span className="cursor-grab text-xs font-semibold" title="টেনে সাজান">⠿ {BLOCK_LABELS_BN[b.type]}</span>
+                    <span className="cursor-grab text-xs font-semibold" title={tr("messaging.msgDragToArrange")}>⠿ {blockLabelsFor(locale)[b.type]}</span>
                     <span className="ml-auto flex gap-1">
                       <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={i === 0} onClick={() => setBuilder({ ...builder, blocks: moveBlock(builder.blocks, i, i - 1) })}>↑</button>
                       <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={i === builder.blocks.length - 1} onClick={() => setBuilder({ ...builder, blocks: moveBlock(builder.blocks, i, i + 1) })}>↓</button>
-                      <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-50" disabled={!cbName.trim()} title="Content Library-তে সংরক্ষণ" onClick={() => saveBlockToLibrary(b)}>📚</button>
-                      <button type="button" className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700" onClick={() => setBuilder({ ...builder, blocks: builder.blocks.filter((_, j) => j !== i) })}>মুছুন</button>
+                      <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-50" disabled={!cbName.trim()} title={tr("messaging.msgSaveToLibraryTitle")} onClick={() => saveBlockToLibrary(b)}>📚</button>
+                      <button type="button" className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700" onClick={() => setBuilder({ ...builder, blocks: builder.blocks.filter((_, j) => j !== i) })}>{tr("messaging.msgDelete")}</button>
                     </span>
                   </div>
-                  {b.type === "text" ? <textarea className={inputCls} rows={3} value={b.text ?? ""} placeholder="লেখা লিখুন — {{name}}-এর মতো Variable পাঠানোর সময় আসল মানে নিয়ে বসে" onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, text: e.target.value } : x) })} /> : null}
+                  {b.type === "text" ? <textarea className={inputCls} rows={3} value={b.text ?? ""} placeholder={tr("messaging.msgTextBlockHint")} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, text: e.target.value } : x) })} /> : null}
                   {b.type === "image" ? (<div className="grid gap-2 lg:grid-cols-2">
-                    <label className="block text-xs">ছবির URL (http/https)<input className={inputCls} value={b.url ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, url: e.target.value } : x) })} /></label>
-                    <label className="block text-xs">Alt লেখা<input className={inputCls} value={b.alt ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, alt: e.target.value } : x) })} /></label>
+                    <label className="block text-xs">{tr("messaging.msgImageUrlLabel")}<input className={inputCls} value={b.url ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, url: e.target.value } : x) })} /></label>
+                    <label className="block text-xs">{tr("messaging.msgAltTextLabel")}<input className={inputCls} value={b.alt ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, alt: e.target.value } : x) })} /></label>
                   </div>) : null}
                   {b.type === "button" ? (<div className="grid gap-2 lg:grid-cols-2">
-                    <label className="block text-xs">বাটনের লেখা<input className={inputCls} value={b.label ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, label: e.target.value } : x) })} /></label>
-                    <label className="block text-xs">লিংক (http/https)<input className={inputCls} value={b.url ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, url: e.target.value } : x) })} /></label>
+                    <label className="block text-xs">{tr("messaging.msgButtonTextLabel")}<input className={inputCls} value={b.label ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, label: e.target.value } : x) })} /></label>
+                    <label className="block text-xs">{tr("messaging.msgLinkLabel")}<input className={inputCls} value={b.url ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, url: e.target.value } : x) })} /></label>
                   </div>) : null}
                   {b.type === "product" ? (
-                    <label className="block text-xs">আসল পণ্য বেছে নিন (না বাছলে স্লট ফাঁকা থাকবে)
-                      <select className={inputCls} value={b.productId ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, productId: e.target.value || null } : x) })}>
-                        <option value="">— স্লট খালি —</option>
+                    <label className="block text-xs">{tr("messaging.msgPickRealProduct")}<select className={inputCls} value={b.productId ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, productId: e.target.value || null } : x) })}>
+                        <option value="">{tr("messaging.msgSlotEmpty")}</option>
                         {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     </label>) : null}
                   {b.type === "coupon" ? (
                     <div className="grid gap-2 lg:grid-cols-2">
-                      <label className="block text-xs">আসল ডিসকাউন্ট বেছে নিন (StoreDiscount)
-                        <select className={inputCls} value={b.discountId ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, discountId: e.target.value || null } : x) })}>
-                          <option value="">— ডিসকাউন্ট নয় —</option>
-                          {discounts.map((d) => <option key={d.id} value={d.id}>{d.code} ({d.kind === "percent" ? `${d.value}%` : d.kind === "free_shipping" ? "ফ্রি ডেলিভারি" : `${d.value}`})</option>)}
+                      <label className="block text-xs">{tr("messaging.msgPickRealDiscount")}<select className={inputCls} value={b.discountId ?? ""} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, discountId: e.target.value || null } : x) })}>
+                          <option value="">{tr("messaging.msgNotDiscount")}</option>
+                          {discounts.map((d) => <option key={d.id} value={d.id}>{d.code} ({d.kind === "percent" ? `${d.value}%` : d.kind === "free_shipping" ? tr("messaging.msgFreeDelivery") : `${d.value}`})</option>)}
                         </select>
                       </label>
-                      <label className="block text-xs">অথবা নিজে লেখা কোড (শুধু লেখা হিসেবে যায় — সিস্টেম যাচাই করে না)<input className={inputCls} value={b.code ?? ""} placeholder="যেমন EID20" onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, code: e.target.value || null } : x) })} /></label>
+                      <label className="block text-xs">{tr("messaging.msgCustomCodeLabel")}<input className={inputCls} value={b.code ?? ""} placeholder={tr("messaging.msgExEid20")} onChange={(e) => setBuilder({ ...builder, blocks: builder.blocks.map((x, j) => j === i ? { ...x, code: e.target.value || null } : x) })} /></label>
                     </div>) : null}
-                  {b.type === "divider" ? <p className="text-xs text-slate-400">বিভাজক রেখা — কোনো সেটিং নেই।</p> : null}
+                  {b.type === "divider" ? <p className="text-xs text-slate-400">{tr("messaging.msgDividerNote")}</p> : null}
                 </div>
               ))}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={previewBuilder}>{busy === "builder-preview" ? "প্রিভিউ হচ্ছে..." : "👁️ প্রিভিউ (সার্ভার রেন্ডার)"}</button>
-              <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !builder.name.trim() || !builder.subject.trim() || builder.blocks.length === 0} onClick={saveBuilder}>{busy === "builder-save" ? "সংরক্ষণ হচ্ছে..." : "Template সংরক্ষণ করুন"}</button>
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBuilder(null)}>বন্ধ করুন</button>
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={previewBuilder}>{busy === "builder-preview" ? tr("messaging.msgPreviewing") : tr("messaging.msgPreviewServerBtn")}</button>
+              <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !builder.name.trim() || !builder.subject.trim() || builder.blocks.length === 0} onClick={saveBuilder}>{busy === "builder-save" ? tr("messaging.msgSaving") : tr("messaging.msgSaveTemplateBtn")}</button>
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBuilder(null)}>{tr("messaging.msgClose")}</button>
             </div>
             {builderPreview ? (
               <div>
-                {builderPreview.emptySlots.length ? <p className="mb-1 text-xs text-amber-700">⚠️ খালি স্লট: {builderPreview.emptySlots.map((s) => `#${s.index + 1} ${s.type} — ${s.reason}`).join("; ")}</p> : null}
-                <iframe title="Builder HTML প্রিভিউ" sandbox="" srcDoc={builderPreview.htmlBody} className="h-72 w-full rounded-lg border bg-white" />
+                {builderPreview.emptySlots.length ? <p className="mb-1 text-xs text-amber-700">{tr("messaging.msgZEmptySlots")}: {builderPreview.emptySlots.map((s) => `#${s.index + 1} ${s.type} — ${s.reason}`).join("; ")}</p> : null}
+                <iframe title={tr("messaging.msgBuilderPreviewTitle")} sandbox="" srcDoc={builderPreview.htmlBody} className="h-72 w-full rounded-lg border bg-white" />
               </div>
             ) : null}
           </div>
@@ -1633,46 +1664,46 @@ export default function MessagingPage() {
 
       {tab === "growth" ? (<>
       <div className="space-y-4 card p-5 msg-section">
-        <h2 className="font-semibold">🌱 Growth Tools ও Preference Center (MX10)</h2>
-        <p className="text-xs text-slate-500">সাইনআপগুলো আসল Lead + MessagePreference হয়ে আসে — Audience Builder-এ Source = <code>messaging_form</code> বা Tag = <code>optin:&lt;slug&gt;</code> দিয়ে বাছা যায়। Double Opt-in চালু থাকলে Confirm না করা পর্যন্ত (Pending) কোনো Marketing বার্তা যায় না। Opt-out সবসময় সর্বোচ্চ — কোনো Growth পথই Opt-out বদলায় না।</p>
+        <h2 className="font-semibold">{tr("messaging.msgGrowthTitle")}</h2>
+        <p className="text-xs text-slate-500">{tr("messaging.msgGrowthIntro")}</p>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-2 rounded-lg border bg-white p-3">
-            <div className="text-sm font-semibold">নতুন Opt-in Form</div>
-            <input className="input w-full py-1 text-sm" placeholder="Form-এর নাম (যেমন: ঈদ অফার লিস্ট)" value={growthDraft.name} onChange={(e) => setGrowthDraft((d) => ({ ...d, name: e.target.value }))} />
-            <input className="input w-full py-1 text-sm" placeholder="Headline (ঐচ্ছিক)" value={growthDraft.headline} onChange={(e) => setGrowthDraft((d) => ({ ...d, headline: e.target.value }))} />
+            <div className="text-sm font-semibold">{tr("messaging.msgNewOptinForm")}</div>
+            <input className="input w-full py-1 text-sm" placeholder={tr("messaging.msgFormNamePlaceholder")} value={growthDraft.name} onChange={(e) => setGrowthDraft((d) => ({ ...d, name: e.target.value }))} />
+            <input className="input w-full py-1 text-sm" placeholder={tr("messaging.msgHeadlinePlaceholder")} value={growthDraft.headline} onChange={(e) => setGrowthDraft((d) => ({ ...d, headline: e.target.value }))} />
             <div className="flex flex-wrap gap-3 text-sm">
               {["email", "sms", "whatsapp"].map((ch) => (
                 <label key={ch} className="flex items-center gap-1"><input type="checkbox" checked={growthDraft.channels.includes(ch)} onChange={(e) => setGrowthDraft((d) => ({ ...d, channels: e.target.checked ? [...d.channels, ch] : d.channels.filter((c) => c !== ch) }))} /> {ch}</label>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input className="input py-1 text-sm" placeholder="Topic (ঐচ্ছিক)" value={growthDraft.topic} onChange={(e) => setGrowthDraft((d) => ({ ...d, topic: e.target.value }))} />
-              <input className="input py-1 text-sm" placeholder="WhatsApp Keyword (ঐচ্ছিক, যেমন JOIN)" value={growthDraft.keyword} onChange={(e) => setGrowthDraft((d) => ({ ...d, keyword: e.target.value }))} />
+              <input className="input py-1 text-sm" placeholder={tr("messaging.msgTopicPlaceholder")} value={growthDraft.topic} onChange={(e) => setGrowthDraft((d) => ({ ...d, topic: e.target.value }))} />
+              <input className="input py-1 text-sm" placeholder={tr("messaging.msgKeywordPlaceholder")} value={growthDraft.keyword} onChange={(e) => setGrowthDraft((d) => ({ ...d, keyword: e.target.value }))} />
             </div>
-            <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={growthDraft.doubleOptIn} onChange={(e) => setGrowthDraft((d) => ({ ...d, doubleOptIn: e.target.checked }))} /> Double Opt-in (ইমেইল লিংক / WhatsApp Keyword দিয়ে Confirm)</label>
-            <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={growthDraft.popupEnabled} onChange={(e) => setGrowthDraft((d) => ({ ...d, popupEnabled: e.target.checked }))} /> Popup হিসেবে দেখান (Embed-এর জন্য)</label>
-            {growthDraft.popupEnabled ? <input className="input w-32 py-1 text-sm" type="number" min="0" placeholder="Delay (সেকেন্ড)" value={growthDraft.popupDelay} onChange={(e) => setGrowthDraft((d) => ({ ...d, popupDelay: e.target.value }))} /> : null}
-            <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !growthDraft.name.trim() || growthDraft.channels.length === 0} onClick={createGrowthForm}>Form তৈরি করুন</button>
+            <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={growthDraft.doubleOptIn} onChange={(e) => setGrowthDraft((d) => ({ ...d, doubleOptIn: e.target.checked }))} />{tr("messaging.msgDoubleOptinLabel")}</label>
+            <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={growthDraft.popupEnabled} onChange={(e) => setGrowthDraft((d) => ({ ...d, popupEnabled: e.target.checked }))} />{tr("messaging.msgPopupLabel")}</label>
+            {growthDraft.popupEnabled ? <input className="input w-32 py-1 text-sm" type="number" min="0" placeholder={tr("messaging.msgDelayPlaceholder")} value={growthDraft.popupDelay} onChange={(e) => setGrowthDraft((d) => ({ ...d, popupDelay: e.target.value }))} /> : null}
+            <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !growthDraft.name.trim() || growthDraft.channels.length === 0} onClick={createGrowthForm}>{tr("messaging.msgCreateForm")}</button>
           </div>
           <div className="space-y-2 rounded-lg border bg-white p-3">
-            <div className="text-sm font-semibold">Preference Center লিংক তৈরি</div>
-            <p className="text-xs text-slate-500">কাস্টমার এই লিংকে নিজের Channel/Topic/Frequency পছন্দ বদলাতে পারবেন — এক ক্লিকেই সব চ্যানেল থেকে Unsubscribe-ও করা যাবে।</p>
+            <div className="text-sm font-semibold">{tr("messaging.msgPrefLinkTitle")}</div>
+            <p className="text-xs text-slate-500">{tr("messaging.msgPrefLinkNote")}</p>
             <div className="flex gap-2">
               <select className="input w-auto py-1 text-sm" value={prefLink.channel} onChange={(e) => setPrefLink((s) => ({ ...s, channel: e.target.value }))}>
                 <option value="email">email</option><option value="sms">sms</option><option value="whatsapp">whatsapp</option>
               </select>
-              <input className="input flex-1 py-1 text-sm" placeholder="কাস্টমারের ঠিকানা (ইমেইল/ফোন)" value={prefLink.address} onChange={(e) => setPrefLink((s) => ({ ...s, address: e.target.value }))} />
-              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !prefLink.address.trim()} onClick={issuePrefLink}>লিংক</button>
+              <input className="input flex-1 py-1 text-sm" placeholder={tr("messaging.msgCustomerAddressPlaceholder")} value={prefLink.address} onChange={(e) => setPrefLink((s) => ({ ...s, address: e.target.value }))} />
+              <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !prefLink.address.trim()} onClick={issuePrefLink}>{tr("messaging.msgLinkBtn")}</button>
             </div>
             {prefLink.url ? <input className="input w-full py-1 text-xs" readOnly value={prefLink.url} onFocus={(e) => e.target.select()} /> : null}
-            <div className="pt-2 text-sm font-semibold">Consent ইতিহাস (MX10 থেকে শুরু)</div>
-            <p className="text-xs text-slate-500">এর আগের Consent বদলের কোনো ইতিহাস রেকর্ড করা ছিল না — তাই Export-এ শুধু MX10-এর পরের আসল বদলগুলোই থাকে, কিছু বানিয়ে যোগ করা হয়নি।</p>
+            <div className="pt-2 text-sm font-semibold">{tr("messaging.msgConsentHistoryTitle")}</div>
+            <p className="text-xs text-slate-500">{tr("messaging.msgConsentHistoryNote")}</p>
             <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={exportConsent}>📥 Consent Audit Export (CSV)</button>
             {consentEvents.length ? (
               <ul className="max-h-40 space-y-1 overflow-y-auto text-xs text-slate-600">
-                {consentEvents.slice(0, 20).map((e) => <li key={e.id}>{new Date(e.createdAt).toLocaleString()} · {e.channel} · {e.address} · {e.fromStatus ?? "—"} → {e.toStatus} · {e.source}</li>)}
+                {consentEvents.slice(0, 20).map((e) => <li key={e.id}>{fmtDateTime(locale, e.createdAt)} · {e.channel} · {e.address} · {e.fromStatus ?? "—"} → {e.toStatus} · {e.source}</li>)}
               </ul>
-            ) : <p className="text-xs text-slate-400">এখনো কোনো Consent বদল রেকর্ড হয়নি।</p>}
+            ) : <p className="text-xs text-slate-400">{tr("messaging.msgNoConsentRecords")}</p>}
           </div>
         </div>
         {growthForms.length ? (
@@ -1681,26 +1712,26 @@ export default function MessagingPage() {
               <div key={f.id} className="rounded-lg bg-slate-50 p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div><span className="font-medium">{f.name}</span> <span className="text-slate-400">({f.channels.join(", ")})</span>
-                    <div className="text-xs text-slate-500">Slug: {f.slug}{f.topic ? ` · Topic: ${f.topic}` : ""}{f.keyword ? ` · Keyword: ${f.keyword}` : ""} · Double Opt-in: {f.doubleOptIn ? "চালু" : "বন্ধ"}{f.popup?.enabled ? ` · Popup (${f.popup.delaySeconds ?? 0}s)` : ""} · {f.enabled ? "সক্রিয়" : "বন্ধ"}</div>
+                    <div className="text-xs text-slate-500">Slug: {f.slug}{f.topic ? ` · Topic: ${f.topic}` : ""}{f.keyword ? ` · Keyword: ${f.keyword}` : ""} · Double Opt-in: {f.doubleOptIn ? tr("messaging.msgStateOn") : tr("messaging.msgStateOff")}{f.popup?.enabled ? ` · Popup (${f.popup.delaySeconds ?? 0}s)` : ""} · {f.enabled ? tr("messaging.msgActiveWord") : tr("messaging.msgStateOff")}</div>
                     <a className="text-xs text-blue-600 underline" href={f.joinUrl} target="_blank" rel="noreferrer">{f.joinUrl}</a>
                   </div>
                   <div className="flex gap-2">
-                    <button className="rounded-lg border px-3 py-1.5 text-xs" onClick={() => toggleGrowthQr(f)}>{growthQr[f.id] ? "QR লুকান" : "🔳 QR Code"}</button>
-                    <button className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteGrowthForm(f)}>মুছুন</button>
+                    <button className="rounded-lg border px-3 py-1.5 text-xs" onClick={() => toggleGrowthQr(f)}>{growthQr[f.id] ? tr("messaging.msgQrHide") : tr("messaging.msgQrShow")}</button>
+                    <button className="rounded-lg border border-red-300 px-3 py-1.5 text-xs text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteGrowthForm(f)}>{tr("messaging.msgDelete")}</button>
                   </div>
                 </div>
                 {growthQr[f.id] ? <img src={growthQr[f.id]} alt={`QR — ${f.name}`} className="mt-2 h-40 w-40 rounded border bg-white" /> : null}
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-slate-500">Embed Snippet (নিজের সাইটে বসান)</summary>
+                  <summary className="cursor-pointer text-xs text-slate-500">{tr("messaging.msgEmbedSnippet")}</summary>
                   <textarea className="input mt-1 w-full text-xs" rows={2} readOnly value={`<iframe src="${f.joinUrl}" width="100%" height="420" style="border:0" title="${f.name}"></iframe>`} onFocus={(e) => e.target.select()} />
                 </details>
               </div>
             ))}
           </div>
-        ) : <p className="text-sm text-slate-400">কোনো Opt-in Form নেই — উপরের ফর্মে প্রথমটি তৈরি করুন।</p>}
+        ) : <p className="text-sm text-slate-400">{tr("messaging.msgNoOptinForms")}</p>}
         <div className="space-y-2 rounded-lg border bg-white p-3">
-          <div className="text-sm font-semibold">📥 CSV Import Wizard — আগে Hygiene রিপোর্ট, তারপর Import</div>
-          <p className="text-xs text-slate-500">Duplicate (ফাইলের ভিতরে + আগের Contact-এর সঙ্গে), Invalid ও Role ঠিকানা (info@, admin@ ইত্যাদি) বাদ যাবে — প্রতিটি বাদ-যাওয়া Row-এর কারণ রিপোর্টে থাকে। শুধু Clean Row Import হয়, প্রতিটির Consent Source থাকে &quot;import&quot;।</p>
+          <div className="text-sm font-semibold">{tr("messaging.msgCsvWizTitle")}</div>
+          <p className="text-xs text-slate-500">{tr("messaging.msgCsvIntro")}</p>
           <div className="flex flex-wrap items-center gap-2">
             <select className="input w-auto py-1 text-sm" value={csvWiz.channel} onChange={(e) => setCsvWiz((s) => ({ ...s, channel: e.target.value, preview: null }))}>
               <option value="email">email</option><option value="sms">sms</option><option value="whatsapp">whatsapp</option>
@@ -1713,18 +1744,18 @@ export default function MessagingPage() {
               {(["name", "email", "phone"] as const).map((k) => (
                 <label key={k} className="flex items-center gap-1 text-xs">{k}:
                   <select className="input w-auto py-1 text-xs" value={csvWiz.mapping[k]} onChange={(e) => setCsvWiz((s) => ({ ...s, mapping: { ...s.mapping, [k]: e.target.value } }))}>
-                    <option value="">— নেই —</option>
+                    <option value="">{tr("messaging.msgNoneOption")}</option>
                     {csvWiz.text.split("\n")[0].split(",").map((h) => h.trim()).filter(Boolean).map((h) => <option key={h} value={h}>{h}</option>)}
                   </select>
                 </label>
               ))}
-              <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={previewCsvWiz}>Hygiene রিপোর্ট দেখুন</button>
+              <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={previewCsvWiz}>{tr("messaging.msgHygieneReportBtn")}</button>
             </div>
           ) : null}
           {csvWiz.preview ? (
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2 text-xs">
-                <span className="badge-indigo">মোট {csvWiz.preview.totalRows}</span>
+                <span className="badge-indigo">{tr("messaging.msgZTotalRows", { count: fmtNumber(locale, csvWiz.preview.totalRows) })}</span>
                 <span className="badge-indigo">Clean {csvWiz.preview.cleanCount}</span>
                 <span className="badge-slate">Duplicate {csvWiz.preview.duplicateCount}</span>
                 <span className="badge-slate">Invalid {csvWiz.preview.invalidCount}</span>
@@ -1732,15 +1763,15 @@ export default function MessagingPage() {
               </div>
               <div className="max-h-56 overflow-y-auto rounded-xl border">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">ঠিকানা</th><th className="px-3 py-2">ফল</th><th className="px-3 py-2">কারণ</th></tr></thead>
+                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">{tr("messaging.msgColAddress")}</th><th className="px-3 py-2">{tr("messaging.msgZResultCol")}</th><th className="px-3 py-2">{tr("messaging.msgColReason")}</th></tr></thead>
                   <tbody>{csvWiz.preview.rows.map((r) => (
-                    <tr key={r.row} className="border-t"><td className="px-3 py-2">{r.row}</td><td className="px-3 py-2">{r.address || "—"}</td><td className="px-3 py-2">{r.status === "clean" ? "✅ Clean" : "🚫 বাদ"}</td><td className="px-3 py-2">{r.reasonText ?? ""}</td></tr>
+                    <tr key={r.row} className="border-t"><td className="px-3 py-2">{r.row}</td><td className="px-3 py-2">{r.address || "—"}</td><td className="px-3 py-2">{r.status === "clean" ? tr("messaging.msgStatusClean") : tr("messaging.msgStatusDropped")}</td><td className="px-3 py-2">{r.reasonText ?? ""}</td></tr>
                   ))}</tbody>
                 </table>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || csvWiz.committed !== "" || csvWiz.preview.cleanCount === 0} onClick={commitCsvWiz}>শুধু Clean {csvWiz.preview.cleanCount}টি Import করুন</button>
-                <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={downloadCsvReport}>📥 Hygiene রিপোর্ট (CSV)</button>
+                <button className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || csvWiz.committed !== "" || csvWiz.preview.cleanCount === 0} onClick={commitCsvWiz}>{tr("messaging.msgZImportCleanOnly", { count: fmtNumber(locale, csvWiz.preview.cleanCount) })}</button>
+                <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={downloadCsvReport}>{tr("messaging.msgHygieneCsvBtn")}</button>
               </div>
               {csvWiz.committed ? <p className="text-xs font-medium text-emerald-700">✅ {csvWiz.committed}</p> : null}
             </div>
@@ -1752,87 +1783,87 @@ export default function MessagingPage() {
       {tab === "campaigns" ? (<>
       <div className="space-y-3 card p-5 msg-section">
         <div className="card space-y-3">
-          <h2 className="font-semibold">📊 RFM Segments (আসল অর্ডার থেকে)</h2>
+          <h2 className="font-semibold">{tr("messaging.msgRfmSegTitle")}</h2>
           {rfm ? (<>
             <div className="flex flex-wrap gap-2">
               {SEGMENTS.map((s) => <span key={s} className="badge-indigo">{SEG_LABEL[s]}: {rfm.segments[s] ?? 0}</span>)}
-              <span className="badge-slate">মোট সক্রিয় কাস্টমার: {rfm.totalCustomers}</span>
+              <span className="badge-slate">{tr("messaging.msgZTotalActiveCustomers", { count: fmtNumber(locale, rfm.totalCustomers) })}</span>
             </div>
             <div className="overflow-x-auto rounded-xl border">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">কাস্টমার</th><th className="px-3 py-2">শেষ অর্ডার</th><th className="px-3 py-2">অর্ডার</th><th className="px-3 py-2">মোট কেনা</th><th className="px-3 py-2">Segment</th></tr></thead>
+                <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">{tr("messaging.msgColCustomer")}</th><th className="px-3 py-2">{tr("messaging.msgColLastOrder")}</th><th className="px-3 py-2">{tr("messaging.msgColOrders")}</th><th className="px-3 py-2">{tr("messaging.msgColTotalBought")}</th><th className="px-3 py-2">Segment</th></tr></thead>
                 <tbody>{rfm.rows.slice(0, 8).map((r) => (
-                  <tr key={r.customerId} className="border-t"><td className="px-3 py-2 font-medium">{r.name}</td><td className="px-3 py-2">{r.recencyDays} দিন আগে</td><td className="px-3 py-2">{r.frequency}টি</td><td className="px-3 py-2">৳{(Number(r.monetaryMinor) / 100).toLocaleString("en-IN")}</td><td className="px-3 py-2">{SEG_LABEL[r.segment] ?? r.segment} (R{r.r} F{r.f} M{r.m})</td></tr>
+                  <tr key={r.customerId} className="border-t"><td className="px-3 py-2 font-medium">{r.name}</td><td className="px-3 py-2">{tr("messaging.msgDaysAgoSuffix", { count: fmtNumber(locale, r.recencyDays) })}</td><td className="px-3 py-2">{tr("messaging.msgCountTi", { count: fmtNumber(locale, r.frequency) })}</td><td className="px-3 py-2">{fmtMoney(locale, Number(r.monetaryMinor) / 100)}</td><td className="px-3 py-2">{SEG_LABEL[r.segment] ?? r.segment} (R{r.r} F{r.f} M{r.m})</td></tr>
                 ))}</tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-400">স্কোর ১–৫ আপনার নিজের কাস্টমার বেসের আপেক্ষিক (quintile)। বাতিল অর্ডার হিসাবের বাইরে।</p>
-          </>) : <p className="text-sm text-slate-400">লোড হচ্ছে...</p>}
+            <p className="text-xs text-slate-400">{tr("messaging.msgRfmQuintileNote")}</p>
+          </>) : <p className="text-sm text-slate-400">{tr("messaging.msgLoading")}</p>}
         </div>
         <div className="card space-y-3">
           <h2 className="font-semibold">🧠 Audience Intelligence (MX11) <span className="badge-indigo">rule-based estimate</span></h2>
-          <p className="text-xs text-slate-500">সব স্কোর ও সেগমেন্ট <strong>নিয়ম-ভিত্তিক অনুমান (rule-based estimate)</strong> — আসল Delivery/Open/Click/Order রেকর্ডের ওপর নির্ধারিত নিয়মে হিসাব করা। এটি কোনো AI বা ML ভবিষ্যদ্বাণী নয়। স্কোর কোথাও সংরক্ষিত নয় — প্রতিবার পড়ার সময় তাজা হিসাব হয় (RFM-এর মতো)।</p>
+          <p className="text-xs text-slate-500">{tr("messaging.msgZRuleBasedA")} <strong>{tr("messaging.msgZRuleBasedStrong")}</strong>{tr("messaging.msgZRuleBasedC")}</p>
           {engagement ? (<>
             <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-              <div className="font-semibold text-slate-700">📐 Engagement Score-এর সূত্র (কোনো ব্ল্যাক বক্স নয়)</div>
+              <div className="font-semibold text-slate-700">{tr("messaging.msgEngagementFormulaTitle")}</div>
               <p className="mt-1">{engagement.formula}</p>
-              <p className="mt-1">মোট Contact: {engagement.totalContacts} · ইতিহাস আছে: {engagement.scoredContacts} · কোনো ইতিহাস নেই (স্কোর ০): {engagement.zeroHistoryContacts}</p>
+              <p className="mt-1">{tr("messaging.msgZContactTotals", { total: fmtNumber(locale, engagement.totalContacts), scored: fmtNumber(locale, engagement.scoredContacts), zero: fmtNumber(locale, engagement.zeroHistoryContacts) })}</p>
             </div>
             <div className="space-y-1">
               {engagement.segmentRules.map((r) => (
                 <div key={r.segment} className="flex flex-wrap items-baseline gap-2 text-xs">
-                  <span className="badge-indigo">{PREDICTIVE_LABEL[r.segment] ?? r.label}: {engagement.segmentCounts[r.segment] ?? 0} জন</span>
+                  <span className="badge-indigo">{PREDICTIVE_LABEL_L[r.segment] ?? r.label}: {fmtNumber(locale, engagement.segmentCounts[r.segment] ?? 0)} {tr("messaging.msgPeopleWord")}</span>
                   <span className="text-slate-500">{r.rule}</span>
                 </div>
               ))}
-              <p className="text-[11px] text-slate-400">Threshold বদলাতে চাইলে নিচের Consent সেটিংসের &quot;Audience Intelligence Thresholds&quot; অংশে যান। এই সেগমেন্টগুলো Audience Builder-এ <em>Predictive Segment</em> ও <em>Engagement Score</em> শর্ত দিয়ে সরাসরি ব্যবহার করা যায়।</p>
+              <p className="text-[11px] text-slate-400">{tr("messaging.msgThresholdNote")}</p>
             </div>
             {engagement.rows.length ? (
               <div className="overflow-x-auto rounded-xl border">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Contact</th><th className="px-3 py-2">Score</th><th className="px-3 py-2">Segments (rule-based estimate)</th><th className="px-3 py-2">প্রমাণ (আসল রেকর্ড)</th><th className="px-3 py-2">শেষ Engagement</th></tr></thead>
+                  <thead className="bg-slate-50 text-slate-500"><tr><th className="px-3 py-2">Contact</th><th className="px-3 py-2">Score</th><th className="px-3 py-2">Segments (rule-based estimate)</th><th className="px-3 py-2">{tr("messaging.msgColEvidence")}</th><th className="px-3 py-2">{tr("messaging.msgColLastEngagement")}</th></tr></thead>
                   <tbody>{engagement.rows.slice(0, 10).map((r) => (
-                    <tr key={`${r.type}:${r.id}`} className="border-t"><td className="px-3 py-2 font-medium">{r.name || r.id} <span className="text-slate-400">({r.type})</span></td><td className="px-3 py-2 font-semibold">{r.score}</td><td className="px-3 py-2">{r.segments.length ? r.segments.map((s) => PREDICTIVE_LABEL[s] ?? s).join(", ") : "—"}</td><td className="px-3 py-2">পাঠানো {r.sentCount} · Open {r.openCount} · Click {r.clickCount} · অর্ডার {r.orderFrequency} (৳{(Number(r.totalSpentMinor) / 100).toLocaleString("en-IN")})</td><td className="px-3 py-2">{r.daysSinceLastEngagement === null ? "কখনো নয়" : `${r.daysSinceLastEngagement} দিন আগে`}</td></tr>
+                    <tr key={`${r.type}:${r.id}`} className="border-t"><td className="px-3 py-2 font-medium">{r.name || r.id} <span className="text-slate-400">({r.type})</span></td><td className="px-3 py-2 font-semibold">{r.score}</td><td className="px-3 py-2">{r.segments.length ? r.segments.map((s) => PREDICTIVE_LABEL_L[s] ?? s).join(", ") : "—"}</td><td className="px-3 py-2">{tr("messaging.msgZEngEvidence", { sent: fmtNumber(locale, r.sentCount), open: fmtNumber(locale, r.openCount), click: fmtNumber(locale, r.clickCount), orders: fmtNumber(locale, r.orderFrequency), money: fmtMoney(locale, Number(r.totalSpentMinor) / 100) })}</td><td className="px-3 py-2">{r.daysSinceLastEngagement === null ? tr("messaging.msgNeverWord") : tr("messaging.msgDaysAgoSuffix", { count: fmtNumber(locale, r.daysSinceLastEngagement) })}</td></tr>
                   ))}</tbody>
                 </table>
               </div>
-            ) : <p className="text-sm text-slate-400">এখনো কোনো Delivery/Click/Order ইতিহাস নেই — স্কোর সবার ০।</p>}
-          </>) : <p className="text-sm text-slate-400">লোড হচ্ছে...</p>}
+            ) : <p className="text-sm text-slate-400">{tr("messaging.msgNoEngagementHistory")}</p>}
+          </>) : <p className="text-sm text-slate-400">{tr("messaging.msgLoading")}</p>}
           <div className="border-t pt-3 space-y-2">
-            <div className="text-sm font-semibold">✍️ নিজের ভাষায় Segment বর্ণনা করুন (AI খসড়া — শুধু draft)</div>
-            <p className="text-xs text-slate-500">AI শুধু একটি <strong>খসড়া নিয়ম</strong> বানিয়ে দেবে — কিছুই তৈরি বা সংরক্ষণ হবে না। খসড়া দেখে, প্রয়োজনে সম্পাদনা করে, তারপর &quot;Saved Audience তৈরি করুন&quot; চাপলেই কেবল Audience তৈরি হবে। খসড়া যাচাইয়ে ব্যর্থ হলে ত্রুটিসহই দেখানো হবে — নিজে থেকে ঠিক করে দেওয়া হবে না।</p>
+            <div className="text-sm font-semibold">{tr("messaging.msgNlTitle")}</div>
+            <p className="text-xs text-slate-500">{tr("messaging.msgZNlNoteA")}<strong>{tr("messaging.msgZNlNoteStrong")}</strong>{tr("messaging.msgZNlNoteB")}</p>
             <div className="flex flex-wrap gap-2">
-              <input className="input flex-1 min-w-64 py-1 text-sm" placeholder="যেমন: যারা কমপক্ষে ৩ বার অর্ডার করেছে কিন্তু ৯০ দিন ধরে কিছু কেনেনি" value={nlDraft.description} onChange={(e) => setNlDraft((d) => ({ ...d, description: e.target.value }))} />
+              <input className="input flex-1 min-w-64 py-1 text-sm" placeholder={tr("messaging.msgNlPlaceholder")} value={nlDraft.description} onChange={(e) => setNlDraft((d) => ({ ...d, description: e.target.value }))} />
               <select className="input w-auto py-1 text-sm" value={nlDraft.entity} onChange={(e) => setNlDraft((d) => ({ ...d, entity: e.target.value }))}>
                 <option value="customers">Customers</option><option value="leads">Leads</option>
               </select>
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !nlDraft.description.trim()} onClick={runNlDraft}>খসড়া বানান</button>
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !nlDraft.description.trim()} onClick={runNlDraft}>{tr("messaging.msgMakeDraft")}</button>
             </div>
             {nlResult ? (
               <div className="space-y-2">
                 {nlResult.valid
-                  ? <p className="text-xs text-green-700">✅ খসড়াটি Audience নিয়মে যাচাই পাস করেছে। {nlResult.notice}</p>
-                  : <div className="text-xs text-red-700">❌ খসড়াটি যাচাইয়ে পাস করেনি — কিছুই তৈরি হয়নি:{nlResult.errors.map((e, i) => <div key={i}>• {e}</div>)}</div>}
-                <textarea className="input w-full font-mono text-xs" rows={6} value={nlDraftJson} onChange={(e) => setNlDraftJson(e.target.value)} placeholder="AI খসড়া (JSON) এখানে আসবে — সম্পাদনাযোগ্য" />
+                  ? <p className="text-xs text-green-700">{tr("messaging.msgZNlValid")} {nlResult.notice}</p>
+                  : <div className="text-xs text-red-700">{tr("messaging.msgZNlInvalid")}{nlResult.errors.map((e, i) => <div key={i}>• {e}</div>)}</div>}
+                <textarea className="input w-full font-mono text-xs" rows={6} value={nlDraftJson} onChange={(e) => setNlDraftJson(e.target.value)} placeholder={tr("messaging.msgNlJsonPlaceholder")} />
                 <div className="flex flex-wrap items-center gap-2">
-                  <input className="input w-56 py-1 text-sm" placeholder="Saved Audience-এর নাম" value={nlName} onChange={(e) => setNlName(e.target.value)} />
-                  <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !nlName.trim() || !nlDraftJson.trim()} onClick={saveNlDraftAsAudience}>মানুষের নিশ্চিতকরণে Saved Audience তৈরি করুন</button>
+                  <input className="input w-56 py-1 text-sm" placeholder={tr("messaging.msgSavedAudienceName")} value={nlName} onChange={(e) => setNlName(e.target.value)} />
+                  <button type="button" className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50" disabled={busy !== "" || !nlName.trim() || !nlDraftJson.trim()} onClick={saveNlDraftAsAudience}>{tr("messaging.msgCreateSavedAudience")}</button>
                 </div>
               </div>
             ) : null}
           </div>
           <div className="border-t pt-3 space-y-2">
-            <div className="text-sm font-semibold">😴 দীর্ঘদিন Unengaged — Suppression পরামর্শ (rule-based estimate)</div>
-            <p className="text-xs text-slate-500">{suppression?.note ?? "এই তালিকা দেখলেই কেউ বাদ পড়ে না — Suppression হবে কেবল আপনি Apply চাপলে, আসল Preference Store-এ Opt-out হিসেবে (Consent ইতিহাসসহ)।"}</p>
+            <div className="text-sm font-semibold">{tr("messaging.msgSuppressionTitle")}</div>
+            <p className="text-xs text-slate-500">{suppression?.note ?? tr("messaging.msgSuppressionDefaultNote")}</p>
             {suppression ? (suppression.suggestions.length ? (<>
               <div className="space-y-1">
                 {suppression.suggestions.slice(0, 20).map((s) => (
                   <div key={`${s.type}:${s.id}`} className="flex flex-wrap items-baseline gap-2 rounded bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-medium">{s.name || s.id}</span><span className="text-slate-400">({s.type})</span>
-                    <span>শেষ Engagement: {s.lastEngagementAt ? `${s.daysSinceLastEngagement} দিন আগে` : "কখনো নয়"}</span>
-                    <span>তারপর পাঠানো হয়েছে: {s.sendsSinceLastEngagement}টি (মোট {s.totalSends})</span>
+                    <span>{tr("messaging.msgLastEngagementPrefix")} {s.daysSinceLastEngagement != null ? tr("messaging.msgDaysAgoSuffix", { count: fmtNumber(locale, s.daysSinceLastEngagement) }) : tr("messaging.msgNeverWord")}</span>
+                    <span>{tr("messaging.msgSentSincePrefix")} {tr("messaging.msgCountTi", { count: fmtNumber(locale, s.sendsSinceLastEngagement) })} ({tr("messaging.msgRevenueTotal")} {fmtNumber(locale, s.totalSends)})</span>
                     <span>Score: {s.score}</span>
-                    {s.alreadyOptedOutChannels.length ? <span className="text-amber-700">ইতিমধ্যে Opt-out: {s.alreadyOptedOutChannels.join(", ")}</span> : null}
+                    {s.alreadyOptedOutChannels.length ? <span className="text-amber-700">{tr("messaging.msgAlreadyOptedOut")} {s.alreadyOptedOutChannels.join(", ")}</span> : null}
                   </div>
                 ))}
               </div>
@@ -1840,174 +1871,174 @@ export default function MessagingPage() {
                 <select className="input w-auto py-1 text-sm" value={suppressChannel} onChange={(e) => setSuppressChannel(e.target.value)}>
                   <option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option>
                 </select>
-                <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={applySuppression}>তালিকার সবাইকে এই Channel-এ Opt-out করুন (মোট {suppression.total} জন)</button>
+                <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={applySuppression}>{tr("messaging.msgZOptOutAll", { count: fmtNumber(locale, suppression.total) })}</button>
               </div>
-            </>) : <p className="text-sm text-slate-400">এই মুহূর্তে কোনো পরামর্শ নেই — সবাই হয় যথেষ্ট সম্প্রতি Engaged, নয়তো পাঠানো বার্তাই কম।</p>) : <p className="text-sm text-slate-400">লোড হচ্ছে...</p>}
+            </>) : <p className="text-sm text-slate-400">{tr("messaging.msgNoSuggestionsNow")}</p>) : <p className="text-sm text-slate-400">{tr("messaging.msgLoading")}</p>}
           </div>
         </div>
-        <div className="font-semibold">Broadcasts ({broadcasts.length}টি লোড হয়েছে)</div>
+        <div className="font-semibold">{tr("messaging.msgZBroadcastsLoaded", { count: fmtNumber(locale, broadcasts.length) })}</div>
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3">
-          <input className="input w-56 py-1 text-sm" placeholder="নাম দিয়ে খুঁজুন (সার্ভার অনুসন্ধান)" value={bcFilters.q} onChange={(e) => setBcFilters((f) => ({ ...f, q: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") applyBcFilters({ q: bcFilters.q }); }} />
+          <input className="input w-56 py-1 text-sm" placeholder={tr("messaging.msgSearchByName")} value={bcFilters.q} onChange={(e) => setBcFilters((f) => ({ ...f, q: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") applyBcFilters({ q: bcFilters.q }); }} />
           <select className="input w-auto py-1 text-sm" value={bcFilters.status} onChange={(e) => applyBcFilters({ status: e.target.value })}>
-            <option value="">সব অবস্থা</option>
+            <option value="">{tr("messaging.msgAllStatuses")}</option>
             <option value="draft">Draft</option><option value="scheduled">Scheduled</option><option value="sending">Sending</option>
             <option value="paused">Paused</option><option value="sent">Sent</option><option value="partial">Partial</option>
             <option value="failed">Failed</option><option value="cancelled">Cancelled</option>
           </select>
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyBcFilters({ q: bcFilters.q })}>খুঁজুন</button>
-          <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={bcFilters.archived} onChange={(e) => applyBcFilters({ archived: e.target.checked })} /> আর্কাইভ করা Broadcast দেখুন</label>
-          <span className="text-[11px] text-slate-400">খোঁজ ও ফিল্টার সার্ভারেই হয় — প্রতিটি পেজে ৫০টি করে আসে।</span>
+          <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyBcFilters({ q: bcFilters.q })}>{tr("messaging.msgSearchBtn")}</button>
+          <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={bcFilters.archived} onChange={(e) => applyBcFilters({ archived: e.target.checked })} />{tr("messaging.msgShowArchived")}</label>
+          <span className="text-[11px] text-slate-400">{tr("messaging.msgServerFilterNote")}</span>
         </div>
-        {broadcasts.length === 0 ? <EmptyState title="কোনো Broadcast নেই" description="নিচের ফর্মে প্রথম Broadcast তৈরি করুন। পাঠানো হবে শুধু Send বাটনে ক্লিক করলে।" /> : broadcasts.map((b) => (
+        {broadcasts.length === 0 ? <EmptyState title={tr("messaging.msgNoBroadcasts")} description={tr("messaging.msgNoBroadcastsHint")} /> : broadcasts.map((b) => (
           <div key={b.id} className="rounded-lg bg-slate-50 p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div><span className="font-medium">{b.name}</span> <span className="text-slate-400 capitalize">({b.channel})</span>
-                <div className="text-xs text-slate-500">Audience: {b.audienceType === "custom" ? "Custom শর্ত" : b.audienceType === "csv" ? "CSV তালিকা" : b.audienceType === "saved" ? `Saved: ${savedAudiences.find((s) => s.id === b.audienceSavedId)?.name ?? "(মুছে ফেলা হয়েছে)"}` : b.audienceType}{b.audienceStage ? ` (${b.audienceStage})` : ""}{b.audienceSegment ? ` (${SEG_LABEL[b.audienceSegment] ?? b.audienceSegment})` : ""}{b.abVariant ? ` · 🧪 Variant ${b.abVariant}` : ""}{b.excludePreviousRecipients ? " · আগের প্রাপক বাদ দেওয়া" : ""} · অবস্থা: {b.status}{b.archivedAt ? " · 🗄️ আর্কাইভ করা (পাঠানো/শিডিউল বন্ধ)" : ""}{b.sentAt ? ` · ${new Date(b.sentAt).toLocaleString()}` : ""} · মোট {b.totalRecipients}, Sent {b.sentCount}, Failed {b.failedCount}</div>
-                {b.scheduledAt ? <div className="text-xs text-slate-500">🗓️ শিডিউল: {new Date(b.scheduledAt).toLocaleString()}{b.status === "scheduled" ? " — সময় হলে Broadcast Send Sweep Job পাঠাবে (Automations-এ Jobটি চালু থাকতে হবে)" : ""}</div> : null}
-                {b.recurrenceGroupId ? <div className="text-xs text-slate-500">🔁 পুনরাবৃত্তি গ্রুপ{b.recurrence ? `: ${recurrenceText(b.recurrence)} — এই ধারার পরের Broadcastটি এই Row-তেই নির্ধারিত; পাঠানো শেষ হলে পরেরটি নিজে থেকে তৈরি হবে` : " — এই ধারার আগের Broadcast থেকে এসেছে (পরের ধাপটি নির্ধারিত Row-তে)"}</div> : null}
-                {b.progress ? <div className="text-xs text-slate-500">অগ্রগতি: মোট {b.progress.total} · Sent {b.progress.sent} · Failed {b.progress.failed} · Skipped {b.progress.skipped} · বাকি {b.progress.pending}</div> : null}
+                <div className="text-xs text-slate-500">Audience: {b.audienceType === "custom" ? tr("messaging.msgAudienceCustom") : b.audienceType === "csv" ? tr("messaging.msgAudienceCsv") : b.audienceType === "saved" ? `Saved: ${savedAudiences.find((s) => s.id === b.audienceSavedId)?.name ?? tr("messaging.msgZDeletedWord")}` : b.audienceType}{b.audienceStage ? ` (${b.audienceStage})` : ""}{b.audienceSegment ? ` (${SEG_LABEL[b.audienceSegment] ?? b.audienceSegment})` : ""}{b.abVariant ? ` · 🧪 Variant ${b.abVariant}` : ""}{b.excludePreviousRecipients ? tr("messaging.msgZExcludePrev") : ""} · {tr("messaging.msgZStatusWord")}: {b.status}{b.archivedAt ? tr("messaging.msgZArchivedNote") : ""}{b.sentAt ? ` · ${fmtDateTime(locale, b.sentAt)}` : ""} {tr("messaging.msgZTotalsLine", { total: fmtNumber(locale, b.totalRecipients), sent: fmtNumber(locale, b.sentCount), failed: fmtNumber(locale, b.failedCount) })}</div>
+                {b.scheduledAt ? <div className="text-xs text-slate-500">{tr("messaging.msgSchedulePrefix")} {fmtDateTime(locale, b.scheduledAt)}{b.status === "scheduled" ? ` — ${tr("messaging.msgScheduleSweepNote")}` : ""}</div> : null}
+                {b.recurrenceGroupId ? <div className="text-xs text-slate-500">{tr("messaging.msgRecurrenceGroup")}{b.recurrence ? `: ${recurrenceText(b.recurrence)} — ${tr("messaging.msgZRecurrenceNext")}` : tr("messaging.msgZRecurrencePrev")}</div> : null}
+                {b.progress ? <div className="text-xs text-slate-500">{tr("messaging.msgProgressLine", { total: fmtNumber(locale, b.progress.total), sent: fmtNumber(locale, b.progress.sent), failed: fmtNumber(locale, b.progress.failed), skipped: fmtNumber(locale, b.progress.skipped), pending: fmtNumber(locale, b.progress.pending) })}</div> : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 <button className="rounded-lg border px-3 py-1.5" onClick={async () => { const o = getOrganizationId(); if (!o) return; const d = await wrap(`dlv-${b.id}`, () => apiFetch<Delivery[]>(`/organizations/${o}/messaging/broadcasts/${b.id}/deliveries`)); if (d) setDeliveries((s) => ({ ...s, [b.id]: d })); }}>Deliveries</button>
-                <button className="rounded-lg border px-3 py-1.5" onClick={() => toggleReport(b)}>{reports[b.id] ? "📊 রিপোর্ট লুকান" : "📊 রিপোর্ট"}</button>
-                {b.status === "draft" ? <button className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`send-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/send`, { method: "POST" })); if (r) { setNotice(`Broadcast "${r.name}": ${r.progress?.sent ?? r.sentCount}টি Sent, ${r.progress?.failed ?? r.failedCount}টি Failed, ${r.progress?.skipped ?? 0}টি Skipped।`); await load(); } }}>{busy === `send-${b.id}` ? "পাঠানো হচ্ছে..." : "Send করুন"}</button> : null}
-                {b.status === "pending_approval" ? <span className="rounded bg-amber-100 px-2 py-1.5 text-xs font-semibold text-amber-800">⏳ অনুমোদনের অপেক্ষায় — পাঠানো/শিডিউল বন্ধ</span> : null}
-                {b.status === "pending_approval" ? <button className="rounded-lg bg-green-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt("অনুমোদনের নোট (ঐচ্ছিক):") ?? undefined; const r = await wrap(`approve-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/approve`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(`Broadcast "${r.name}" অনুমোদিত হয়েছে — এখন পাঠানো/শিডিউল করা যাবে।`); await load(); } }}>{busy === `approve-${b.id}` ? "হচ্ছে..." : "✅ অনুমোদন দিন"}</button> : null}
-                {b.status === "pending_approval" ? <button className="rounded-lg border border-red-300 px-3 py-1.5 font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt("প্রত্যাখ্যানের কারণ (নোট):") ?? undefined; const r = await wrap(`reject-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/reject`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(`Broadcast "${r.name}" প্রত্যাখ্যাত হয়েছে — নির্মাতা সম্পাদনা করে আবার জমা দিতে পারবেন।`); await load(); } }}>{busy === `reject-${b.id}` ? "হচ্ছে..." : "❌ প্রত্যাখ্যান"}</button> : null}
-                {b.status === "draft" && b.approvalStatus === "rejected" ? <span className="rounded bg-red-100 px-2 py-1.5 text-xs font-semibold text-red-700">প্রত্যাখ্যাত{b.approvalNote ? `: ${b.approvalNote}` : ""} — পাঠানো বন্ধ</span> : null}
-                {b.status === "draft" && b.approvalStatus === "rejected" ? <button className="rounded-lg border px-3 py-1.5 font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`submit-approval-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/submit-approval`, { method: "POST" })); if (r) { setNotice(`Broadcast "${r.name}" আবার অনুমোদনের জন্য জমা পড়েছে।`); await load(); } }}>↩️ আবার অনুমোদনে জমা দিন</button> : null}
+                <button className="rounded-lg border px-3 py-1.5" onClick={() => toggleReport(b)}>{reports[b.id] ? tr("messaging.msgReportHide") : tr("messaging.msgReportShow")}</button>
+                {b.status === "draft" ? <button className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`send-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/send`, { method: "POST" })); if (r) { setNotice(tr("messaging.msgZSendResult", { name: r.name, sent: fmtNumber(locale, r.progress?.sent ?? r.sentCount), failed: fmtNumber(locale, r.progress?.failed ?? r.failedCount), skipped: fmtNumber(locale, r.progress?.skipped ?? 0) })); await load(); } }}>{busy === `send-${b.id}` ? tr("messaging.msgSending") : tr("messaging.msgZSendNow")}</button> : null}
+                {b.status === "pending_approval" ? <span className="rounded bg-amber-100 px-2 py-1.5 text-xs font-semibold text-amber-800">{tr("messaging.msgPendingApprovalBadge")}</span> : null}
+                {b.status === "pending_approval" ? <button className="rounded-lg bg-green-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt(tr("messaging.msgApprovalNotePrompt")) ?? undefined; const r = await wrap(`approve-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/approve`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(tr("messaging.msgZApprovedNotice", { name: r.name })); await load(); } }}>{busy === `approve-${b.id}` ? tr("messaging.msgZWorking") : tr("messaging.msgZApproveBtn")}</button> : null}
+                {b.status === "pending_approval" ? <button className="rounded-lg border border-red-300 px-3 py-1.5 font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt(tr("messaging.msgRejectReasonPrompt")) ?? undefined; const r = await wrap(`reject-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/reject`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(tr("messaging.msgZRejectedNotice", { name: r.name })); await load(); } }}>{busy === `reject-${b.id}` ? tr("messaging.msgZWorking") : tr("messaging.msgZRejectBtn")}</button> : null}
+                {b.status === "draft" && b.approvalStatus === "rejected" ? <span className="rounded bg-red-100 px-2 py-1.5 text-xs font-semibold text-red-700">{tr("messaging.msgRejectedBadge")}{b.approvalNote ? `: ${b.approvalNote}` : ""} — {tr("messaging.msgSendingBlockedSuffix")}</span> : null}
+                {b.status === "draft" && b.approvalStatus === "rejected" ? <button className="rounded-lg border px-3 py-1.5 font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`submit-approval-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/submit-approval`, { method: "POST" })); if (r) { setNotice(tr("messaging.msgZResubmittedNotice", { name: r.name })); await load(); } }}>{tr("messaging.msgZResubmitBtn")}</button> : null}
                 {b.status === "scheduled" ? <>
-                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "schedule", { scheduledAt: null }, `Broadcast "${b.name}": শিডিউল বাতিল হয়েছে, আবার Draft অবস্থায় আছে।`)}>শিডিউল বাতিল</button>
-                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "pause", undefined, `Broadcast "${b.name}" Pause করা হয়েছে।`)}>Pause</button>
+                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "schedule", { scheduledAt: null }, tr("messaging.msgScheduleCancelled", { name: b.name }))}>{tr("messaging.msgZScheduleCancelBtn")}</button>
+                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "pause", undefined, tr("messaging.msgPausedNotice", { name: b.name }))}>Pause</button>
                 </> : null}
                 {b.status === "sending" ? <>
-                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "pause", undefined, `Broadcast "${b.name}" Pause করা হয়েছে — চলমান অংশ (chunk) শেষ হলেই থামবে।`)}>Pause</button>
+                  <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "pause", undefined, tr("messaging.msgPausedChunkNotice", { name: b.name }))}>Pause</button>
                 </> : null}
-                {b.status === "paused" ? <button className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "resume", undefined, `Broadcast "${b.name}" আবার চালু হয়েছে।`)}>Resume</button> : null}
-                {(["sent", "partial", "failed"].includes(b.status) && (b.progress?.failed ?? b.failedCount) > 0) ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "retry-failed", undefined, `Broadcast "${b.name}": ব্যর্থ প্রাপকদের আবার পাঠানো হয়েছে।`)}>ব্যর্থগুলো আবার পাঠান ({b.progress?.failed ?? b.failedCount})</button> : null}
-                {(["draft", "scheduled", "paused", "sending"].includes(b.status)) ? <button className="rounded-lg border border-red-300 px-3 py-1.5 text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "cancel", undefined, `Broadcast "${b.name}" বাতিল করা হয়েছে — এটি আর পাঠানো যাবে না।`)}>বাতিল করুন</button> : null}
-                {(["draft", "scheduled", "paused", "pending_approval"].includes(b.status) && !b.archivedAt) ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => (bcEditId === b.id ? setBcEditId(null) : startBcEdit(b))}>{bcEditId === b.id ? "সম্পাদনা বন্ধ করুন" : "✏️ সম্পাদনা"}</button> : null}
-                <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => cloneBc(b)}>📄 কপি</button>
+                {b.status === "paused" ? <button className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "resume", undefined, tr("messaging.msgResumedNotice", { name: b.name }))}>Resume</button> : null}
+                {(["sent", "partial", "failed"].includes(b.status) && (b.progress?.failed ?? b.failedCount) > 0) ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "retry-failed", undefined, tr("messaging.msgRetryFailedNotice", { name: b.name }))}>{tr("messaging.msgZRetryFailedBtn", { count: fmtNumber(locale, b.progress?.failed ?? b.failedCount) })}</button> : null}
+                {(["draft", "scheduled", "paused", "sending"].includes(b.status)) ? <button className="rounded-lg border border-red-300 px-3 py-1.5 text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => broadcastAction(b, "cancel", undefined, tr("messaging.msgCancelNotice", { name: b.name }))}>{tr("messaging.msgZCancelBtn")}</button> : null}
+                {(["draft", "scheduled", "paused", "pending_approval"].includes(b.status) && !b.archivedAt) ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => (bcEditId === b.id ? setBcEditId(null) : startBcEdit(b))}>{bcEditId === b.id ? tr("messaging.msgEditClose") : tr("messaging.msgEditBtn")}</button> : null}
+                <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => cloneBc(b)}>{tr("messaging.msgCopyBtn")}</button>
                 {b.archivedAt
-                  ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => archiveBc(b, false)}>আনআর্কাইভ</button>
-                  : <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => archiveBc(b, true)}>🗄️ আর্কাইভ</button>}
-                {(["draft", "cancelled"].includes(b.status)) ? <button className="rounded-lg border border-red-300 px-3 py-1.5 text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteBc(b)}>মুছুন</button> : null}
+                  ? <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => archiveBc(b, false)}>{tr("messaging.msgUnarchiveBtn")}</button>
+                  : <button className="rounded-lg border px-3 py-1.5 disabled:opacity-50" disabled={busy !== ""} onClick={() => archiveBc(b, true)}>{tr("messaging.msgArchiveBtn")}</button>}
+                {(["draft", "cancelled"].includes(b.status)) ? <button className="rounded-lg border border-red-300 px-3 py-1.5 text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteBc(b)}>{tr("messaging.msgDelete")}</button> : null}
               </div>
             </div>
             {b.status === "draft" ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input type="datetime-local" className="input w-auto" value={scheduleInputs[b.id] ?? ""} onChange={(e) => setScheduleInputs((s) => ({ ...s, [b.id]: e.target.value }))} />
-                <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(scheduleInputs[b.id] ?? "")} onClick={() => broadcastAction(b, "schedule", { scheduledAt: new Date(scheduleInputs[b.id]).toISOString() }, `Broadcast "${b.name}" শিডিউল করা হয়েছে।`)}>🗓️ শিডিউল করুন</button>
-                <span className="text-[11px] text-slate-400">শিডিউল অনুযায়ী পাঠাতে Automations-এ Broadcast Send Sweep Job চালু থাকতে হবে।</span>
+                <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(scheduleInputs[b.id] ?? "")} onClick={() => broadcastAction(b, "schedule", { scheduledAt: new Date(scheduleInputs[b.id]).toISOString() }, tr("messaging.msgZScheduledNotice", { name: b.name }))}>{tr("messaging.msgZScheduleDoBtn")}</button>
+                <span className="text-[11px] text-slate-400">{tr("messaging.msgZScheduleJobNote")}</span>
               </div>
             ) : null}
             {bcEditId === b.id ? (
               <div className="mt-2 grid gap-2 rounded-lg border bg-white p-3">
-                <div className="text-xs font-semibold">✏️ Broadcast সম্পাদনা — অবস্থা: {b.status}</div>
-                {b.status === "paused" ? <p className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">⚠️ এই Broadcast-টি Pause অবস্থায় আছে। লেখা পাঠানোর মুহূর্তে Broadcast Row থেকেই নেওয়া হয় — তাই Subject/Body বদলালে বাকি (এখনো পাঠানো হয়নি) প্রাপকদের কাছে নতুন লেখাটাই যাবে; যাদের কাছে ইতিমধ্যে গেছে, তাদেরটা বদলাবে না।</p> : null}
-                <label className="block text-sm">নাম<input className={inputCls} value={bcEditForm.name} onChange={(e) => setBcEditForm({ ...bcEditForm, name: e.target.value })} /></label>
+                <div className="text-xs font-semibold">{tr("messaging.msgZEditBroadcast", { status: b.status })}</div>
+                {b.status === "paused" ? <p className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">{tr("messaging.msgZPausedEditNote")}</p> : null}
+                <label className="block text-sm">{tr("messaging.msgNameLabel")}<input className={inputCls} value={bcEditForm.name} onChange={(e) => setBcEditForm({ ...bcEditForm, name: e.target.value })} /></label>
                 {b.channel === "whatsapp" ? (<>
                   <label className="block text-sm">WhatsApp Template
                     <select className={inputCls} value={bcEditForm.whatsappTemplateId} onChange={(e) => setBcEditForm({ ...bcEditForm, whatsappTemplateId: e.target.value })}>
-                      <option value="">আগেরটাই থাক</option>
+                      <option value="">{tr("messaging.msgKeepPrevious")}</option>
                       {waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
                     </select>
                   </label>
-                  <label className="block text-sm">Template প্যারামিটার (কমা দিয়ে)<input className={inputCls} value={bcEditForm.templateParams} onChange={(e) => setBcEditForm({ ...bcEditForm, templateParams: e.target.value })} /></label>
-                  <p className="text-[11px] text-slate-400">WhatsApp-এর লেখা Template থেকেই আসে — Template বদলালে Broadcast-এর সংরক্ষিত Body-ও নতুন Template অনুযায়ী বদলে যাবে।</p>
+                  <label className="block text-sm">{tr("messaging.msgTplParamsLabel")}<input className={inputCls} value={bcEditForm.templateParams} onChange={(e) => setBcEditForm({ ...bcEditForm, templateParams: e.target.value })} /></label>
+                  <p className="text-[11px] text-slate-400">{tr("messaging.msgZWaBodyNote")}</p>
                 </>) : (<>
-                  <label className="block text-sm">Template (ঐচ্ছিক — বেছে নিলে লিংক হিসেবে যুক্ত হয়; লেখা নিচের Subject/Body থেকেই যাবে)
+                  <label className="block text-sm">{tr("messaging.msgZTemplateOptionalLabel")}
                     <select className={inputCls} value={bcEditForm.templateId} onChange={(e) => { const t = templates.find((x) => x.id === e.target.value); setBcEditForm({ ...bcEditForm, templateId: e.target.value, ...(t ? { subject: t.subject ?? bcEditForm.subject, body: t.body, htmlBody: t.htmlBody ?? "" } : {}) }); }}>
-                      <option value="">কোনো Template নয়</option>
+                      <option value="">{tr("messaging.msgNoTemplate")}</option>
                       {templates.filter((t) => t.channel === b.channel).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                   </label>
                   {b.channel === "email" ? <label className="block text-sm">Subject<input className={inputCls} value={bcEditForm.subject} onChange={(e) => setBcEditForm({ ...bcEditForm, subject: e.target.value })} /></label> : null}
-                  {b.channel === "push" ? <label className="block text-sm">শিরোনাম (Title — সর্বোচ্চ ১২০ অক্ষর)<input className={inputCls} maxLength={120} value={bcEditForm.subject} onChange={(e) => setBcEditForm({ ...bcEditForm, subject: e.target.value })} /></label> : null}
-                  {b.channel === "push" ? <label className="block text-sm">ক্লিকের লিংক (ঐচ্ছিক — শুধু দোকানের ভেতরের ঠিকানা, যেমন /sale)<input className={inputCls} value={bcEditForm.pushUrl} onChange={(e) => setBcEditForm({ ...bcEditForm, pushUrl: e.target.value })} placeholder="/sale" /></label> : null}
-                  {b.channel === "onsite" ? <label className="block text-sm">শিরোনাম (Title — সর্বোচ্চ ১২০ অক্ষর)<input className={inputCls} maxLength={120} value={bcEditForm.subject} onChange={(e) => setBcEditForm({ ...bcEditForm, subject: e.target.value })} /></label> : null}
-                  {b.channel === "onsite" ? <label className="block text-sm">ক্লিকে খুলবে (ঐচ্ছিক — শুধু দোকানের ভেতরের ঠিকানা, যেমন /sale)<input className={inputCls} value={bcEditForm.onsiteUrl} onChange={(e) => setBcEditForm({ ...bcEditForm, onsiteUrl: e.target.value })} placeholder="/sale" /></label> : null}
+                  {b.channel === "push" ? <label className="block text-sm">{tr("messaging.msgTitleLabel")}<input className={inputCls} maxLength={120} value={bcEditForm.subject} onChange={(e) => setBcEditForm({ ...bcEditForm, subject: e.target.value })} /></label> : null}
+                  {b.channel === "push" ? <label className="block text-sm">{tr("messaging.msgClickLinkLabel")}<input className={inputCls} value={bcEditForm.pushUrl} onChange={(e) => setBcEditForm({ ...bcEditForm, pushUrl: e.target.value })} placeholder="/sale" /></label> : null}
+                  {b.channel === "onsite" ? <label className="block text-sm">{tr("messaging.msgTitleLabel")}<input className={inputCls} maxLength={120} value={bcEditForm.subject} onChange={(e) => setBcEditForm({ ...bcEditForm, subject: e.target.value })} /></label> : null}
+                  {b.channel === "onsite" ? <label className="block text-sm">{tr("messaging.msgClickOpenLabel")}<input className={inputCls} value={bcEditForm.onsiteUrl} onChange={(e) => setBcEditForm({ ...bcEditForm, onsiteUrl: e.target.value })} placeholder="/sale" /></label> : null}
                   {b.channel === "telegram" ? (
                     <div className="space-y-2 lg:col-span-2">
-                      <div className="text-sm font-medium">✈️ URL বাটন (ঐচ্ছিক, সর্বোচ্চ ৪টি)</div>
+                      <div className="text-sm font-medium">{tr("messaging.msgUrlButtonsLabel")}</div>
                       {bcEditForm.tgButtons.map((row, i) => (
                         <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-                          <input className="input w-48" maxLength={64} value={row.label} onChange={(e) => setBcEditForm({ ...bcEditForm, tgButtons: bcEditForm.tgButtons.map((r, j) => j === i ? { ...r, label: e.target.value } : r) })} placeholder="বাটনের লেখা" />
+                          <input className="input w-48" maxLength={64} value={row.label} onChange={(e) => setBcEditForm({ ...bcEditForm, tgButtons: bcEditForm.tgButtons.map((r, j) => j === i ? { ...r, label: e.target.value } : r) })} placeholder={tr("messaging.msgButtonTextLabel")} />
                           <input className="input w-80" value={row.url} onChange={(e) => setBcEditForm({ ...bcEditForm, tgButtons: bcEditForm.tgButtons.map((r, j) => j === i ? { ...r, url: e.target.value } : r) })} placeholder="https://..." />
-                          <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcEditForm({ ...bcEditForm, tgButtons: bcEditForm.tgButtons.filter((_, j) => j !== i) })}>সরান</button>
+                          <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcEditForm({ ...bcEditForm, tgButtons: bcEditForm.tgButtons.filter((_, j) => j !== i) })}>{tr("messaging.msgRemoveBtn")}</button>
                         </div>
                       ))}
-                      <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcEditForm.tgButtons.length >= 4} onClick={() => setBcEditForm({ ...bcEditForm, tgButtons: [...bcEditForm.tgButtons, { label: "", url: "" }] })}>+ বাটন যোগ করুন</button>
+                      <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcEditForm.tgButtons.length >= 4} onClick={() => setBcEditForm({ ...bcEditForm, tgButtons: [...bcEditForm.tgButtons, { label: "", url: "" }] })}>{tr("messaging.msgZAddButton")}</button>
                     </div>
                   ) : null}
                   <label className="block text-sm">Body<textarea className={inputCls} rows={3} value={bcEditForm.body} onChange={(e) => setBcEditForm({ ...bcEditForm, body: e.target.value })} /></label>
-                  {b.channel === "email" ? <label className="block text-sm">HTML Body (ঐচ্ছিক — খালি রাখলে HTML অংশ থাকবে না)<textarea className={inputCls} rows={3} value={bcEditForm.htmlBody} onChange={(e) => setBcEditForm({ ...bcEditForm, htmlBody: e.target.value })} /></label> : null}
+                  {b.channel === "email" ? <label className="block text-sm">{tr("messaging.msgHtmlBodyOptional")}<textarea className={inputCls} rows={3} value={bcEditForm.htmlBody} onChange={(e) => setBcEditForm({ ...bcEditForm, htmlBody: e.target.value })} /></label> : null}
                 </>)}
-                {(b.status === "draft" || b.status === "scheduled") ? <label className="block text-sm">শিডিউল (খালি রাখলে Schedule থাকবে না / Draft হবে)<input type="datetime-local" className={inputCls} value={bcEditForm.scheduledAt} onChange={(e) => setBcEditForm({ ...bcEditForm, scheduledAt: e.target.value })} /></label> : null}
+                {(b.status === "draft" || b.status === "scheduled") ? <label className="block text-sm">{tr("messaging.msgScheduleFieldLabel")}<input type="datetime-local" className={inputCls} value={bcEditForm.scheduledAt} onChange={(e) => setBcEditForm({ ...bcEditForm, scheduledAt: e.target.value })} /></label> : null}
                 <div className="flex gap-2">
-                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => saveBcEdit(b)}>{busy === `bc-edit-${b.id}` ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}</button>
-                  <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBcEditId(null)}>বাতিল</button>
+                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => saveBcEdit(b)}>{busy === `bc-edit-${b.id}` ? tr("messaging.msgSaving") : tr("messaging.msgSave")}</button>
+                  <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBcEditId(null)}>{tr("messaging.msgCancel")}</button>
                 </div>
               </div>
             ) : null}
             {(deliveries[b.id] ?? []).map((d) => (
               <div key={d.id} className="mt-1 flex items-center justify-between rounded bg-white px-2 py-1 text-xs">
-                <span>{d.address} · {new Date(d.createdAt).toLocaleString()}</span>
+                <span>{d.address} · {fmtDateTime(locale, d.createdAt)}</span>
                 <span className={d.status === "sent" ? "text-green-600" : "text-red-600"}>{d.status}{d.providerMessageId ? ` · ${d.providerMessageId}` : ""}{d.error ? ` · ${d.error}` : ""}</span>
               </div>
             ))}
             {reports[b.id] ? (() => { const report = reports[b.id]; const f = report.funnel; const cells: [string, number | null][] = [
-              ["দর্শক (Audience)", f.audience], ["পাঠানো হয়েছে", f.sent], ["ব্যর্থ", f.failed], ["বাদ (Skipped)", f.skipped],
-              ["পৌঁছেছে (Delivered)", f.delivered], ["পড়া হয়েছে (Read)", f.read],
-              ["খোলা হয়েছে (Opened — শুধু HTML ইমেইলে)", f.opened],
-              ["ক্লিক করেছেন (জন)", f.clickedRecipients], ["মোট ক্লিক", f.totalClicks],
+              [tr("messaging.msgReportAudience"), f.audience], [tr("messaging.msgReportSent"), f.sent], [tr("messaging.msgReportFailed"), f.failed], [tr("messaging.msgReportSkipped"), f.skipped],
+              [tr("messaging.msgReportDelivered"), f.delivered], [tr("messaging.msgReportRead"), f.read],
+              [tr("messaging.msgReportOpened"), f.opened],
+              [tr("messaging.msgReportClickers"), f.clickedRecipients], [tr("messaging.msgReportTotalClicks"), f.totalClicks],
             ]; return (
               <div className="mt-3 space-y-3 rounded-lg border bg-slate-100 p-3">
-                <div className="font-medium">📊 Broadcast রিপোর্ট</div>
+                <div className="font-medium">{tr("messaging.msgReportTitle")}</div>
                 <div className="grid grid-cols-3 gap-2 lg:grid-cols-5">
                   {cells.map(([label, value]) => (
                     <div key={label} className="rounded bg-white p-2 text-center">
                       <div className="text-base font-semibold">{value === null ? "—" : value}</div>
-                      <div className="text-[11px] text-slate-500">{label}{value === null ? " · এই চ্যানেলে পাওয়া যায় না" : ""}</div>
+                      <div className="text-[11px] text-slate-500">{label}{value === null ? tr("messaging.msgZNotAvailableChannel") : ""}</div>
                     </div>
                   ))}
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  {b.channel === "email" ? "ইমেইলে Delivered/Read পাওয়া যায় না — SMTP-তে ডেলিভারির কোনো সংকেত নেই (তাই ০ না দেখিয়ে ফাঁকা রাখা হয়েছে)। Opened শুধু HTML ইমেইলের পিক্সেল থেকে আসে।" : null}
-                  {b.channel === "sms" ? "SMS-এ Delivered/Read পাওয়া যায় না — SSL Wireless-এর কোনো নথিভুক্ত DLR (ডেলিভারি রিপোর্ট) API নেই, তাই ধাপগুলো ফাঁকা রাখা হয়েছে (অনুমান করে সংখ্যা বসানো হয়নি)। Tenant Gateway-এর DLR-ও এই রিপোর্টের বাইরে।" : null}
-                  {b.channel === "whatsapp" ? "Delivered/Read আসে Meta-র Webhook থেকে। WhatsApp-এ ক্লিক ট্র্যাকিং হয় না — Template-এর লিংক Meta-র দিকে থাকে, তাই ক্লিক ফাঁকা।" : null}
-                  {b.channel === "push" ? "Web Push-এ Delivered/Read/Click-এর কোনো নির্ভরযোগ্য সংকেত ব্রাউজার থেকে আসে না — তাই সেগুলো ০ না দেখিয়ে ফাঁকা রাখা হয়েছে। \"পাঠানো হয়েছে\" মানে Push Service বার্তাটি গ্রহণ করেছে। সাবস্ক্রিপশন মৃত (410 Gone) হলে সেই প্রাপক ব্যর্থ হিসেবে গোনা হয় এবং সাবস্ক্রিপশনটি Gone চিহ্নিত হয় — পরের Broadcast-এ তাকে আর ধরা হয় না। Push-এর কোনো হার সেট করা নেই, তাই খরচের হিসাব দেখানো হয় না।" : null}
-                  {b.channel === "onsite" ? "On-site নোটিফিকেশনে Delivered মানে নোটিফিকেশনটি গ্রাহকের অ্যাকাউন্টের নোটিফিকেশন সেন্টারে তৈরি হয়েছে (তৈরি হওয়াটাই ডেলিভারি — কোনো বাইরের Provider নেই), আর Read মানে গ্রাহক সত্যিই সেটি খুলেছেন — দুটোই আসল সংকেত। ক্লিক আলাদা করে ট্র্যাক হয় না, তাই ক্লিক ফাঁকা। কোনো Provider খরচ নেই, তাই খরচের হিসাব দেখানো হয় না।" : null}
-                  {b.channel === "telegram" ? "Telegram Bot বার্তায় Delivered/Read-এর কোনো সংকেত Bot API দেয় না — তাই সেগুলো ০ না দেখিয়ে ফাঁকা রাখা হয়েছে। \"পাঠানো হয়েছে\" মানে Telegram বার্তাটি গ্রহণ করে একটি Message ID দিয়েছে। গ্রাহক Bot Block করে থাকলে (403) বা চ্যাট না পাওয়া গেলে Telegram-এর আসল কারণই ব্যর্থতা হিসেবে দেখানো হয়। Telegram-এর কোনো হার সেট করা নেই, তাই খরচের হিসাব দেখানো হয় না।" : null}
+                  {b.channel === "email" ? tr("messaging.msgZChanNoteEmail") : null}
+                  {b.channel === "sms" ? tr("messaging.msgZChanNoteSms") : null}
+                  {b.channel === "whatsapp" ? tr("messaging.msgZChanNoteWhatsapp") : null}
+                  {b.channel === "push" ? tr("messaging.msgZChanNotePush") : null}
+                  {b.channel === "onsite" ? tr("messaging.msgZChanNoteOnsite") : null}
+                  {b.channel === "telegram" ? tr("messaging.msgZChanNoteTelegram") : null}
                 </p>
                 {report.failureReasons.length ? (
                   <div>
-                    <div className="text-xs font-semibold">ব্যর্থতার কারণ (Provider-এর ত্রুটি গোষ্ঠীভুক্ত)</div>
+                    <div className="text-xs font-semibold">{tr("messaging.msgFailureReasons")}</div>
                     <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
-                      {report.failureReasons.map((r) => <li key={r.reason}>• {r.reason} — {r.count}টি</li>)}
+                      {report.failureReasons.map((r) => <li key={r.reason}>• {r.reason} — {tr("messaging.msgCountTi", { count: fmtNumber(locale, r.count) })}</li>)}
                     </ul>
                   </div>
                 ) : null}
                 {report.cascade ? (
                   <div className="rounded bg-white p-2 text-xs">
-                    <div className="font-semibold">🔀 ক্যাসকেড (চ্যানেলভিত্তিক চেষ্টা)</div>
+                    <div className="font-semibold">{tr("messaging.msgCascadeTitle")}</div>
                     <div className="mt-1 grid gap-2 sm:grid-cols-3">
                       {report.cascade.channels.map((c) => (
                         <div key={c.channel} className="rounded bg-slate-50 p-2">
                           <div className="font-medium capitalize">{c.channel}</div>
-                          <div>চেষ্টা: {c.attempts} · সফল: {c.sent} · ব্যর্থ: {c.failed} · বাদ: {c.skipped}</div>
-                          <div>শেষ চ্যানেল হিসেবে সফল: <strong>{c.finalSuccesses}</strong> জন</div>
+                          <div>{tr("messaging.msgZCascadeStats", { attempts: fmtNumber(locale, c.attempts), sent: fmtNumber(locale, c.sent), failed: fmtNumber(locale, c.failed), skipped: fmtNumber(locale, c.skipped) })}</div>
+                          <div>{tr("messaging.msgCascadeFinalSuccess")}<strong>{fmtNumber(locale, c.finalSuccesses)}</strong> {tr("messaging.msgPeopleWord")}</div>
                         </div>
                       ))}
                     </div>
                     {report.cascade.ratesNote ? <p className="mt-2 text-amber-700">💰 {report.cascade.ratesNote}</p> : null}
                     {report.cascade.skippedChannels.map((sk) => <p key={sk.channel} className="mt-1 text-slate-500">⏭️ {sk.channel}: {sk.reason}</p>)}
-                    {report.cascade.breakerEvents.map((ev, i) => <p key={i} className="mt-1 text-red-600">⚡ SMS Gateway Circuit Breaker: {ev.gatewayKey} — পরপর {ev.failures}বার ব্যর্থ হওয়ায় এই রানের বাকি সময়ের জন্য বাদ দেওয়া হয়েছে।</p>)}
+                    {report.cascade.breakerEvents.map((ev, i) => <p key={i} className="mt-1 text-red-600">{tr("messaging.msgZBreaker", { gateway: ev.gatewayKey, failures: fmtNumber(locale, ev.failures) })}</p>)}
                     {report.cascade.chains.length ? (
                       <div className="mt-2">
-                        <div className="font-medium">প্রাপকভিত্তিক চেষ্টার ধারাবাহিকতা (সর্বোচ্চ ২০০ জন)</div>
+                        <div className="font-medium">{tr("messaging.msgRecipientChainTitle")}</div>
                         <ul className="mt-1 space-y-0.5 text-slate-600">
-                          {report.cascade.chains.slice(0, 20).map((ch) => <li key={ch.key}>• {ch.attempts.map((a) => `${a.channel}: ${a.status}`).join(" → ")} — শেষ: {ch.finalChannel ?? "—"} ({ch.finalStatus})</li>)}
+                          {report.cascade.chains.slice(0, 20).map((ch) => <li key={ch.key}>• {ch.attempts.map((a) => `${a.channel}: ${a.status}`).join(" → ")} — {tr("messaging.msgZFinalWord")}: {ch.finalChannel ?? "—"} ({ch.finalStatus})</li>)}
                         </ul>
                       </div>
                     ) : null}
@@ -2015,30 +2046,30 @@ export default function MessagingPage() {
                 ) : null}
                 {report.ab ? (
                   <div className="rounded bg-white p-2 text-xs">
-                    <div className="font-semibold">🧪 A/B তুলনা</div>
+                    <div className="font-semibold">{tr("messaging.msgAbCompareTitle")}</div>
                     <div className="mt-1 grid gap-2 sm:grid-cols-2">
                       {(["A", "B"] as const).map((v) => report.ab!.variants[v] ? (
                         <div key={v} className="rounded bg-slate-50 p-2">
                           <div className="font-medium">Variant {v}</div>
-                          <div>পাঠানো: {report.ab!.variants[v].sent} · ব্যর্থ: {report.ab!.variants[v].failed} · Delivered: {report.ab!.variants[v].delivered ?? "—"} · Read: {report.ab!.variants[v].read ?? "—"} · Opened: {report.ab!.variants[v].opened ?? "—"} · ক্লিক (জন): {report.ab!.variants[v].clickedRecipients ?? "—"}</div>
+                          <div>{tr("messaging.msgZAbVariantStats", { sent: fmtNumber(locale, report.ab!.variants[v].sent), failed: fmtNumber(locale, report.ab!.variants[v].failed), delivered: report.ab!.variants[v].delivered ?? "—", read: report.ab!.variants[v].read ?? "—", opened: report.ab!.variants[v].opened ?? "—", clicked: report.ab!.variants[v].clickedRecipients ?? "—" })}</div>
                         </div>
                       ) : null)}
                     </div>
-                    <p className="mt-2 text-slate-600">💡 পরামর্শ: {report.ab.suggestion.leader ? `Variant ${report.ab.suggestion.leader} এগিয়ে। ` : ""}{report.ab.suggestion.note}</p>
+                    <p className="mt-2 text-slate-600">💡 {tr("messaging.msgZAdviceWord")}: {report.ab.suggestion.leader ? tr("messaging.msgZVariantLeading", { variant: report.ab.suggestion.leader }) : ""}{report.ab.suggestion.note}</p>
                     {report.ab.autoWinner ? (
                       <div className="mt-2 rounded bg-slate-50 p-2">
-                        <div className="font-medium">🏆 A/B স্বয়ংক্রিয় জয়ী (Auto-Winner) — {report.ab.autoWinner.enabled ? "চালু" : "বন্ধ"}</div>
+                        <div className="font-medium">{tr("messaging.msgZAutoWinnerTitle")} — {report.ab.autoWinner.enabled ? tr("messaging.msgStateOn") : tr("messaging.msgStateOff")}</div>
                         {report.ab.autoWinner.winner ? (
-                          <div className="mt-1">✅ সিদ্ধান্ত হয়েছে: <strong>Variant {report.ab.autoWinner.winner}</strong> — {report.ab.autoWinner.decidedAt ? new Date(report.ab.autoWinner.decidedAt).toLocaleString() : ""}{report.ab.autoWinner.detail ? <span> · মেট্রিক: {report.ab.autoWinner.detail.metric} · A: {report.ab.autoWinner.detail.a.success}/{report.ab.autoWinner.detail.a.sent} ({(report.ab.autoWinner.detail.a.rate * 100).toFixed(1)}%) · B: {report.ab.autoWinner.detail.b.success}/{report.ab.autoWinner.detail.b.sent} ({(report.ab.autoWinner.detail.b.rate * 100).toFixed(1)}%) · z = {report.ab.autoWinner.detail.z} · p = {report.ab.autoWinner.detail.pValue}</span> : null}</div>
-                        ) : <p className="mt-1 text-slate-500">এখনো কোনো সিদ্ধান্ত হয়নি — নিয়ম পূরণ হলেই সিদ্ধান্ত হবে (কমপক্ষে ১০০ পাঠানো/Variant + z-test p &lt; ০.০৫)।</p>}
+                          <div className="mt-1">{tr("messaging.msgAbDecidedPrefix")}<strong>Variant {report.ab.autoWinner.winner}</strong> — {report.ab.autoWinner.decidedAt ? fmtDateTime(locale, report.ab.autoWinner.decidedAt) : ""}{report.ab.autoWinner.detail ? <span> · {tr("messaging.msgZMetricWord")}: {report.ab.autoWinner.detail.metric} · A: {report.ab.autoWinner.detail.a.success}/{report.ab.autoWinner.detail.a.sent} ({(report.ab.autoWinner.detail.a.rate * 100).toFixed(1)}%) · B: {report.ab.autoWinner.detail.b.success}/{report.ab.autoWinner.detail.b.sent} ({(report.ab.autoWinner.detail.b.rate * 100).toFixed(1)}%) · z = {report.ab.autoWinner.detail.z} · p = {report.ab.autoWinner.detail.pValue}</span> : null}</div>
+                        ) : <p className="mt-1 text-slate-500">{tr("messaging.msgZAbNoDecision")}</p>}
                         <p className="mt-1 text-slate-500">{report.ab.autoWinner.rule}</p>
                         <p className="text-slate-500">{report.ab.autoWinner.scopeNote}</p>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, true); }}>এই যুগলের জন্য চালু করুন</button>
-                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, false); }}>এই যুগলের জন্য বন্ধ করুন</button>
-                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, null); }}>Org ডিফল্টে ফেরান</button>
+                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, true); }}>{tr("messaging.msgAbEnablePair")}</button>
+                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, false); }}>{tr("messaging.msgAbDisablePair")}</button>
+                          <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => { void setAbAutoWinner(b, null); }}>{tr("messaging.msgAbOrgDefault")}</button>
                         </div>
-                        <p className="mt-1 text-[11px] text-slate-400">বন্ধ করলে পরের Chunk থেকেই কার্যকর হবে; ইতোমধ্যে নেওয়া সিদ্ধান্ত বদলায় না।</p>
+                        <p className="mt-1 text-[11px] text-slate-400">{tr("messaging.msgAbToggleNote")}</p>
                       </div>
                     ) : null}
                   </div>
@@ -2046,68 +2077,68 @@ export default function MessagingPage() {
                 {report.holdout ? (
                   <div className="rounded bg-white p-2 text-xs">
                     <div className="font-semibold">🎯 Holdout Group ({report.holdout.percent}%)</div>
-                    <div className="mt-1">বাদ রাখা হয়েছে: <strong>{report.holdout.heldOutCount}</strong> জন — এদের কাছে এই Broadcast পাঠানো হয়নি (তুলনার জন্য)।</div>
+                    <div className="mt-1">{tr("messaging.msgHoldoutLine")}<strong>{report.holdout.heldOutCount}</strong>{tr("messaging.msgHoldoutSuffix")}</div>
                     <p className="mt-1 text-slate-500">{report.holdout.label}</p>
                   </div>
                 ) : null}
                 <div className="grid gap-2 text-xs sm:grid-cols-2">
                   <div className="rounded bg-white p-2">
-                    <div className="font-semibold">💰 আয়ের সম্পর্ক</div>
-                    {report.revenue ? <div className="mt-1">৭ দিনে অর্ডার: <strong>{report.revenue.orders}</strong>টি · মোট: <strong>৳{(Number(report.revenue.totalMinor) / 100).toFixed(2)}</strong> ({report.revenue.customerRecipients} জন প্রাপক কাস্টমারের মধ্যে)<div className="mt-1 text-slate-500">{report.revenue.method}</div></div>
-                      : <div className="mt-1 text-slate-500">এখনো পাঠানো হয়নি — আয়ের হিসাবের উইন্ডো নেই।</div>}
+                    <div className="font-semibold">{tr("messaging.msgRevenueTitle")}</div>
+                    {report.revenue ? <div className="mt-1">{tr("messaging.msgRevenueOrders")}{tr("messaging.msgZRevenueRest", { orders: fmtNumber(locale, report.revenue.orders), total: fmtMoneyMinor(locale, Number(report.revenue.totalMinor)), recipients: fmtNumber(locale, report.revenue.customerRecipients) })}<div className="mt-1 text-slate-500">{report.revenue.method}</div></div>
+                      : <div className="mt-1 text-slate-500">{tr("messaging.msgRevenueNoWindow")}</div>}
                   </div>
                   <div className="rounded bg-white p-2">
-                    <div className="font-semibold">💬 জবাব (Replies)</div>
-                    <div className="mt-1">{report.replies === null ? "এই চ্যানেলে পাওয়া যায় না।" : <><strong>{report.replies}</strong>টি কথোপকথনে জবাব এসেছে।</>}<div className="mt-1 text-slate-500">{report.repliesMethod}</div></div>
+                    <div className="font-semibold">{tr("messaging.msgRepliesTitle")}</div>
+                    <div className="mt-1">{report.replies === null ? tr("messaging.msgRepliesUnavailable") : <><strong>{report.replies}</strong>{tr("messaging.msgRepliesSuffix")}</>}<div className="mt-1 text-slate-500">{report.repliesMethod}</div></div>
                   </div>
                 </div>
                 <div className="rounded bg-white p-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-semibold">ডেলিভারি তালিকা</span>
+                    <span className="text-xs font-semibold">{tr("messaging.msgDeliveryListTitle")}</span>
                     <select className="input w-auto py-1 text-xs" value={(dlvFilter[b.id] ?? { status: "", q: "" }).status} onChange={(e) => setDlvFilter((s) => ({ ...s, [b.id]: { ...(s[b.id] ?? { status: "", q: "" }), status: e.target.value } }))}>
-                      <option value="">সব অবস্থা</option><option value="sent">Sent</option><option value="failed">Failed</option><option value="skipped">Skipped</option>
+                      <option value="">{tr("messaging.msgAllStatuses")}</option><option value="sent">Sent</option><option value="failed">Failed</option><option value="skipped">Skipped</option>
                     </select>
-                    <input className="input w-52 py-1 text-xs" placeholder="ঠিকানা খুঁজুন (ইমেইল/ফোন)" value={(dlvFilter[b.id] ?? { status: "", q: "" }).q} onChange={(e) => setDlvFilter((s) => ({ ...s, [b.id]: { ...(s[b.id] ?? { status: "", q: "" }), q: e.target.value } }))} />
-                    <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadPagedDeliveries(b.id, true)}>খুঁজুন</button>
+                    <input className="input w-52 py-1 text-xs" placeholder={tr("messaging.msgAddressSearchPlaceholder")} value={(dlvFilter[b.id] ?? { status: "", q: "" }).q} onChange={(e) => setDlvFilter((s) => ({ ...s, [b.id]: { ...(s[b.id] ?? { status: "", q: "" }), q: e.target.value } }))} />
+                    <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadPagedDeliveries(b.id, true)}>{tr("messaging.msgSearchBtn")}</button>
                     <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => exportDeliveries(b.id)}>⬇️ CSV Export</button>
-                    <span className="text-[11px] text-slate-400">সর্বোচ্চ ১০,০০০ রেকর্ড; বেশি থাকলে ফাইলের প্রথম লাইনে সতর্কতা থাকে। Export Audit Log-এ লেখা হয়।</span>
+                    <span className="text-[11px] text-slate-400">{tr("messaging.msgExportCapNote")}</span>
                   </div>
                   {(pagedDlv[b.id]?.items ?? []).map((d) => (
                     <div key={d.id} className="mt-1 flex items-center justify-between rounded bg-slate-50 px-2 py-1 text-xs">
-                      <span>{d.address} · {new Date(d.createdAt).toLocaleString()}</span>
+                      <span>{d.address} · {fmtDateTime(locale, d.createdAt)}</span>
                       <span className="flex items-center gap-2">
                         {/* MX6: WhatsApp rows with a matched inbox conversation link to the Inbox.
                             The inbox page selects a conversation by internal state only (no URL
                             parameter), so this links to the Inbox itself — see the MX6 acceptance. */}
-                        {d.conversationId ? <a className="font-semibold text-blue-700 underline" href="/dashboard/inbox">💬 কথোপকথন</a> : null}
+                        {d.conversationId ? <a className="font-semibold text-blue-700 underline" href="/dashboard/inbox">{tr("messaging.msgConversationWord")}</a> : null}
                         <span className={d.status === "sent" ? "text-green-600" : "text-red-600"}>{d.status}{d.deliveryStatus ? ` · ${d.deliveryStatus}` : ""}{d.openedAt ? " · opened" : ""}{d.providerMessageId ? ` · ${d.providerMessageId}` : ""}{d.error ? ` · ${d.error}` : ""}</span>
                       </span>
                     </div>
                   ))}
-                  {(pagedDlv[b.id]?.items ?? []).length === 0 ? <p className="mt-1 text-xs text-slate-400">কোনো ডেলিভারি পাওয়া যায়নি।</p> : null}
-                  {pagedDlv[b.id]?.nextCursor ? <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadPagedDeliveries(b.id, false)}>আরও দেখুন (পরের ৫০টি)</button> : null}
+                  {(pagedDlv[b.id]?.items ?? []).length === 0 ? <p className="mt-1 text-xs text-slate-400">{tr("messaging.msgNoDeliveries")}</p> : null}
+                  {pagedDlv[b.id]?.nextCursor ? <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadPagedDeliveries(b.id, false)}>{tr("messaging.msgLoadMore50")}</button> : null}
                 </div>
               </div>
             ); })() : null}
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
-              {b.channel === "onsite" ? <span className="text-[11px] text-slate-400">🏠 On-site Broadcast ঠিকানা দিয়ে টেস্ট হয় না — এটি গ্রাহকের দোকান-অ্যাকাউন্টের নোটিফিকেশন সেন্টারে যায়; আসল গ্রাহকের সেন্টারে টেস্ট বার্তা পাঠানো হয় না। টেস্ট করতে শুধু নিজের টেস্ট অ্যাকাউন্ট আছে এমন ছোট Audience (যেমন Segment) বেছে আসল Broadcast পাঠান।</span> : null}
-              {b.channel === "push" ? <span className="text-[11px] text-slate-400">🔔 Push Broadcast ঠিকানা দিয়ে টেস্ট হয় না — Push পৌঁছায় ব্রাউজার সাবস্ক্রিপশনে। টেস্ট করতে Web Push প্যানেলে এই ব্রাউজারকে টেস্ট ডিভাইস হিসেবে যোগ করে সেখান থেকে টেস্ট পাঠান।</span> : null}
-              {b.channel !== "push" && b.channel !== "onsite" ? <input className="input w-64" placeholder={b.channel === "email" ? "টেস্ট পাঠানোর ইমেইল" : b.channel === "telegram" ? "টেস্ট পাঠানোর Telegram Chat ID (যেমন 123456789)" : "টেস্ট পাঠানোর ফোন নম্বর"} value={bcTestInputs[b.id] ?? ""} onChange={(e) => setBcTestInputs((s) => ({ ...s, [b.id]: e.target.value }))} /> : null}
-              {b.channel !== "push" && b.channel !== "onsite" ? <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(bcTestInputs[b.id] ?? "").trim()} onClick={() => runTestSend("broadcast", b.id, bcTestInputs[b.id] ?? "")}>{busy === `test-broadcast-${b.id}` ? "পাঠানো হচ্ছে..." : "🧪 টেস্ট পাঠান"}</button> : null}
-              {b.channel !== "push" && b.channel !== "onsite" ? <span className="text-[11px] text-slate-400">টেস্ট পাঠানো Broadcast-এর গণনা/অবস্থা বদলায় না — শুধু একটি &quot;test&quot; Delivery রেকর্ড হয়।</span> : null}
+              {b.channel === "onsite" ? <span className="text-[11px] text-slate-400">{tr("messaging.msgZOnsiteTestNote")}</span> : null}
+              {b.channel === "push" ? <span className="text-[11px] text-slate-400">{tr("messaging.msgZPushTestNote")}</span> : null}
+              {b.channel !== "push" && b.channel !== "onsite" ? <input className="input w-64" placeholder={b.channel === "email" ? tr("messaging.msgTestEmailPlaceholder") : b.channel === "telegram" ? tr("messaging.msgTelegramTestPlaceholder") : tr("messaging.msgTestPhonePlaceholder")} value={bcTestInputs[b.id] ?? ""} onChange={(e) => setBcTestInputs((s) => ({ ...s, [b.id]: e.target.value }))} /> : null}
+              {b.channel !== "push" && b.channel !== "onsite" ? <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !(bcTestInputs[b.id] ?? "").trim()} onClick={() => runTestSend("broadcast", b.id, bcTestInputs[b.id] ?? "")}>{busy === `test-broadcast-${b.id}` ? tr("messaging.msgSending") : tr("messaging.msgTestSendBtn")}</button> : null}
+              {b.channel !== "push" && b.channel !== "onsite" ? <span className="text-[11px] text-slate-400">{tr("messaging.msgZTestNote")}</span> : null}
               {bcTestResults[b.id] ? <span className="text-xs">{bcTestResults[b.id]}</span> : null}
             </div>
           </div>
         ))}
-        {bcNextCursor ? <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadBroadcastList(false, bcNextCursor)}>আরও Broadcast দেখুন (পরের ৫০টি)</button> : null}
+        {bcNextCursor ? <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadBroadcastList(false, bcNextCursor)}>{tr("messaging.msgMoreBroadcasts")}</button> : null}
         {(sendTime || segmentSuggestions.length > 0) ? (
           <div className="grid gap-3 border-t pt-3 lg:grid-cols-2">
             {sendTime ? (
               <div className="rounded-lg bg-indigo-50 p-3 text-sm">
-                <div className="font-medium">🕐 পাঠানোর সময়ের পরামর্শ (নিজের ডেটা থেকে)</div>
+                <div className="font-medium">{tr("messaging.msgBestTimeTitle")}</div>
                 {sendTime.available ? (<>
                   <div className="mt-1 flex flex-wrap gap-2">
-                    {(sendTime.bestHours ?? []).map((h) => <span key={h.hour} className="badge-indigo">{h.hour}:00–{(h.hour + 1) % 24}:00 (ঢাকা) · {h.events}টি সাড়া</span>)}
+                    {(sendTime.bestHours ?? []).map((h) => <span key={h.hour} className="badge-indigo">{h.hour}:00–{(h.hour + 1) % 24}:00 ({tr("messaging.msgZDhaka")}) · {tr("messaging.msgZResponsesTi", { count: fmtNumber(locale, h.events) })}</span>)}
                   </div>
                   <p className="mt-1 text-[11px] text-slate-500">{sendTime.method}</p>
                 </>) : <p className="mt-1 text-slate-600">{sendTime.reason}</p>}
@@ -2115,12 +2146,12 @@ export default function MessagingPage() {
             ) : null}
             {segmentSuggestions.length > 0 ? (
               <div className="rounded-lg bg-emerald-50 p-3 text-sm">
-                <div className="font-medium">🎯 Audience পরামর্শ (আসল RFM হিসাব থেকে)</div>
+                <div className="font-medium">{tr("messaging.msgAudienceAdviceTitle")}</div>
                 <ul className="mt-1 space-y-2">
                   {segmentSuggestions.map((s) => (
                     <li key={s.kind} className="flex flex-wrap items-start justify-between gap-2">
                       <span className="text-slate-700">{s.reason}</span>
-                      {s.audienceType === "segment" && s.audienceSegment ? <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => { setBcForm((f) => ({ ...f, audienceType: "segment", audienceSegment: s.audienceSegment as string })); setNotice(`Audience হিসেবে "${SEG_LABEL[s.audienceSegment as string] ?? s.audienceSegment}" Segment বেছে দেওয়া হয়েছে — নিচের ফর্মে দেখে নিয়ে তৈরি করুন।`); }}>এই Segment বেছে নিন</button> : null}
+                      {s.audienceType === "segment" && s.audienceSegment ? <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold" onClick={() => { setBcForm((f) => ({ ...f, audienceType: "segment", audienceSegment: s.audienceSegment as string })); setNotice(tr("messaging.msgZSegmentPicked", { segment: SEG_LABEL[s.audienceSegment as string] ?? s.audienceSegment })); }}>{tr("messaging.msgZPickSegment")}</button> : null}
                     </li>
                   ))}
                 </ul>
@@ -2173,78 +2204,75 @@ export default function MessagingPage() {
               ? { name: bcForm.name, channel: "whatsapp", whatsappTemplateId: bcForm.whatsappTemplateId, templateParams: bcForm.templateParams ? bcForm.templateParams.split(",").map((x) => x.trim()) : [], templateComponents: waComponents, ...audienceFields(), abTest: bcForm.abTest || undefined, abWhatsappTemplateId: bcForm.abTest ? bcForm.abWhatsappTemplateId : undefined, abAutoWinnerEnabled: bcForm.abTest ? bcForm.abAutoWinner : undefined, excludePreviousRecipients: bcForm.excludePreviousRecipients || undefined, topic: bcForm.topic.trim() || undefined, holdoutPercent: bcForm.holdoutPercent ? Number(bcForm.holdoutPercent) : undefined, budgetCapMinor: bcForm.budgetCapTaka ? Math.round(Number(bcForm.budgetCapTaka) * 100) : undefined, scheduledAt: bcForm.scheduledAt ? new Date(bcForm.scheduledAt).toISOString() : undefined, recurrence, cascade }
               : { name: bcForm.name, channel: bcForm.channel, templateId: bcForm.templateId || undefined, subject: bcForm.templateId ? undefined : (bcForm.subject || undefined), body: bcForm.templateId ? undefined : bcForm.body, htmlBody: !bcForm.templateId && bcForm.channel === "email" && bcForm.htmlBody ? bcForm.htmlBody : undefined, pushUrl: bcForm.channel === "push" && bcForm.pushUrl.trim() ? bcForm.pushUrl.trim() : undefined, telegramButtons: bcForm.channel === "telegram" && bcForm.tgButtons.some((b) => b.label.trim() && b.url.trim()) ? bcForm.tgButtons.filter((b) => b.label.trim() && b.url.trim()) : undefined, onsiteUrl: bcForm.channel === "onsite" && bcForm.onsiteUrl.trim() ? bcForm.onsiteUrl.trim() : undefined, ...audienceFields(), abTest: bcForm.abTest || undefined, abAutoWinnerEnabled: bcForm.abTest ? bcForm.abAutoWinner : undefined, abSubject: bcForm.abTest ? (bcForm.abSubject || undefined) : undefined, abBody: bcForm.abTest ? bcForm.abBody : undefined, excludePreviousRecipients: bcForm.excludePreviousRecipients || undefined, topic: bcForm.topic.trim() || undefined, holdoutPercent: bcForm.holdoutPercent ? Number(bcForm.holdoutPercent) : undefined, budgetCapMinor: bcForm.budgetCapTaka ? Math.round(Number(bcForm.budgetCapTaka) * 100) : undefined, scheduledAt: bcForm.scheduledAt ? new Date(bcForm.scheduledAt).toISOString() : undefined, recurrence, cascade }),
           }));
-          if (res) { setBcForm({ name: "", channel: "email", templateId: "", subject: "", body: "", htmlBody: "", cascadeEnabled: false, cascadeChannels: ["sms", "email"], cascadeSmart: false, cascadeOrdering: "org", cascadeSmsBody: "", cascadeEmailSubject: "", cascadeEmailBody: "", cascadeWhatsappTemplateId: "", audienceType: "customers", audienceStage: "qualified", audienceSegment: "at_risk", audienceSavedId: "", whatsappTemplateId: "", templateParams: "", waHeaderMediaUrl: "", waHeaderTextParams: "", waButtonRows: [], pushUrl: "", tgButtons: [], onsiteUrl: "", abTest: false, abSubject: "", abBody: "", abWhatsappTemplateId: "", abAutoWinner: false, excludePreviousRecipients: false, topic: "", holdoutPercent: "", budgetCapTaka: "", scheduledAt: "", recEnabled: false, recFreq: "weekly", recInterval: "1", recWeekdays: [], recEndsAt: "" }); setCsvText(""); setPreview(null); setNotice((res as { variants?: unknown[] }).variants ? "A/B Broadcast তৈরি হয়েছে — দুটি (A ও B) পাঠানোর জন্য প্রস্তুত।" : bcForm.scheduledAt ? "Broadcast শিডিউল করা হয়েছে — সময় হলে Sweep Job পাঠাবে।" : "Broadcast Draft তৈরি হয়েছে।"); await load(); }
+          if (res) { setBcForm({ name: "", channel: "email", templateId: "", subject: "", body: "", htmlBody: "", cascadeEnabled: false, cascadeChannels: ["sms", "email"], cascadeSmart: false, cascadeOrdering: "org", cascadeSmsBody: "", cascadeEmailSubject: "", cascadeEmailBody: "", cascadeWhatsappTemplateId: "", audienceType: "customers", audienceStage: "qualified", audienceSegment: "at_risk", audienceSavedId: "", whatsappTemplateId: "", templateParams: "", waHeaderMediaUrl: "", waHeaderTextParams: "", waButtonRows: [], pushUrl: "", tgButtons: [], onsiteUrl: "", abTest: false, abSubject: "", abBody: "", abWhatsappTemplateId: "", abAutoWinner: false, excludePreviousRecipients: false, topic: "", holdoutPercent: "", budgetCapTaka: "", scheduledAt: "", recEnabled: false, recFreq: "weekly", recInterval: "1", recWeekdays: [], recEndsAt: "" }); setCsvText(""); setPreview(null); setNotice((res as { variants?: unknown[] }).variants ? tr("messaging.msgAbCreatedNotice") : bcForm.scheduledAt ? tr("messaging.msgBcScheduledNotice") : tr("messaging.msgBcDraftNotice")); await load(); }
         }}>
-          <label className="block text-sm">নাম<input className={inputCls} value={bcForm.name} onChange={(e) => setBcForm({ ...bcForm, name: e.target.value })} required /></label>
+          <label className="block text-sm">{tr("messaging.msgNameLabel")}<input className={inputCls} value={bcForm.name} onChange={(e) => setBcForm({ ...bcForm, name: e.target.value })} required /></label>
           <label className="block text-sm">Channel
             <select className={inputCls} value={bcForm.channel} onChange={(e) => setBcForm({ ...bcForm, channel: e.target.value, templateId: "", ...(e.target.value === "push" ? { audienceType: "push_subscribers" } : {}), ...(e.target.value === "telegram" ? { audienceType: "telegram_subscribers" } : {}) })}>
-              <option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp (Template)</option><option value="push">🔔 Web Push</option><option value="telegram">✈️ Telegram</option><option value="onsite">🏠 On-site (দোকানের নোটিফিকেশন)</option>
+              <option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp (Template)</option><option value="push">🔔 Web Push</option><option value="telegram">✈️ Telegram</option><option value="onsite">{tr("messaging.msgOnsiteChannel")}</option>
             </select>
           </label>
           {bcForm.channel === "whatsapp" ? (<>
             <label className="block text-sm">WhatsApp Template
               <select className={inputCls} value={bcForm.whatsappTemplateId} onChange={(e) => setBcForm({ ...bcForm, whatsappTemplateId: e.target.value })} required>
-                <option value="">বেছে নিন</option>
+                <option value="">{tr("messaging.msgPickOption")}</option>
                 {waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
               </select>
             </label>
-            <label className="block text-sm">Template প্যারামিটার (কমা দিয়ে, {"{name}"} ব্যবহার করা যায়)
-              <input className={inputCls} value={bcForm.templateParams} onChange={(e) => setBcForm({ ...bcForm, templateParams: e.target.value })} placeholder="যেমন: {name}, ঈদ" />
+            <label className="block text-sm">{tr("messaging.msgZTemplateParamsLabel")}
+              <input className={inputCls} value={bcForm.templateParams} onChange={(e) => setBcForm({ ...bcForm, templateParams: e.target.value })} placeholder={tr("messaging.msgExNameEid")} />
             </label>
-            <label className="block text-sm">Header Media URL (ঐচ্ছিক — Template-এ ছবির Header থাকলে; ছবি হিসেবেই পাঠানো হয়)
-              <input className={inputCls} value={bcForm.waHeaderMediaUrl} onChange={(e) => setBcForm({ ...bcForm, waHeaderMediaUrl: e.target.value })} placeholder="https://.../image.jpg" />
+            <label className="block text-sm">{tr("messaging.msgHeaderMediaLabel")}<input className={inputCls} value={bcForm.waHeaderMediaUrl} onChange={(e) => setBcForm({ ...bcForm, waHeaderMediaUrl: e.target.value })} placeholder="https://.../image.jpg" />
             </label>
-            <label className="block text-sm">Header Text প্যারামিটার (ঐচ্ছিক, কমা দিয়ে — Template-এর Header-এ &#123;&#123;1&#125;&#125; থাকলে)
-              <input className={inputCls} value={bcForm.waHeaderTextParams} onChange={(e) => setBcForm({ ...bcForm, waHeaderTextParams: e.target.value })} placeholder="যেমন: {name}" />
+            <label className="block text-sm">{tr("messaging.msgHeaderTextParams")}
+              <input className={inputCls} value={bcForm.waHeaderTextParams} onChange={(e) => setBcForm({ ...bcForm, waHeaderTextParams: e.target.value })} placeholder={tr("messaging.msgExNameOnly")} />
             </label>
             <div className="space-y-2 lg:col-span-3 rounded-lg bg-slate-50 p-3">
-              <div className="text-sm font-medium">বাটন প্যারামিটার (ঐচ্ছিক — Template-এর বাটনে Variable থাকলেই লাগে)</div>
+              <div className="text-sm font-medium">{tr("messaging.msgButtonParamsLabel")}</div>
               {bcForm.waButtonRows.map((row, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
                   <label className="flex items-center gap-1">Index <input type="number" min={0} className="input w-20" value={row.index} onChange={(e) => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.map((r, j) => j === i ? { ...r, index: e.target.value } : r) })} /></label>
                   <select className="input w-auto" value={row.subType} onChange={(e) => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.map((r, j) => j === i ? { ...r, subType: e.target.value } : r) })}>
-                    <option value="url">URL বাটন (Suffix)</option><option value="quick_reply">Quick Reply (Payload)</option>
+                    <option value="url">{tr("messaging.msgUrlButtonSuffixOption")}</option><option value="quick_reply">Quick Reply (Payload)</option>
                   </select>
-                  <input className="input w-64" value={row.value} onChange={(e) => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r) })} placeholder={row.subType === "url" ? "URL-এর শেষ অংশ (যেমন অফারের কোড)" : "Payload (যেমন ORDER_STATUS)"} />
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.filter((_, j) => j !== i) })}>সরান</button>
+                  <input className="input w-64" value={row.value} onChange={(e) => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r) })} placeholder={row.subType === "url" ? tr("messaging.msgUrlSuffixLabel") : tr("messaging.msgPayloadLabel")} />
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcForm({ ...bcForm, waButtonRows: bcForm.waButtonRows.filter((_, j) => j !== i) })}>{tr("messaging.msgRemoveBtn")}</button>
                 </div>
               ))}
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcForm.waButtonRows.length >= 10} onClick={() => setBcForm({ ...bcForm, waButtonRows: [...bcForm.waButtonRows, { index: String(bcForm.waButtonRows.length), subType: "url", value: "" }] })}>+ বাটন প্যারামিটার যোগ করুন</button>
-              <p className="text-[11px] text-slate-400">URL বাটনে শুধু বাটনের URL-এর বদলি অংশ (suffix) যায় — পুরো URL Template-এই থাকে। মানগুলোতে {"{name}"} জাতীয় Variable চলবে।</p>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcForm.waButtonRows.length >= 10} onClick={() => setBcForm({ ...bcForm, waButtonRows: [...bcForm.waButtonRows, { index: String(bcForm.waButtonRows.length), subType: "url", value: "" }] })}>{tr("messaging.msgZAddButtonParam")}</button>
+              <p className="text-[11px] text-slate-400">{tr("messaging.msgZUrlSuffixNote")}</p>
             </div>
           </>) : bcForm.channel === "push" ? (<>
-            <label className="block text-sm">শিরোনাম (Title — সর্বোচ্চ ১২০ অক্ষর)
-              <input className={inputCls} maxLength={120} value={bcForm.subject} onChange={(e) => setBcForm({ ...bcForm, subject: e.target.value })} placeholder="যেমন: ঈদ অফার চলছে!" required />
+            <label className="block text-sm">{tr("messaging.msgTitleLabel")}<input className={inputCls} maxLength={120} value={bcForm.subject} onChange={(e) => setBcForm({ ...bcForm, subject: e.target.value })} placeholder={tr("messaging.msgExEidOffer")} required />
             </label>
-            <label className="block text-sm">ক্লিকে খুলবে (ঐচ্ছিক — শুধু দোকানের ভেতরের ঠিকানা)
+            <label className="block text-sm">{tr("messaging.msgZClickOpenLabel")}
               <input className={inputCls} value={bcForm.pushUrl} onChange={(e) => setBcForm({ ...bcForm, pushUrl: e.target.value })} placeholder="/sale" />
             </label>
-            <p className="text-xs text-slate-500 lg:col-span-3">🔔 Web Push নোটিফিকেশনে শুধু শিরোনাম, লেখা আর ক্লিকের লিংক যায় — দোকানের Service Worker এটুকুই দেখায়, তাই ছবি বা বাটনের কোনো অপশন এখানে নেই (যা পৌঁছাবে না তা দেখানো হয় না)। প্রাপক হন শুধু দোকানের সক্রিয় Push সাবস্ক্রাইবাররা — নিচে Audience থেকে বেছে নিন: সব সাবস্ক্রাইবার, শুধু চেনা Customer-দের সাবস্ক্রিপশন, অথবা একটি RFM Segment-এর Customer-দের সাবস্ক্রিপশন। একজন Customer-এর দুটি ডিভাইসে সাবস্ক্রিপশন থাকলে দুটিতেই যাবে। Push পাঠাতে আগে Organization Settings / Web Push চালু থাকতে হবে — না থাকলে পাঠানো সৎভাবে ব্যর্থ হবে। খরচের কোনো হার Push-এ নেই, তাই প্রিভিউতে খরচের হিসাব দেখানো হয় না।</p>
+            <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZPushComposerNote")}</p>
           </>) : bcForm.channel === "telegram" ? (<>
             <div className="space-y-2 lg:col-span-3 rounded-lg bg-slate-50 p-3">
-              <div className="text-sm font-medium">✈️ URL বাটন (ঐচ্ছিক, সর্বোচ্চ ৪টি) — বার্তার নিচে বাটন হিসেবে যাবে</div>
+              <div className="text-sm font-medium">{tr("messaging.msgZTgButtonsTitle")}</div>
               {bcForm.tgButtons.map((row, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-                  <input className="input w-48" maxLength={64} value={row.label} onChange={(e) => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.map((r, j) => j === i ? { ...r, label: e.target.value } : r) })} placeholder="বাটনের লেখা (যেমন: এখনই কিনুন)" />
-                  <input className="input w-80" value={row.url} onChange={(e) => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.map((r, j) => j === i ? { ...r, url: e.target.value } : r) })} placeholder="https://... (শুধু https লিংকই চলবে)" />
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.filter((_, j) => j !== i) })}>সরান</button>
+                  <input className="input w-48" maxLength={64} value={row.label} onChange={(e) => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.map((r, j) => j === i ? { ...r, label: e.target.value } : r) })} placeholder={tr("messaging.msgZButtonTextPlaceholder")} />
+                  <input className="input w-80" value={row.url} onChange={(e) => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.map((r, j) => j === i ? { ...r, url: e.target.value } : r) })} placeholder={tr("messaging.msgZHttpsOnlyPlaceholder")} />
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setBcForm({ ...bcForm, tgButtons: bcForm.tgButtons.filter((_, j) => j !== i) })}>{tr("messaging.msgRemoveBtn")}</button>
                 </div>
               ))}
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcForm.tgButtons.length >= 4} onClick={() => setBcForm({ ...bcForm, tgButtons: [...bcForm.tgButtons, { label: "", url: "" }] })}>+ বাটন যোগ করুন</button>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={bcForm.tgButtons.length >= 4} onClick={() => setBcForm({ ...bcForm, tgButtons: [...bcForm.tgButtons, { label: "", url: "" }] })}>{tr("messaging.msgZAddButton")}</button>
             </div>
-            <p className="text-xs text-slate-500 lg:col-span-3">✈️ Telegram সাবস্ক্রাইবার মানে যারা আপনার দোকানের Telegram Bot-এ কখনো মেসেজ পাঠিয়েছেন (Bot নিজে থেকে কাউকে প্রথম মেসেজ পাঠাতে পারে না — তাই সাবস্ক্রাইবার তালিকা আসে Inbox-এর Telegram কথোপকথন থেকে)। পাঠাতে আগে Inbox-এ Telegram Bot যুক্ত থাকতে হবে — না থাকলে পাঠানো সৎভাবে ব্যর্থ হবে। চ্যাটে STOP লিখলে সেই গ্রাহক আর Broadcast পাবেন না; START বা /start লিখলে আবার পাবেন। Telegram Bot বার্তায় Delivered/Read-এর কোনো সংকেত দেয় না — তাই রিপোর্টে সেগুলো ০ না দেখিয়ে ফাঁকা থাকবে। বার্তার লেখা সর্বোচ্চ ৪০৯৬ অক্ষর (Telegram-এর নিজের সীমা)। খরচের কোনো হার Telegram-এ নেই, তাই প্রিভিউতে খরচের হিসাব দেখানো হয় না।</p>
+            <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZTgComposerNote")}</p>
           </>) : bcForm.channel === "onsite" ? (<>
-            <label className="block text-sm">শিরোনাম (Title — সর্বোচ্চ ১২০ অক্ষর)
-              <input className={inputCls} maxLength={120} value={bcForm.subject} onChange={(e) => setBcForm({ ...bcForm, subject: e.target.value })} placeholder="যেমন: ঈদ অফার চলছে!" required />
+            <label className="block text-sm">{tr("messaging.msgTitleLabel")}<input className={inputCls} maxLength={120} value={bcForm.subject} onChange={(e) => setBcForm({ ...bcForm, subject: e.target.value })} placeholder={tr("messaging.msgExEidOffer")} required />
             </label>
-            <label className="block text-sm">ক্লিকে খুলবে (ঐচ্ছিক — শুধু দোকানের ভেতরের ঠিকানা)
+            <label className="block text-sm">{tr("messaging.msgZClickOpenLabel")}
               <input className={inputCls} value={bcForm.onsiteUrl} onChange={(e) => setBcForm({ ...bcForm, onsiteUrl: e.target.value })} placeholder="/sale" />
             </label>
-            <p className="text-xs text-slate-500 lg:col-span-3">🏠 On-site নোটিফিকেশন যায় শুধু দোকানের Customer-দের অ্যাকাউন্টের নোটিফিকেশন সেন্টারে (Shop Account-এ লগইন করলে দেখা যায়) — Lead বা বেনামি কারো কাছে যায় না, তাই Audience শুধু সব Customer অথবা একটি RFM Segment হতে পারে। কোনো বাইরের Provider নেই, তাই Provider খরচও নেই — প্রিভিউতে খরচের হিসাব দেখানো হয় না। গ্রাহক নোটিফিকেশন খুললেই Read হিসেবে সত্যিকারের হিসাব রিপোর্টে আসে। লেখা (Body) সর্বোচ্চ ২০০০ অক্ষর।</p>
+            <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZOnsiteComposerNote")}</p>
           </>) : (<>
-          <label className="block text-sm">Template (ঐচ্ছিক)
+          <label className="block text-sm">{tr("messaging.msgZTemplateOptionalShort")}
             <select className={inputCls} value={bcForm.templateId} onChange={(e) => setBcForm({ ...bcForm, templateId: e.target.value })}>
-              <option value="">নিজে লিখব</option>
+              <option value="">{tr("messaging.msgZWriteMyself")}</option>
               {templates.filter((t) => t.channel === bcForm.channel).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </label>
@@ -2252,37 +2280,37 @@ export default function MessagingPage() {
           {bcForm.channel !== "whatsapp" && !bcForm.templateId && bcForm.channel === "email" ? (
             <div className="text-sm">
               <label className="block">Subject<input className={inputCls} value={bcForm.subject} onChange={(e) => setBcForm({ ...bcForm, subject: e.target.value })} required /></label>
-              <button type="button" className="mt-1 rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.subject.trim()} onClick={runAiSubjects}>{busy === "ai-subjects" ? "প্রস্তাব তৈরি হচ্ছে..." : "🤖 AI Subject প্রস্তাব"}</button>
+              <button type="button" className="mt-1 rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.subject.trim()} onClick={runAiSubjects}>{busy === "ai-subjects" ? tr("messaging.msgZSubjectsWorking") : tr("messaging.msgZAiSubjectBtn")}</button>
               {aiSubjects ? (
                 <div className="mt-1 space-y-1">
                   <div className="flex flex-wrap gap-1">
                     {aiSubjects.variants.map((v, i) => <button key={i} type="button" className="rounded-full border bg-white px-2 py-0.5 text-xs hover:bg-slate-100" onClick={() => setBcForm((f) => ({ ...f, subject: v }))}>{v}</button>)}
                   </div>
-                  <p className="text-[11px] text-slate-400">{aiSubjects.isRealLlm ? `AI Provider: ${aiSubjects.providerLabel} — প্রস্তাবে ক্লিক করলে Subject বসবে।` : aiSubjects.notice}</p>
+                  <p className="text-[11px] text-slate-400">{aiSubjects.isRealLlm ? `AI Provider: ${aiSubjects.providerLabel} — ${tr("messaging.msgZAiClickFillSubject")}` : aiSubjects.notice}</p>
                 </div>
               ) : null}
             </div>
           ) : null}
           {bcForm.channel !== "whatsapp" && !bcForm.templateId ? <label className="block text-sm lg:col-span-2">Body<textarea className={inputCls} rows={2} value={bcForm.body} onChange={(e) => setBcForm({ ...bcForm, body: e.target.value })} required /></label> : null}
-          {bcForm.channel === "sms" && !bcForm.templateId && bcForm.body ? (() => { const seg = smsSegments(bcForm.body); return <p className="text-xs text-slate-500 lg:col-span-2">📱 SMS হিসাব: {seg.parts}টি পার্ট ({seg.encoding === "unicode" ? "Unicode — বাংলা/বিশেষ অক্ষর আছে" : "GSM-7"}, {seg.length} অক্ষর/ইউনিট)। লিংক ট্র্যাকিং চালু থাকলে লিংকগুলো ছোট Redirect লিংকে বদলে যায় — তাতে পার্ট বাড়তে পারে।</p>; })() : null}
+          {bcForm.channel === "sms" && !bcForm.templateId && bcForm.body ? (() => { const seg = smsSegments(bcForm.body); return <p className="text-xs text-slate-500 lg:col-span-2">{tr("messaging.msgZSmsCalc", { parts: fmtNumber(locale, seg.parts), encoding: seg.encoding === "unicode" ? tr("messaging.msgZSmsUnicode") : "GSM-7", length: fmtNumber(locale, seg.length) })}</p>; })() : null}
           {composeWarnings.length ? (
             <div className="rounded-lg bg-amber-50 p-3 text-sm lg:col-span-3">
-              <div className="font-medium text-amber-800">⚠️ Compose সতর্কতা (পরামর্শমূলক — পাঠানো আটকাবে না)</div>
+              <div className="font-medium text-amber-800">{tr("messaging.msgZComposeWarnings")}</div>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-amber-700">{composeWarnings.map((w) => <li key={w.code}>{w.message}</li>)}</ul>
             </div>
           ) : null}
           {bcForm.channel === "email" && !bcForm.templateId ? (<>
-            <label className="block text-sm lg:col-span-3">HTML Body (ঐচ্ছিক) — দিলে ইমেইল HTML হিসেবে যাবে; Text Body Fallback থাকবেই<textarea className={inputCls} rows={4} value={bcForm.htmlBody} onChange={(e) => setBcForm({ ...bcForm, htmlBody: e.target.value })} placeholder="<p>হ্যালো {{name}}, ...</p>" /></label>
+            <label className="block text-sm lg:col-span-3">{tr("messaging.msgZHtmlBodyComposer")}<textarea className={inputCls} rows={4} value={bcForm.htmlBody} onChange={(e) => setBcForm({ ...bcForm, htmlBody: e.target.value })} placeholder={`<p>${tr("messaging.msgHelloPlaceholder")}</p>`} /></label>
             {bcForm.htmlBody ? <div className="lg:col-span-3">
-              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBcHtmlPreview((v) => !v)}>{bcHtmlPreview ? "প্রিভিউ লুকান" : "👁️ HTML প্রিভিউ (Sandbox)"}</button>
-              {bcHtmlPreview ? <iframe title="Broadcast HTML প্রিভিউ" sandbox="" srcDoc={bcForm.htmlBody} className="mt-2 h-64 w-full rounded-lg border bg-white" /> : null}
+              <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setBcHtmlPreview((v) => !v)}>{bcHtmlPreview ? tr("messaging.msgHidePreview") : tr("messaging.msgHtmlPreviewBtn")}</button>
+              {bcHtmlPreview ? <iframe title={tr("messaging.msgZBroadcastHtmlPreview")} sandbox="" srcDoc={bcForm.htmlBody} className="mt-2 h-64 w-full rounded-lg border bg-white" /> : null}
             </div> : null}
           </>) : null}
           {bcForm.channel !== "whatsapp" && !bcForm.templateId ? (
             <div className="space-y-3 rounded-lg bg-slate-50 p-3 lg:col-span-3">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="font-medium">✍️ Composer:</span>
-                <span className="text-xs text-slate-500">বসানোর জায়গা:</span>
+                <span className="text-xs text-slate-500">{tr("messaging.msgZInsertTarget")}</span>
                 <button type="button" className={`rounded-lg border px-2 py-1 text-xs font-semibold ${insertTarget === "body" ? "bg-slate-800 text-white" : ""}`} onClick={() => setInsertTarget("body")}>Text Body</button>
                 {bcForm.channel === "email" ? <button type="button" className={`rounded-lg border px-2 py-1 text-xs font-semibold ${insertTarget === "html" ? "bg-slate-800 text-white" : ""}`} onClick={() => setInsertTarget("html")}>HTML Body</button> : null}
               </div>
@@ -2290,44 +2318,44 @@ export default function MessagingPage() {
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <span className="text-slate-500">Variable ({variableEntity() === "customer" ? "Customer" : variableEntity() === "lead" ? "Lead" : "CSV"}):</span>
                   {variables[variableEntity()].map((v) => <button key={v.key} type="button" className="rounded-full border bg-white px-2 py-0.5 hover:bg-slate-100" title={v.labelBn} onClick={() => insertSnippet(`{{${v.key}}}`, `{{${v.key}}}`)}>{`{{${v.key}}}`}</button>)}
-                  <span className="text-[11px] text-slate-400">যার কাছে মান নেই, সেখানে Variable খালি থাকে — কখনো ভুয়া মান বসে না।</span>
+                  <span className="text-[11px] text-slate-400">{tr("messaging.msgZVariableEmptyNote")}</span>
                 </div>
               ) : null}
               <div className="flex flex-wrap items-end gap-2 text-sm">
-                <label className="block">প্রোডাক্ট বসান
+                <label className="block">{tr("messaging.msgZInsertProduct")}
                   <select className="input mt-1 w-64" value={productPick} onChange={(e) => setProductPick(e.target.value)}>
-                    {products.length === 0 ? <option value="">কোনো সক্রিয় প্রোডাক্ট নেই</option> : products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {products.length === 0 ? <option value="">{tr("messaging.msgZNoActiveProducts")}</option> : products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40" disabled={!productPick} onClick={() => { const p = products.find((x) => x.id === productPick); if (p) insertSnippet(p.snippetText, p.snippetHtml); }}>বসান</button>
-                <span className="text-[11px] text-slate-400">আসল প্রোডাক্টের নাম ও দাম বসে; প্রোডাক্টের লিংক (Slug) থাকলেই কেবল লিংক আসে — না থাকলে শুধু নাম ও দাম।</span>
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40" disabled={!productPick} onClick={() => { const p = products.find((x) => x.id === productPick); if (p) insertSnippet(p.snippetText, p.snippetHtml); }}>{tr("messaging.msgZInsertBtn")}</button>
+                <span className="text-[11px] text-slate-400">{tr("messaging.msgZProductInsertNote")}</span>
               </div>
               <div className="flex flex-wrap items-end gap-2 text-sm">
-                <label className="block">কুপন কোড<input className="input mt-1 w-40" value={couponForm.code} onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value })} placeholder="EID20" /></label>
-                <label className="block">লেবেল (ঐচ্ছিক)<input className="input mt-1 w-48" value={couponForm.label} onChange={(e) => setCouponForm({ ...couponForm, label: e.target.value })} placeholder="ঈদ অফার" /></label>
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40" disabled={!couponForm.code.trim()} onClick={() => insertSnippet(couponSnippetText(couponForm.code.trim(), couponForm.label.trim() || undefined), couponSnippetHtml(couponForm.code.trim(), couponForm.label.trim() || undefined))}>বসান</button>
-                <span className="text-[11px] text-amber-600">⚠️ কুপন কোড শুধু লেখা হিসেবে বার্তায় যায় — এই সিস্টেম কোডটি যাচাই, রিডিম বা ট্র্যাক করে না।</span>
+                <label className="block">{tr("messaging.msgZCouponCode")}<input className="input mt-1 w-40" value={couponForm.code} onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value })} placeholder="EID20" /></label>
+                <label className="block">{tr("messaging.msgZLabelOptional")}<input className="input mt-1 w-48" value={couponForm.label} onChange={(e) => setCouponForm({ ...couponForm, label: e.target.value })} placeholder={tr("messaging.msgZEidOfferPlain")} /></label>
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40" disabled={!couponForm.code.trim()} onClick={() => insertSnippet(couponSnippetText(couponForm.code.trim(), couponForm.label.trim() || undefined), couponSnippetHtml(couponForm.code.trim(), couponForm.label.trim() || undefined))}>{tr("messaging.msgZInsertBtn")}</button>
+                <span className="text-[11px] text-amber-600">{tr("messaging.msgZCouponNote")}</span>
               </div>
               {bcForm.channel !== "push" && bcForm.channel !== "telegram" && bcForm.channel !== "onsite" ? (<div className="space-y-2 border-t pt-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">🤖 AI দিয়ে লিখুন:</span>
-                  <span className="text-[11px] text-slate-400">খসড়া শুধু এখানেই দেখানো হয় — কোথাও সংরক্ষিত হয় না, নিজে থেকে কিছু পাঠানোও হয় না। পছন্দের খসড়ায় ক্লিক করলে তবেই ফর্মে বসে।</span>
+                  <span className="font-medium">{tr("messaging.msgZAiWriteTitle")}</span>
+                  <span className="text-[11px] text-slate-400">{tr("messaging.msgZAiWriteNote")}</span>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="block">লক্ষ্য (Goal)<input className="input mt-1 w-64" value={aiForm.goal} onChange={(e) => setAiForm({ ...aiForm, goal: e.target.value })} placeholder="যেমন: ঈদ কালেকশনের বিক্রি বাড়ানো" /></label>
-                  <label className="block">প্রোডাক্ট (ঐচ্ছিক)
+                  <label className="block">{tr("messaging.msgZGoalLabel")}<input className="input mt-1 w-64" value={aiForm.goal} onChange={(e) => setAiForm({ ...aiForm, goal: e.target.value })} placeholder={tr("messaging.msgZExGoal")} /></label>
+                  <label className="block">{tr("messaging.msgZProductOptional")}
                     <select className="input mt-1 w-56" value={aiForm.productId} onChange={(e) => setAiForm({ ...aiForm, productId: e.target.value })}>
-                      <option value="">কোনো নির্দিষ্ট প্রোডাক্ট নয়</option>
+                      <option value="">{tr("messaging.msgZNoSpecificProduct")}</option>
                       {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </label>
-                  <label className="block">Audience ইঙ্গিত (ঐচ্ছিক)<input className="input mt-1 w-48" value={aiForm.audienceHint} onChange={(e) => setAiForm({ ...aiForm, audienceHint: e.target.value })} placeholder="যেমন: পুরনো কাস্টমার" /></label>
-                  <label className="block">ভাষা
+                  <label className="block">{tr("messaging.msgZAudienceHintLabel")}<input className="input mt-1 w-48" value={aiForm.audienceHint} onChange={(e) => setAiForm({ ...aiForm, audienceHint: e.target.value })} placeholder={tr("messaging.msgZExOldCustomers")} /></label>
+                  <label className="block">{tr("messaging.msgZLanguageLabel")}
                     <select className="input mt-1 w-auto" value={aiForm.language} onChange={(e) => setAiForm({ ...aiForm, language: e.target.value })}>
-                      <option value="bn">বাংলা</option><option value="en">English</option>
+                      <option value="bn">{tr("messaging.msgZBanglaWord")}</option><option value="en">English</option>
                     </select>
                   </label>
-                  <button type="button" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !aiForm.goal.trim()} onClick={runAiDraft}>{busy === "ai-draft" ? "খসড়া তৈরি হচ্ছে..." : "খসড়া তৈরি করুন"}</button>
+                  <button type="button" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !aiForm.goal.trim()} onClick={runAiDraft}>{busy === "ai-draft" ? tr("messaging.msgZDraftWorking") : tr("messaging.msgZMakeDraftBtn")}</button>
                 </div>
                 {aiDraft ? (
                   <div className="space-y-2">
@@ -2337,8 +2365,8 @@ export default function MessagingPage() {
                         <div key={i} className="rounded-lg border bg-white p-3">
                           {v.subject ? <div className="font-medium">{v.subject}</div> : null}
                           <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{v.body}</p>
-                          {v.smsParts !== undefined ? <p className="mt-1 text-[11px] text-slate-400">SMS হিসেবে: {v.smsParts}টি পার্ট</p> : null}
-                          <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant(v)}>এই খসড়াটি ফর্মে বসান</button>
+                          {v.smsParts !== undefined ? <p className="mt-1 text-[11px] text-slate-400">{tr("messaging.msgZSmsPartsLine", { count: fmtNumber(locale, v.smsParts) })}</p> : null}
+                          <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant(v)}>{tr("messaging.msgZApplyVariant")}</button>
                         </div>
                       ))}
                     </div>
@@ -2346,38 +2374,38 @@ export default function MessagingPage() {
                 ) : null}
                 <div className="space-y-2 border-t pt-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">🧭 MX16 · ক্যাম্পেইন প্ল্যানার (AI প্রস্তাব):</span>
-                    <span className="text-[11px] text-slate-400">উপরের লক্ষ্য (Goal) থেকে পুরো প্রস্তাব — Audience নিয়ম, বিষয়বস্তু খসড়া, চ্যানেল ও সময়ের পরামর্শ। <strong>প্রস্তাবটি কিছুই তৈরি করে না</strong> — প্রতিটি অংশ আলাদা বোতামে ক্লিক করে আপনি নিজে ব্যবহার করবেন।</span>
-                    <button type="button" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !aiForm.goal.trim()} onClick={runPlanner}>{busy === "ai-plan" ? "প্রস্তাব তৈরি হচ্ছে..." : "পূর্ণ প্রস্তাব তৈরি করুন"}</button>
+                    <span className="font-medium">{tr("messaging.msgZPlannerTitle")}</span>
+                    <span className="text-[11px] text-slate-400">{tr("messaging.msgZPlannerNoteA")}<strong>{tr("messaging.msgZPlannerNoteStrong")}</strong>{tr("messaging.msgZPlannerNoteB")}</span>
+                    <button type="button" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !aiForm.goal.trim()} onClick={runPlanner}>{busy === "ai-plan" ? tr("messaging.msgZSubjectsWorking") : tr("messaging.msgZPlannerMakeBtn")}</button>
                   </div>
                   {planner ? (
                     <div className="space-y-2 rounded-lg border bg-white p-3 text-sm">
                       <p className="text-[11px] text-slate-500">{planner.isRealLlm ? `AI Provider: ${planner.providerLabel}` : planner.notice}</p>
                       <div>
-                        <div className="font-medium">👥 প্রস্তাবিত Audience (MS3 নিয়ম)</div>
-                        {planner.proposal.audienceValid ? <pre className="mt-1 overflow-x-auto rounded bg-slate-50 p-2 text-xs">{JSON.stringify(planner.proposal.audienceDefinition, null, 2)}</pre> : <p className="mt-1 text-amber-700">⚠️ প্রস্তাবিত নিয়ম যাচাইয়ে পাস করেনি — সরাসরি ব্যবহার করা যাবে না: {planner.proposal.audienceErrors.join("; ")}</p>}
-                        {planner.proposal.audienceValid ? <button type="button" className="mt-1 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => { setNlDraftJson(JSON.stringify(planner.proposal.audienceDefinition, null, 2)); setNotice("Audience নিয়মটি নিচের NL খসড়া বক্সে বসানো হয়েছে — নাম দিয়ে 'Saved Audience তৈরি করুন' বোতামে ক্লিক করলেই তৈরি হবে (সেই ধাপটিও মানুষের)।"); }}>Audience নিয়মটি NL খসড়া বক্সে বসান</button> : null}
+                        <div className="font-medium">{tr("messaging.msgZPlannerAudience")}</div>
+                        {planner.proposal.audienceValid ? <pre className="mt-1 overflow-x-auto rounded bg-slate-50 p-2 text-xs">{JSON.stringify(planner.proposal.audienceDefinition, null, 2)}</pre> : <p className="mt-1 text-amber-700">{tr("messaging.msgZPlannerAudienceInvalid", { errors: planner.proposal.audienceErrors.join("; ") })}</p>}
+                        {planner.proposal.audienceValid ? <button type="button" className="mt-1 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => { setNlDraftJson(JSON.stringify(planner.proposal.audienceDefinition, null, 2)); setNotice(tr("messaging.msgZPlannerNlNotice")); }}>{tr("messaging.msgZPlannerPutRule")}</button> : null}
                       </div>
                       <div>
-                        <div className="font-medium">✉️ বিষয়বস্তু খসড়া</div>
+                        <div className="font-medium">{tr("messaging.msgZPlannerContent")}</div>
                         {planner.proposal.contentDraft.subject ? <div className="mt-0.5 font-medium">{planner.proposal.contentDraft.subject}</div> : null}
                         <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{planner.proposal.contentDraft.body}</p>
-                        <button type="button" className="mt-1 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant({ subject: planner.proposal.contentDraft.subject ?? undefined, body: planner.proposal.contentDraft.body })}>খসড়াটি ফর্মে বসান</button>
+                        <button type="button" className="mt-1 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant({ subject: planner.proposal.contentDraft.subject ?? undefined, body: planner.proposal.contentDraft.body })}>{tr("messaging.msgZApplyDraftShort")}</button>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span>📡 প্রস্তাবিত চ্যানেল: <strong>{planner.proposal.channelRecommendation ?? "—"}</strong></span>
-                        {planner.proposal.channelRecommendation && ["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(planner.proposal.channelRecommendation) ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => setBcForm((f) => ({ ...f, channel: planner.proposal.channelRecommendation as string }))}>এই চ্যানেলটি ফর্মে বেছে নিন</button> : null}
+                        <span>{tr("messaging.msgZPlannerChannel")} <strong>{planner.proposal.channelRecommendation ?? "—"}</strong></span>
+                        {planner.proposal.channelRecommendation && ["email", "sms", "whatsapp", "push", "telegram", "onsite"].includes(planner.proposal.channelRecommendation) ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => setBcForm((f) => ({ ...f, channel: planner.proposal.channelRecommendation as string }))}>{tr("messaging.msgZPickChannelBtn")}</button> : null}
                       </div>
-                      <div>🕐 সময়ের পরামর্শ: <strong>{planner.proposal.timingSuggestion ?? "—"}</strong> <span className="text-[11px] text-slate-400">(পরামর্শ মাত্র — শিডিউল আপনি নিজে সেট করবেন)</span></div>
+                      <div>{tr("messaging.msgZPlannerTiming")} <strong>{planner.proposal.timingSuggestion ?? "—"}</strong> <span className="text-[11px] text-slate-400">{tr("messaging.msgZTimingNote")}</span></div>
                       {planner.proposal.rationale ? <p className="text-slate-500">{planner.proposal.rationale}</p> : null}
                     </div>
                   ) : null}
                 </div>
                 <div className="space-y-2 border-t pt-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">🌐 MX16 · অনুবাদ খসড়া (AI):</span>
-                    <span className="text-[11px] text-slate-400">বর্তমান Subject/Body-র অনুবাদ খসড়া — ফর্মে বসবে শুধু আপনার ক্লিকে; কোনো Template-এ নিজে থেকে প্রয়োগ হয় না।</span>
-                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.body.trim()} onClick={() => runTranslate("bn")}>বাংলায় অনুবাদ</button>
+                    <span className="font-medium">{tr("messaging.msgZTranslateTitle")}</span>
+                    <span className="text-[11px] text-slate-400">{tr("messaging.msgZTranslateNote")}</span>
+                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.body.trim()} onClick={() => runTranslate("bn")}>{tr("messaging.msgZTranslateBn")}</button>
                     <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.body.trim()} onClick={() => runTranslate("en")}>Translate to English</button>
                   </div>
                   {translation ? (
@@ -2385,53 +2413,53 @@ export default function MessagingPage() {
                       <p className="text-[11px] text-slate-500">{translation.isRealLlm ? `AI Provider: ${translation.providerLabel}` : translation.notice}</p>
                       {translation.subject ? <div className="mt-1 font-medium">{translation.subject}</div> : null}
                       <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{translation.body}</p>
-                      <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant({ subject: translation.subject ?? undefined, body: translation.body })}>অনুবাদটি ফর্মে বসান</button>
+                      <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => applyAiVariant({ subject: translation.subject ?? undefined, body: translation.body })}>{tr("messaging.msgZApplyTranslation")}</button>
                     </div>
                   ) : null}
                 </div>
                 <div className="space-y-2 border-t pt-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">🎯 MX16 · Subject গুণমান স্কোর (Heuristic — AI নয়):</span>
-                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.subject.trim()} onClick={runSubjectScore}>{busy === "subject-score" ? "হিসাব হচ্ছে..." : "স্কোর দেখুন"}</button>
-                    <span className="text-[11px] text-slate-400">এটি Open-rate-এর মাপা ভবিষ্যদ্বাণী নয় — নিয়ম-ভিত্তিক স্কোর, ফ্যাক্টরসহ দেখানো হয়।</span>
+                    <span className="font-medium">{tr("messaging.msgZSubjectScoreTitle")}</span>
+                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.subject.trim()} onClick={runSubjectScore}>{busy === "subject-score" ? tr("messaging.msgZScoringWorking") : tr("messaging.msgZSeeScore")}</button>
+                    <span className="text-[11px] text-slate-400">{tr("messaging.msgZScoreNote")}</span>
                   </div>
                   {subjectScore ? (
                     <div className="rounded-lg border bg-white p-3 text-sm">
-                      <div>মোট স্কোর: <strong>{subjectScore.score} / {subjectScore.maxScore}</strong></div>
+                      <div>{tr("messaging.msgZTotalScorePrefix")} <strong>{subjectScore.score} / {subjectScore.maxScore}</strong></div>
                       <ul className="mt-1 space-y-0.5 text-slate-600">
                         {subjectScore.factors.map((f) => <li key={f.code}>• {f.label}: <strong>{f.points}/{f.maxPoints}</strong> — {f.detail}</li>)}
                       </ul>
-                      {subjectScore.spamWordsMatched.length ? <p className="mt-1 text-amber-700">⚠️ Spam-শব্দ মিলেছে: {subjectScore.spamWordsMatched.join(", ")}</p> : null}
+                      {subjectScore.spamWordsMatched.length ? <p className="mt-1 text-amber-700">{tr("messaging.msgZSpamMatched", { words: subjectScore.spamWordsMatched.join(", ") })}</p> : null}
                     </div>
                   ) : null}
                 </div>
                 <div className="space-y-2 border-t pt-2">
                   <div className="flex flex-wrap items-end gap-2">
-                    <span className="font-medium">🕐 MX16 · প্রাপকভিত্তিক সেরা পাঠানোর সময় (পরিসংখ্যান — AI নয়):</span>
-                    <label className="block text-sm">প্রাপকের ঠিকানা/Key<input className="input mt-1 w-64" value={recipientTimeKey} onChange={(e) => setRecipientTimeKey(e.target.value)} placeholder="যেমন: user@example.com বা +8801..." /></label>
-                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !recipientTimeKey.trim()} onClick={runRecipientSendTime}>{busy === "recipient-time" ? "হিসাব হচ্ছে..." : "সময় দেখুন"}</button>
+                    <span className="font-medium">{tr("messaging.msgZRecipientTimeTitle")}</span>
+                    <label className="block text-sm">{tr("messaging.msgZRecipientKeyLabel")}<input className="input mt-1 w-64" value={recipientTimeKey} onChange={(e) => setRecipientTimeKey(e.target.value)} placeholder={tr("messaging.msgZExRecipientKey")} /></label>
+                    <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !recipientTimeKey.trim()} onClick={runRecipientSendTime}>{busy === "recipient-time" ? tr("messaging.msgZScoringWorking") : tr("messaging.msgZSeeTime")}</button>
                   </div>
                   {recipientSendTime ? (
-                    recipientSendTime.available ? <p className="text-sm text-slate-600">এই প্রাপক সবচেয়ে বেশি সক্রিয় থাকেন ঢাকা সময় <strong>{recipientSendTime.modalHour}:০০</strong>-এর ঘণ্টায় ({recipientSendTime.modalHourEvents}টি ঘটনা, মোট {recipientSendTime.totalEvents}টি থেকে)। এটি অতীতের আসল Click/Open/Read ঘটনা থেকে হিসাব করা পরিসংখ্যান — কোনো গ্যারান্টি নয়।</p>
-                      : <p className="text-sm text-amber-700">পর্যাপ্ত তথ্য নেই — এই প্রাপকের জন্য মাত্র {recipientSendTime.totalEvents}টি Engagement ঘটনা আছে (কমপক্ষে {recipientSendTime.minEvents}টি লাগে)। কোনো সময় অনুমান করে দেখানো হয়নি।</p>
+                    recipientSendTime.available ? <p className="text-sm text-slate-600">{tr("messaging.msgZRecipientActiveA")} <strong>{tr("messaging.msgZHourColon", { hour: fmtNumber(locale, recipientSendTime.modalHour ?? 0) })}</strong>{tr("messaging.msgZRecipientActiveB", { modal: fmtNumber(locale, recipientSendTime.modalHourEvents), total: fmtNumber(locale, recipientSendTime.totalEvents) })}</p>
+                      : <p className="text-sm text-amber-700">{tr("messaging.msgZRecipientNoData", { total: fmtNumber(locale, recipientSendTime.totalEvents), min: fmtNumber(locale, recipientSendTime.minEvents) })}</p>
                   ) : null}
                 </div>
               </div>) : null}
             </div>
           ) : null}
-          {bcForm.channel === "whatsapp" ? <p className="text-xs text-slate-500 lg:col-span-2">WhatsApp Broadcast শুধুমাত্র Meta-অনুমোদিত Template দিয়েই যায় (২৪ ঘণ্টার Window এর বাইরে ফ্রি-ফর্ম মার্কেটিং বার্তা Meta নিষেধ করে)। প্রতিটি প্রাপকের জন্য আলাদা Delivery রেকর্ড থাকে।</p> : null}
-          {bcForm.channel === "onsite" ? <p className="text-xs text-slate-500 lg:col-span-3">🔀 On-site Channel-এ ফলব্যাক ক্যাসকেড নেই — নোটিফিকেশন তৈরি না হলে অন্য Channel-এ চেষ্টা হয় না; ব্যর্থতার আসল কারণ রিপোর্টে দেখা যায়।</p> : null}
-          {bcForm.channel === "push" ? <p className="text-xs text-slate-500 lg:col-span-3">🔀 Push Channel-এ ফলব্যাক ক্যাসকেড নেই — Push ব্যর্থ হলে অন্য Channel-এ চেষ্টা হয় না; ব্যর্থতার আসল কারণ রিপোর্টে দেখা যায়।</p> : null}
-          {bcForm.channel === "telegram" ? <p className="text-xs text-slate-500 lg:col-span-3">🔀 Telegram Channel-এ ফলব্যাক ক্যাসকেড নেই — Telegram ব্যর্থ হলে (যেমন Bot Block করা থাকলে) অন্য Channel-এ চেষ্টা হয় না; Telegram-এর আসল কারণ রিপোর্টে দেখা যায়।</p> : null}
+          {bcForm.channel === "whatsapp" ? <p className="text-xs text-slate-500 lg:col-span-2">{tr("messaging.msgZWaBroadcastNote")}</p> : null}
+          {bcForm.channel === "onsite" ? <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZNoCascadeOnsite")}</p> : null}
+          {bcForm.channel === "push" ? <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZNoCascadePush")}</p> : null}
+          {bcForm.channel === "telegram" ? <p className="text-xs text-slate-500 lg:col-span-3">{tr("messaging.msgZNoCascadeTelegram")}</p> : null}
           {bcForm.channel !== "push" && bcForm.channel !== "telegram" && bcForm.channel !== "onsite" ? (<div className="space-y-2 rounded-lg bg-slate-50 p-3 lg:col-span-3">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input type="checkbox" checked={bcForm.cascadeEnabled} onChange={(e) => setBcForm({ ...bcForm, cascadeEnabled: e.target.checked })} />
-              🔀 ফলব্যাক ক্যাসকেড চালু করুন (এক চ্যানেল ব্যর্থ হলে পরের চ্যানেলে চেষ্টা হবে)
+              {tr("messaging.msgZCascadeEnable")}
             </label>
             {bcForm.cascadeEnabled ? (<>
-              <p className="text-xs text-slate-500">প্রথমে মূল চ্যানেল ({bcForm.channel}) চেষ্টা হবে; প্রাপকভেদে ব্যর্থ হলে নিচের ক্রমে পরের চ্যানেলগুলো চেষ্টা হবে। প্রতিটি চেষ্টার আলাদা Delivery রেকর্ড থাকে এবং রিপোর্টে দেখা যায় কোন চ্যানেলে শেষ পর্যন্ত পৌঁছাল।</p>
+              <p className="text-xs text-slate-500">{tr("messaging.msgZCascadeIntro", { channel: bcForm.channel })}</p>
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="font-medium">ফলব্যাক ক্রম:</span>
+                <span className="font-medium">{tr("messaging.msgZCascadeOrder")}</span>
                 {(["email", "sms", "whatsapp"] as const).filter((c) => c !== bcForm.channel).map((c) => {
                   const idx = bcForm.cascadeChannels.indexOf(c);
                   const on = idx >= 0;
@@ -2439,7 +2467,7 @@ export default function MessagingPage() {
                     <span key={c} className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold ${on ? "bg-indigo-50 border-indigo-300" : "bg-white"}`}>
                       <input type="checkbox" checked={on} onChange={(e) => setBcForm({ ...bcForm, cascadeChannels: e.target.checked ? [...bcForm.cascadeChannels, c] : bcForm.cascadeChannels.filter((x) => x !== c) })} />
                       {on ? `${idx + 2}. ` : ""}{c === "email" ? "Email" : c === "sms" ? "SMS" : "WhatsApp"}
-                      {on && idx > 0 ? <button type="button" title="আগে আনুন" onClick={() => { const arr = [...bcForm.cascadeChannels]; const j = arr.indexOf(c); [arr[j - 1], arr[j]] = [arr[j], arr[j - 1]]; setBcForm({ ...bcForm, cascadeChannels: arr }); }}>↑</button> : null}
+                      {on && idx > 0 ? <button type="button" title={tr("messaging.msgZMoveEarlier")} onClick={() => { const arr = [...bcForm.cascadeChannels]; const j = arr.indexOf(c); [arr[j - 1], arr[j]] = [arr[j], arr[j - 1]]; setBcForm({ ...bcForm, cascadeChannels: arr }); }}>↑</button> : null}
                     </span>
                   );
                 })}
@@ -2447,23 +2475,23 @@ export default function MessagingPage() {
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={bcForm.cascadeSmart} onChange={(e) => setBcForm({ ...bcForm, cascadeSmart: e.target.checked })} />
-                  🧠 স্মার্ট রাউটিং (প্রাপকের আগের Engagement অনুযায়ী পছন্দের চ্যানেল আগে)
+                  {tr("messaging.msgZSmartRouting")}
                 </label>
-                <label className="flex items-center gap-2">ক্রমের ভিত্তি
+                <label className="flex items-center gap-2">{tr("messaging.msgZOrderingBasis")}
                   <select className="input w-auto py-1" value={bcForm.cascadeOrdering} onChange={(e) => setBcForm({ ...bcForm, cascadeOrdering: e.target.value })}>
-                    <option value="org">আমার সাজানো ক্রম</option>
-                    <option value="cheapest">সবচেয়ে সস্তা আগে (শুধু আমার দেওয়া Rate দিয়ে)</option>
+                    <option value="org">{tr("messaging.msgZOrderMine")}</option>
+                    <option value="cheapest">{tr("messaging.msgZOrderCheapest")}</option>
                   </select>
                 </label>
               </div>
-              {bcForm.cascadeChannels.includes("sms") && bcForm.channel !== "sms" ? <label className="block text-sm">SMS ফলব্যাকের লেখা<textarea className={inputCls} rows={2} value={bcForm.cascadeSmsBody} onChange={(e) => setBcForm({ ...bcForm, cascadeSmsBody: e.target.value })} placeholder="SMS চ্যানেলে পাঠানোর লেখা ({{name}} চলবে)" /></label> : null}
+              {bcForm.cascadeChannels.includes("sms") && bcForm.channel !== "sms" ? <label className="block text-sm">{tr("messaging.msgZSmsFallbackBody")}<textarea className={inputCls} rows={2} value={bcForm.cascadeSmsBody} onChange={(e) => setBcForm({ ...bcForm, cascadeSmsBody: e.target.value })} placeholder={tr("messaging.msgZSmsFallbackPlaceholder")} /></label> : null}
               {bcForm.cascadeChannels.includes("email") && bcForm.channel !== "email" ? (<>
-                <label className="block text-sm">ইমেইল ফলব্যাকের Subject<input className={inputCls} value={bcForm.cascadeEmailSubject} onChange={(e) => setBcForm({ ...bcForm, cascadeEmailSubject: e.target.value })} /></label>
-                <label className="block text-sm">ইমেইল ফলব্যাকের লেখা<textarea className={inputCls} rows={2} value={bcForm.cascadeEmailBody} onChange={(e) => setBcForm({ ...bcForm, cascadeEmailBody: e.target.value })} /></label>
+                <label className="block text-sm">{tr("messaging.msgZEmailFallbackSubject")}<input className={inputCls} value={bcForm.cascadeEmailSubject} onChange={(e) => setBcForm({ ...bcForm, cascadeEmailSubject: e.target.value })} /></label>
+                <label className="block text-sm">{tr("messaging.msgZEmailFallbackBody")}<textarea className={inputCls} rows={2} value={bcForm.cascadeEmailBody} onChange={(e) => setBcForm({ ...bcForm, cascadeEmailBody: e.target.value })} /></label>
               </>) : null}
-              {bcForm.cascadeChannels.includes("whatsapp") && bcForm.channel !== "whatsapp" ? <label className="block text-sm">WhatsApp ফলব্যাক Template (শুধু অনুমোদিত Template-ই যাবে)
+              {bcForm.cascadeChannels.includes("whatsapp") && bcForm.channel !== "whatsapp" ? <label className="block text-sm">{tr("messaging.msgZWaFallbackTemplate")}
                 <select className={inputCls} value={bcForm.cascadeWhatsappTemplateId} onChange={(e) => setBcForm({ ...bcForm, cascadeWhatsappTemplateId: e.target.value })}>
-                  <option value="">— Template বেছে নিন (না দিলে WhatsApp ধাপ বাদ যাবে) —</option>
+                  <option value="">{tr("messaging.msgZWaFallbackPick")}</option>
                   {waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
                 </select>
               </label> : null}
@@ -2471,10 +2499,10 @@ export default function MessagingPage() {
           </div>) : null}
           <label className="block text-sm">Audience
             <select className={inputCls} value={bcForm.audienceType} onChange={(e) => setBcForm({ ...bcForm, audienceType: e.target.value })}>
-              <option value="customers">সব Customer (ঠিকানা থাকলে)</option><option value="leads_stage">একটি Lead Stage</option><option value="segment">RFM Segment</option>
-              <option value="push_subscribers">🔔 সব Push সাবস্ক্রাইবার (শুধু Push Channel-এ)</option>
-              <option value="telegram_subscribers">✈️ সব Telegram সাবস্ক্রাইবার (শুধু Telegram Channel-এ)</option>
-              <option value="custom">🎯 Custom শর্ত (Audience Builder)</option><option value="saved">💾 Saved Audience</option><option value="csv">📋 CSV / ঠিকানার তালিকা</option>
+              <option value="customers">{tr("messaging.msgZAudAllCustomers")}</option><option value="leads_stage">{tr("messaging.msgZAudLeadStage")}</option><option value="segment">RFM Segment</option>
+              <option value="push_subscribers">{tr("messaging.msgZAudPushSubs")}</option>
+              <option value="telegram_subscribers">{tr("messaging.msgZAudTgSubs")}</option>
+              <option value="custom">{tr("messaging.msgZAudCustom")}</option><option value="saved">💾 Saved Audience</option><option value="csv">{tr("messaging.msgZAudCsv")}</option>
             </select>
           </label>
           {bcForm.audienceType === "leads_stage" ? <label className="block text-sm">Lead Stage
@@ -2484,26 +2512,26 @@ export default function MessagingPage() {
           </label> : null}
           {bcForm.audienceType === "segment" ? <label className="block text-sm">Segment
             <select className={inputCls} value={bcForm.audienceSegment} onChange={(e) => setBcForm({ ...bcForm, audienceSegment: e.target.value })}>
-              {SEGMENTS.map((s) => <option key={s} value={s}>{SEG_LABEL[s]} ({rfm?.segments[s] ?? 0} জন)</option>)}
+              {SEGMENTS.map((s) => <option key={s} value={s}>{SEG_LABEL[s]} ({fmtNumber(locale, rfm?.segments[s] ?? 0)} {tr("messaging.msgPeopleWord")})</option>)}
             </select>
           </label> : null}
           {bcForm.audienceType === "custom" ? (
             <div className="space-y-2 lg:col-span-3 rounded-lg bg-slate-50 p-3">
               <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="font-medium">শর্ত তৈরি করুন:</span>
-                <label className="flex items-center gap-1">তালিকা
-                  <select className="input w-auto" value={condEntity} onChange={(e) => { setCondEntity(e.target.value); const d = (e.target.value === "customers" ? CUSTOMER_FIELD_DEFS : LEAD_FIELD_DEFS)[0]; setCondRows([{ field: d.field, op: d.ops[0], key: "", value: "" }]); }}>
+                <span className="font-medium">{tr("messaging.msgZBuildConditions")}</span>
+                <label className="flex items-center gap-1">{tr("messaging.msgZListWord")}
+                  <select className="input w-auto" value={condEntity} onChange={(e) => { setCondEntity(e.target.value); const d = (e.target.value === "customers" ? fieldDefsFor(CUSTOMER_FIELD_DEFS, locale) : fieldDefsFor(LEAD_FIELD_DEFS, locale))[0]; setCondRows([{ field: d.field, op: d.ops[0], key: "", value: "" }]); }}>
                     <option value="customers">Customer</option><option value="leads">Lead</option>
                   </select>
                 </label>
-                <label className="flex items-center gap-1">মিল
+                <label className="flex items-center gap-1">{tr("messaging.msgZMatchWord")}
                   <select className="input w-auto" value={condMatch} onChange={(e) => setCondMatch(e.target.value)}>
-                    <option value="all">সব শর্ত (AND)</option><option value="any">যেকোনো শর্ত (OR)</option>
+                    <option value="all">{tr("messaging.msgZMatchAll")}</option><option value="any">{tr("messaging.msgZMatchAny")}</option>
                   </select>
                 </label>
               </div>
               {condRows.map((row, i) => {
-                const defs = condEntity === "customers" ? CUSTOMER_FIELD_DEFS : LEAD_FIELD_DEFS;
+                const defs = condEntity === "customers" ? fieldDefsFor(CUSTOMER_FIELD_DEFS, locale) : fieldDefsFor(LEAD_FIELD_DEFS, locale);
                 const def = defs.find((d) => d.field === row.field) ?? defs[0];
                 return (
                   <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
@@ -2511,12 +2539,12 @@ export default function MessagingPage() {
                       {defs.map((d) => <option key={d.field} value={d.field}>{d.label}</option>)}
                     </select>
                     <select className="input w-auto" value={row.op} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, op: e.target.value } : r))}>
-                      {def.ops.map((op) => <option key={op} value={op}>{OP_LABEL[op] ?? op}</option>)}
+                      {def.ops.map((op) => <option key={op} value={op}>{OP_LABEL_L[op] ?? op}</option>)}
                     </select>
-                    {def.kind === "keyed" ? <input className="input w-32" value={row.key} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, key: e.target.value } : r))} placeholder={row.field === "address_key" ? "যেমন: district" : "যেমন: tier"} /> : null}
+                    {def.kind === "keyed" ? <input className="input w-32" value={row.key} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, key: e.target.value } : r))} placeholder={row.field === "address_key" ? tr("messaging.msgZExDistrict") : tr("messaging.msgZExTier")} /> : null}
                     {def.kind === "boolean" ? (
                       <select className="input w-auto" value={row.value || "true"} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}>
-                        <option value="true">হ্যাঁ</option><option value="false">না</option>
+                        <option value="true">{tr("messaging.msgZYesWord")}</option><option value="false">{tr("messaging.msgZNoWord")}</option>
                       </select>
                     ) : def.kind === "segment" ? (
                       <select className="input w-auto" value={row.value || "champions"} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}>
@@ -2524,162 +2552,162 @@ export default function MessagingPage() {
                       </select>
                     ) : def.kind === "predictive" ? (
                       <select className="input w-auto" value={row.value || "churn_risk"} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}>
-                        {PREDICTIVE_SEGMENTS.map((s) => <option key={s} value={s}>{PREDICTIVE_LABEL[s]}</option>)}
+                        {PREDICTIVE_SEGMENTS.map((s) => <option key={s} value={s}>{PREDICTIVE_LABEL_L[s]}</option>)}
                       </select>
                     ) : def.kind === "stage" ? (
                       <select className="input w-auto" value={row.value || "new"} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}>
                         {LEAD_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
                       </select>
                     ) : (
-                      <input className="input w-40" type={def.kind === "number" ? "number" : "text"} value={row.value} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))} placeholder="মান" />
+                      <input className="input w-40" type={def.kind === "number" ? "number" : "text"} value={row.value} onChange={(e) => setCondRows(condRows.map((r, j) => j === i ? { ...r, value: e.target.value } : r))} placeholder={tr("messaging.msgValueLabel")} />
                     )}
-                    <button type="button" className="rounded-lg border px-2 py-1 text-xs disabled:opacity-40" disabled={condRows.length <= 1} onClick={() => setCondRows(condRows.filter((_, j) => j !== i))}>সরান</button>
+                    <button type="button" className="rounded-lg border px-2 py-1 text-xs disabled:opacity-40" disabled={condRows.length <= 1} onClick={() => setCondRows(condRows.filter((_, j) => j !== i))}>{tr("messaging.msgRemoveBtn")}</button>
                   </div>
                 );
               })}
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={condRows.length >= 20} onClick={() => { const d = (condEntity === "customers" ? CUSTOMER_FIELD_DEFS : LEAD_FIELD_DEFS)[0]; setCondRows([...condRows, { field: d.field, op: d.ops[0], key: "", value: "" }]); }}>+ শর্ত যোগ করুন (সর্বোচ্চ ২০)</button>
-              <p className="text-[11px] text-slate-400">অর্ডার-ভিত্তিক শর্ত আসল অর্ডার হিসাব থেকে আসে। যার কোনো অর্ডার নেই, তার অর্ডার সংখ্যা ০ — তবে &quot;শেষ অর্ডার&quot; শর্তে সে কখনো মিলবে না। ঠিকানার শর্ত (district ইত্যাদি) নির্ভর করে কাস্টমারের ঠিকানা যেভাবে সংরক্ষিত আছে তার ওপর।</p>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={condRows.length >= 20} onClick={() => { const d = (condEntity === "customers" ? fieldDefsFor(CUSTOMER_FIELD_DEFS, locale) : fieldDefsFor(LEAD_FIELD_DEFS, locale))[0]; setCondRows([...condRows, { field: d.field, op: d.ops[0], key: "", value: "" }]); }}>{tr("messaging.msgZAddCondition", { max: fmtNumber(locale, 20) })}</button>
+              <p className="text-[11px] text-slate-400">{tr("messaging.msgZConditionsNote")}</p>
             </div>
           ) : null}
           {bcForm.audienceType === "saved" ? (
             <div className="space-y-2 lg:col-span-3 rounded-lg bg-slate-50 p-3">
               <label className="block text-sm">Saved Audience
                 <select className={inputCls} value={bcForm.audienceSavedId} onChange={(e) => setBcForm({ ...bcForm, audienceSavedId: e.target.value })} required>
-                  <option value="">বেছে নিন</option>
-                  {savedAudiences.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.definition.entity === "leads" ? "Lead" : "Customer"}, {s.definition.conditions?.length ?? 0}টি শর্ত)</option>)}
+                  <option value="">{tr("messaging.msgPickOption")}</option>
+                  {savedAudiences.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.definition.entity === "leads" ? "Lead" : "Customer"}, {tr("messaging.msgZConditionsCount", { count: fmtNumber(locale, s.definition.conditions?.length ?? 0) })})</option>)}
                 </select>
               </label>
-              {savedAudiences.length === 0 ? <p className="text-xs text-slate-500">এখনো কোনো Saved Audience নেই — নিচে Custom শর্ত বানিয়ে নাম দিয়ে সংরক্ষণ করুন।</p> : null}
+              {savedAudiences.length === 0 ? <p className="text-xs text-slate-500">{tr("messaging.msgZNoSavedAudience")}</p> : null}
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <input className="input w-56" value={savedName} onChange={(e) => setSavedName(e.target.value)} placeholder="নতুন নাম / নতুন নাম (Rename-এর জন্য)" />
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !savedName.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-create", () => apiFetch<SavedAudience>(`/organizations/${o}/messaging/audiences`, { method: "POST", body: JSON.stringify({ name: savedName.trim(), definition: buildDefinition() }) })); if (r) { setSavedName(""); setNotice(`Saved Audience "${r.name}" তৈরি হয়েছে (বর্তমান Custom শর্ত থেকে)।`); await load(); } }}>বর্তমান Custom শর্ত থেকে তৈরি করুন</button>
-                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.audienceSavedId || !savedName.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-rename", () => apiFetch(`/organizations/${o}/messaging/audiences/${bcForm.audienceSavedId}`, { method: "PATCH", body: JSON.stringify({ name: savedName.trim() }) })); if (r) { setSavedName(""); setNotice("Saved Audience-এর নাম বদলানো হয়েছে।"); await load(); } }}>নাম বদলান</button>
-                <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== "" || !bcForm.audienceSavedId} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-delete", () => apiFetch(`/organizations/${o}/messaging/audiences/${bcForm.audienceSavedId}`, { method: "DELETE" })); if (r) { setBcForm({ ...bcForm, audienceSavedId: "" }); setNotice("Saved Audience মুছে ফেলা হয়েছে। যেসব Draft Broadcast এটি ব্যবহার করছিল, সেগুলোর প্রিভিউ/পাঠানো এখন সৎভাবে ব্যর্থ হবে।"); await load(); } }}>মুছুন</button>
+                <input className="input w-56" value={savedName} onChange={(e) => setSavedName(e.target.value)} placeholder={tr("messaging.msgZSavedNamePlaceholder")} />
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !savedName.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-create", () => apiFetch<SavedAudience>(`/organizations/${o}/messaging/audiences`, { method: "POST", body: JSON.stringify({ name: savedName.trim(), definition: buildDefinition() }) })); if (r) { setSavedName(""); setNotice(tr("messaging.msgZSavedAudienceCreated", { name: r.name })); await load(); } }}>{tr("messaging.msgZCreateFromCustom")}</button>
+                <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !bcForm.audienceSavedId || !savedName.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-rename", () => apiFetch(`/organizations/${o}/messaging/audiences/${bcForm.audienceSavedId}`, { method: "PATCH", body: JSON.stringify({ name: savedName.trim() }) })); if (r) { setSavedName(""); setNotice(tr("messaging.msgZSavedAudienceRenamed")); await load(); } }}>{tr("messaging.msgZRenameBtn")}</button>
+                <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== "" || !bcForm.audienceSavedId} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("aud-delete", () => apiFetch(`/organizations/${o}/messaging/audiences/${bcForm.audienceSavedId}`, { method: "DELETE" })); if (r) { setBcForm({ ...bcForm, audienceSavedId: "" }); setNotice(tr("messaging.msgZSavedAudienceDeleted")); await load(); } }}>{tr("messaging.msgDelete")}</button>
               </div>
-              <p className="text-[11px] text-slate-400">&quot;তৈরি করুন&quot; বাটনটি উপরের Custom শর্ত-বিল্ডারের বর্তমান শর্তগুলো সংরক্ষণ করে — আগে Audience ধরণ Custom করে শর্তগুলো সাজিয়ে নিন।</p>
+              <p className="text-[11px] text-slate-400">{tr("messaging.msgZCreateBtnNote")}</p>
             </div>
           ) : null}
           {bcForm.audienceType === "csv" ? (
-            <label className="block text-sm lg:col-span-3">ঠিকানার তালিকা (এক লাইনে একটি, অথবা কমা দিয়ে — সর্বোচ্চ ৫০০০)
+            <label className="block text-sm lg:col-span-3">{tr("messaging.msgZAddressListLabel", { max: fmtNumber(locale, 5000) })}
               <textarea className={inputCls} rows={4} value={csvText} onChange={(e) => setCsvText(e.target.value)} placeholder={bcForm.channel === "email" ? "one@example.com\ntwo@example.com" : "01712345678\n+8801712345678"} required />
-              <span className="mt-1 block text-[11px] font-normal text-slate-400">তালিকার ঠিকানা আপনার Customer/Lead তালিকার সঙ্গে মিললে নামসহ তাদের কাছেই যাবে; না মিললেও ঠিকানাটিতে পাঠানো যাবে। অবৈধ ঠিকানা প্রিভিউতে গণনা দেখানো হবে — নীরবে বাদ যাবে না।</span>
+              <span className="mt-1 block text-[11px] font-normal text-slate-400">{tr("messaging.msgZCsvListNote")}</span>
             </label>
           ) : null}
-          <label className="block text-sm">শিডিউল (ঐচ্ছিক) — সময় দিলে Draft না হয়ে Scheduled হবে<input type="datetime-local" className={inputCls} value={bcForm.scheduledAt} onChange={(e) => setBcForm({ ...bcForm, scheduledAt: e.target.value })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZScheduleLabel")}<input type="datetime-local" className={inputCls} value={bcForm.scheduledAt} onChange={(e) => setBcForm({ ...bcForm, scheduledAt: e.target.value })} /></label>
           {bcForm.scheduledAt ? (
             <div className="space-y-2 rounded-lg bg-slate-50 p-3 lg:col-span-3">
-              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={bcForm.recEnabled} onChange={(e) => setBcForm({ ...bcForm, recEnabled: e.target.checked })} /> 🔁 পুনরাবৃত্তি (Recurring) — পাঠানো শেষ হলে পরেরটি নিজে থেকেই শিডিউল হবে</label>
+              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={bcForm.recEnabled} onChange={(e) => setBcForm({ ...bcForm, recEnabled: e.target.checked })} /> {tr("messaging.msgZRecurringLabel")}</label>
               {bcForm.recEnabled ? <>
                 <div className="flex flex-wrap items-end gap-3">
-                  <label className="block text-sm">ধরন
+                  <label className="block text-sm">{tr("messaging.msgZKindLabel")}
                     <select className={inputCls} value={bcForm.recFreq} onChange={(e) => setBcForm({ ...bcForm, recFreq: e.target.value })}>
-                      <option value="daily">প্রতিদিন (Daily)</option><option value="weekly">সাপ্তাহিক (Weekly)</option>
+                      <option value="daily">{tr("messaging.msgZDailyOption")}</option><option value="weekly">{tr("messaging.msgZWeeklyOption")}</option>
                     </select>
                   </label>
-                  <label className="block text-sm">ব্যবধান (Interval)<input type="number" min={1} max={52} className={inputCls} value={bcForm.recInterval} onChange={(e) => setBcForm({ ...bcForm, recInterval: e.target.value })} /></label>
-                  <label className="block text-sm">শেষ তারিখ (ঐচ্ছিক)<input type="date" className={inputCls} value={bcForm.recEndsAt} onChange={(e) => setBcForm({ ...bcForm, recEndsAt: e.target.value })} /></label>
+                  <label className="block text-sm">{tr("messaging.msgZIntervalLabel")}<input type="number" min={1} max={52} className={inputCls} value={bcForm.recInterval} onChange={(e) => setBcForm({ ...bcForm, recInterval: e.target.value })} /></label>
+                  <label className="block text-sm">{tr("messaging.msgZEndDateLabel")}<input type="date" className={inputCls} value={bcForm.recEndsAt} onChange={(e) => setBcForm({ ...bcForm, recEndsAt: e.target.value })} /></label>
                 </div>
                 {bcForm.recFreq === "weekly" ? (
                   <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-slate-500">সপ্তাহের দিন (ফাঁকা = শিডিউলের দিনেই):</span>
-                    {["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"].map((label, d) => (
+                    <span className="text-slate-500">{tr("messaging.msgZWeekdaysLabel")}</span>
+                    {[tr("messaging.msgDaySun"), tr("messaging.msgDayMon"), tr("messaging.msgDayTue"), tr("messaging.msgDayWed"), tr("messaging.msgDayThu"), tr("messaging.msgDayFri"), tr("messaging.msgDaySat")].map((label, d) => (
                       <label key={d} className="flex items-center gap-1 rounded border bg-white px-2 py-1 text-xs">
                         <input type="checkbox" checked={bcForm.recWeekdays.includes(d)} onChange={(e) => setBcForm({ ...bcForm, recWeekdays: e.target.checked ? [...bcForm.recWeekdays, d].sort((x, y) => x - y) : bcForm.recWeekdays.filter((x) => x !== d) })} /> {label}
                       </label>
                     ))}
                   </div>
                 ) : null}
-                <p className="text-[11px] text-slate-400">একটি ধারায় একবারে একটি মাত্র পরবর্তী Broadcast নির্ধারিত থাকে। Pause বা বাতিল করলে ধারা সেখানেই থেমে যায়। প্রতিটি পাঠানোর সময় প্রাপক তালিকা নতুন করে তৈরি হয় — অপ্ট-আউট ও দৈনিক সীমা প্রতিবারই নতুনভাবে যাচাই হয়।</p>
+                <p className="text-[11px] text-slate-400">{tr("messaging.msgZRecurringNote")}</p>
               </> : null}
             </div>
           ) : null}
-          <label className="text-sm lg:col-span-2">Topic (ঐচ্ছিক — Preference Center-এ এই Topic বেছে না নেওয়া প্রাপক বাদ যাবেন)
-            <input className="input mt-1 w-64" placeholder="যেমন: offers" value={bcForm.topic} onChange={(e) => setBcForm({ ...bcForm, topic: e.target.value })} />
+          <label className="text-sm lg:col-span-2">{tr("messaging.msgZTopicLabel")}
+            <input className="input mt-1 w-64" placeholder={tr("messaging.msgZExOffers")} value={bcForm.topic} onChange={(e) => setBcForm({ ...bcForm, topic: e.target.value })} />
           </label>
-          <label className="flex items-center gap-2 text-sm lg:col-span-2"><input type="checkbox" checked={bcForm.excludePreviousRecipients} onChange={(e) => setBcForm({ ...bcForm, excludePreviousRecipients: e.target.checked })} /> আগের Broadcast-এর প্রাপকদের বাদ দিন (যাদের কাছে আগের কোনো Broadcast সফলভাবে পৌঁছেছে; ব্যর্থ পাঠানো গণনায় আসে না)</label>
-          <label className="flex items-center gap-2 text-sm lg:col-span-2"><input type="checkbox" checked={bcForm.abTest} onChange={(e) => setBcForm({ ...bcForm, abTest: e.target.checked })} /> 🧪 A/B Test (অডিয়েন্স অর্ধেক-অর্ধেক ভাগ হয়ে দুটি Variant যাবে)</label>
-          {bcForm.abTest ? <label className="flex items-start gap-2 text-sm lg:col-span-2"><input type="checkbox" className="mt-0.5" checked={bcForm.abAutoWinner} onChange={(e) => setBcForm({ ...bcForm, abAutoWinner: e.target.checked })} /> <span>🏆 <strong>A/B স্বয়ংক্রিয় জয়ী (Auto-Winner)</strong> — চালু থাকলে: প্রতি Variant-এর কমপক্ষে <strong>১০০টি</strong> পাঠানোর পর দুটি ভাগের হারের <strong>two-proportion z-test</strong>-এ <strong>৯৫% আত্মবিশ্বাস (p &lt; ০.০৫)</strong> পেলে বাকি প্রাপকরা জয়ী Variant-এর বিষয়বস্তু পাবেন। এটি AI নয় — একটি নির্দিষ্ট পরিসংখ্যান নিয়ম। টাই বা অপর্যাপ্ত নমুনায় কখনো সিদ্ধান্ত হয় না। মেট্রিক: যেখানে পাওয়া যায় সেখানে Read/Click/Open; যে চ্যানেলে সৎ মেট্রিক নেই সেখানে স্বয়ংক্রিয় জয়ী চলবে না। শুধু Recipient-table (chunked) পথে কার্যকর — লিগ্যাসি Snapshot পথে নয়। সিদ্ধান্ত Broadcast-এ রেকর্ড থাকে। <strong>ডিফল্ট: বন্ধ</strong> (Org সেটিংসেও ডিফল্ট বন্ধ; এখানে চালু করলে এই যুগলের জন্য Org মান ছাড়িয়ে যায়)।</span></label> : null}
-          <label className="block text-sm">🎯 Holdout Group — তুলনার জন্য বাদ রাখা (%) (খালি = Holdout নেই, ১–৫০)
-            <input type="number" min={1} max={50} className={inputCls} value={bcForm.holdoutPercent} onChange={(e) => setBcForm({ ...bcForm, holdoutPercent: e.target.value })} placeholder="যেমন: 10" />
-            <span className="mt-1 block text-[11px] text-slate-400">Holdout-এ পড়া প্রাপকদের কাছে এই Broadcast যাবে না — একই Deterministic Hash-এ ঠিক হয়, তাই Resume-এও বদলায় না। A/B-এর সঙ্গেও একসঙ্গে চলতে পারে। রিপোর্টে Holdout সংখ্যা দেখা যাবে।</span>
+          <label className="flex items-center gap-2 text-sm lg:col-span-2"><input type="checkbox" checked={bcForm.excludePreviousRecipients} onChange={(e) => setBcForm({ ...bcForm, excludePreviousRecipients: e.target.checked })} /> {tr("messaging.msgZExcludePrevLong")}</label>
+          <label className="flex items-center gap-2 text-sm lg:col-span-2"><input type="checkbox" checked={bcForm.abTest} onChange={(e) => setBcForm({ ...bcForm, abTest: e.target.checked })} /> {tr("messaging.msgZAbTestLabel")}</label>
+          {bcForm.abTest ? <label className="flex items-start gap-2 text-sm lg:col-span-2"><input type="checkbox" className="mt-0.5" checked={bcForm.abAutoWinner} onChange={(e) => setBcForm({ ...bcForm, abAutoWinner: e.target.checked })} /> <span>🏆 <strong>{tr("messaging.msgZAutoWinnerName")}</strong>{tr("messaging.msgZAwA")}<strong>{tr("messaging.msgZAwHundred")}</strong>{tr("messaging.msgZAwB")}<strong>two-proportion z-test</strong>{tr("messaging.msgZAwC")}<strong>{tr("messaging.msgZAwConf")}</strong>{tr("messaging.msgZAwD")}<strong>{tr("messaging.msgZAwDefaultOff")}</strong>{tr("messaging.msgZAwE")}</span></label> : null}
+          <label className="block text-sm">{tr("messaging.msgZHoldoutLabel", { min: fmtNumber(locale, 1), max: fmtNumber(locale, 50) })}
+            <input type="number" min={1} max={50} className={inputCls} value={bcForm.holdoutPercent} onChange={(e) => setBcForm({ ...bcForm, holdoutPercent: e.target.value })} placeholder={tr("messaging.msgZEx10")} />
+            <span className="mt-1 block text-[11px] text-slate-400">{tr("messaging.msgZHoldoutNote")}</span>
           </label>
-          <label className="block text-sm">💰 এই Broadcast-এর খরচের সীমা (৳, ঐচ্ছিক — খালি = Org-এর ডিফল্ট সীমা)
-            <input type="number" min={0} step="0.01" className={inputCls} value={bcForm.budgetCapTaka} onChange={(e) => setBcForm({ ...bcForm, budgetCapTaka: e.target.value })} placeholder="যেমন: 500" />
-            <span className="mt-1 block text-[11px] text-slate-400">আনুমানিক খরচ (আপনার দেওয়া হার × প্রাপক) এই সীমা ছাড়ালে পাঠানো আটকে যাবে — সংখ্যাসহ কারণ দেখানো হবে। এটি খরচ-ভিত্তিক সীমা, কোনো ব্যালেন্স থেকে কাটা হয় না।</span>
+          <label className="block text-sm">{tr("messaging.msgZBudgetLabel")}
+            <input type="number" min={0} step="0.01" className={inputCls} value={bcForm.budgetCapTaka} onChange={(e) => setBcForm({ ...bcForm, budgetCapTaka: e.target.value })} placeholder={tr("messaging.msgZEx500")} />
+            <span className="mt-1 block text-[11px] text-slate-400">{tr("messaging.msgZBudgetNote")}</span>
           </label>
           {bcForm.abTest && bcForm.channel !== "whatsapp" ? (<>
-            {bcForm.channel === "email" || bcForm.channel === "push" || bcForm.channel === "onsite" ? <label className="block text-sm">Variant B {bcForm.channel === "push" || bcForm.channel === "onsite" ? "Title" : "Subject"}<input className={inputCls} value={bcForm.abSubject} onChange={(e) => setBcForm({ ...bcForm, abSubject: e.target.value })} placeholder="ফাঁকা রাখলে A এর টাইটেল/Subject" /></label> : null}
+            {bcForm.channel === "email" || bcForm.channel === "push" || bcForm.channel === "onsite" ? <label className="block text-sm">Variant B {bcForm.channel === "push" || bcForm.channel === "onsite" ? "Title" : "Subject"}<input className={inputCls} value={bcForm.abSubject} onChange={(e) => setBcForm({ ...bcForm, abSubject: e.target.value })} placeholder={tr("messaging.msgZVariantBPlaceholder")} /></label> : null}
             <label className="block text-sm lg:col-span-2">Variant B Body<textarea className={inputCls} rows={2} value={bcForm.abBody} onChange={(e) => setBcForm({ ...bcForm, abBody: e.target.value })} required /></label>
           </>) : null}
           {bcForm.abTest && bcForm.channel === "whatsapp" ? <label className="block text-sm">Variant B Template
             <select className={inputCls} value={bcForm.abWhatsappTemplateId} onChange={(e) => setBcForm({ ...bcForm, abWhatsappTemplateId: e.target.value })} required>
-              <option value="">বেছে নিন</option>
+              <option value="">{tr("messaging.msgPickOption")}</option>
               {waTemplates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
             </select>
           </label> : null}
           <div className="space-y-2 lg:col-span-3">
             <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={runPreview}>
-              {busy === "preview" ? "প্রিভিউ হচ্ছে..." : "👁️ প্রাপক প্রিভিউ"}
+              {busy === "preview" ? tr("messaging.msgPreviewing") : tr("messaging.msgZRecipientPreview")}
             </button>
             {preview ? (
               <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span>মোট দর্শক: <strong>{preview.audienceTotal}</strong></span>
-                  <span>বাদ পড়েছে (আগের প্রাপক): <strong>{preview.excludedPreviousCount}</strong></span>
-                  <span>বাদ পড়েছে (অপ্ট-আউট): <strong>{preview.excludedSuppressedCount ?? 0}</strong></span>
-                  <span>বাদ পড়েছে (দৈনিক সীমা): <strong>{preview.excludedFrequencyCount ?? 0}</strong></span>
-                  <span>বাদ পড়েছে (WhatsApp সম্মতি নেই): <strong>{preview.excludedNoOptInCount ?? 0}</strong></span>
-                  {(preview.invalidCount ?? 0) > 0 ? <span className="text-red-600">অবৈধ ঠিকানা (গণনা করা হয়েছে, পাঠানো হবে না): <strong>{preview.invalidCount}</strong></span> : null}
-                  {(preview.excludedHoldoutCount ?? 0) > 0 ? <span>বাদ পড়েছে (Holdout Group): <strong>{preview.excludedHoldoutCount}</strong></span> : null}
-                  <span>চূড়ান্ত প্রাপক: <strong>{preview.total}</strong></span>
+                  <span>{tr("messaging.msgZPreviewTotal")} <strong>{fmtNumber(locale, preview.audienceTotal)}</strong></span>
+                  <span>{tr("messaging.msgZPreviewExcludedPrev")} <strong>{fmtNumber(locale, preview.excludedPreviousCount)}</strong></span>
+                  <span>{tr("messaging.msgZPreviewExcludedOptout")} <strong>{fmtNumber(locale, preview.excludedSuppressedCount ?? 0)}</strong></span>
+                  <span>{tr("messaging.msgZPreviewExcludedFreq")} <strong>{fmtNumber(locale, preview.excludedFrequencyCount ?? 0)}</strong></span>
+                  <span>{tr("messaging.msgZPreviewExcludedOptin")} <strong>{fmtNumber(locale, preview.excludedNoOptInCount ?? 0)}</strong></span>
+                  {(preview.invalidCount ?? 0) > 0 ? <span className="text-red-600">{tr("messaging.msgZPreviewInvalid")} <strong>{fmtNumber(locale, preview.invalidCount ?? 0)}</strong></span> : null}
+                  {(preview.excludedHoldoutCount ?? 0) > 0 ? <span>{tr("messaging.msgZPreviewExcludedHoldout")} <strong>{fmtNumber(locale, preview.excludedHoldoutCount ?? 0)}</strong></span> : null}
+                  <span>{tr("messaging.msgZPreviewFinal")} <strong>{fmtNumber(locale, preview.total)}</strong></span>
                 </div>
                 {preview.costEstimate ? (
-                  <p className="rounded bg-white px-2 py-1 text-xs text-slate-600">💰 আনুমানিক খরচ: {preview.costEstimate.totalMinor !== undefined ? <strong>৳{(preview.costEstimate.totalMinor / 100).toFixed(2)}</strong> : null}{preview.costEstimate.smsParts ? ` · SMS পার্ট: ${preview.costEstimate.smsParts}টি/বার্তা` : ""} · <span className="text-slate-500">{preview.costEstimate.basis}</span></p>
+                  <p className="rounded bg-white px-2 py-1 text-xs text-slate-600">{tr("messaging.msgZEstCost")} {preview.costEstimate.totalMinor !== undefined ? <strong>{fmtMoneyMinor(locale, preview.costEstimate.totalMinor)}</strong> : null}{preview.costEstimate.smsParts ? ` · ${tr("messaging.msgZSmsPartsPerMsg", { count: fmtNumber(locale, preview.costEstimate.smsParts) })}` : ""} · <span className="text-slate-500">{preview.costEstimate.basis}</span></p>
                 ) : (
-                  <p className="text-[11px] text-slate-400">{bcForm.channel === "push" ? "Push-এর কোনো প্রতি-বার্তা হার নেই — তাই খরচের হিসাব দেখানো হয় না (অনুমান করে কোনো সংখ্যা বসানো হয় না)।" : bcForm.channel === "onsite" ? "On-site নোটিফিকেশনে কোনো Provider খরচ নেই — তাই খরচের হিসাব দেখানো হয় না (শূন্য হার বানিয়ে দেখানো হয় না)।" : bcForm.channel === "telegram" ? "Telegram-এর কোনো প্রতি-বার্তা হার নেই — তাই খরচের হিসাব দেখানো হয় না (অনুমান করে কোনো সংখ্যা বসানো হয় না)।" : "খরচের আনুমানিক হিসাব দেখানো যাচ্ছে না — এই Channel-এর হার সেট করা নেই। প্রেরক সেটিংসে নিজের হার বসালে এখানে হিসাব দেখাবে (কোনো হার অনুমান করে দেখানো হয় না)।"}</p>
+                  <p className="text-[11px] text-slate-400">{bcForm.channel === "push" ? tr("messaging.msgZNoCostPush") : bcForm.channel === "onsite" ? tr("messaging.msgZNoCostOnsite") : bcForm.channel === "telegram" ? tr("messaging.msgZNoCostTelegram") : tr("messaging.msgZNoCostGeneric")}</p>
                 )}
                 {preview.sample.length ? (
                   <ul className="grid gap-1 sm:grid-cols-2">
                     {preview.sample.map((s, i) => (
                       <li key={i} className="flex items-center justify-between rounded bg-white px-2 py-1 text-xs">
                         <span className="font-medium">{s.name}</span>
-                        <span className="text-slate-500">{s.address} · {s.type === "customer" ? "Customer" : s.type === "lead" ? "Lead" : s.type === "push" ? "Push Subscriber" : s.type === "telegram" ? "Telegram Subscriber" : "CSV তালিকা"}</span>
+                        <span className="text-slate-500">{s.address} · {s.type === "customer" ? "Customer" : s.type === "lead" ? "Lead" : s.type === "push" ? "Push Subscriber" : s.type === "telegram" ? "Telegram Subscriber" : tr("messaging.msgAudienceCsv")}</span>
                       </li>
                     ))}
                   </ul>
-                ) : <p className="text-xs text-slate-500">কোনো প্রাপক নেই।</p>}
-                <p className="text-[11px] text-slate-400">নমুনায় ঠিকানা আড়াল (mask) করা — পুরো ঠিকানা কখনো প্রিভিউতে আসে না। সর্বোচ্চ ২০ জন নমুনা দেখানো হয়।</p>
+                ) : <p className="text-xs text-slate-500">{tr("messaging.msgZNoRecipients")}</p>}
+                <p className="text-[11px] text-slate-400">{tr("messaging.msgZMaskNote")}</p>
               </div>
             ) : null}
           </div>
-          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>Draft তৈরি করুন</button>
+          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgZCreateDraft")}</button>
         </form>
-        <p className="text-xs text-slate-400">প্রতি Send এ সর্বোচ্চ ১০০০ জন (Environment এ বদলানো যায়)। তার বেশি হলে সার্ভার আটকে দেবে, নিজে থেকে কাউকে বাদ দেবে না।</p>
+        <p className="text-xs text-slate-400">{tr("messaging.msgZSendCapNote")}</p>
       </div>
       </>) : null}
 
       {tab === "journeys" ? (<>
       <div className="space-y-3 card p-5 msg-section">
-        <div className="font-semibold">🧭 Journey Presets (তৈরি অটোমেশন যাত্রা)</div>
-        <p className="text-sm text-slate-500">এক ক্লিকে তৈরি Customer Journey: প্রতিটি Preset একটি আসল Message Template ও একটি Workflow তৈরি করে। Workflow-টি <strong>বন্ধ (disabled)</strong> অবস্থায় থাকে — Workflows পেজে পর্যালোচনা করে Enable না করলে কিছুই চলবে না। Template-গুলো Templates তালিকায় গিয়ে নিজের মতো বদলে নেওয়া যায়। প্রতিটি Journey-র পাঠানো একই সম্মতি (Opt-out) নিয়ম মানে — অপ্ট-আউট করা প্রাপকের কাছে কোনো Journey বার্তাও যাবে না।</p>
-        {journeyPresets.length === 0 && unavailablePresets.length === 0 ? <p className="text-sm text-slate-400">Preset লোড হচ্ছে...</p> : (
+        <div className="font-semibold">{tr("messaging.msgZJourneyPresetsTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZPresetsIntroA")}<strong>{tr("messaging.msgZPresetsIntroStrong")}</strong>{tr("messaging.msgZPresetsIntroB")}</p>
+        {journeyPresets.length === 0 && unavailablePresets.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZPresetLoading")}</p> : (
           <div className="grid gap-3 lg:grid-cols-2">
             {journeyPresets.map((p) => (
               <div key={p.key} className="rounded-lg bg-slate-50 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-medium">{p.name} {p.version === 2 ? <span className="ml-1 rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">v2 · বহু-ধাপ</span> : null}{p.exitOnPurchase ? <span className="ml-1 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">কিনলেই যাত্রা শেষ</span> : null}</div>
-                    <div className="text-xs text-slate-500">{p.flow}{p.stepsCount ? ` · মোট ${p.stepsCount}টি ধাপ` : ""}</div>
+                    <div className="font-medium">{p.name} {p.version === 2 ? <span className="ml-1 rounded bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{tr("messaging.msgZV2MultiStep")}</span> : null}{p.exitOnPurchase ? <span className="ml-1 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">{tr("messaging.msgZExitOnPurchaseBadge")}</span> : null}</div>
+                    <div className="text-xs text-slate-500">{p.flow}{p.stepsCount ? tr("messaging.msgZStepsTotal", { count: fmtNumber(locale, p.stepsCount) }) : ""}</div>
                     {p.version === 2 && p.templates?.length ? (
                       <div className="text-xs text-slate-500">Templates: {p.templates.map((t) => `${t.name} (${t.channel === "email" ? "Email" : "SMS"})`).join(" · ")}</div>
                     ) : (
                       <div className="text-xs text-slate-500">Template: {p.templateName} ({p.channel === "email" ? "Email" : "SMS"})</div>
                     )}
                   </div>
-                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => installJourney(p)}>{busy === `journey-${p.key}` ? "ইনস্টল হচ্ছে..." : "ইনস্টল করুন"}</button>
+                  <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => installJourney(p)}>{busy === `journey-${p.key}` ? tr("messaging.msgZInstalling") : tr("messaging.msgZInstallBtn")}</button>
                 </div>
                 <p className="mt-1 text-sm text-slate-600">{p.descriptionBn}</p>
-                {journeyResults[p.key] ? <p className="mt-2 rounded bg-white px-2 py-1 text-xs text-slate-700">{journeyResults[p.key]} {p.version !== 2 ? <a className="font-semibold text-blue-700 underline" href="/dashboard/workflows">Workflows পেজে যান →</a> : null}</p> : null}
+                {journeyResults[p.key] ? <p className="mt-2 rounded bg-white px-2 py-1 text-xs text-slate-700">{journeyResults[p.key]} {p.version !== 2 ? <a className="font-semibold text-blue-700 underline" href="/dashboard/workflows">{tr("messaging.msgZGoWorkflows")}</a> : null}</p> : null}
               </div>
             ))}
             {unavailablePresets.map((p) => (
@@ -2687,33 +2715,33 @@ export default function MessagingPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-medium text-slate-500">{p.name}</div>
-                    <div className="text-xs text-slate-400">এই Preset-টি পাওয়া যাচ্ছে না</div>
+                    <div className="text-xs text-slate-400">{tr("messaging.msgZPresetUnavailable")}</div>
                   </div>
-                  <span className="rounded bg-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-500">অনুপলব্ধ</span>
+                  <span className="rounded bg-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-500">{tr("messaging.msgZUnavailableBadge")}</span>
                 </div>
                 <p className="mt-1 text-sm text-slate-500">{p.reasonBn}</p>
               </div>
             ))}
           </div>
         )}
-        <p className="text-[11px] text-slate-400">দ্রষ্টব্য: আগের &quot;Winback (Schedule)&quot; ধারণাটি রাখা হয়নি — Schedule Workflow-এর Context-এ কোনো প্রাপক থাকে না। MX5-এর Win-back ও বার্ষিকী Preset স্ক্যান-ভিত্তিক: প্রতি ৫ মিনিটের স্ক্যানে শর্ত মিলিয়ে আসল কাস্টমারদের সরাসরি যাত্রায় ঢোকানো হয়, তাই এগুলো সত্যিই চলতে পারে।</p>
+        <p className="text-[11px] text-slate-400">{tr("messaging.msgZPresetsFootnote")}</p>
       </div>
       </>) : null}
 
       {tab === "journeys" ? (<>
       <div className="space-y-3 card p-5 msg-section">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">🧭 Journeys (কাস্টমার যাত্রা)</div>
-          <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={startNewJourney}>+ নতুন Journey তৈরি করুন</button>
+          <div className="font-semibold">{tr("messaging.msgZJourneysTitle")}</div>
+          <button type="button" className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={startNewJourney}>{tr("messaging.msgZNewJourneyBtn")}</button>
         </div>
-        <p className="text-sm text-slate-500">নিজের মতো ধাপ সাজিয়ে Customer Journey বানান — ট্রিগার, অপেক্ষা, ইমেইল/SMS, শর্ত ও শাখা। প্রতিটি Journey আসলে একটি Workflow: একই Engine-ই চালায়, আলাদা কোনো Engine নেই। নতুন Journey <strong>বন্ধ (disabled)</strong> অবস্থায় তৈরি হয় — পর্যালোচনা করে চালু করুন। চলমান রান তার শুরুর সময়ের ধাপ দিয়েই শেষ হয়; সম্পাদনা শুধু নতুন রানে প্রযোজ্য। WhatsApp ধাপ Journey-তে নেই — Engine-এ WhatsApp Send ধাপের ধরনই নেই।</p>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZJourneysIntroA")}<strong>{tr("messaging.msgZPresetsIntroStrong")}</strong>{tr("messaging.msgZJourneysIntroB")}</p>
 
         {journeyDraft ? (
           <div className="space-y-3 rounded-lg border bg-white p-3">
-            <div className="text-sm font-semibold">{journeyDraft.id ? "✏️ Journey সম্পাদনা" : "🆕 নতুন Journey"}</div>
+            <div className="text-sm font-semibold">{journeyDraft.id ? tr("messaging.msgZJourneyEditTitle") : tr("messaging.msgZJourneyNewTitle")}</div>
             <div className="grid gap-3 lg:grid-cols-2">
-              <label className="block text-sm">Journey-র নাম<input className={inputCls} value={journeyDraft.name} onChange={(e) => setJourneyDraft({ ...journeyDraft, name: e.target.value })} placeholder="যেমন: ডেলিভারির পর ফলো-আপ" /></label>
-              <label className="block text-sm">ট্রিগার (কখন শুরু হবে)
+              <label className="block text-sm">{tr("messaging.msgZJourneyName")}<input className={inputCls} value={journeyDraft.name} onChange={(e) => setJourneyDraft({ ...journeyDraft, name: e.target.value })} placeholder={tr("messaging.msgZExJourneyName")} /></label>
+              <label className="block text-sm">{tr("messaging.msgZTriggerLabel")}
                 <select className={inputCls} value={journeyDraft.trigger} onChange={(e) => setJourneyDraft({ ...journeyDraft, trigger: e.target.value })}>
                   {(journeyMeta?.triggers ?? []).map((t) => <option key={t.trigger} value={t.trigger}>{t.labelBn}</option>)}
                 </select>
@@ -2721,23 +2749,23 @@ export default function MessagingPage() {
             </div>
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" className="mt-1" checked={journeyDraft.exitOnPurchase} onChange={(e) => setJourneyDraft({ ...journeyDraft, exitOnPurchase: e.target.checked })} />
-              <span>কাস্টমার কিনলেই যাত্রা শেষ (Exit on Purchase)
-                <span className="block text-[11px] text-slate-400">এটি পোলিং-ভিত্তিক: কোনো রান অপেক্ষা থেকে জেগে ওঠার (resume) সময়ই যাচাই হয় — কেনাকাটা হলেই সঙ্গে সঙ্গে নয়। যাত্রা শুরুর পরের নতুন অর্ডার পেলেই রানটি বাকি ধাপ না চালিয়ে সম্পন্ন হয়ে যায়।</span>
+              <span>{tr("messaging.msgZExitOnPurchaseLabel")}
+                <span className="block text-[11px] text-slate-400">{tr("messaging.msgZExitOnPurchaseNote")}</span>
               </span>
             </label>
 
             <div>
-              <div className="rounded-lg border-2 border-blue-200 bg-blue-50 p-3 text-sm font-medium">🎯 ট্রিগার — {journeyTriggerLabel(journeyDraft.trigger)}</div>
+              <div className="rounded-lg border-2 border-blue-200 bg-blue-50 p-3 text-sm font-medium">{tr("messaging.msgZTriggerBanner")} — {journeyTriggerLabel(journeyDraft.trigger)}</div>
               {journeyDraft.steps.map((step, i) => (
                 <div key={i}>
                   <div className="py-0.5 text-center text-slate-400">↓</div>
                   <div className="space-y-2 rounded-lg border bg-slate-50 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium">ধাপ {i + 1} · {JOURNEY_STEP_LABEL[step.type] ?? step.type}</span>
+                      <span className="text-sm font-medium">{tr("messaging.msgZStepN", { n: fmtNumber(locale, i + 1) })} · {JOURNEY_STEP_LABEL_L[step.type] ?? step.type}</span>
                       <span className="flex gap-1">
-                        <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-40" disabled={i === 0} onClick={() => moveDraftStep(i, -1)}>↑ উপরে</button>
-                        <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-40" disabled={i === journeyDraft.steps.length - 1} onClick={() => moveDraftStep(i, 1)}>↓ নিচে</button>
-                        <button type="button" className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700" onClick={() => setJourneyDraft({ ...journeyDraft, steps: journeyDraft.steps.filter((_, j) => j !== i) })}>মুছুন</button>
+                        <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-40" disabled={i === 0} onClick={() => moveDraftStep(i, -1)}>↑ {tr("messaging.msgZMoveUpWord")}</button>
+                        <button type="button" className="rounded border px-2 py-0.5 text-xs disabled:opacity-40" disabled={i === journeyDraft.steps.length - 1} onClick={() => moveDraftStep(i, 1)}>↓ {tr("messaging.msgZMoveDownWord")}</button>
+                        <button type="button" className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700" onClick={() => setJourneyDraft({ ...journeyDraft, steps: journeyDraft.steps.filter((_, j) => j !== i) })}>{tr("messaging.msgDelete")}</button>
                       </span>
                     </div>
                     {journeyStepFields(step, (p) => patchDraftStep(i, p))}
@@ -2745,11 +2773,11 @@ export default function MessagingPage() {
                       <div className="grid gap-3 md:grid-cols-2">
                         {(["then", "else"] as const).map((arm) => (
                           <div key={arm} className="space-y-2 rounded-lg border bg-white p-2">
-                            <div className="text-xs font-semibold">{arm === "then" ? "✅ শর্ত মিললে (Then)" : "↩️ শর্ত না মিললে (Else)"}</div>
+                            <div className="text-xs font-semibold">{arm === "then" ? tr("messaging.msgZArmThen") : tr("messaging.msgZArmElse")}</div>
                             {(step[arm] ?? []).map((sub, si) => (
                               <div key={si} className="space-y-2 rounded border bg-slate-50 p-2">
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-medium">{JOURNEY_STEP_LABEL[sub.type] ?? sub.type}</span>
+                                  <span className="text-xs font-medium">{JOURNEY_STEP_LABEL_L[sub.type] ?? sub.type}</span>
                                   <span className="flex gap-1">
                                     <button type="button" className="rounded border px-1.5 py-0.5 text-[11px] disabled:opacity-40" disabled={si === 0} onClick={() => moveDraftSub(i, arm, si, -1)}>↑</button>
                                     <button type="button" className="rounded border px-1.5 py-0.5 text-[11px] disabled:opacity-40" disabled={si === (step[arm] ?? []).length - 1} onClick={() => moveDraftSub(i, arm, si, 1)}>↓</button>
@@ -2760,12 +2788,12 @@ export default function MessagingPage() {
                               </div>
                             ))}
                             <div className="flex flex-wrap items-center gap-1">
-                              <span className="text-[11px] text-slate-400">ধাপ যোগ:</span>
+                              <span className="text-[11px] text-slate-400">{tr("messaging.msgZAddStepLabel")}</span>
                               {JOURNEY_ADDABLE.filter((a) => ["send_email", "send_sms", "add_tag"].includes(a.type)).map((a) => (
                                 <button key={a.type} type="button" className="rounded border px-2 py-0.5 text-[11px] font-semibold" onClick={() => patchDraftStep(i, { [arm]: [...(step[arm] ?? []), defaultJourneyStep(a.type)] })}>+ {a.label}</button>
                               ))}
                             </div>
-                            <p className="text-[11px] text-slate-400">শাখার ভিতরে অপেক্ষা/শর্ত/আরেকটি শাখা রাখা যায় না (Engine-এর নিয়ম)।</p>
+                            <p className="text-[11px] text-slate-400">{tr("messaging.msgZBranchNestingNote")}</p>
                           </div>
                         ))}
                       </div>
@@ -2774,55 +2802,55 @@ export default function MessagingPage() {
                 </div>
               ))}
               <div className="flex flex-wrap items-center gap-2 pt-3">
-                <span className="text-sm text-slate-500">ধাপ যোগ করুন:</span>
-                {JOURNEY_ADDABLE.map((a) => (
+                <span className="text-sm text-slate-500">{tr("messaging.msgZAddStepsLabel")}</span>
+                {journeyAddableFor(locale).map((a) => (
                   <button key={a.type} type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold" onClick={() => setJourneyDraft({ ...journeyDraft, steps: [...journeyDraft.steps, defaultJourneyStep(a.type)] })}>+ {a.label}</button>
                 ))}
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-              <button type="button" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !journeyDraft.name.trim() || journeyDraft.steps.length === 0} onClick={saveJourneyDraft}>{busy.startsWith("journey-") ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}</button>
-              <button type="button" className="rounded-lg border px-4 py-2 text-sm font-semibold" onClick={() => setJourneyDraft(null)}>বাতিল</button>
-              {!journeyDraft.id ? <span className="text-[11px] text-slate-400">নতুন Journey বন্ধ (disabled) অবস্থায় তৈরি হবে — তালিকা থেকে চালু করুন।</span> : null}
+              <button type="button" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy !== "" || !journeyDraft.name.trim() || journeyDraft.steps.length === 0} onClick={saveJourneyDraft}>{busy.startsWith("journey-") ? tr("messaging.msgSaving") : tr("messaging.msgSave")}</button>
+              <button type="button" className="rounded-lg border px-4 py-2 text-sm font-semibold" onClick={() => setJourneyDraft(null)}>{tr("messaging.msgCancel")}</button>
+              {!journeyDraft.id ? <span className="text-[11px] text-slate-400">{tr("messaging.msgZNewJourneyDisabledNote")}</span> : null}
             </div>
           </div>
         ) : null}
 
-        {journeys.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো কাস্টম Journey নেই — উপরের বাটনে প্রথমটি তৈরি করুন, অথবা উপরের Preset ব্যবহার করুন।</p> : journeys.map((j) => (
+        {journeys.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZNoJourneys")}</p> : journeys.map((j) => (
           <div key={j.id} className="rounded-lg bg-slate-50 p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <span className="font-medium">{j.name}</span>
-                <span className="ml-2 text-xs text-slate-500">ট্রিগার: {journeyTriggerLabel(j.trigger)}</span>
-                {j.journey?.exitOnPurchase ? <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">কিনলেই যাত্রা শেষ</span> : null}
-                <span className={`ml-2 rounded px-2 py-0.5 text-xs ${j.enabled ? "bg-green-100 text-green-800" : "bg-slate-200 text-slate-600"}`}>{j.enabled ? "চালু" : "বন্ধ"}</span>
+                <span className="ml-2 text-xs text-slate-500">{tr("messaging.msgZTriggerWord")}: {journeyTriggerLabel(j.trigger)}</span>
+                {j.journey?.exitOnPurchase ? <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">{tr("messaging.msgZExitOnPurchaseBadge")}</span> : null}
+                <span className={`ml-2 rounded px-2 py-0.5 text-xs ${j.enabled ? "bg-green-100 text-green-800" : "bg-slate-200 text-slate-600"}`}>{j.enabled ? tr("messaging.msgStateOn") : tr("messaging.msgStateOff")}</span>
               </div>
               <span className="flex flex-wrap gap-1">
-                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleJourneyEnabled(j)}>{j.enabled ? "বন্ধ করুন" : "চালু করুন"}</button>
-                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => startEditJourney(j)}>✏️ সম্পাদনা</button>
-                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleJourneyDetail(j)}>{journeyDetails[j.id] ? "বিস্তারিত বন্ধ করুন" : "বিস্তারিত"}</button>
+                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleJourneyEnabled(j)}>{j.enabled ? tr("messaging.msgClose") : tr("messaging.msgZEnableBtn")}</button>
+                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => startEditJourney(j)}>{tr("messaging.msgEditBtn")}</button>
+                <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleJourneyDetail(j)}>{journeyDetails[j.id] ? tr("messaging.msgZDetailClose") : tr("messaging.msgZDetailBtn")}</button>
               </span>
             </div>
             {j.runSummary ? (
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                <span>মোট রান: <strong>{j.runSummary.total}</strong></span>
-                <span>অপেক্ষমাণ: <strong>{j.runSummary.waiting}</strong></span>
-                <span>সম্পন্ন: <strong>{j.runSummary.completed}</strong></span>
-                <span>ব্যর্থ: <strong>{j.runSummary.failed}</strong></span>
-                <span>বাদ (Skipped): <strong>{j.runSummary.skipped}</strong></span>
+                <span>{tr("messaging.msgZRunTotal")} <strong>{fmtNumber(locale, j.runSummary.total)}</strong></span>
+                <span>{tr("messaging.msgZRunWaiting")} <strong>{fmtNumber(locale, j.runSummary.waiting)}</strong></span>
+                <span>{tr("messaging.msgZRunCompleted")} <strong>{fmtNumber(locale, j.runSummary.completed)}</strong></span>
+                <span>{tr("messaging.msgZRunFailed")} <strong>{fmtNumber(locale, j.runSummary.failed)}</strong></span>
+                <span>{tr("messaging.msgZRunSkipped")} <strong>{fmtNumber(locale, j.runSummary.skipped)}</strong></span>
               </div>
             ) : null}
             {journeyDetails[j.id] ? (
               <div className="mt-3 space-y-3 rounded-lg border bg-white p-3">
-                <div className="text-sm font-medium">ধাপ অনুযায়ী পরিসংখ্যান</div>
+                <div className="text-sm font-medium">{tr("messaging.msgZStepStatsTitle")}</div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead><tr className="border-b text-slate-500"><th className="py-1 pr-2">ধাপ</th><th className="py-1 pr-2">প্রবেশ</th><th className="py-1 pr-2">সফল</th><th className="py-1 pr-2">বাদ</th><th className="py-1 pr-2">ব্যর্থ</th><th className="py-1 pr-2">এখানে অপেক্ষমাণ</th><th className="py-1">ডেলিভারি (পাঠানো/ব্যর্থ/বাদ/খোলা)</th></tr></thead>
+                    <thead><tr className="border-b text-slate-500"><th className="py-1 pr-2">{tr("messaging.msgZColStep")}</th><th className="py-1 pr-2">{tr("messaging.msgZColEntered")}</th><th className="py-1 pr-2">{tr("messaging.msgZColOk")}</th><th className="py-1 pr-2">{tr("messaging.msgZColSkipped")}</th><th className="py-1 pr-2">{tr("messaging.msgReportFailed")}</th><th className="py-1 pr-2">{tr("messaging.msgZColWaitingHere")}</th><th className="py-1">{tr("messaging.msgZColDeliveryBreakdown")}</th></tr></thead>
                     <tbody>
                       {journeyDetails[j.id].stepStats.map((s) => (
                         <tr key={s.idx} className="border-b last:border-0">
-                          <td className="py-1 pr-2">{s.idx + 1}. {JOURNEY_STEP_LABEL[s.type] ?? s.type}</td>
+                          <td className="py-1 pr-2">{s.idx + 1}. {JOURNEY_STEP_LABEL_L[s.type] ?? s.type}</td>
                           <td className="py-1 pr-2">{s.entered}</td><td className="py-1 pr-2">{s.ok}</td><td className="py-1 pr-2">{s.skipped}</td><td className="py-1 pr-2">{s.failed}</td>
                           <td className="py-1 pr-2">{s.waitingHere === null ? "—" : s.waitingHere}</td>
                           <td className="py-1">{s.delivery ? `${s.delivery.sent}/${s.delivery.failed}/${s.delivery.skipped}/${s.delivery.opened}` : "—"}</td>
@@ -2831,14 +2859,14 @@ export default function MessagingPage() {
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[11px] text-slate-400">মোট ক্লিক (Journey-জুড়ে): {journeyDetails[j.id].totalClicks} — ক্লিকের রেকর্ডে ধাপের তথ্য থাকে না, তাই ক্লিক ধাপ অনুযায়ী ভাগ করা হয় না।</p>
-                {journeyDetails[j.id].legacyRunCount > 0 ? <p className="text-[11px] text-amber-600">⚠️ {journeyDetails[j.id].legacyRunCount}টি পুরনো রানের ধাপ-লগে ধাপের নম্বর (idx) নেই (MX4-এর আগের রান) — সেগুলো শুধু মোট হিসাবে গণনা করা হয়েছে, ধাপের হিসাবে নয়।</p> : null}
+                <p className="text-[11px] text-slate-400">{tr("messaging.msgZTotalClicksLine", { count: fmtNumber(locale, journeyDetails[j.id].totalClicks) })}</p>
+                {journeyDetails[j.id].legacyRunCount > 0 ? <p className="text-[11px] text-amber-600">{tr("messaging.msgZLegacyRunsNote", { count: fmtNumber(locale, journeyDetails[j.id].legacyRunCount) })}</p> : null}
                 <div>
-                  <div className="mb-1 text-sm font-medium">সাম্প্রতিক রান ({journeyDetails[j.id].recentRuns.length})</div>
-                  {journeyDetails[j.id].recentRuns.length === 0 ? <p className="text-xs text-slate-400">এখনো কোনো রান হয়নি।</p> : journeyDetails[j.id].recentRuns.map((r) => (
+                  <div className="mb-1 text-sm font-medium">{tr("messaging.msgZRecentRuns", { count: fmtNumber(locale, journeyDetails[j.id].recentRuns.length) })}</div>
+                  {journeyDetails[j.id].recentRuns.length === 0 ? <p className="text-xs text-slate-400">{tr("messaging.msgZNoRuns")}</p> : journeyDetails[j.id].recentRuns.map((r) => (
                     <div key={r.id} className="flex flex-wrap justify-between gap-2 border-b py-1 text-xs last:border-0">
                       <span>{r.trigger} · <span className={r.status === "completed" ? "text-green-700" : r.status === "failed" ? "text-red-600" : "text-slate-600"}>{r.status}</span></span>
-                      <span className="text-slate-400">{new Date(r.createdAt).toLocaleString()}</span>
+                      <span className="text-slate-400">{fmtDateTime(locale, r.createdAt)}</span>
                     </div>
                   ))}
                 </div>
@@ -2852,52 +2880,52 @@ export default function MessagingPage() {
       {tab === "channels" ? (<>
       <div className="space-y-3 card p-5 msg-section">
         <div className="font-semibold">💬 WhatsApp Templates (Meta)</div>
-        <p className="text-sm text-slate-500">WhatsApp Broadcast শুধু Meta-অনুমোদিত Template দিয়েই যায়। এখান থেকে Meta-র Template গুলো Sync করে আনুন, নতুন Template Meta-তে জমা দিন (Submit), আর প্রতিটির অনুমোদনের অবস্থা দেখুন। Sync/Submit-এর জন্য WABA ID আবশ্যক — না থাকলে সার্ভার সৎভাবে আটকে দেবে।</p>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZWaTemplatesIntro")}</p>
 
         <form className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
           e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
           const res = await wrap("waba-save", () => apiFetch(`/organizations/${orgId}/inbox/whatsapp-waba`, { method: "PATCH", body: JSON.stringify({ wabaId: wabaInput.trim() || null }) }));
-          if (res) { setNotice(wabaInput.trim() ? "WABA ID সংরক্ষিত হয়েছে।" : "WABA ID সরানো হয়েছে।"); await load(); }
+          if (res) { setNotice(wabaInput.trim() ? tr("messaging.msgZWabaSaved") : tr("messaging.msgZWabaRemoved")); await load(); }
         }}>
           <label className="block text-sm lg:col-span-2">WhatsApp Business Account ID (WABA ID)
-            <input className={inputCls} value={wabaInput} onChange={(e) => setWabaInput(e.target.value)} placeholder="যেমন: 123456789012345" />
+            <input className={inputCls} value={wabaInput} onChange={(e) => setWabaInput(e.target.value)} placeholder={tr("messaging.msgZExWaba")} />
           </label>
-          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>সংরক্ষণ করুন</button>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">কোথায় পাবেন: Meta Business Settings → WhatsApp Accounts, অথবা WhatsApp Manager-এর Account Settings-এ WhatsApp Business Account ID দেখানো হয়। {waIntegrations.some((r) => r.provider === "whatsapp") ? "" : "সতর্কতা: এখনো কোনো WhatsApp Integration যুক্ত নেই — আগে Inbox পেজে WhatsApp যুক্ত করুন, নাহলে সংরক্ষণ ব্যর্থ হবে।"}</p>
+          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgSave")}</button>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZWabaHelp")} {waIntegrations.some((r) => r.provider === "whatsapp") ? "" : tr("messaging.msgZWabaNoIntegration")}</p>
         </form>
 
         <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("wa-sync", () => apiFetch<{ synced: number; created: number; updated: number; notOnMeta: number; truncated: boolean }>(`/organizations/${o}/inbox/whatsapp-templates/sync`, { method: "POST" })); if (r) { setSyncResult(r); setNotice(`Sync সম্পন্ন: মোট ${r.synced}টি Template — নতুন ${r.created}টি, হালনাগাদ ${r.updated}টি।`); await load(); } }}>{busy === "wa-sync" ? "Sync হচ্ছে..." : "🔄 Meta থেকে Sync করুন"}</button>
-          {syncResult ? <span className="text-xs text-slate-500">শেষ Sync: মোট {syncResult.synced} · নতুন {syncResult.created} · হালনাগাদ {syncResult.updated} · Meta-তে নেই এমন চিহ্নিত {syncResult.notOnMeta}{syncResult.truncated ? " · ⚠️ তালিকা অসম্পূর্ণ ছিল (পেজ সীমা) — তাই কোনোটিকেই 'Meta-তে নেই' বলা হয়নি" : ""}</span> : null}
+          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("wa-sync", () => apiFetch<{ synced: number; created: number; updated: number; notOnMeta: number; truncated: boolean }>(`/organizations/${o}/inbox/whatsapp-templates/sync`, { method: "POST" })); if (r) { setSyncResult(r); setNotice(tr("messaging.msgZSyncDone", { synced: fmtNumber(locale, r.synced), created: fmtNumber(locale, r.created), updated: fmtNumber(locale, r.updated) })); await load(); } }}>{busy === "wa-sync" ? tr("messaging.msgZSyncWorking") : tr("messaging.msgZSyncBtn")}</button>
+          {syncResult ? <span className="text-xs text-slate-500">{tr("messaging.msgZLastSync", { synced: fmtNumber(locale, syncResult.synced), created: fmtNumber(locale, syncResult.created), updated: fmtNumber(locale, syncResult.updated), notOnMeta: fmtNumber(locale, syncResult.notOnMeta) })}{syncResult.truncated ? tr("messaging.msgZSyncTruncatedNote") : ""}</span> : null}
         </div>
 
         {waTemplates.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-sm">Category অনুযায়ী ছাঁকুন
+            <label className="text-sm">{tr("messaging.msgZCategoryFilter")}
               <select className={inputCls} value={waCategoryFilter} onChange={(e) => setWaCategoryFilter(e.target.value)}>
-                <option value="ALL">সব Category</option>
+                <option value="ALL">{tr("messaging.msgZAllCategories")}</option>
                 <option value="MARKETING">MARKETING</option>
                 <option value="UTILITY">UTILITY</option>
                 <option value="AUTHENTICATION">AUTHENTICATION</option>
-                <option value="NONE">Category জানা নেই (Sync হয়নি)</option>
+                <option value="NONE">{tr("messaging.msgZCategoryUnknown")}</option>
               </select>
             </label>
-            <span className="text-xs text-slate-400">Category Meta-র Sync থেকে আসে — এখানে বসানো হয় না।</span>
+            <span className="text-xs text-slate-400">{tr("messaging.msgZCategoryNote")}</span>
           </div>
         ) : null}
 
-        {waTemplates.length === 0 ? <p className="text-sm text-slate-400">কোনো WhatsApp Template নেই — Sync করুন, অথবা নিচের ফর্মে নতুন Template Meta-তে জমা দিন।</p> : waTemplates.filter((t) => waCategoryFilter === "ALL" ? true : waCategoryFilter === "NONE" ? !t.category : t.category === waCategoryFilter).map((t) => { const kind = waTemplateKind(t); const rate = waTemplateRateMinor(t, senderSettings?.rates); return (
+        {waTemplates.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZNoWaTemplates")}</p> : waTemplates.filter((t) => waCategoryFilter === "ALL" ? true : waCategoryFilter === "NONE" ? !t.category : t.category === waCategoryFilter).map((t) => { const kind = waTemplateKind(t); const rate = waTemplateRateMinor(t, senderSettings?.rates); return (
           <div key={t.id} className="rounded-lg bg-slate-50 p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-medium">{t.name} <span className="text-xs text-slate-400">({t.language}{t.category ? ` · ${t.category}` : ""})</span></span>
-              <span className="flex flex-wrap gap-1">{waStatusBadge(t)}{kind !== "standard" ? <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs">{kind === "carousel" ? "🎠 Carousel" : kind === "catalog" ? "🛍️ Catalog" : "📝 Flow"}</span> : null}{t.qualityRating ? <span className={`rounded px-2 py-0.5 text-xs ${t.qualityRating === "RED" ? "bg-red-200 text-red-800" : "bg-slate-200"}`}>মান: {t.qualityRating}</span> : null}</span>
+              <span className="flex flex-wrap gap-1">{waStatusBadge(t)}{kind !== "standard" ? <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs">{kind === "carousel" ? "🎠 Carousel" : kind === "catalog" ? "🛍️ Catalog" : "📝 Flow"}</span> : null}{t.qualityRating ? <span className={`rounded px-2 py-0.5 text-xs ${t.qualityRating === "RED" ? "bg-red-200 text-red-800" : "bg-slate-200"}`}>{tr("messaging.msgZQualityWord")}: {t.qualityRating}</span> : null}</span>
             </div>
             {t.bodyText ? <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{t.bodyText}</p> : null}
-            {rate ? <div className="text-[11px] text-slate-500">আনুমানিক খরচ (আপনার দেওয়া {rate.basis === "category" ? `${t.category} Category-র হার` : "সাধারণ হার"}): ৳{(rate.minor / 100).toFixed(2)} / বার্তা — Meta-র আসল চার্জ আলাদা হতে পারে।</div> : <div className="text-[11px] text-slate-400">খরচের হার সেট করা নেই — তাই এই Template-এর খরচ দেখানো হচ্ছে না (নিচে Sender সেটিংসে হার বসান)।</div>}
-            {!t.qualityRating ? <div className="text-[11px] text-slate-400">Quality Rating জানা নেই — Meta থেকে Sync করলেই আসল মান দেখা যাবে। Quality Guard শুধু আসল RED/REJECTED তথ্যেই কাজ করে।</div> : null}
-            {t.qualityRating === "RED" || t.status === "REJECTED" ? <div className="text-[11px] font-medium text-red-600">⚠️ এই Template-এর মান সর্বনিম্ন/প্রত্যাখ্যাত — Quality Guard চালু থাকলে এটি দিয়ে নতুন Broadcast পাঠানো যাবে না।</div> : null}
-            {kind === "carousel" ? <div className="text-[11px] text-slate-400">Carousel Template এখানে তৈরি/Sync করা যায়। তবে Broadcast Send-এ প্রতিটি কার্ডের আলাদা Media/Parameter পাঠানোর পথ এখনো তৈরি হয়নি — এই Template দিয়ে পাঠালে Meta-র জবাব (সফল/ব্যর্থ) হুবহু Delivery-তে দেখা যাবে, সফল বলে সাজানো হবে না।</div> : null}
-            {t.lastSyncedAt ? <div className="text-[11px] text-slate-400">শেষ Sync: {new Date(t.lastSyncedAt).toLocaleString()}</div> : null}
+            {rate ? <div className="text-[11px] text-slate-500">{tr("messaging.msgZTemplateRate", { basis: rate.basis === "category" ? tr("messaging.msgZCategoryRate", { category: t.category ?? "" }) : tr("messaging.msgZFlatRate"), price: fmtMoneyMinor(locale, rate.minor) })}</div> : <div className="text-[11px] text-slate-400">{tr("messaging.msgZTemplateNoRate")}</div>}
+            {!t.qualityRating ? <div className="text-[11px] text-slate-400">{tr("messaging.msgZQualityUnknown")}</div> : null}
+            {t.qualityRating === "RED" || t.status === "REJECTED" ? <div className="text-[11px] font-medium text-red-600">{tr("messaging.msgZQualityRed")}</div> : null}
+            {kind === "carousel" ? <div className="text-[11px] text-slate-400">{tr("messaging.msgZCarouselNote")}</div> : null}
+            {t.lastSyncedAt ? <div className="text-[11px] text-slate-400">{tr("messaging.msgZLastSyncPrefix")} {fmtDateTime(locale, t.lastSyncedAt)}</div> : null}
           </div>
         ); })}
 
@@ -2924,86 +2952,86 @@ export default function MessagingPage() {
               carouselCards,
             }),
           }));
-          if (res) { setNotice(`Template "${res.name}" Meta-তে জমা হয়েছে — অবস্থা: ${res.status ?? "PENDING"}। অনুমোদন Meta-র সিদ্ধান্ত; Sync করে অবস্থা হালনাগাদ করুন।`); setWaSubmit({ name: "", language: "bn", category: "MARKETING", bodyText: "", exampleValues: "", headerType: "none", headerText: "", headerExample: "", headerHandle: "" }); setWaButtons([]); setWaCards([]); await load(); }
+          if (res) { setNotice(tr("messaging.msgZTemplateSubmitted", { name: res.name, status: res.status ?? "PENDING" })); setWaSubmit({ name: "", language: "bn", category: "MARKETING", bodyText: "", exampleValues: "", headerType: "none", headerText: "", headerExample: "", headerHandle: "" }); setWaButtons([]); setWaCards([]); await load(); }
         }}>
-          <div className="text-sm font-medium lg:col-span-2">নতুন Template Meta-তে জমা দিন (Submit) — Meta গ্রহণ করলেই কেবল এখানে সংরক্ষিত হয়; প্রত্যাখ্যান হলে Meta-র কারণ হুবহু দেখানো হয়।</div>
-          <label className="block text-sm">নাম (ছোট হাতের ইংরেজি, সংখ্যা ও _ — যেমন eid_offer_2026)<input className={inputCls} value={waSubmit.name} onChange={(e) => setWaSubmit({ ...waSubmit, name: e.target.value })} required /></label>
-          <label className="block text-sm">ভাষা (Language Code)
+          <div className="text-sm font-medium lg:col-span-2">{tr("messaging.msgZSubmitTemplateTitle")}</div>
+          <label className="block text-sm">{tr("messaging.msgZWaNameLabel")}<input className={inputCls} value={waSubmit.name} onChange={(e) => setWaSubmit({ ...waSubmit, name: e.target.value })} required /></label>
+          <label className="block text-sm">{tr("messaging.msgZLanguageCodeLabel")}
             <select className={inputCls} value={waSubmit.language} onChange={(e) => setWaSubmit({ ...waSubmit, language: e.target.value })}>
-              <option value="bn">বাংলা (bn)</option><option value="en">English (en)</option><option value="en_US">English US (en_US)</option>
+              <option value="bn">{tr("messaging.msgZBanglaBn")}</option><option value="en">English (en)</option><option value="en_US">English US (en_US)</option>
             </select>
           </label>
           <label className="block text-sm">Category
             <select className={inputCls} value={waSubmit.category} onChange={(e) => setWaSubmit({ ...waSubmit, category: e.target.value })}>
-              <option value="MARKETING">MARKETING (প্রচারণা)</option><option value="UTILITY">UTILITY (লেনদেন/সেবা)</option><option value="AUTHENTICATION">AUTHENTICATION (OTP)</option>
+              <option value="MARKETING">MARKETING ({tr("messaging.msgZCatMarketingSuffix")})</option><option value="UTILITY">UTILITY ({tr("messaging.msgZCatUtilitySuffix")})</option><option value="AUTHENTICATION">AUTHENTICATION (OTP)</option>
             </select>
           </label>
           <label className="block text-sm">Header
             <select className={inputCls} value={waSubmit.headerType} onChange={(e) => setWaSubmit({ ...waSubmit, headerType: e.target.value })}>
-              <option value="none">নেই</option><option value="text">Text</option><option value="image">ছবি (Image)</option>
+              <option value="none">{tr("messaging.msgZNoneWord")}</option><option value="text">Text</option><option value="image">{tr("messaging.msgZImageOption")}</option>
             </select>
           </label>
           {waSubmit.headerType === "text" ? (<>
-            <label className="block text-sm">Header Text (&#123;&#123;1&#125;&#125; একটি মাত্র Variable চলবে)<input className={inputCls} value={waSubmit.headerText} onChange={(e) => setWaSubmit({ ...waSubmit, headerText: e.target.value })} required /></label>
-            <label className="block text-sm">Header উদাহরণ (&#123;&#123;1&#125;&#125; থাকলে আবশ্যক)<input className={inputCls} value={waSubmit.headerExample} onChange={(e) => setWaSubmit({ ...waSubmit, headerExample: e.target.value })} placeholder="যেমন: ঈদ অফার" /></label>
+            <label className="block text-sm">{tr("messaging.msgZHeaderTextLabel")}<input className={inputCls} value={waSubmit.headerText} onChange={(e) => setWaSubmit({ ...waSubmit, headerText: e.target.value })} required /></label>
+            <label className="block text-sm">{tr("messaging.msgZHeaderExampleLabel")}<input className={inputCls} value={waSubmit.headerExample} onChange={(e) => setWaSubmit({ ...waSubmit, headerExample: e.target.value })} placeholder={tr("messaging.msgZExEidOffer")} /></label>
           </>) : null}
-          {waSubmit.headerType === "image" ? <label className="block text-sm lg:col-span-2">ছবির Upload Handle (Resumable Upload) — Meta-তে ছবি আপলোডের পর পাওয়া Handle লাগবে; এই অ্যাপ থেকে এখনো ছবি আপলোড করা যায় না, তাই Handle ছাড়া ছবির Header জমা দেওয়া যাবে না<input className={inputCls} value={waSubmit.headerHandle} onChange={(e) => setWaSubmit({ ...waSubmit, headerHandle: e.target.value })} required /></label> : null}
-          <label className="block text-sm lg:col-span-2">Body Text — &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125; আকারে Variable<textarea className={inputCls} rows={3} value={waSubmit.bodyText} onChange={(e) => setWaSubmit({ ...waSubmit, bodyText: e.target.value })} required placeholder="হ্যালো {{1}}, আপনার অর্ডার {{2}} পথে আছে।" /></label>
-          <label className="block text-sm lg:col-span-2">উদাহরণ মান (কমা দিয়ে — Body-তে Variable থাকলে প্রতিটির জন্য আসল-জাতীয় উদাহরণ আবশ্যক)<input className={inputCls} value={waSubmit.exampleValues} onChange={(e) => setWaSubmit({ ...waSubmit, exampleValues: e.target.value })} placeholder="যেমন: রহিম, ORD-1024" /></label>
+          {waSubmit.headerType === "image" ? <label className="block text-sm lg:col-span-2">{tr("messaging.msgZImageHandleLabel")}<input className={inputCls} value={waSubmit.headerHandle} onChange={(e) => setWaSubmit({ ...waSubmit, headerHandle: e.target.value })} required /></label> : null}
+          <label className="block text-sm lg:col-span-2">{tr("messaging.msgZBodyTextVars")}<textarea className={inputCls} rows={3} value={waSubmit.bodyText} onChange={(e) => setWaSubmit({ ...waSubmit, bodyText: e.target.value })} required placeholder={tr("messaging.msgZExBodyText")} /></label>
+          <label className="block text-sm lg:col-span-2">{tr("messaging.msgZExampleValuesLabel")}<input className={inputCls} value={waSubmit.exampleValues} onChange={(e) => setWaSubmit({ ...waSubmit, exampleValues: e.target.value })} placeholder={tr("messaging.msgZExExampleValues")} /></label>
           <div className="space-y-2 lg:col-span-2 rounded-lg bg-slate-50 p-3">
-            <div className="text-sm font-medium">বাটন (ঐচ্ছিক, সর্বোচ্চ ১০টি; লেখা সর্বোচ্চ ২৫ অক্ষর)</div>
+            <div className="text-sm font-medium">{tr("messaging.msgZWaButtonsTitle", { max: fmtNumber(locale, 10), chars: fmtNumber(locale, 25) })}</div>
             {waButtons.map((b, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
                 <select className="input w-auto" value={b.subType} onChange={(e) => setWaButtons(waButtons.map((x, j) => j === i ? { ...x, subType: e.target.value as WaButtonRow["subType"] } : x))}>
-                  <option value="url">URL বাটন</option><option value="quick_reply">Quick Reply</option>
+                  <option value="url">{tr("messaging.msgZUrlButtonOption")}</option><option value="quick_reply">Quick Reply</option>
                 </select>
-                <input className="input w-48" maxLength={25} value={b.text} onChange={(e) => setWaButtons(waButtons.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} placeholder="বাটনের লেখা" />
-                {b.subType === "url" ? <input className="input w-64" value={b.payload} onChange={(e) => setWaButtons(waButtons.map((x, j) => j === i ? { ...x, payload: e.target.value } : x))} placeholder="https://... (শেষে {{1}} থাকতে পারে)" /> : null}
-                <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setWaButtons(waButtons.filter((_, j) => j !== i))}>সরান</button>
+                <input className="input w-48" maxLength={25} value={b.text} onChange={(e) => setWaButtons(waButtons.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} placeholder={tr("messaging.msgButtonTextLabel")} />
+                {b.subType === "url" ? <input className="input w-64" value={b.payload} onChange={(e) => setWaButtons(waButtons.map((x, j) => j === i ? { ...x, payload: e.target.value } : x))} placeholder={tr("messaging.msgZUrlPayloadPlaceholder")} /> : null}
+                <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setWaButtons(waButtons.filter((_, j) => j !== i))}>{tr("messaging.msgRemoveBtn")}</button>
               </div>
             ))}
-            <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={waButtons.length >= 10} onClick={() => setWaButtons([...waButtons, { subType: "quick_reply", text: "", payload: "" }])}>+ বাটন যোগ করুন</button>
+            <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={waButtons.length >= 10} onClick={() => setWaButtons([...waButtons, { subType: "quick_reply", text: "", payload: "" }])}>{tr("messaging.msgZAddButton")}</button>
           </div>
           <div className="space-y-2 lg:col-span-2 rounded-lg bg-slate-50 p-3">
-            <div className="text-sm font-medium">🎠 Carousel কার্ড (ঐচ্ছিক — দিলে Template-টি Carousel হবে; ২–১০টি কার্ড)</div>
-            <p className="text-[11px] text-slate-400">প্রতিটি কার্ডের Header ছবি/ভিডিও — তার Upload Handle Meta-র Resumable Upload থেকে পেতে হয় (এই অ্যাপ থেকে উদাহরণ Media আপলোড করা যায় না)। Carousel দিলে ওপরের Header &quot;নেই&quot; রাখুন। কার্ডের বাটন সর্বোচ্চ ২টি।</p>
+            <div className="text-sm font-medium">{tr("messaging.msgZCarouselTitle", { min: fmtNumber(locale, 2), max: fmtNumber(locale, 10) })}</div>
+            <p className="text-[11px] text-slate-400">{tr("messaging.msgZCarouselFormNote")}</p>
             {waCards.map((c, i) => (
               <div key={i} className="space-y-2 rounded border bg-white p-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium">কার্ড {i + 1}</span>
+                  <span className="font-medium">{tr("messaging.msgZCardN", { n: fmtNumber(locale, i + 1) })}</span>
                   <select className="input w-auto" value={c.headerFormat} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, headerFormat: e.target.value as WaCardRow["headerFormat"] } : x))}>
-                    <option value="image">ছবি (Image)</option><option value="video">ভিডিও (Video)</option>
+                    <option value="image">{tr("messaging.msgZImageOption")}</option><option value="video">{tr("messaging.msgZVideoOption")}</option>
                   </select>
-                  <input className="input w-64" value={c.headerHandle} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, headerHandle: e.target.value } : x))} placeholder="Upload Handle (আবশ্যক)" />
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setWaCards(waCards.filter((_, j) => j !== i))}>সরান</button>
+                  <input className="input w-64" value={c.headerHandle} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, headerHandle: e.target.value } : x))} placeholder={tr("messaging.msgZHandleRequired")} />
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setWaCards(waCards.filter((_, j) => j !== i))}>{tr("messaging.msgRemoveBtn")}</button>
                 </div>
-                <textarea className={inputCls} rows={2} value={c.bodyText} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, bodyText: e.target.value } : x))} placeholder="কার্ডের লেখা — {{1}} আকারে Variable চলবে" />
-                <input className={inputCls} value={c.exampleValues} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, exampleValues: e.target.value } : x))} placeholder="উদাহরণ মান (কমা দিয়ে — Variable থাকলে আবশ্যক)" />
+                <textarea className={inputCls} rows={2} value={c.bodyText} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, bodyText: e.target.value } : x))} placeholder={tr("messaging.msgZCardBodyPlaceholder")} />
+                <input className={inputCls} value={c.exampleValues} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, exampleValues: e.target.value } : x))} placeholder={tr("messaging.msgZCardExamplePlaceholder")} />
                 {([1, 2] as const).map((n) => {
                   const typeKey = n === 1 ? "btn1Type" : "btn2Type"; const textKey = n === 1 ? "btn1Text" : "btn2Text"; const urlKey = n === 1 ? "btn1Url" : "btn2Url";
                   return (
                     <div key={n} className="flex flex-wrap items-center gap-2 text-sm">
                       <select className="input w-auto" value={c[typeKey]} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, [typeKey]: e.target.value } : x))}>
-                        <option value="">বাটন {n} — নেই</option><option value="url">URL বাটন</option><option value="quick_reply">Quick Reply</option>
+                        <option value="">{tr("messaging.msgZCardButtonNone", { n: fmtNumber(locale, n) })}</option><option value="url">{tr("messaging.msgZUrlButtonOption")}</option><option value="quick_reply">Quick Reply</option>
                       </select>
-                      {c[typeKey] ? <input className="input w-48" maxLength={25} value={c[textKey]} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, [textKey]: e.target.value } : x))} placeholder="বাটনের লেখা" /> : null}
+                      {c[typeKey] ? <input className="input w-48" maxLength={25} value={c[textKey]} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, [textKey]: e.target.value } : x))} placeholder={tr("messaging.msgButtonTextLabel")} /> : null}
                       {c[typeKey] === "url" ? <input className="input w-64" value={c[urlKey]} onChange={(e) => setWaCards(waCards.map((x, j) => j === i ? { ...x, [urlKey]: e.target.value } : x))} placeholder="https://..." /> : null}
                     </div>
                   );
                 })}
               </div>
             ))}
-            <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={waCards.length >= 10} onClick={() => setWaCards([...waCards, { headerFormat: "image", headerHandle: "", bodyText: "", exampleValues: "", btn1Type: "", btn1Text: "", btn1Url: "", btn2Type: "", btn2Text: "", btn2Url: "" }])}>+ কার্ড যোগ করুন</button>
+            <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40" disabled={waCards.length >= 10} onClick={() => setWaCards([...waCards, { headerFormat: "image", headerHandle: "", bodyText: "", exampleValues: "", btn1Type: "", btn1Text: "", btn1Url: "", btn2Type: "", btn2Text: "", btn2Url: "" }])}>{tr("messaging.msgZAddCard")}</button>
           </div>
-          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "wa-submit" ? "জমা হচ্ছে..." : "Meta-তে জমা দিন"}</button>
+          <button className="self-end btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "wa-submit" ? tr("messaging.msgZSubmitting") : tr("messaging.msgZSubmitToMeta")}</button>
         </form>
       </div>
       </>) : null}
 
       {tab === "settings" ? (<>
       <div className="space-y-3 card p-5 msg-section">
-        <div className="font-semibold">✉️ প্রেরক (Sender) সেটিংস</div>
-        <p className="text-sm text-slate-500">নিজের SMTP ও SMS Gateway বসালে Broadcast আপনার নিজের অ্যাকাউন্ট দিয়েই যাবে; না বসালে প্ল্যাটফর্মেরটি ব্যবহৃত হবে। SMTP সংরক্ষণের আগে সার্ভার সত্যিকারের যাচাই (Handshake) করে — যাচাই ব্যর্থ হলে কিছুই সংরক্ষিত হয় না। পাসওয়ার্ড/API Key শুধু &quot;সেট করা আছে কিনা&quot; দেখানো হয়, কখনো দেখানো বা ফেরত পাঠানো হয় না।</p>
+        <div className="font-semibold">{tr("messaging.msgZSenderSettingsTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZSenderIntro")}</p>
 
         <form className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
           e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
@@ -3011,33 +3039,33 @@ export default function MessagingPage() {
             method: "PUT",
             body: JSON.stringify({ smtpHost: smtpForm.smtpHost, smtpPort: Number(smtpForm.smtpPort), smtpUser: smtpForm.smtpUser || undefined, smtpPass: smtpForm.smtpPass || undefined, fromAddress: smtpForm.fromAddress, fromName: smtpForm.fromName || undefined, dkimSelector: smtpForm.dkimSelector || undefined }),
           }));
-          if (res) { setSenderSettings(res); setSmtpForm({ ...smtpForm, smtpPass: "" }); setNotice("SMTP যাচাই সফল হয়েছে — আপনার প্রেরক সেটিংস সংরক্ষিত হয়েছে।"); await load(); }
+          if (res) { setSenderSettings(res); setSmtpForm({ ...smtpForm, smtpPass: "" }); setNotice(tr("messaging.msgZSmtpSaved")); await load(); }
         }}>
-          <div className="text-sm font-medium lg:col-span-3">নিজের SMTP {senderSettings?.email.tenantConfigured ? <span className="badge-green">সক্রিয় — এই পথেই ইমেইল যাবে</span> : senderSettings?.email.platformConfigured ? <span className="badge-slate">এখন প্ল্যাটফর্ম SMTP ব্যবহৃত হচ্ছে</span> : <span className="badge-amber">কোনো ইমেইল পথ নেই</span>}</div>
+          <div className="text-sm font-medium lg:col-span-3">{tr("messaging.msgZOwnSmtpTitle")} {senderSettings?.email.tenantConfigured ? <span className="badge-green">{tr("messaging.msgZSmtpActiveBadge")}</span> : senderSettings?.email.platformConfigured ? <span className="badge-slate">{tr("messaging.msgZPlatformSmtpBadge")}</span> : <span className="badge-amber">{tr("messaging.msgZNoEmailPath")}</span>}</div>
           <label className="block text-sm">SMTP Host<input className={inputCls} value={smtpForm.smtpHost} onChange={(e) => setSmtpForm({ ...smtpForm, smtpHost: e.target.value })} placeholder="mail.example.com" /></label>
           <label className="block text-sm">Port<input type="number" className={inputCls} value={smtpForm.smtpPort} onChange={(e) => setSmtpForm({ ...smtpForm, smtpPort: e.target.value })} /></label>
           <label className="block text-sm">Username<input className={inputCls} value={smtpForm.smtpUser} onChange={(e) => setSmtpForm({ ...smtpForm, smtpUser: e.target.value })} /></label>
-          <label className="block text-sm">Password<input type="password" className={inputCls} value={smtpForm.smtpPass} onChange={(e) => setSmtpForm({ ...smtpForm, smtpPass: e.target.value })} placeholder={senderSettings?.email.smtpPassConfigured ? "সংরক্ষিত আছে — বদলাতে চাইলে নতুন পাসওয়ার্ড দিন" : "SMTP পাসওয়ার্ড"} autoComplete="new-password" /></label>
-          <label className="block text-sm">From ঠিকানা<input className={inputCls} value={smtpForm.fromAddress} onChange={(e) => setSmtpForm({ ...smtpForm, fromAddress: e.target.value })} placeholder="hello@example.com" /></label>
-          <label className="block text-sm">From নাম<input className={inputCls} value={smtpForm.fromName} onChange={(e) => setSmtpForm({ ...smtpForm, fromName: e.target.value })} placeholder="আমার দোকান" /></label>
-          <label className="block text-sm">DKIM Selector (ঐচ্ছিক)<input className={inputCls} value={smtpForm.dkimSelector} onChange={(e) => setSmtpForm({ ...smtpForm, dkimSelector: e.target.value })} placeholder="যেমন: mail, default, google" /></label>
+          <label className="block text-sm">Password<input type="password" className={inputCls} value={smtpForm.smtpPass} onChange={(e) => setSmtpForm({ ...smtpForm, smtpPass: e.target.value })} placeholder={senderSettings?.email.smtpPassConfigured ? tr("messaging.msgZPasswordSavedPlaceholder") : tr("messaging.msgZSmtpPassword")} autoComplete="new-password" /></label>
+          <label className="block text-sm">{tr("messaging.msgZFromAddress")}<input className={inputCls} value={smtpForm.fromAddress} onChange={(e) => setSmtpForm({ ...smtpForm, fromAddress: e.target.value })} placeholder="hello@example.com" /></label>
+          <label className="block text-sm">{tr("messaging.msgZFromName")}<input className={inputCls} value={smtpForm.fromName} onChange={(e) => setSmtpForm({ ...smtpForm, fromName: e.target.value })} placeholder={tr("messaging.msgZExMyShop")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZDkimSelector")}<input className={inputCls} value={smtpForm.dkimSelector} onChange={(e) => setSmtpForm({ ...smtpForm, dkimSelector: e.target.value })} placeholder={tr("messaging.msgZExDkim")} /></label>
           <div className="flex flex-wrap items-end gap-2">
-            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "smtp-save" ? "যাচাই হচ্ছে..." : "যাচাই করে সংরক্ষণ করুন"}</button>
-            {senderSettings?.email.tenantConfigured ? <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("smtp-clear", () => apiFetch<SenderSettings>(`/organizations/${o}/messaging/senders/email`, { method: "PUT", body: JSON.stringify({ clear: true }) })); if (r) { setSenderSettings(r); setNotice("নিজের SMTP সরানো হয়েছে — এখন থেকে প্ল্যাটফর্ম SMTP ব্যবহৃত হবে (যদি কনফিগার থাকে)।"); await load(); } }}>নিজের SMTP সরান</button> : null}
+            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "smtp-save" ? tr("messaging.msgZVerifying") : tr("messaging.msgZVerifyAndSave")}</button>
+            {senderSettings?.email.tenantConfigured ? <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("smtp-clear", () => apiFetch<SenderSettings>(`/organizations/${o}/messaging/senders/email`, { method: "PUT", body: JSON.stringify({ clear: true }) })); if (r) { setSenderSettings(r); setNotice(tr("messaging.msgZSmtpRemoved")); await load(); } }}>{tr("messaging.msgZRemoveOwnSmtp")}</button> : null}
           </div>
         </form>
 
         <div className="flex flex-wrap items-end gap-2 border-t pt-3">
-          <label className="block text-sm">টেস্ট ইমেইল পাঠান<input className={inputCls} value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder="আপনার ইমেইল ঠিকানা" /></label>
-          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== "" || !testEmailTo} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("smtp-test", () => apiFetch<{ sent: boolean; path: string; providerMessageId: string }>(`/organizations/${o}/messaging/senders/email/test`, { method: "POST", body: JSON.stringify({ to: testEmailTo }) })); if (r) setNotice(`টেস্ট ইমেইল পাঠানো হয়েছে — পথ: ${r.path === "tenant" ? "আপনার নিজের SMTP" : "প্ল্যাটফর্ম SMTP"} (Provider ID: ${r.providerMessageId})।`); }}>{busy === "smtp-test" ? "পাঠানো হচ্ছে..." : "টেস্ট ইমেইল পাঠান"}</button>
-          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("domain-health", () => apiFetch<DomainHealth>(`/organizations/${o}/messaging/senders/email/domain-health`)); if (r) setDomainHealth(r); }}>ডোমেইন হেলথ (SPF/DKIM) দেখুন</button>
+          <label className="block text-sm">{tr("messaging.msgZTestEmailLabel")}<input className={inputCls} value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder={tr("messaging.msgZYourEmail")} /></label>
+          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== "" || !testEmailTo} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("smtp-test", () => apiFetch<{ sent: boolean; path: string; providerMessageId: string }>(`/organizations/${o}/messaging/senders/email/test`, { method: "POST", body: JSON.stringify({ to: testEmailTo }) })); if (r) setNotice(tr("messaging.msgZTestEmailSent", { path: r.path === "tenant" ? tr("messaging.msgZPathOwnSmtp") : tr("messaging.msgZPathPlatformSmtp"), id: r.providerMessageId })); }}>{busy === "smtp-test" ? tr("messaging.msgSending") : tr("messaging.msgZTestEmailBtn")}</button>
+          <button className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("domain-health", () => apiFetch<DomainHealth>(`/organizations/${o}/messaging/senders/email/domain-health`)); if (r) setDomainHealth(r); }}>{tr("messaging.msgZDomainHealthBtn")}</button>
         </div>
         {domainHealth ? (
           <div className="space-y-1 rounded-lg bg-slate-50 p-3 text-sm">
             {domainHealth.domain ? <>
-              <div>ডোমেইন: <strong>{domainHealth.domain}</strong> ({domainHealth.source === "tenant" ? "আপনার From" : "প্ল্যাটফর্ম From"})</div>
-              <div>SPF: {domainHealth.spf.status === "found" ? <span className="text-green-700">✅ পাওয়া গেছে — <span className="break-all text-xs">{domainHealth.spf.record}</span></span> : domainHealth.spf.status === "missing" ? <span className="text-red-600">❌ নেই — {domainHealth.spf.reason}</span> : <span className="text-amber-600">❔ জানা যায়নি — {domainHealth.spf.reason}</span>}</div>
-              <div>DKIM: {domainHealth.dkim.status === "found" ? <span className="text-green-700">✅ পাওয়া গেছে (Selector: {domainHealth.dkim.selector})</span> : domainHealth.dkim.status === "missing" ? <span className="text-red-600">❌ নেই — {domainHealth.dkim.reason}</span> : domainHealth.dkim.status === "not_checked" ? <span className="text-slate-500">পরীক্ষা করা হয়নি — {domainHealth.dkim.reason}</span> : <span className="text-amber-600">❔ জানা যায়নি — {domainHealth.dkim.reason}</span>}</div>
+              <div>{tr("messaging.msgZDomainWord")} <strong>{domainHealth.domain}</strong> ({domainHealth.source === "tenant" ? tr("messaging.msgZYourFrom") : tr("messaging.msgZPlatformFrom")})</div>
+              <div>SPF: {domainHealth.spf.status === "found" ? <span className="text-green-700">{tr("messaging.msgZFoundWord")} — <span className="break-all text-xs">{domainHealth.spf.record}</span></span> : domainHealth.spf.status === "missing" ? <span className="text-red-600">{tr("messaging.msgZMissingWord")} — {domainHealth.spf.reason}</span> : <span className="text-amber-600">{tr("messaging.msgZUnknownWord")} — {domainHealth.spf.reason}</span>}</div>
+              <div>DKIM: {domainHealth.dkim.status === "found" ? <span className="text-green-700">{tr("messaging.msgZFoundWord")} ({tr("messaging.msgZSelectorWord")}: {domainHealth.dkim.selector})</span> : domainHealth.dkim.status === "missing" ? <span className="text-red-600">{tr("messaging.msgZMissingWord")} — {domainHealth.dkim.reason}</span> : domainHealth.dkim.status === "not_checked" ? <span className="text-slate-500">{tr("messaging.msgZNotCheckedWord")} — {domainHealth.dkim.reason}</span> : <span className="text-amber-600">{tr("messaging.msgZUnknownWord")} — {domainHealth.dkim.reason}</span>}</div>
             </> : <div className="text-amber-600">{domainHealth.spf.reason}</div>}
           </div>
         ) : null}
@@ -3048,22 +3076,22 @@ export default function MessagingPage() {
             method: "PUT",
             body: JSON.stringify({ smsGateway: smsForm.smsGateway, smsApiKey: smsForm.smsApiKey || undefined, smsSenderId: smsForm.smsSenderId, smsApiUrl: smsForm.smsApiUrl || undefined }),
           }));
-          if (res) { setSenderSettings(res); setSmsForm({ ...smsForm, smsApiKey: "" }); setNotice(res.note ? `SMS Gateway সংরক্ষিত হয়েছে। ${res.note}` : "SMS Gateway সংরক্ষিত হয়েছে।"); await load(); }
+          if (res) { setSenderSettings(res); setSmsForm({ ...smsForm, smsApiKey: "" }); setNotice(res.note ? tr("messaging.msgZSmsSavedWithNote", { note: res.note }) : tr("messaging.msgZSmsSaved")); await load(); }
         }}>
-          <div className="text-sm font-medium lg:col-span-3">নিজের SMS Gateway {senderSettings?.sms.tenantConfigured ? <span className="badge-green">সক্রিয় — এই Gateway দিয়েই SMS যাবে</span> : senderSettings?.sms.platformConfigured ? <span className="badge-slate">এখন প্ল্যাটফর্ম Gateway ব্যবহৃত হচ্ছে</span> : <span className="badge-amber">কোনো SMS পথ নেই</span>}</div>
+          <div className="text-sm font-medium lg:col-span-3">{tr("messaging.msgZOwnSmsTitle")} {senderSettings?.sms.tenantConfigured ? <span className="badge-green">{tr("messaging.msgZSmsActiveBadge")}</span> : senderSettings?.sms.platformConfigured ? <span className="badge-slate">{tr("messaging.msgZPlatformGatewayBadge")}</span> : <span className="badge-amber">{tr("messaging.msgZNoSmsPath")}</span>}</div>
           <label className="block text-sm">Gateway
             <select className={inputCls} value={smsForm.smsGateway} onChange={(e) => setSmsForm({ ...smsForm, smsGateway: e.target.value })}>
               {SMS_GATEWAY_OPTIONS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
             </select>
           </label>
-          <label className="block text-sm">API Key<input type="password" className={inputCls} value={smsForm.smsApiKey} onChange={(e) => setSmsForm({ ...smsForm, smsApiKey: e.target.value })} placeholder={senderSettings?.sms.smsApiKeyConfigured ? "সংরক্ষিত আছে — বদলাতে চাইলে নতুন Key দিন" : "Gateway API Key"} autoComplete="new-password" /></label>
-          <label className="block text-sm">Sender ID<input className={inputCls} value={smsForm.smsSenderId} onChange={(e) => setSmsForm({ ...smsForm, smsSenderId: e.target.value })} placeholder="অনুমোদিত Sender ID / Masking নাম" /></label>
-          <label className="block text-sm">API URL (ঐচ্ছিক Override)<input className={inputCls} value={smsForm.smsApiUrl} onChange={(e) => setSmsForm({ ...smsForm, smsApiUrl: e.target.value })} placeholder="ফাঁকা রাখলে Gateway-এর ডিফল্ট ঠিকানা" /></label>
+          <label className="block text-sm">API Key<input type="password" className={inputCls} value={smsForm.smsApiKey} onChange={(e) => setSmsForm({ ...smsForm, smsApiKey: e.target.value })} placeholder={senderSettings?.sms.smsApiKeyConfigured ? tr("messaging.msgZKeySavedPlaceholder") : "Gateway API Key"} autoComplete="new-password" /></label>
+          <label className="block text-sm">Sender ID<input className={inputCls} value={smsForm.smsSenderId} onChange={(e) => setSmsForm({ ...smsForm, smsSenderId: e.target.value })} placeholder={tr("messaging.msgZSenderIdPlaceholder")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZApiUrlLabel")}<input className={inputCls} value={smsForm.smsApiUrl} onChange={(e) => setSmsForm({ ...smsForm, smsApiUrl: e.target.value })} placeholder={tr("messaging.msgZApiUrlPlaceholder")} /></label>
           <div className="flex flex-wrap items-end gap-2">
-            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>সংরক্ষণ করুন</button>
-            {senderSettings?.sms.tenantConfigured ? <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("sms-clear", () => apiFetch<SenderSettings>(`/organizations/${o}/messaging/senders/sms`, { method: "PUT", body: JSON.stringify({ clear: true }) })); if (r) { setSenderSettings(r); setNotice("নিজের SMS Gateway সরানো হয়েছে — এখন থেকে প্ল্যাটফর্ম Gateway ব্যবহৃত হবে (যদি কনফিগার থাকে)।"); await load(); } }}>নিজের Gateway সরান</button> : null}
+            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgSave")}</button>
+            {senderSettings?.sms.tenantConfigured ? <button type="button" className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("sms-clear", () => apiFetch<SenderSettings>(`/organizations/${o}/messaging/senders/sms`, { method: "PUT", body: JSON.stringify({ clear: true }) })); if (r) { setSenderSettings(r); setNotice(tr("messaging.msgZSmsGatewayRemoved")); await load(); } }}>{tr("messaging.msgZRemoveOwnGateway")}</button> : null}
           </div>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">SMS Gateway-এর জন্য আগে থেকে যাচাইয়ের সুযোগ নেই — প্রথম আসল পাঠানোই প্রমাণ। Gateway অস্বীকার করলে সেই বার্তা হুবহু Send ফলাফলে দেখা যাবে।</p>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZSmsGatewayNote")}</p>
         </form>
 
         <form className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
@@ -3073,138 +3101,138 @@ export default function MessagingPage() {
             method: "PATCH",
             body: JSON.stringify({ smsCostPerPartMinor: toMinor(rateForm.sms), whatsappCostPerMessageMinor: toMinor(rateForm.whatsapp), whatsappMarketingCostPerMessageMinor: toMinor(rateForm.whatsappMarketing), whatsappUtilityCostPerMessageMinor: toMinor(rateForm.whatsappUtility), whatsappAuthenticationCostPerMessageMinor: toMinor(rateForm.whatsappAuthentication), emailCostPerMessageMinor: toMinor(rateForm.email) }),
           }));
-          if (res) { setSenderSettings(res); setNotice("খরচের হার সংরক্ষিত হয়েছে — প্রিভিউতে এখন আনুমানিক খরচ দেখা যাবে।"); await load(); }
+          if (res) { setSenderSettings(res); setNotice(tr("messaging.msgZRatesSaved")); await load(); }
         }}>
-          <div className="text-sm font-medium lg:col-span-3">খরচের হার (শুধু প্রিভিউর আনুমানিক হিসাবের জন্য)</div>
-          <label className="block text-sm">SMS — প্রতি পার্ট (৳)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.sms} onChange={(e) => setRateForm({ ...rateForm, sms: e.target.value })} placeholder="ফাঁকা = হার জানা নেই" /></label>
-          <label className="block text-sm">WhatsApp — প্রতি বার্তা, সাধারণ হার (৳)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsapp} onChange={(e) => setRateForm({ ...rateForm, whatsapp: e.target.value })} placeholder="ফাঁকা = হার জানা নেই" /></label>
-          <label className="block text-sm">WhatsApp MARKETING — প্রতি বার্তা (৳, ঐচ্ছিক)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappMarketing} onChange={(e) => setRateForm({ ...rateForm, whatsappMarketing: e.target.value })} placeholder="ফাঁকা = সাধারণ হার" /></label>
-          <label className="block text-sm">WhatsApp UTILITY — প্রতি বার্তা (৳, ঐচ্ছিক)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappUtility} onChange={(e) => setRateForm({ ...rateForm, whatsappUtility: e.target.value })} placeholder="ফাঁকা = সাধারণ হার" /></label>
-          <label className="block text-sm">WhatsApp AUTHENTICATION — প্রতি বার্তা (৳, ঐচ্ছিক)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappAuthentication} onChange={(e) => setRateForm({ ...rateForm, whatsappAuthentication: e.target.value })} placeholder="ফাঁকা = সাধারণ হার" /></label>
-          <label className="block text-sm">Email — প্রতি বার্তা (৳)<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.email} onChange={(e) => setRateForm({ ...rateForm, email: e.target.value })} placeholder="ফাঁকা = হার জানা নেই" /></label>
-          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>হার সংরক্ষণ করুন</button>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">এই হার আপনার নিজের দেওয়া — Gateway/Meta-র আসল চার্জ এর থেকে আলাদা হতে পারে। হার না বসালে প্রিভিউতে কোনো খরচ দেখানো হয় না।</p>
+          <div className="text-sm font-medium lg:col-span-3">{tr("messaging.msgZRatesTitle")}</div>
+          <label className="block text-sm">{tr("messaging.msgZRateSms")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.sms} onChange={(e) => setRateForm({ ...rateForm, sms: e.target.value })} placeholder={tr("messaging.msgZRateUnknownPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZRateWa")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsapp} onChange={(e) => setRateForm({ ...rateForm, whatsapp: e.target.value })} placeholder={tr("messaging.msgZRateUnknownPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZRateWaMarketing")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappMarketing} onChange={(e) => setRateForm({ ...rateForm, whatsappMarketing: e.target.value })} placeholder={tr("messaging.msgZRateFlatPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZRateWaUtility")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappUtility} onChange={(e) => setRateForm({ ...rateForm, whatsappUtility: e.target.value })} placeholder={tr("messaging.msgZRateFlatPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZRateWaAuth")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.whatsappAuthentication} onChange={(e) => setRateForm({ ...rateForm, whatsappAuthentication: e.target.value })} placeholder={tr("messaging.msgZRateFlatPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZRateEmail")}<input type="number" step="0.01" min="0" className={inputCls} value={rateForm.email} onChange={(e) => setRateForm({ ...rateForm, email: e.target.value })} placeholder={tr("messaging.msgZRateUnknownPh")} /></label>
+          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgZSaveRates")}</button>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZRatesNote")}</p>
         </form>
       </div>
       </>) : null}
 
       {tab === "settings" ? (<>
       <div className="space-y-3 card p-5 msg-section">
-        <div className="font-semibold">🚫 সম্মতি ও অপ্ট-আউট</div>
-        <p className="text-sm text-slate-500">যে ঠিকানা অপ্ট-আউট করা, সেখানে Broadcast ও Workflow — কোনো পথেই বার্তা যাবে না (Delivery-তে Skipped হিসেবে রেকর্ড থাকবে)। ইমেইলের আনসাবস্ক্রাইব লিংক, WhatsApp-এ STOP লিখে পাঠানো, কিংবা এখানে হাতে যোগ করা — সব একই তালিকায় জমা হয়।</p>
+        <div className="font-semibold">{tr("messaging.msgZConsentTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZConsentIntro")}</p>
         <form className="grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
           e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
           const res = await wrap("msg-setting", () => apiFetch<MessagingSetting>(`/organizations/${orgId}/messaging/settings`, { method: "PATCH", body: JSON.stringify(msgSetting) }));
-          if (res) { applySettingsView(res); setNotice("সম্মতির সেটিংস সংরক্ষিত হয়েছে।"); void load(); }
+          if (res) { applySettingsView(res); setNotice(tr("messaging.msgZConsentSaved")); void load(); }
         }}>
-          <label className="block text-sm">প্রতি প্রাপকের দৈনিক Broadcast সীমা (২৪ ঘণ্টায়, ০ = সীমা নেই)<input type="number" min={0} max={20} className={inputCls} value={msgSetting.frequencyCapPerDay} onChange={(e) => setMsgSetting({ ...msgSetting, frequencyCapPerDay: Number(e.target.value) })} /></label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.whatsappOptInRequired} onChange={(e) => setMsgSetting({ ...msgSetting, whatsappOptInRequired: e.target.checked })} /> WhatsApp Broadcast-এ শুধু সম্মতি (Opt-in) দেওয়া নম্বরেই পাঠানো হবে</label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.whatsappQualityGuardEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, whatsappQualityGuardEnabled: e.target.checked })} /> 🛡️ WhatsApp Quality Guard — Meta Quality Rating RED অথবা REJECTED Template দিয়ে নতুন Broadcast আটকে দিন (শুধু Sync থেকে পাওয়া আসল তথ্যেই কাজ করে; মান জানা না থাকলে আটকায় না)</label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.abAutoWinnerEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, abAutoWinnerEnabled: e.target.checked })} /> 🏆 A/B Auto-Winner (Default) — Org ডিফল্ট; কোনো A/B যুগল নিজে মান না দিলে এটি প্রযোজ্য। নিয়ম: প্রতি Variant-এ কমপক্ষে ১০০ পাঠানো + two-proportion z-test, ৯৫% আত্মবিশ্বাস (p &lt; ০.০৫)। এটি AI নয় — পরিসংখ্যান নিয়ম। <strong>ডিফল্ট বন্ধ।</strong></label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.approvalEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, approvalEnabled: e.target.checked })} /> ✅ Send Approval Workflow — চালু থাকলে OWNER/ADMIN নন এমন সদস্যের তৈরি Broadcast অন্য একজন OWNER/ADMIN-এর অনুমোদন ছাড়া পাঠানো/শিডিউল করা যাবে না (Four-eyes: নির্মাতা নিজে কখনো অনুমোদন দিতে পারবেন না)। ডিফল্ট বন্ধ। <strong>AGENCY প্ল্যানের জন্য চালু রাখার সুপারিশ</strong> — তবে জোর করা হয় না।</label>
-          <label className="block text-sm">প্রতি Broadcast-এর খরচের সর্বোচ্চ সীমা (৳, খালি = সীমা নেই)<input type="number" min={0} step="0.01" className={inputCls} value={msgSetting.broadcastCostCapMinor === null ? "" : msgSetting.broadcastCostCapMinor / 100} onChange={(e) => setMsgSetting({ ...msgSetting, broadcastCostCapMinor: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} placeholder="সীমা নেই" /></label>
-          <label className="block text-sm">মাসিক মোট খরচের সীমা (৳, খালি = সীমা নেই)<input type="number" min={0} step="0.01" className={inputCls} value={msgSetting.monthlySpendCapMinor === null ? "" : msgSetting.monthlySpendCapMinor / 100} onChange={(e) => setMsgSetting({ ...msgSetting, monthlySpendCapMinor: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} placeholder="সীমা নেই" /></label>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">বাজেট সীমা <strong>খরচ-ভিত্তিক (spend-based)</strong> — হিসাব হয় শুধু আপনার দেওয়া হার × আসল/পরিকল্পিত পাঠানো থেকে। কোনো ওয়ালেট/ব্যালেন্স থেকে কাটা হয় না (Messaging-এর জন্য এমন কোনো ব্যালেন্স নেই)। হার না থাকলে খরচ অনুমান করা যায় না — তখন সতর্কতা দেখিয়ে পাঠানো যাবে, আটকানো হবে না।</p>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.linkTrackingEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, linkTrackingEnabled: e.target.checked })} /> 🔗 লিংক ট্র্যাকিং (Broadcast-এর লিংকে UTM + Click গণনা)</label>
-          <label className="block text-sm">প্রতি Sweep Run-এ সর্বোচ্চ Broadcast সংখ্যা (খালি = প্ল্যাটফর্ম ডিফল্ট)<input type="number" min={1} max={50} className={inputCls} value={msgSetting.marketingMaxBroadcastsPerSweep ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, marketingMaxBroadcastsPerSweep: e.target.value === "" ? null : Number(e.target.value) })} placeholder="ডিফল্ট" /></label>
-          <label className="block text-sm">প্রতি Broadcast-এ প্রতি Run-এ সর্বোচ্চ প্রাপক (খালি = প্ল্যাটফর্ম ডিফল্ট)<input type="number" min={1} max={5000} className={inputCls} value={msgSetting.marketingMaxEntriesPerSweep ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, marketingMaxEntriesPerSweep: e.target.value === "" ? null : Number(e.target.value) })} placeholder="ডিফল্ট" /></label>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.quietHoursEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursEnabled: e.target.checked })} /> 🌙 Quiet Hours — এই সময়ে Marketing Broadcast পাঠানো স্থগিত থাকবে</label>
-          <label className="block text-sm">Quiet Hours শুরু<input type="time" className={inputCls} value={msgSetting.quietHoursStart ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursStart: e.target.value || null })} /></label>
-          <label className="block text-sm">Quiet Hours শেষ<input type="time" className={inputCls} value={msgSetting.quietHoursEnd ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursEnd: e.target.value || null })} /></label>
-          <div className="text-sm font-medium lg:col-span-3 border-t pt-3">🧠 Audience Intelligence Thresholds (MX11 — সবই নিয়ম-ভিত্তিক অনুমান / rule-based estimate, কোনো AI/ML ভবিষ্যদ্বাণী নয়)</div>
-          <label className="block text-sm">Churn Risk — শেষ Engagement-এর পর নীরবতার দিন (কমপক্ষে)<input type="number" min={1} max={3650} className={inputCls} value={msgSetting.churnRiskSilentDays} onChange={(e) => setMsgSetting({ ...msgSetting, churnRiskSilentDays: Number(e.target.value) })} /></label>
-          <label className="block text-sm">Likely to Buy — সর্বনিম্ন Engagement Score<input type="number" min={0} max={100} className={inputCls} value={msgSetting.likelyToBuyMinScore} onChange={(e) => setMsgSetting({ ...msgSetting, likelyToBuyMinScore: Number(e.target.value) })} /></label>
-          <label className="block text-sm">High LTV — সর্বনিম্ন মোট কেনাকাটা (পয়সায়, কমপক্ষে ২টি অর্ডারসহ)<input type="number" min={0} className={inputCls} value={msgSetting.highLtvMinSpentMinor} onChange={(e) => setMsgSetting({ ...msgSetting, highLtvMinSpentMinor: Number(e.target.value) })} /></label>
-          <label className="block text-sm">Suppression পরামর্শ — Engagement ছাড়া দিন (কমপক্ষে)<input type="number" min={1} max={3650} className={inputCls} value={msgSetting.unengagedSuppressDays} onChange={(e) => setMsgSetting({ ...msgSetting, unengagedSuppressDays: Number(e.target.value) })} /></label>
-          <label className="block text-sm">Suppression পরামর্শ — সর্বনিম্ন পাঠানো বার্তা<input type="number" min={1} max={1000} className={inputCls} value={msgSetting.unengagedMinSends} onChange={(e) => setMsgSetting({ ...msgSetting, unengagedMinSends: Number(e.target.value) })} /></label>
-          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>সেটিংস সংরক্ষণ করুন</button>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">Quiet Hours আপনার প্রতিষ্ঠানের টাইমজোনে ({streamInfo?.timezone ?? "Asia/Dhaka"}) হিসাব হয়{streamInfo?.quietHoursActive ? " — ⏸️ এই মুহূর্তে Quiet Hours সক্রিয়: Marketing Broadcast পরের Sweep-এ যাবে" : ""}। এটি শুধু Marketing Broadcast-এর জন্য — অর্ডার নোটিফিকেশন ও OTP-র মতো লেনদেনের বার্তা কখনো এতে আটকায় না। Sweep সীমা একবারে কতটা Marketing কাজ হবে তা বেঁধে দেয়, যাতে বড় Broadcast লেনদেনের বার্তার পথ আটকাতে না পারে; বাকিটা পরের Run-এ যায়।</p>
-          <p className="text-[11px] text-slate-400 lg:col-span-3">লিংক ট্র্যাকিং চালু থাকলে Broadcast (শুধু Broadcast — Workflow নয়, WhatsApp নয়) ইমেইল/SMS-এর লিংকে UTM যোগ হয় ও লিংকগুলো স্বাক্ষরিত Redirect লিংকে বদলে যায়, যাতে কে ক্লিক করল গণনা করা যায়। <strong>বন্ধ থাকলে লিংক হুবহু যেমন লিখেছেন তেমনই যায়</strong> — কোনো UTM বা Redirect নয়। SMS-এ Redirect লিংক মূল লিংকের চেয়ে লম্বা/ছোট হতে পারে — তাতে SMS পার্ট বাড়তে পারে।</p>
+          <label className="block text-sm">{tr("messaging.msgZFrequencyCapLabel")}<input type="number" min={0} max={20} className={inputCls} value={msgSetting.frequencyCapPerDay} onChange={(e) => setMsgSetting({ ...msgSetting, frequencyCapPerDay: Number(e.target.value) })} /></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.whatsappOptInRequired} onChange={(e) => setMsgSetting({ ...msgSetting, whatsappOptInRequired: e.target.checked })} /> {tr("messaging.msgZWaOptInLabel")}</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.whatsappQualityGuardEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, whatsappQualityGuardEnabled: e.target.checked })} /> {tr("messaging.msgZQualityGuardLabel")}</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.abAutoWinnerEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, abAutoWinnerEnabled: e.target.checked })} /> {tr("messaging.msgZAwDefaultA")}{tr("messaging.msgZAwConf")}{tr("messaging.msgZAwDefaultB")}<strong>{tr("messaging.msgZAwDefaultOffNote")}</strong></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.approvalEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, approvalEnabled: e.target.checked })} /> {tr("messaging.msgZApprovalLabelA")}<strong>{tr("messaging.msgZApprovalRecommend")}</strong>{tr("messaging.msgZApprovalTail")}</label>
+          <label className="block text-sm">{tr("messaging.msgZBroadcastCostCapLabel")}<input type="number" min={0} step="0.01" className={inputCls} value={msgSetting.broadcastCostCapMinor === null ? "" : msgSetting.broadcastCostCapMinor / 100} onChange={(e) => setMsgSetting({ ...msgSetting, broadcastCostCapMinor: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} placeholder={tr("messaging.msgZNoCapPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZMonthlyCapLabel")}<input type="number" min={0} step="0.01" className={inputCls} value={msgSetting.monthlySpendCapMinor === null ? "" : msgSetting.monthlySpendCapMinor / 100} onChange={(e) => setMsgSetting({ ...msgSetting, monthlySpendCapMinor: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} placeholder={tr("messaging.msgZNoCapPh")} /></label>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZBudgetNoteA")}<strong>{tr("messaging.msgZBudgetNoteStrong")}</strong>{tr("messaging.msgZBudgetNoteB")}</p>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.linkTrackingEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, linkTrackingEnabled: e.target.checked })} /> {tr("messaging.msgZLinkTrackingLabel")}</label>
+          <label className="block text-sm">{tr("messaging.msgZSweepBroadcastsLabel")}<input type="number" min={1} max={50} className={inputCls} value={msgSetting.marketingMaxBroadcastsPerSweep ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, marketingMaxBroadcastsPerSweep: e.target.value === "" ? null : Number(e.target.value) })} placeholder={tr("messaging.msgZDefaultPh")} /></label>
+          <label className="block text-sm">{tr("messaging.msgZSweepEntriesLabel")}<input type="number" min={1} max={5000} className={inputCls} value={msgSetting.marketingMaxEntriesPerSweep ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, marketingMaxEntriesPerSweep: e.target.value === "" ? null : Number(e.target.value) })} placeholder={tr("messaging.msgZDefaultPh")} /></label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={msgSetting.quietHoursEnabled} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursEnabled: e.target.checked })} /> {tr("messaging.msgZQuietHoursLabel")}</label>
+          <label className="block text-sm">{tr("messaging.msgZQuietStart")}<input type="time" className={inputCls} value={msgSetting.quietHoursStart ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursStart: e.target.value || null })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZQuietEnd")}<input type="time" className={inputCls} value={msgSetting.quietHoursEnd ?? ""} onChange={(e) => setMsgSetting({ ...msgSetting, quietHoursEnd: e.target.value || null })} /></label>
+          <div className="text-sm font-medium lg:col-span-3 border-t pt-3">{tr("messaging.msgZThresholdsTitle")}</div>
+          <label className="block text-sm">{tr("messaging.msgZThChurn")}<input type="number" min={1} max={3650} className={inputCls} value={msgSetting.churnRiskSilentDays} onChange={(e) => setMsgSetting({ ...msgSetting, churnRiskSilentDays: Number(e.target.value) })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZThLikely")}<input type="number" min={0} max={100} className={inputCls} value={msgSetting.likelyToBuyMinScore} onChange={(e) => setMsgSetting({ ...msgSetting, likelyToBuyMinScore: Number(e.target.value) })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZThLtv")}<input type="number" min={0} className={inputCls} value={msgSetting.highLtvMinSpentMinor} onChange={(e) => setMsgSetting({ ...msgSetting, highLtvMinSpentMinor: Number(e.target.value) })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZThSuppressDays")}<input type="number" min={1} max={3650} className={inputCls} value={msgSetting.unengagedSuppressDays} onChange={(e) => setMsgSetting({ ...msgSetting, unengagedSuppressDays: Number(e.target.value) })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZThSuppressSends")}<input type="number" min={1} max={1000} className={inputCls} value={msgSetting.unengagedMinSends} onChange={(e) => setMsgSetting({ ...msgSetting, unengagedMinSends: Number(e.target.value) })} /></label>
+          <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgZSaveSettings")}</button>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZQuietInfoA", { tz: streamInfo?.timezone ?? "Asia/Dhaka" })}{streamInfo?.quietHoursActive ? tr("messaging.msgZQuietActiveNote") : ""}{tr("messaging.msgZQuietInfoB")}</p>
+          <p className="text-[11px] text-slate-400 lg:col-span-3">{tr("messaging.msgZLinkInfoA")}<strong>{tr("messaging.msgZLinkInfoStrong")}</strong>{tr("messaging.msgZLinkInfoB")}</p>
         </form>
 
         <div className="border-t pt-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium">সম্মতির তালিকা ({preferences.length})</span>
-            <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={exportPreferences}>অপ্ট-আউট তালিকা Export (CSV)</button>
+            <span className="text-sm font-medium">{tr("messaging.msgZConsentListTitle", { count: fmtNumber(locale, preferences.length) })}</span>
+            <button className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={exportPreferences}>{tr("messaging.msgZExportOptOut")}</button>
           </div>
-          {preferences.length === 0 ? <p className="text-sm text-slate-400">কোনো রেকর্ড নেই — কেউ এখনো অপ্ট-আউট করেনি।</p> : preferences.map((p) => (
+          {preferences.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZNoPrefRecords")}</p> : preferences.map((p) => (
             <div key={p.id} className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-3 py-2 text-sm">
-              <span><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{p.channel}</span> <span className="font-medium">{p.address}</span> <span className={p.status === "opted_out" ? "text-red-600" : "text-green-600"}>{p.status === "opted_out" ? "অপ্ট-আউট" : "অপ্ট-ইন"}</span> <span className="text-xs text-slate-400">· {p.source} · {new Date(p.updatedAt).toLocaleString()}</span></span>
-              <button className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`pref-del-${p.id}`, () => apiFetch(`/organizations/${o}/messaging/preferences/${p.id}`, { method: "DELETE" })); if (r) { setNotice("সম্মতির রেকর্ড সরানো হয়েছে।"); await load(); } }}>সরান</button>
+              <span><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{p.channel}</span> <span className="font-medium">{p.address}</span> <span className={p.status === "opted_out" ? "text-red-600" : "text-green-600"}>{p.status === "opted_out" ? tr("messaging.msgZOptedOut") : tr("messaging.msgZOptedIn")}</span> <span className="text-xs text-slate-400">· {p.source} · {fmtDateTime(locale, p.updatedAt)}</span></span>
+              <button className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`pref-del-${p.id}`, () => apiFetch(`/organizations/${o}/messaging/preferences/${p.id}`, { method: "DELETE" })); if (r) { setNotice(tr("messaging.msgZPrefRemoved")); await load(); } }}>{tr("messaging.msgRemoveBtn")}</button>
             </div>
           ))}
           <form className="mt-3 grid gap-3 lg:grid-cols-4" onSubmit={async (e) => {
             e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
             const res = await wrap("pref-add", () => apiFetch(`/organizations/${orgId}/messaging/preferences`, { method: "POST", body: JSON.stringify(prefForm) }));
-            if (res) { setPrefForm({ channel: "email", address: "", status: "opted_out" }); setNotice("সম্মতির রেকর্ড যোগ হয়েছে।"); await load(); }
+            if (res) { setPrefForm({ channel: "email", address: "", status: "opted_out" }); setNotice(tr("messaging.msgZPrefAdded")); await load(); }
           }}>
             <label className="block text-sm">Channel
               <select className={inputCls} value={prefForm.channel} onChange={(e) => setPrefForm({ ...prefForm, channel: e.target.value })}>
                 <option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option>
               </select>
             </label>
-            <label className="block text-sm">ঠিকানা (ইমেইল বা ফোন)<input className={inputCls} value={prefForm.address} onChange={(e) => setPrefForm({ ...prefForm, address: e.target.value })} required placeholder="name@example.com বা 017..." /></label>
-            <label className="block text-sm">অবস্থা
+            <label className="block text-sm">{tr("messaging.msgZAddressLabel")}<input className={inputCls} value={prefForm.address} onChange={(e) => setPrefForm({ ...prefForm, address: e.target.value })} required placeholder={tr("messaging.msgZPrefAddressPlaceholder")} /></label>
+            <label className="block text-sm">{tr("messaging.msgZStatusLabel")}
               <select className={inputCls} value={prefForm.status} onChange={(e) => setPrefForm({ ...prefForm, status: e.target.value })}>
-                <option value="opted_out">অপ্ট-আউট</option><option value="opted_in">অপ্ট-ইন</option>
+                <option value="opted_out">{tr("messaging.msgZOptedOut")}</option><option value="opted_in">{tr("messaging.msgZOptedIn")}</option>
               </select>
             </label>
-            <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>যোগ করুন</button>
+            <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgZAddBtn")}</button>
           </form>
           <form className="mt-3 grid gap-3 border-t pt-3 lg:grid-cols-3" onSubmit={async (e) => {
             e.preventDefault(); const orgId = getOrganizationId(); if (!orgId) return;
             const addresses = importForm.text.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
-            if (!addresses.length) { setError("Import-এর জন্য অন্তত একটি ঠিকানা লিখুন"); return; }
+            if (!addresses.length) { setError(tr("messaging.msgZImportNeedAddress")); return; }
             const res = await wrap("pref-import", () => apiFetch<{ imported: number; errors: { address: string; error: string }[] }>(`/organizations/${orgId}/messaging/preferences/import`, { method: "POST", body: JSON.stringify({ channel: importForm.channel, addresses }) }));
-            if (res) { setImportResult(res); setImportForm({ channel: "email", text: "" }); setNotice(`Import সম্পন্ন: ${res.imported}টি অপ্ট-আউট যোগ হয়েছে, ${res.errors.length}টি ব্যর্থ।`); await load(); }
+            if (res) { setImportResult(res); setImportForm({ channel: "email", text: "" }); setNotice(tr("messaging.msgZImportDone", { imported: fmtNumber(locale, res.imported), failed: fmtNumber(locale, res.errors.length) })); await load(); }
           }}>
             <label className="block text-sm">Import Channel
               <select className={inputCls} value={importForm.channel} onChange={(e) => setImportForm({ ...importForm, channel: e.target.value })}>
                 <option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option>
               </select>
             </label>
-            <label className="block text-sm lg:col-span-2">অপ্ট-আউট তালিকা Import (এক লাইনে একটি ঠিকানা, সর্বোচ্চ ১০০০)<textarea className={inputCls} rows={3} value={importForm.text} onChange={(e) => setImportForm({ ...importForm, text: e.target.value })} placeholder={"one@example.com\ntwo@example.com"} /></label>
-            <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>Import করুন</button>
+            <label className="block text-sm lg:col-span-2">{tr("messaging.msgZImportLabel", { max: fmtNumber(locale, 1000) })}<textarea className={inputCls} rows={3} value={importForm.text} onChange={(e) => setImportForm({ ...importForm, text: e.target.value })} placeholder={"one@example.com\ntwo@example.com"} /></label>
+            <button className="self-end rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""}>{tr("messaging.msgZImportBtn")}</button>
             {importResult && importResult.errors.length ? (
               <div className="rounded-lg bg-red-50 p-3 text-xs text-red-700 lg:col-span-3">
-                ব্যর্থ ঠিকানা: {importResult.errors.map((x) => `${x.address} (${x.error})`).join("; ")}
+                {tr("messaging.msgZFailedAddresses")} {importResult.errors.map((x) => `${x.address} (${x.error})`).join("; ")}
               </div>
             ) : null}
           </form>
-          <p className="mt-2 text-[11px] text-slate-400">দৈনিক সীমা শুধু Broadcast-এর ক্ষেত্রে প্রযোজ্য — Workflow/লেনদেনের বার্তা সীমায় আটকায় না, তবে অপ্ট-আউট সেখানেও প্রযোজ্য।</p>
+          <p className="mt-2 text-[11px] text-slate-400">{tr("messaging.msgZDailyCapNote")}</p>
         </div>
       </div>
       </>) : null}
 
       {tab === "channels" ? (<>
       <div className="space-y-3 card p-5 msg-section">
-        <div className="font-semibold">💬 Keyword Campaigns (রিপ্লাই ক্যাম্পেইন)</div>
-        <p className="text-sm text-slate-500">WhatsApp-এ গ্রাহক একটি নির্দিষ্ট কীওয়ার্ড পাঠালে স্বয়ংক্রিয়ভাবে ট্যাগ বসে এবং/অথবা আপনার লেখা রিপ্লাই যায়; পোল (Poll) দিলে গ্রাহকের জবাব ভোট হিসেবে গোনা হয়। শুধু WhatsApp — SMS-এ কোনো Inbound পথ নেই এবং Email রিপ্লাই Messaging-এ যুক্ত নয়, তাই সেসব চ্যানেলে এই ক্যাম্পেইন চলে না। STOP/START জাতীয় সংরক্ষিত কীওয়ার্ড এখানে ব্যবহার করা যায় না — সেগুলো Opt-out/Opt-in-এর জন্য সংরক্ষিত এবং সবার ঊর্ধ্বে।</p>
-        {kwRules.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো নিয়ম নেই — নিচের ফর্মে প্রথমটি তৈরি করুন।</p> : kwRules.map((r) => (
+        <div className="font-semibold">{tr("messaging.msgZKeywordTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZKeywordIntro")}</p>
+        {kwRules.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZNoKwRules")}</p> : kwRules.map((r) => (
           <div key={r.id} className="rounded-lg bg-slate-50 p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-medium">{r.name}</span>
               <span className="flex flex-wrap items-center gap-1">
-                <span className={`rounded px-2 py-0.5 text-xs ${r.kind === "poll" ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700"}`}>{r.kind === "poll" ? "🗳️ পোল" : "🔑 কীওয়ার্ড"}</span>
-                <span className={`rounded px-2 py-0.5 text-xs ${r.enabled ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"}`}>{r.enabled ? "চালু" : "বন্ধ"}</span>
-                <span className="rounded bg-slate-200 px-2 py-0.5 text-xs">{r.hitCount}টি হিট</span>
+                <span className={`rounded px-2 py-0.5 text-xs ${r.kind === "poll" ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700"}`}>{r.kind === "poll" ? tr("messaging.msgZPollBadge") : tr("messaging.msgZKeywordBadge")}</span>
+                <span className={`rounded px-2 py-0.5 text-xs ${r.enabled ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"}`}>{r.enabled ? tr("messaging.msgStateOn") : tr("messaging.msgStateOff")}</span>
+                <span className="rounded bg-slate-200 px-2 py-0.5 text-xs">{tr("messaging.msgZHits", { count: fmtNumber(locale, r.hitCount) })}</span>
               </span>
             </div>
             {r.kind === "keyword" ? (
               <div className="mt-1 text-slate-600">
-                কীওয়ার্ড: <strong>&quot;{r.keyword}&quot;</strong>
-                {r.tag ? <> · 🏷️ ট্যাগ &quot;{r.tag}&quot; → {(r.applyTagTo ?? []).map((t) => t === "customer" ? "কাস্টমার (না থাকলে লিড)" : t === "lead" ? "লিড" : "কথোপকথন").join(", ")}</> : null}
-                {r.autoReplyText ? <> · ↩️ স্বয়ংক্রিয় রিপ্লাই: &quot;{r.autoReplyText.length > 80 ? `${r.autoReplyText.slice(0, 80)}…` : r.autoReplyText}&quot;</> : null}
+                {tr("messaging.msgZKeywordWord")}: <strong>&quot;{r.keyword}&quot;</strong>
+                {r.tag ? <> · 🏷️ {tr("messaging.msgZTagWord")} &quot;{r.tag}&quot; → {(r.applyTagTo ?? []).map((t) => t === "customer" ? tr("messaging.msgZTagCustomer") : t === "lead" ? tr("messaging.msgZTagLead") : tr("messaging.msgZTagConversation")).join(", ")}</> : null}
+                {r.autoReplyText ? <> · ↩️ {tr("messaging.msgZAutoReplyPrefix")}: &quot;{r.autoReplyText.length > 80 ? `${r.autoReplyText.slice(0, 80)}…` : r.autoReplyText}&quot;</> : null}
               </div>
             ) : (
               <div className="mt-1 text-slate-600">{(r.pollOptions ?? []).map((o) => `${o.label} (${o.keywords.join(" / ")})`).join(" · ")}</div>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleKwRule(r)}>{busy === `kw-toggle-${r.id}` ? "..." : r.enabled ? "বন্ধ করুন" : "চালু করুন"}</button>
-              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => startKwEdit(r)}>✏️ সম্পাদনা</button>
-              {r.kind === "poll" ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadKwTally(r.id)}>{busy === `kw-tally-${r.id}` ? "লোড হচ্ছে..." : "📊 ফলাফল দেখুন"}</button> : null}
-              <button type="button" className="rounded-lg border border-red-300 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteKwRule(r)}>মুছুন</button>
-              <span className="text-[11px] text-slate-400">মুছতে OWNER/ADMIN ভূমিকা লাগে।</span>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleKwRule(r)}>{busy === `kw-toggle-${r.id}` ? "..." : r.enabled ? tr("messaging.msgClose") : tr("messaging.msgZEnableBtn")}</button>
+              <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => startKwEdit(r)}>{tr("messaging.msgEditBtn")}</button>
+              {r.kind === "poll" ? <button type="button" className="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => loadKwTally(r.id)}>{busy === `kw-tally-${r.id}` ? tr("messaging.msgLoading") : tr("messaging.msgZSeeResults")}</button> : null}
+              <button type="button" className="rounded-lg border border-red-300 px-3 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={() => deleteKwRule(r)}>{tr("messaging.msgDelete")}</button>
+              <span className="text-[11px] text-slate-400">{tr("messaging.msgZDeleteRoleShort")}</span>
             </div>
             {r.kind === "poll" && kwTallies[r.id] ? (
               <div className="mt-2 space-y-1 rounded-lg border bg-white p-3">
@@ -3215,91 +3243,91 @@ export default function MessagingPage() {
                     <div key={o.key} className="flex items-center gap-2 text-xs">
                       <span className="w-36 shrink-0 font-medium">{o.label}</span>
                       <span className="h-3 flex-1 overflow-hidden rounded bg-slate-100"><span className="block h-full bg-violet-400" style={{ width: `${pct}%` }} /></span>
-                      <span className="w-20 shrink-0 text-right">{o.votes} ভোট ({pct}%)</span>
+                      <span className="w-20 shrink-0 text-right">{tr("messaging.msgZVotes", { votes: fmtNumber(locale, o.votes), pct: fmtNumber(locale, pct) })}</span>
                     </div>
                   );
                 })}
-                <p className="text-[11px] text-slate-400">মোট ভোটার: {kwTallies[r.id].totalVoters} জন (একজন একবারই গোনা হয় — মত বদলালে সর্বশেষ জবাবটাই ধরা হয়)।</p>
+                <p className="text-[11px] text-slate-400">{tr("messaging.msgZTotalVoters", { count: fmtNumber(locale, kwTallies[r.id].totalVoters) })}</p>
               </div>
             ) : null}
           </div>
         ))}
         <form className="grid gap-3 border-t pt-3 lg:grid-cols-2" onSubmit={submitKwRule}>
-          <label className="block text-sm">নিয়মের নাম<input className={inputCls} value={kwForm.name} onChange={(e) => setKwForm({ ...kwForm, name: e.target.value })} required /></label>
-          <label className="block text-sm">ধরন
+          <label className="block text-sm">{tr("messaging.msgZRuleName")}<input className={inputCls} value={kwForm.name} onChange={(e) => setKwForm({ ...kwForm, name: e.target.value })} required /></label>
+          <label className="block text-sm">{tr("messaging.msgZKindLabel")}
             <select className={inputCls} value={kwForm.kind} disabled={kwEditId !== null} onChange={(e) => setKwForm({ ...kwForm, kind: e.target.value })}>
-              <option value="keyword">🔑 কীওয়ার্ড (ট্যাগ / স্বয়ংক্রিয় রিপ্লাই)</option>
-              <option value="poll">🗳️ পোল (ভোট গোনা)</option>
+              <option value="keyword">{tr("messaging.msgZKwKindKeyword")}</option>
+              <option value="poll">{tr("messaging.msgZKwKindPoll")}</option>
             </select>
           </label>
-          {kwEditId !== null ? <p className="text-[11px] text-slate-400 lg:col-span-2">সম্পাদনার সময় ধরন বদলানো যায় না — দরকার হলে নিয়মটি মুছে নতুন করে তৈরি করুন।</p> : null}
+          {kwEditId !== null ? <p className="text-[11px] text-slate-400 lg:col-span-2">{tr("messaging.msgZKwKindLockedNote")}</p> : null}
           {kwForm.kind === "keyword" ? (<>
-            <label className="block text-sm lg:col-span-2">কীওয়ার্ড (গ্রাহককে হুবহু এই লেখাটাই পাঠাতে হবে)
-              <input className={inputCls} value={kwForm.keyword} onChange={(e) => setKwForm({ ...kwForm, keyword: e.target.value })} placeholder="যেমন: OFFER" required />
-              <span className="mt-1 block text-[11px] text-slate-400">সংরক্ষিত কীওয়ার্ড ব্যবহার করা যাবে না: STOP, STOP ALL, UNSUBSCRIBE, বন্ধ করুন, স্টপ, START, চালু করুন — এগুলো Opt-out/Opt-in-এর জন্য সংরক্ষিত। ইংরেজি কীওয়ার্ডে বড়/ছোট হাতের অক্ষরে তফাৎ হয় না।</span>
+            <label className="block text-sm lg:col-span-2">{tr("messaging.msgZKwKeywordLabel")}
+              <input className={inputCls} value={kwForm.keyword} onChange={(e) => setKwForm({ ...kwForm, keyword: e.target.value })} placeholder={tr("messaging.msgZExOfferKw")} required />
+              <span className="mt-1 block text-[11px] text-slate-400">{tr("messaging.msgZKwReservedNote")}</span>
             </label>
-            <label className="block text-sm">ট্যাগ (ঐচ্ছিক)<input className={inputCls} value={kwForm.tag} onChange={(e) => setKwForm({ ...kwForm, tag: e.target.value })} placeholder="যেমন: interested" /></label>
-            <div className="block text-sm">ট্যাগ কোথায় বসবে
+            <label className="block text-sm">{tr("messaging.msgZTagOptional")}<input className={inputCls} value={kwForm.tag} onChange={(e) => setKwForm({ ...kwForm, tag: e.target.value })} placeholder={tr("messaging.msgZExInterested")} /></label>
+            <div className="block text-sm">{tr("messaging.msgZTagWhere")}
               <div className="mt-1 flex flex-wrap gap-3 text-sm">
-                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toCustomer} onChange={(e) => setKwForm({ ...kwForm, toCustomer: e.target.checked })} /> কাস্টমার (না থাকলে লিড)</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toLead} onChange={(e) => setKwForm({ ...kwForm, toLead: e.target.checked })} /> লিড</label>
-                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toConversation} onChange={(e) => setKwForm({ ...kwForm, toConversation: e.target.checked })} /> কথোপকথন</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toCustomer} onChange={(e) => setKwForm({ ...kwForm, toCustomer: e.target.checked })} /> {tr("messaging.msgZTagCustomer")}</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toLead} onChange={(e) => setKwForm({ ...kwForm, toLead: e.target.checked })} /> {tr("messaging.msgZTagLead")}</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={kwForm.toConversation} onChange={(e) => setKwForm({ ...kwForm, toConversation: e.target.checked })} /> {tr("messaging.msgZTagConversation")}</label>
               </div>
             </div>
-            <label className="block text-sm lg:col-span-2">স্বয়ংক্রিয় রিপ্লাই (ঐচ্ছিক, সর্বোচ্চ ১০০০ অক্ষর)
-              <textarea className={inputCls} rows={2} value={kwForm.autoReplyText} onChange={(e) => setKwForm({ ...kwForm, autoReplyText: e.target.value })} placeholder="আপনার লেখা রিপ্লাই — যেমন: ধন্যবাদ! অফারটি পেতে কল করুন…" />
-              <span className="mt-1 block text-[11px] text-slate-400">রিপ্লাইটি Inbox কথোপকথনেই পাঠানো হবে — গ্রাহক মেসেজ পাঠালেই কেবল এই পথ খোলে; STOP পাঠালে কোনো ক্যাম্পেইন-রিপ্লাই যাবে না। প্রাপক Opt-out করা থাকলেও রিপ্লাই যাবে না (শুধু ট্যাগ বসবে)।</span>
+            <label className="block text-sm lg:col-span-2">{tr("messaging.msgZKwAutoReplyLabel", { max: fmtNumber(locale, 1000) })}
+              <textarea className={inputCls} rows={2} value={kwForm.autoReplyText} onChange={(e) => setKwForm({ ...kwForm, autoReplyText: e.target.value })} placeholder={tr("messaging.msgZKwAutoReplyPlaceholder")} />
+              <span className="mt-1 block text-[11px] text-slate-400">{tr("messaging.msgZKwAutoReplyNote")}</span>
             </label>
           </>) : (<>
             <div className="lg:col-span-2">
-              <div className="text-sm font-medium">পোলের অপশন (২–৬টি) — প্রতিটিতে লেবেল ও অন্তত একটি কীওয়ার্ড (একাধিক হলে কমা দিয়ে)</div>
+              <div className="text-sm font-medium">{tr("messaging.msgZPollOptionsTitle", { min: fmtNumber(locale, 2), max: fmtNumber(locale, 6) })}</div>
               <div className="mt-2 space-y-2">
                 {kwPollOptions.map((o, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2">
-                    <input className="input w-52" placeholder="লেবেল (যেমন: হোম ডেলিভারি)" value={o.label} onChange={(e) => setKwPollOptions((s) => s.map((x, xi) => (xi === i ? { ...x, label: e.target.value } : x)))} required />
-                    <input className="input w-72" placeholder="কীওয়ার্ড (যেমন: HOME, বাসা)" value={o.keywords} onChange={(e) => setKwPollOptions((s) => s.map((x, xi) => (xi === i ? { ...x, keywords: e.target.value } : x)))} required />
-                    {kwPollOptions.length > 2 ? <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700" onClick={() => setKwPollOptions((s) => s.filter((_, xi) => xi !== i))}>সরান</button> : null}
+                    <input className="input w-52" placeholder={tr("messaging.msgZPollLabelPlaceholder")} value={o.label} onChange={(e) => setKwPollOptions((s) => s.map((x, xi) => (xi === i ? { ...x, label: e.target.value } : x)))} required />
+                    <input className="input w-72" placeholder={tr("messaging.msgZPollKeywordPlaceholder")} value={o.keywords} onChange={(e) => setKwPollOptions((s) => s.map((x, xi) => (xi === i ? { ...x, keywords: e.target.value } : x)))} required />
+                    {kwPollOptions.length > 2 ? <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700" onClick={() => setKwPollOptions((s) => s.filter((_, xi) => xi !== i))}>{tr("messaging.msgRemoveBtn")}</button> : null}
                   </div>
                 ))}
               </div>
-              {kwPollOptions.length < 6 ? <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => setKwPollOptions((s) => [...s, { key: "", label: "", keywords: "" }])}>+ আরেকটি অপশন</button> : null}
-              <p className="mt-1 text-[11px] text-slate-400">পোল শুধু ভোট গোনে — ট্যাগ বা স্বয়ংক্রিয় রিপ্লাই পোলে নেই। একজন গ্রাহক মত বদলালে সর্বশেষ জবাবটাই গোনা হয়।</p>
+              {kwPollOptions.length < 6 ? <button type="button" className="mt-2 rounded-lg border px-3 py-1 text-xs font-semibold" onClick={() => setKwPollOptions((s) => [...s, { key: "", label: "", keywords: "" }])}>{tr("messaging.msgZAddOption")}</button> : null}
+              <p className="mt-1 text-[11px] text-slate-400">{tr("messaging.msgZPollNote")}</p>
             </div>
           </>)}
           <div className="flex items-end gap-2">
-            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "kw-rule" ? "সংরক্ষণ হচ্ছে..." : kwEditId ? "সংরক্ষণ করুন" : "নিয়ম তৈরি করুন"}</button>
-            {kwEditId ? <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold" onClick={resetKwForm}>বাতিল</button> : null}
+            <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "kw-rule" ? tr("messaging.msgSaving") : kwEditId ? tr("messaging.msgSave") : tr("messaging.msgZCreateRule")}</button>
+            {kwEditId ? <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold" onClick={resetKwForm}>{tr("messaging.msgCancel")}</button> : null}
           </div>
         </form>
         <div className="border-t pt-3">
-          <div className="text-sm font-semibold">সাম্প্রতিক হিট ({kwHits.length})</div>
-          {kwHits.length === 0 ? <p className="mt-1 text-sm text-slate-400">এখনো কোনো কীওয়ার্ড হিট হয়নি — গ্রাহক WhatsApp-এ কীওয়ার্ড পাঠালেই এখানে দেখা যাবে।</p> : kwHits.map((h) => (
+          <div className="text-sm font-semibold">{tr("messaging.msgZRecentHits", { count: fmtNumber(locale, kwHits.length) })}</div>
+          {kwHits.length === 0 ? <p className="mt-1 text-sm text-slate-400">{tr("messaging.msgZNoKwHits")}</p> : kwHits.map((h) => (
             <div key={h.id} className="mt-2 rounded-lg bg-slate-50 p-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span><span className="font-medium">&quot;{h.matchedText}&quot;</span> <span className="text-slate-500">→ নিয়ম: {h.ruleName ?? h.ruleId}{h.pollOptionKey ? ` · ভোট: ${h.pollOptionKey}` : ` · কীওয়ার্ড: "${h.matchedKeyword}"`}</span></span>
-                <span className="text-xs text-slate-400">{new Date(h.createdAt).toLocaleString()}</span>
+                <span><span className="font-medium">&quot;{h.matchedText}&quot;</span> <span className="text-slate-500">→ {tr("messaging.msgZRuleWord")}: {h.ruleName ?? h.ruleId}{h.pollOptionKey ? tr("messaging.msgZVoteSuffix", { key: h.pollOptionKey }) : tr("messaging.msgZKwSuffix", { keyword: h.matchedKeyword })}</span></span>
+                <span className="text-xs text-slate-400">{fmtDateTime(locale, h.createdAt)}</span>
               </div>
               {(h.actions ?? []).length ? (
                 <div className="mt-1 flex flex-wrap gap-1">
                   {(h.actions ?? []).map((a, i) => (
                     <span key={i} className={`rounded px-2 py-0.5 text-xs ${a.status === "applied" ? "bg-green-100 text-green-700" : a.status === "failed" ? "bg-red-100 text-red-700" : "bg-slate-200 text-slate-600"}`}>
-                      {a.action === "tag" ? `🏷️ ট্যাগ (${a.entity ?? a.target ?? ""})` : "↩️ রিপ্লাই"}: {a.status === "applied" ? "হয়েছে" : a.status === "failed" ? "ব্যর্থ" : "বাদ"}{a.reason ? ` — ${a.reason}` : ""}{a.providerMessageId ? ` · ${a.providerMessageId}` : ""}
+                      {a.action === "tag" ? tr("messaging.msgZTagChip", { entity: a.entity ?? a.target ?? "" }) : tr("messaging.msgZReplyChip")}: {a.status === "applied" ? tr("messaging.msgZAppliedWord") : a.status === "failed" ? tr("messaging.msgReportFailed") : tr("messaging.msgZSkippedWord")}{a.reason ? ` — ${a.reason}` : ""}{a.providerMessageId ? ` · ${a.providerMessageId}` : ""}
                     </span>
                   ))}
                 </div>
               ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {h.classifyStatus === "suggested" && h.suggestedLabel ? (<>
-                  <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">🤖 AI পরামর্শ: {h.suggestedLabel}</span>
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyKwHitLabel(h, "confirm")}>✓ নিশ্চিত করুন</button>
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyKwHitLabel(h, "dismiss")}>বাতিল</button>
-                  <span className="text-[11px] text-slate-400">নিশ্চিত না করলে কিছুই প্রয়োগ হয় না। &quot;opt-out&quot; নিশ্চিত করলেও কাউকে Opt-out করা হয় না — সেটি শুধু আসল STOP পাঠালেই হয়।</span>
+                  <span className="rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">{tr("messaging.msgZAiSuggestion", { label: h.suggestedLabel })}</span>
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyKwHitLabel(h, "confirm")}>{tr("messaging.msgZConfirmBtn")}</button>
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => applyKwHitLabel(h, "dismiss")}>{tr("messaging.msgCancel")}</button>
+                  <span className="text-[11px] text-slate-400">{tr("messaging.msgZClassifyNote")}</span>
                 </>) : h.classifyStatus === "confirmed" ? (
-                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">✓ লেবেল নিশ্চিত: {h.confirmedLabel}</span>
+                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">{tr("messaging.msgZLabelConfirmed", { label: h.confirmedLabel ?? "" })}</span>
                 ) : h.classifyStatus === "dismissed" ? (
-                  <span className="rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-500">AI পরামর্শ বাতিল করা হয়েছে</span>
+                  <span className="rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-500">{tr("messaging.msgZAiDismissed")}</span>
                 ) : (
-                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => classifyKwHit(h)}>{busy === `kw-classify-${h.id}` ? "ভাবছে..." : "🤖 শ্রেণি নির্ণয়"}</button>
+                  <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => classifyKwHit(h)}>{busy === `kw-classify-${h.id}` ? tr("messaging.msgZThinking") : tr("messaging.msgZClassifyBtn")}</button>
                 )}
               </div>
             </div>
@@ -3311,116 +3339,116 @@ export default function MessagingPage() {
       {tab === "insights" ? (<>
       <div className="space-y-3 card p-5 msg-section">
       <div className="space-y-3 card p-5">
-        <div className="font-semibold">📊 MX16 · তুলনামূলক Analytics (সব চ্যানেল)</div>
-        <p className="text-sm text-slate-500">আসল Broadcast, Delivery ও Link-Click রেকর্ড থেকে হিসাব করা। যে ধাপ কোনো চ্যানেল রিপোর্ট করতে পারে না, সেখানে সংখ্যা <strong>—</strong> দেখানো হয় (কখনো ০ নয়)। আয়ের সংখ্যা <strong>শুধুমাত্র সম্পর্ক (association)</strong> — কোন Broadcast-এর কারণে অর্ডার হয়েছে তা প্রমাণ করে না; Messaging Delivery-র সঙ্গে Attribution-এর কোনো সৎ সংযোগ এই সিস্টেমে নেই।</p>
+        <div className="font-semibold">{tr("messaging.msgZAnalyticsTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZAnalyticsIntroA")}<strong>—</strong>{tr("messaging.msgZAnalyticsIntroB")}<strong>{tr("messaging.msgZAnalyticsIntroStrong")}</strong>{tr("messaging.msgZAnalyticsIntroC")}</p>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="block text-sm">থেকে<input type="date" className={inputCls} value={analyticsRange.from} onChange={(e) => setAnalyticsRange({ ...analyticsRange, from: e.target.value })} /></label>
-          <label className="block text-sm">পর্যন্ত<input type="date" className={inputCls} value={analyticsRange.to} onChange={(e) => setAnalyticsRange({ ...analyticsRange, to: e.target.value })} /></label>
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={loadAnalytics}>{busy === "analytics" ? "লোড হচ্ছে..." : "Analytics দেখুন"}</button>
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={exportAnalytics}>⬇️ CSV Export (একই সংখ্যা)</button>
+          <label className="block text-sm">{tr("messaging.msgZFromLabel")}<input type="date" className={inputCls} value={analyticsRange.from} onChange={(e) => setAnalyticsRange({ ...analyticsRange, from: e.target.value })} /></label>
+          <label className="block text-sm">{tr("messaging.msgZToLabel")}<input type="date" className={inputCls} value={analyticsRange.to} onChange={(e) => setAnalyticsRange({ ...analyticsRange, to: e.target.value })} /></label>
+          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={loadAnalytics}>{busy === "analytics" ? tr("messaging.msgLoading") : tr("messaging.msgZSeeAnalytics")}</button>
+          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={exportAnalytics}>{tr("messaging.msgZCsvExportSame")}</button>
         </div>
         {analytics ? (
           <div className="space-y-3 text-sm">
-            <p className="text-xs text-slate-400">{new Date(analytics.range.from).toLocaleDateString()} – {new Date(analytics.range.to).toLocaleDateString()} · {analytics.stageNote}</p>
+            <p className="text-xs text-slate-400">{fmtDate(locale, analytics.range.from)} – {fmtDate(locale, analytics.range.to)} · {analytics.stageNote}</p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-xs">
-                <thead><tr className="border-b text-slate-500"><th className="py-1 pr-2">চ্যানেল</th><th className="py-1 pr-2">Broadcast</th><th className="py-1 pr-2">Audience</th><th className="py-1 pr-2">Sent</th><th className="py-1 pr-2">Failed</th><th className="py-1 pr-2">Skipped</th><th className="py-1 pr-2">Delivered</th><th className="py-1 pr-2">Read</th><th className="py-1 pr-2">Opened</th><th className="py-1 pr-2">ক্লিক (জন)</th><th className="py-1">ক্লিক (মোট)</th></tr></thead>
+                <thead><tr className="border-b text-slate-500"><th className="py-1 pr-2">{tr("messaging.msgZColChannel")}</th><th className="py-1 pr-2">Broadcast</th><th className="py-1 pr-2">Audience</th><th className="py-1 pr-2">Sent</th><th className="py-1 pr-2">Failed</th><th className="py-1 pr-2">Skipped</th><th className="py-1 pr-2">Delivered</th><th className="py-1 pr-2">Read</th><th className="py-1 pr-2">Opened</th><th className="py-1 pr-2">{tr("messaging.msgZColClicksPeople")}</th><th className="py-1">{tr("messaging.msgZColClicksTotal")}</th></tr></thead>
                 <tbody>
                   {analytics.channels.map((c) => (
                     <tr key={c.channel} className="border-b">
                       <td className="py-1 pr-2 font-medium">{c.channel}</td><td className="py-1 pr-2">{c.broadcasts}</td><td className="py-1 pr-2">{c.audience}</td><td className="py-1 pr-2">{c.sent}</td><td className="py-1 pr-2">{c.failed}</td><td className="py-1 pr-2">{c.skipped}</td><td className="py-1 pr-2">{c.delivered ?? "—"}</td><td className="py-1 pr-2">{c.read ?? "—"}</td><td className="py-1 pr-2">{c.opened ?? "—"}</td><td className="py-1 pr-2">{c.clickedRecipients ?? "—"}</td><td className="py-1">{c.totalClicks ?? "—"}</td>
                     </tr>
                   ))}
-                  <tr className="font-semibold"><td className="py-1 pr-2">মোট</td><td className="py-1 pr-2">{analytics.totals.broadcasts}</td><td className="py-1 pr-2">{analytics.totals.audience}</td><td className="py-1 pr-2">{analytics.totals.sent}</td><td className="py-1 pr-2">{analytics.totals.failed}</td><td className="py-1 pr-2">{analytics.totals.skipped}</td><td className="py-1 pr-2">{analytics.totals.delivered ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.read ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.opened ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.clickedRecipients ?? "—"}</td><td className="py-1">{analytics.totals.totalClicks ?? "—"}</td></tr>
+                  <tr className="font-semibold"><td className="py-1 pr-2">{tr("messaging.msgZTotalWord")}</td><td className="py-1 pr-2">{analytics.totals.broadcasts}</td><td className="py-1 pr-2">{analytics.totals.audience}</td><td className="py-1 pr-2">{analytics.totals.sent}</td><td className="py-1 pr-2">{analytics.totals.failed}</td><td className="py-1 pr-2">{analytics.totals.skipped}</td><td className="py-1 pr-2">{analytics.totals.delivered ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.read ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.opened ?? "—"}</td><td className="py-1 pr-2">{analytics.totals.clickedRecipients ?? "—"}</td><td className="py-1">{analytics.totals.totalClicks ?? "—"}</td></tr>
                 </tbody>
               </table>
             </div>
             <div>
-              <div className="font-medium">Broadcast-ভিত্তিক তুলনা</div>
+              <div className="font-medium">{tr("messaging.msgZPerBroadcastCompare")}</div>
               <ul className="mt-1 space-y-1 text-xs text-slate-600">
-                {analytics.broadcasts.map((b) => <li key={b.id}>• <strong>{b.name}</strong> ({b.channel}, {b.status}) — Sent {b.funnel.sent} · Delivered {b.funnel.delivered ?? "—"} · Read {b.funnel.read ?? "—"} · Opened {b.funnel.opened ?? "—"} · ক্লিক (জন) {b.funnel.clickedRecipients ?? "—"}{b.revenueAssociation ? ` · সম্পর্কিত অর্ডার (association): ${b.revenueAssociation.orders}টি, ৳${(Number(b.revenueAssociation.totalMinor) / 100).toFixed(2)}` : ""}</li>)}
-                {analytics.broadcasts.length === 0 ? <li>এই সময়সীমায় কোনো Broadcast নেই।</li> : null}
+                {analytics.broadcasts.map((b) => <li key={b.id}>• <strong>{b.name}</strong> ({b.channel}, {b.status}) — Sent {b.funnel.sent} · Delivered {b.funnel.delivered ?? "—"} · Read {b.funnel.read ?? "—"} · Opened {b.funnel.opened ?? "—"} · {tr("messaging.msgZColClicksPeople")} {b.funnel.clickedRecipients ?? "—"}{b.revenueAssociation ? ` · ${tr("messaging.msgZAssocOrders", { orders: fmtNumber(locale, b.revenueAssociation.orders), total: fmtMoneyMinor(locale, Number(b.revenueAssociation.totalMinor)) })}` : ""}</li>)}
+                {analytics.broadcasts.length === 0 ? <li>{tr("messaging.msgZNoBroadcastsInRange")}</li> : null}
               </ul>
             </div>
-            <p className="rounded bg-amber-50 p-2 text-xs text-amber-800">💰 {analytics.association.label} — মোট সম্পর্কিত অর্ডার: <strong>{analytics.association.orders}</strong>টি · মোট: <strong>৳{(Number(analytics.association.totalMinor) / 100).toFixed(2)}</strong><br />{analytics.attributionNote}</p>
+            <p className="rounded bg-amber-50 p-2 text-xs text-amber-800">💰 {analytics.association.label}{tr("messaging.msgZAssocLine", { orders: fmtNumber(locale, analytics.association.orders), total: fmtMoneyMinor(locale, Number(analytics.association.totalMinor)) })}<br />{analytics.attributionNote}</p>
           </div>
         ) : null}
       </div>
 
-        <div className="font-semibold">🛡️ Deliverability, Reputation ও Governance (MX15)</div>
-        <p className="text-sm text-slate-500">সব সংখ্যা আসল MessageDelivery রেকর্ড থেকে হিসাব করা। যে ধাপ কোনো Channel রিপোর্ট করতে পারে না, সেখানে সংখ্যা বসানো হয় না — &quot;—&quot; (null) দেখানো হয়। Bounce/Complaint-এর কোনো Webhook এই সিস্টেমে নেই, তাই সেই হার সবসময় null — কখনো বানানো ০ নয়।</p>
+        <div className="font-semibold">{tr("messaging.msgZGovernanceTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZGovernanceIntro")}</p>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">📈 Delivery Health</span>
           <select className="rounded-lg border px-2 py-1 text-sm" value={healthDays} onChange={(e) => setHealthDays(Number(e.target.value))}>
-            <option value={7}>গত ৭ দিন</option><option value={30}>গত ৩০ দিন</option><option value={90}>গত ৯০ দিন</option>
+            <option value={7}>{tr("messaging.msgZLast7Days")}</option><option value={30}>{tr("messaging.msgZLast30Days")}</option><option value={90}>{tr("messaging.msgZLast90Days")}</option>
           </select>
-          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("health", () => apiFetch<DeliveryHealth>(`/organizations/${o}/messaging/health?days=${healthDays}`)); if (r) setHealth(r); }}>{busy === "health" ? "লোড হচ্ছে..." : "Health দেখুন"}</button>
+          <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("health", () => apiFetch<DeliveryHealth>(`/organizations/${o}/messaging/health?days=${healthDays}`)); if (r) setHealth(r); }}>{busy === "health" ? tr("messaging.msgLoading") : tr("messaging.msgZSeeHealth")}</button>
         </div>
         {health ? (health.available ? (
           <div className="space-y-2">
             <div className="flex flex-wrap gap-1.5 text-xs">
-              <span className="rounded bg-slate-100 px-2 py-1">মোট Delivery: {health.totals?.deliveries ?? "—"} · Sent: {health.totals?.sent ?? "—"} · Failed: {health.totals?.failed ?? "—"} · Failure Rate: {health.totals?.failureRate === null || health.totals?.failureRate === undefined ? "—" : `${(health.totals.failureRate * 100).toFixed(1)}%`}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">{tr("messaging.msgZHealthTotals", { deliveries: health.totals?.deliveries ?? "—", sent: health.totals?.sent ?? "—", failed: health.totals?.failed ?? "—", rate: health.totals?.failureRate === null || health.totals?.failureRate === undefined ? "—" : `${(health.totals.failureRate * 100).toFixed(1)}%` })}</span>
               <span className="rounded bg-slate-100 px-2 py-1">Bounce Rate: — (null) · Complaint Rate: — (null)</span>
-              {health.domainHealth?.domain ? <span className="rounded bg-slate-100 px-2 py-1">ডোমেইন {health.domainHealth.domain}: SPF {health.domainHealth.spf.status} · DKIM {health.domainHealth.dkim.status}</span> : null}
+              {health.domainHealth?.domain ? <span className="rounded bg-slate-100 px-2 py-1">{tr("messaging.msgZHealthDomain", { domain: health.domainHealth.domain, spf: health.domainHealth.spf.status, dkim: health.domainHealth.dkim.status })}</span> : null}
             </div>
             {health.channels.map((c) => (
               <div key={c.channel} className="rounded bg-slate-50 px-3 py-2 text-sm">
                 <span className="font-medium capitalize">{c.channel}</span>
                 <span className="text-slate-500"> — Sent {c.sent} · Failed {c.failed} · Skipped {c.skipped} · Failure {c.failureRate === null ? "—" : `${(c.failureRate * 100).toFixed(1)}%`} · Delivered {c.deliveredRate === null ? "—" : `${(c.deliveredRate * 100).toFixed(1)}%`} · Read {c.readRate === null ? "—" : `${(c.readRate * 100).toFixed(1)}%`} · Bounce — · Complaint —</span>
-                {c.failureReasons.length ? <div className="text-xs text-red-500">ব্যর্থতার কারণ: {c.failureReasons.map((f) => `${f.reason} (${f.count})`).join(" · ")}</div> : null}
+                {c.failureReasons.length ? <div className="text-xs text-red-500">{tr("messaging.msgZFailureReasonsWord")}: {c.failureReasons.map((f) => `${f.reason} (${f.count})`).join(" · ")}</div> : null}
               </div>
             ))}
             <p className="text-[11px] text-slate-400">{health.bounceComplaintNote}</p>
             <p className="text-[11px] text-slate-400">{health.perSenderNote}</p>
             {health.autoSuppression ? <p className="text-[11px] text-slate-400">🤖 Auto-suppression: {health.autoSuppression}</p> : null}
           </div>
-        ) : <p className="text-sm text-amber-600">{health.reason}</p>) : <p className="text-sm text-slate-400">Health লোড হয়নি — &quot;Health দেখুন&quot; চাপুন।</p>}
+        ) : <p className="text-sm text-amber-600">{health.reason}</p>) : <p className="text-sm text-slate-400">{tr("messaging.msgZHealthNotLoaded")}</p>}
         <div className="border-t pt-3">
-          <div className="text-sm font-medium">🧪 Pre-send Checklist v2 — উপরের Composer ফর্মের বর্তমান লেখা দিয়ে</div>
-          <p className="text-xs text-slate-500">MS5 Compose Check-এর সম্প্রসারণ: লিংকের ফরম্যাট, Tracked-link সেট, আসল প্রাপক-নমুনায় Variable ভরা আছে কিনা, ছবির আকার (মেটাডেটা থাকলেই), আর Heuristic Spam-শব্দ। যেটা চালানো যায়নি, সেটা কারণসহ &quot;চালানো হয়নি&quot; — নীরব Pass কখনো নয়। কোনো লিংক Fetch করা হয় না — পৌঁছানো যাবে কিনা তা দাবি করা হয় না।</p>
-          <button type="button" className="mt-1 rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("check-v2", () => apiFetch<ComposeCheckV2Result>(`/organizations/${o}/messaging/compose-check-v2`, { method: "POST", body: JSON.stringify({ channel: bcForm.channel, subject: bcForm.subject || undefined, body: bcForm.body, htmlBody: bcForm.htmlBody || undefined, audienceType: bcForm.audienceType, audienceStage: bcForm.audienceStage || undefined, audienceSegment: bcForm.audienceSegment || undefined }) })); if (r) setCheckV2(r); }}>{busy === "check-v2" ? "যাচাই হচ্ছে..." : "Checklist v2 চালান"}</button>
+          <div className="text-sm font-medium">{tr("messaging.msgZChecklistTitle")}</div>
+          <p className="text-xs text-slate-500">{tr("messaging.msgZChecklistIntro")}</p>
+          <button type="button" className="mt-1 rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("check-v2", () => apiFetch<ComposeCheckV2Result>(`/organizations/${o}/messaging/compose-check-v2`, { method: "POST", body: JSON.stringify({ channel: bcForm.channel, subject: bcForm.subject || undefined, body: bcForm.body, htmlBody: bcForm.htmlBody || undefined, audienceType: bcForm.audienceType, audienceStage: bcForm.audienceStage || undefined, audienceSegment: bcForm.audienceSegment || undefined }) })); if (r) setCheckV2(r); }}>{busy === "check-v2" ? tr("messaging.msgZVerifying") : tr("messaging.msgZRunChecklist")}</button>
           {checkV2 ? (
             <div className="mt-2 space-y-1.5">
               {checkV2.checks.map((c) => (
                 <div key={c.code} className="rounded bg-slate-50 px-3 py-2 text-sm">
                   <span className="font-medium">{c.status === "pass" ? "✅" : c.status === "warn" ? "⚠️" : c.status === "fail" ? "❌" : "➖"} {c.label}</span>
                   <span className="text-slate-600"> — {c.detail}</span>
-                  <div className="text-[11px] text-slate-400">যাচাই করা হয়েছে: {c.verified}</div>
+                  <div className="text-[11px] text-slate-400">{tr("messaging.msgZVerifiedPrefix")} {c.verified}</div>
                 </div>
               ))}
-              <p className="text-[11px] text-slate-400">Spam-শব্দ তালিকা (Heuristic — {checkV2.spamWords.label}): EN: {checkV2.spamWords.en.join(", ")} · BN: {checkV2.spamWords.bn.join(", ")}</p>
+              <p className="text-[11px] text-slate-400">{tr("messaging.msgZSpamWordList", { label: checkV2.spamWords.label, en: checkV2.spamWords.en.join(", "), bn: checkV2.spamWords.bn.join(", ") })}</p>
             </div>
           ) : null}
         </div>
         <div className="border-t pt-3">
-          <div className="text-sm font-medium">🌱 Seed / Test তালিকা — অভ্যন্তরীণ টেস্ট প্রাপক</div>
-          <p className="text-xs text-slate-500">এই ঠিকানাগুলো শুধু টেস্ট পাঠানোর জন্য — কোনো Audience বা Consent তালিকায় যোগ হয় না। টেস্ট যায় বিদ্যমান Test Send পথেই। Push/On-site-এ ঠিকানা দিয়ে টেস্ট হয় না বলে সেই Channel এখানে নেই।</p>
+          <div className="text-sm font-medium">{tr("messaging.msgZSeedTitle")}</div>
+          <p className="text-xs text-slate-500">{tr("messaging.msgZSeedIntro")}</p>
           <div className="mt-2 flex flex-wrap items-end gap-2">
             <label className="block text-sm">Channel<select className={inputCls} value={seedForm.channel} onChange={(e) => setSeedForm({ ...seedForm, channel: e.target.value })}><option value="email">Email</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option></select></label>
-            <label className="block text-sm">ঠিকানা<input className={inputCls} value={seedForm.address} onChange={(e) => setSeedForm({ ...seedForm, address: e.target.value })} placeholder="নিজের ইমেইল / ফোন / Chat ID" /></label>
-            <label className="block text-sm">লেবেল (ঐচ্ছিক)<input className={inputCls} value={seedForm.label} onChange={(e) => setSeedForm({ ...seedForm, label: e.target.value })} placeholder="যেমন: মালিকের ফোন" /></label>
-            <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== "" || !seedForm.address.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("seed-add", () => apiFetch<SeedRecipient>(`/organizations/${o}/messaging/seed-recipients`, { method: "POST", body: JSON.stringify(seedForm) })); if (r) { setSeedForm({ ...seedForm, address: "", label: "" }); setNotice("Seed প্রাপক যোগ হয়েছে।"); await load(); } }}>যোগ করুন</button>
-            <label className="block text-sm">টেস্টের Broadcast<select className={inputCls} value={seedTestBroadcastId} onChange={(e) => setSeedTestBroadcastId(e.target.value)}><option value="">বেছে নিন…</option>{broadcasts.filter((b) => ["email", "sms", "whatsapp", "telegram"].includes(b.channel)).map((b) => <option key={b.id} value={b.id}>{b.name} ({b.channel})</option>)}</select></label>
+            <label className="block text-sm">{tr("messaging.msgColAddress")}<input className={inputCls} value={seedForm.address} onChange={(e) => setSeedForm({ ...seedForm, address: e.target.value })} placeholder={tr("messaging.msgZSeedAddressPlaceholder")} /></label>
+            <label className="block text-sm">{tr("messaging.msgZLabelOptional")}<input className={inputCls} value={seedForm.label} onChange={(e) => setSeedForm({ ...seedForm, label: e.target.value })} placeholder={tr("messaging.msgZExOwnerPhone")} /></label>
+            <button type="button" className="rounded-lg border px-3 py-1.5 text-sm font-semibold disabled:opacity-50" disabled={busy !== "" || !seedForm.address.trim()} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap("seed-add", () => apiFetch<SeedRecipient>(`/organizations/${o}/messaging/seed-recipients`, { method: "POST", body: JSON.stringify(seedForm) })); if (r) { setSeedForm({ ...seedForm, address: "", label: "" }); setNotice(tr("messaging.msgZSeedAdded")); await load(); } }}>{tr("messaging.msgZAddBtn")}</button>
+            <label className="block text-sm">{tr("messaging.msgZSeedTestBroadcast")}<select className={inputCls} value={seedTestBroadcastId} onChange={(e) => setSeedTestBroadcastId(e.target.value)}><option value="">{tr("messaging.msgZPickEllipsis")}</option>{broadcasts.filter((b) => ["email", "sms", "whatsapp", "telegram"].includes(b.channel)).map((b) => <option key={b.id} value={b.id}>{b.name} ({b.channel})</option>)}</select></label>
           </div>
-          {seeds.length === 0 ? <p className="mt-1 text-sm text-slate-400">কোনো Seed প্রাপক নেই।</p> : seeds.map((sd) => (
+          {seeds.length === 0 ? <p className="mt-1 text-sm text-slate-400">{tr("messaging.msgZNoSeeds")}</p> : seeds.map((sd) => (
             <div key={sd.id} className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-3 py-2 text-sm">
               <span><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{sd.channel}</span> <span className="font-medium">{sd.address}</span>{sd.label ? <span className="text-slate-500"> · {sd.label}</span> : null}</span>
               <span className="flex gap-2">
-                <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !seedTestBroadcastId} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`seed-test-${sd.id}`, () => apiFetch<TestSendResult>(`/organizations/${o}/messaging/broadcasts/${seedTestBroadcastId}/test-send-seed`, { method: "POST", body: JSON.stringify({ seedId: sd.id }) })); if (r) setNotice(`Seed টেস্ট (${sd.address}): ${r.status}${r.error ? ` — ${r.error}` : ""}`); }}>🧪 টেস্ট পাঠান</button>
-                <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`seed-del-${sd.id}`, () => apiFetch(`/organizations/${o}/messaging/seed-recipients/${sd.id}`, { method: "DELETE" })); if (r) { setNotice("Seed প্রাপক সরানো হয়েছে।"); await load(); } }}>মুছুন</button>
+                <button type="button" className="rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== "" || !seedTestBroadcastId} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`seed-test-${sd.id}`, () => apiFetch<TestSendResult>(`/organizations/${o}/messaging/broadcasts/${seedTestBroadcastId}/test-send-seed`, { method: "POST", body: JSON.stringify({ seedId: sd.id }) })); if (r) setNotice(tr("messaging.msgZSeedTestPrefix", { address: sd.address, status: r.status }) + (r.error ? ` — ${r.error}` : "")); }}>{tr("messaging.msgTestSendBtn")}</button>
+                <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const r = await wrap(`seed-del-${sd.id}`, () => apiFetch(`/organizations/${o}/messaging/seed-recipients/${sd.id}`, { method: "DELETE" })); if (r) { setNotice(tr("messaging.msgZSeedRemoved")); await load(); } }}>{tr("messaging.msgDelete")}</button>
               </span>
             </div>
           ))}
         </div>
         <div className="border-t pt-3">
-          <div className="text-sm font-medium">⏳ অনুমোদনের সারি ({approvals.length})</div>
-          <p className="text-xs text-slate-500">Approval চালু থাকলে (উপরের Consent সেটিংস) non-approver সদস্যের Broadcast এখানে আসে। অনুমোদন/প্রত্যাখ্যান Broadcast তালিকা থেকেও করা যায় — নির্মাতা নিজে কখনোই পারবেন না (Four-eyes), প্রতিটি সিদ্ধান্ত Audit Log-এ থাকে।</p>
-          {approvals.length === 0 ? <p className="mt-1 text-sm text-slate-400">অপেক্ষমাণ কোনো Broadcast নেই।</p> : approvals.map((b) => (
+          <div className="text-sm font-medium">{tr("messaging.msgZApprovalsQueue", { count: fmtNumber(locale, approvals.length) })}</div>
+          <p className="text-xs text-slate-500">{tr("messaging.msgZApprovalsIntro")}</p>
+          {approvals.length === 0 ? <p className="mt-1 text-sm text-slate-400">{tr("messaging.msgZNoApprovals")}</p> : approvals.map((b) => (
             <div key={b.id} className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded bg-amber-50 px-3 py-2 text-sm">
-              <span><span className="font-medium">{b.name}</span> <span className="text-slate-500 capitalize">({b.channel})</span>{b.scheduledAt ? <span className="text-slate-500"> · শিডিউল: {new Date(b.scheduledAt).toLocaleString()}</span> : null}</span>
+              <span><span className="font-medium">{b.name}</span> <span className="text-slate-500 capitalize">({b.channel})</span>{b.scheduledAt ? <span className="text-slate-500"> · {tr("messaging.msgZScheduleWord")}: {fmtDateTime(locale, b.scheduledAt)}</span> : null}</span>
               <span className="flex gap-2">
-                <button type="button" className="rounded-lg bg-green-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt("অনুমোদনের নোট (ঐচ্ছিক):") ?? undefined; const r = await wrap(`approve-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/approve`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(`Broadcast "${r.name}" অনুমোদিত হয়েছে।`); await load(); } }}>✅ অনুমোদন</button>
-                <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt("প্রত্যাখ্যানের কারণ (নোট):") ?? undefined; const r = await wrap(`reject-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/reject`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(`Broadcast "${r.name}" প্রত্যাখ্যাত হয়েছে।`); await load(); } }}>❌ প্রত্যাখ্যান</button>
+                <button type="button" className="rounded-lg bg-green-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt(tr("messaging.msgApprovalNotePrompt")) ?? undefined; const r = await wrap(`approve-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/approve`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(tr("messaging.msgZApprovedShort", { name: r.name })); await load(); } }}>{tr("messaging.msgZApproveShort")}</button>
+                <button type="button" className="rounded-lg border border-red-300 px-2 py-1 text-xs font-semibold text-red-700 disabled:opacity-50" disabled={busy !== ""} onClick={async () => { const o = getOrganizationId(); if (!o) return; const note = window.prompt(tr("messaging.msgRejectReasonPrompt")) ?? undefined; const r = await wrap(`reject-${b.id}`, () => apiFetch<Broadcast>(`/organizations/${o}/messaging/broadcasts/${b.id}/reject`, { method: "POST", body: JSON.stringify({ note }) })); if (r) { setNotice(tr("messaging.msgZRejectedShort", { name: r.name })); await load(); } }}>{tr("messaging.msgZRejectShort")}</button>
               </span>
             </div>
           ))}
@@ -3430,29 +3458,29 @@ export default function MessagingPage() {
 
       {tab === "insights" ? (<>
       <div className="space-y-3 card p-5 msg-section">
-        <div className="font-semibold">📦 অর্ডার নোটিফিকেশন (Transactional) — শুধু দেখার জন্য</div>
-        <p className="text-sm text-slate-500">এটি শুধু দেখার জন্য — অর্ডার নোটিফিকেশন সেটিংস তার নিজের জায়গা থেকে বদলায় (Orders-এর নোটিফিকেশন সেটিংস)। এই বার্তাগুলো Broadcast ইঞ্জিন দিয়ে যায় না — Quiet Hours বা Sweep সীমায় এগুলো কখনো আটকায় না।</p>
-        {!txOverview ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+        <div className="font-semibold">{tr("messaging.msgZTxTitle")}</div>
+        <p className="text-sm text-slate-500">{tr("messaging.msgZTxIntro")}</p>
+        {!txOverview ? <p className="text-sm text-slate-400">{tr("messaging.msgZLoadingEllipsis")}</p> : (
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2 text-sm">
-              <span className="rounded bg-slate-100 px-2 py-1">সেটিংস: {txOverview.setting === null ? "পড়া যায়নি" : txOverview.setting.configured ? "কনফিগার করা" : "ডিফল্ট (কোনো সেভ করা সেটিংস নেই)"}</span>
-              {txOverview.setting ? <span className="rounded bg-slate-100 px-2 py-1">সক্রিয় Event: {txOverview.setting.enabledEvents}/{txOverview.setting.totalEvents}</span> : null}
+              <span className="rounded bg-slate-100 px-2 py-1">{tr("messaging.msgZTxSettingsWord")}: {txOverview.setting === null ? tr("messaging.msgZTxUnreadable") : txOverview.setting.configured ? tr("messaging.msgZTxConfigured") : tr("messaging.msgZTxDefault")}</span>
+              {txOverview.setting ? <span className="rounded bg-slate-100 px-2 py-1">{tr("messaging.msgZTxActiveEvents", { enabled: fmtNumber(locale, txOverview.setting.enabledEvents), total: fmtNumber(locale, txOverview.setting.totalEvents) })}</span> : null}
               {txOverview.setting && txOverview.setting.channelsInUse.length ? <span className="rounded bg-slate-100 px-2 py-1">Channel: {txOverview.setting.channelsInUse.join(", ")}</span> : null}
-              <span className="rounded bg-slate-100 px-2 py-1">মোট লগ: {txOverview.summary.total ?? "—"} · পাঠানো: {txOverview.summary.sent ?? "—"} · ব্যর্থ: {txOverview.summary.failed ?? "—"}</span>
+              <span className="rounded bg-slate-100 px-2 py-1">{tr("messaging.msgZTxTotals", { total: txOverview.summary.total ?? "—", sent: txOverview.summary.sent ?? "—", failed: txOverview.summary.failed ?? "—" })}</span>
             </div>
             {txOverview.setting ? (
               <div className="flex flex-wrap gap-1.5">
                 {txOverview.setting.events.map((ev) => (
-                  <span key={ev.event} className={`rounded px-2 py-0.5 text-xs ${ev.enabled ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-400"}`}>{ev.event}: {ev.enabled ? `চালু (${ev.channels.join("/")})` : "বন্ধ"}</span>
+                  <span key={ev.event} className={`rounded px-2 py-0.5 text-xs ${ev.enabled ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-400"}`}>{ev.event}: {ev.enabled ? tr("messaging.msgZTxEventOn", { channels: ev.channels.join("/") }) : tr("messaging.msgStateOff")}</span>
                 ))}
               </div>
             ) : null}
             <div>
-              <div className="mb-2 text-sm font-medium">সাম্প্রতিক লেনদেনের বার্তা ({txOverview.recent.length})</div>
-              {txOverview.recent.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো অর্ডার নোটিফিকেশন পাঠানো হয়নি।</p> : txOverview.recent.map((l) => (
+              <div className="mb-2 text-sm font-medium">{tr("messaging.msgZTxRecent", { count: fmtNumber(locale, txOverview.recent.length) })}</div>
+              {txOverview.recent.length === 0 ? <p className="text-sm text-slate-400">{tr("messaging.msgZTxNone")}</p> : txOverview.recent.map((l) => (
                 <div key={l.id} className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded bg-slate-50 px-3 py-2 text-sm">
-                  <span><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{l.channel}</span> <span className="font-medium">অর্ডার {l.orderRef}</span> <span className="text-slate-500">{l.event}</span> <span className={l.status === "sent" ? "text-green-600" : l.status.startsWith("failed") ? "text-red-600" : "text-slate-500"}>{l.status}</span>{l.error ? <span className="text-xs text-red-500"> · {l.error}</span> : null}</span>
-                  <span className="text-xs text-slate-400">{new Date(l.createdAt).toLocaleString()}</span>
+                  <span><span className="rounded bg-slate-200 px-2 py-0.5 text-xs capitalize">{l.channel}</span> <span className="font-medium">{tr("messaging.msgZOrderWord")} {l.orderRef}</span> <span className="text-slate-500">{l.event}</span> <span className={l.status === "sent" ? "text-green-600" : l.status.startsWith("failed") ? "text-red-600" : "text-slate-500"}>{l.status}</span>{l.error ? <span className="text-xs text-red-500"> · {l.error}</span> : null}</span>
+                  <span className="text-xs text-slate-400">{fmtDateTime(locale, l.createdAt)}</span>
                 </div>
               ))}
             </div>

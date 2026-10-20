@@ -197,6 +197,6 @@ describe("CC3 delete + overview own-app flags", () => {
     social = overview.categories.find((c) => c.key === "social")!;
     expect(social.accounts.find((a) => a.id === "tt-own")).toMatchObject({ ownAppConfigMissing: false });
 
-    await expect(svc.deleteAppConfig("org-1", "owner-1", "meta")).rejects.toThrow(/not found/i);
+    await expect(svc.deleteAppConfig("org-1", "owner-1", "meta")).rejects.toMatchObject({ code: "connections.appConfigNotFound" });
   });
 });

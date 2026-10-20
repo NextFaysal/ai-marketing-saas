@@ -212,9 +212,9 @@ describe("SA-B4 LearningService — approval application (D3)", () => {
     const { item } = await learning.createSuggestion(ORG_A, {
       kind: "fact", title: "t", content: { text: "তথ্য" }, sourceType: "conversation", sourceRef: [],
     });
-    await expect(learning.approve(ORG_B, "user-9", item.id)).rejects.toThrow(/not found/i);
+    await expect(learning.approve(ORG_B, "user-9", item.id)).rejects.toMatchObject({ code: "ai.learnedItemNotFound" });
     await learning.reject(ORG_A, "user-1", item.id);
-    await expect(learning.approve(ORG_A, "user-1", item.id)).rejects.toThrow(/already rejected/);
+    await expect(learning.approve(ORG_A, "user-1", item.id)).rejects.toMatchObject({ code: "ai.learnedItemIsAlready" });
     expect(prisma.__tables.knowledgeDocument).toHaveLength(0);
   });
 

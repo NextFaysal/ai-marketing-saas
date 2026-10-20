@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { PromotionsService } from "../commerce/promotions.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -412,7 +413,7 @@ describe("ON3 stage-guard matrix", () => {
     await ctx.prisma.fulfillment.create({
       data: { id: "ful-1", organizationId: ORG, orderId: order.id, status: "packed", items: [{ orderItemId: "item-1", quantity: 1 }] },
     });
-    await expect(edit(ctx, order.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(edit(ctx, order.id)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("pending fulfillment covering more than the new qty → 400", async () => {
@@ -423,7 +424,7 @@ describe("ON3 stage-guard matrix", () => {
     });
     await expect(ctx.surgery.editItems(ORG, "u-1", order.id, {
       items: [{ orderItemId: "item-1", quantity: 1 }],
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("picked_up shipment → 400", async () => {
@@ -716,7 +717,7 @@ describe("ON3 split", () => {
     const { ctx, order } = await splitCtx();
     await expect(ctx.surgery.split(ORG, "u-1", order.id, {
       lines: [{ orderItemId: "item-1", quantity: 5 }, { orderItemId: "item-2", quantity: 2 }],
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toBeInstanceOf(ApiException);
   });
 });
 

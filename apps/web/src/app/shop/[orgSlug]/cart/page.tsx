@@ -303,10 +303,10 @@ export default function CartPage() {
         {previewMinor > 0n && (
           <div className="rounded-xl bg-amber-50/80 p-3 text-xs text-amber-900 border border-amber-200/60">
             {previewMinor >= 200000n ? (
-              <p className="font-bold text-emerald-700">🎉 অভিনন্দন! আপনি সারাদেশে ফ্রি ডেলিভারি পাচ্ছেন!</p>
+              <p className="font-bold text-emerald-700">{t.shopWidgets.cartFreeDelivery}</p>
             ) : (
               <p className="font-medium">
-                🚚 আর মাত্র <b>{formatMinor(200000n - previewMinor)}</b> টাকার কেনাকাটা করলেই <b>ফ্রি ডেলিভারি</b>!
+                {t.shopWidgets.cartFreeDeliveryPrefix}<b>{formatMinor(200000n - previewMinor)}</b>{t.shopWidgets.cartFreeDeliveryMid}<b>{t.shopWidgets.cartFreeDeliveryBold}</b>!
               </p>
             )}
           </div>
@@ -322,22 +322,22 @@ export default function CartPage() {
         </Link>
         {/* AB4 (AX5c): express checkout — renders only for a
             logged-in shopper with a live shop session. */}
-        <ExpressCheckout orgSlug={orgSlug} ensureCart={() => ensureCartToken(orgSlug)} />
+        <ExpressCheckout orgSlug={orgSlug} locale={locale} ensureCart={() => ensureCartToken(orgSlug)} />
         <Link href={`/shop/${orgSlug}`} className="block text-center text-xs font-bold text-stone-600 hover:text-neutral-900 hover:underline">{t.cart.continueShopping}</Link>
 
         {/* Fashion Trust Assurances */}
         <div className="border-t border-stone-100 pt-3 space-y-2 text-[11px] text-stone-600">
           <div className="flex items-center gap-2">
             <span>🚚</span>
-            <span>ঢাকার ভিতর ২৪-৪৮ ঘণ্টা এক্সপ্রেস ডেলিভারি</span>
+            <span>{t.shopWidgets.cartTrust1}</span>
           </div>
           <div className="flex items-center gap-2">
             <span>🔄</span>
-            <span>৭ দিনের সহজ সাইজ ও কালার এক্সচেঞ্জ গ্যারান্টি</span>
+            <span>{t.shopWidgets.cartTrust2}</span>
           </div>
           <div className="flex items-center gap-2">
             <span>💵</span>
-            <span>ক্যাশ অন ডেলিভারি (পণ্য দেখে মূল্য পরিশোধ)</span>
+            <span>{t.shopWidgets.cartTrust3}</span>
           </div>
         </div>
       </div>

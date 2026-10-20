@@ -1,0 +1,14 @@
+-- MB5 (ML14, CD-3): MessageTemplate per-locale variants — the
+-- workflow/journey variant-if-exists storage of the
+-- Multi-Language program.
+--
+-- MessageTemplate.variants is ONE additive nullable Json column
+-- holding the merchant's OWN per-locale variants of a template:
+-- { bn?: { subject?, body?, htmlBody? }, en?: { ... } }.
+-- Nullable with no default: every existing row keeps NULL and
+-- behaves byte-identically (authored subject/body/htmlBody sent
+-- verbatim in every locale, as before MB5). No existing column
+-- could carry this — variants must live on the shared template
+-- row the workflow engine already loads at send time.
+-- Hand-written to match schema.prisma exactly.
+ALTER TABLE "MessageTemplate" ADD COLUMN "variants" JSONB;

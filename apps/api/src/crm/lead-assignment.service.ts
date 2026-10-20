@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { effectiveAccess } from "../common/permission-catalog";
 import { isWithinSchedule } from "../inbox/working-hours";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * CRM C5 — Lead Auto-Assignment.
@@ -89,7 +90,7 @@ export class LeadAssignmentService {
 
   async updateSetting(organizationId: string, strategy: string): Promise<LeadAssignSettingView> {
     if (!(LEAD_ASSIGN_STRATEGIES as readonly string[]).includes(strategy)) {
-      throw new BadRequestException("leadAssignStrategy must be off | round_robin | least_open_leads");
+      throw badRequest("crm.leadassignstrategyMustBeOffRoundRobin");
     }
     const p = this.prisma as any;
     const existing = await p.crmSetting.findUnique({ where: { organizationId } }).catch(() => null);

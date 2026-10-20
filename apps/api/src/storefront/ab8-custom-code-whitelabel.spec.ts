@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { StorefrontService } from "./storefront.service";
 import { EmailProvider } from "../messaging/email.provider";
@@ -199,7 +200,7 @@ describe("AB8 AX23 — custom CSS/JS validation", () => {
     const prisma = makeStorefrontPrisma(); seedShop(prisma);
     const { svc } = makeStorefront(prisma);
     await expect(svc.updateSettings("org-1", "u-1", { customCss: "a{} </STYLE> <script>" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     expect(prisma.storefrontSetting.rows[0].customCss).toBeNull();
   });
 
@@ -207,14 +208,14 @@ describe("AB8 AX23 — custom CSS/JS validation", () => {
     const prisma = makeStorefrontPrisma(); seedShop(prisma);
     const { svc } = makeStorefront(prisma);
     await expect(svc.updateSettings("org-1", "u-1", { customCss: "a{} <!-- sneaky" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects customJs containing </script (case-insensitive)", async () => {
     const prisma = makeStorefrontPrisma(); seedShop(prisma);
     const { svc } = makeStorefront(prisma);
     await expect(svc.updateSettings("org-1", "u-1", { customJs: "x(); </ScRiPt>" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     expect(prisma.storefrontSetting.rows[0].customJs).toBeNull();
   });
 
@@ -223,9 +224,9 @@ describe("AB8 AX23 — custom CSS/JS validation", () => {
     const { svc } = makeStorefront(prisma);
     const big = "x".repeat(50001);
     await expect(svc.updateSettings("org-1", "u-1", { customCss: big } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.updateSettings("org-1", "u-1", { customJs: big } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     // Exactly at the cap is accepted.
     const ok = await svc.updateSettings("org-1", "u-1", { customCss: "x".repeat(50000) } as any);
     expect(ok.setting.customCss).toHaveLength(50000);
@@ -456,12 +457,12 @@ describe("AB8 AX24 — admin whiteLabel toggle", () => {
   it("rejects a non-boolean whiteLabel and unknown orgs, like neighbouring fields", async () => {
     const h = makeAdminHarness();
     await expect(h.svc.updateOrgLimits(h.actor, "org-1", { whiteLabel: "yes" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(h.svc.updateOrgLimits(h.actor, "no-such-org", { whiteLabel: true }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
     // Neighbouring behaviour unchanged: negative limits still refuse.
     await expect(h.svc.updateOrgLimits(h.actor, "org-1", { seatLimit: -1 }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     const org = await h.svc.updateOrgLimits(h.actor, "org-1", { seatLimit: 3 });
     expect(org.seatLimit).toBe(3);
     expect(org.whiteLabel).toBe(false);

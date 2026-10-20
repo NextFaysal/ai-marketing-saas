@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ProductsService } from "./products.service";
 
 /** CP5: POST products/push-batch service behaviour. */
@@ -66,10 +67,10 @@ describe("CP5 ProductsService.pushBatch", () => {
 
   it("empty array 400s (Bengali) and >50 400s (Bengali)", async () => {
     const { svc } = setup();
-    await expect(svc.pushBatch("org-1", "u1", [])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.pushBatch("org-1", "u1", [])).rejects.toBeInstanceOf(ApiException);
     await expect(svc.pushBatch("org-1", "u1", [])).rejects.toThrow("কমপক্ষে একটি");
     const fiftyOne = Array.from({ length: 51 }, (_, i) => `p${i}`);
-    await expect(svc.pushBatch("org-1", "u1", fiftyOne)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.pushBatch("org-1", "u1", fiftyOne)).rejects.toBeInstanceOf(ApiException);
     await expect(svc.pushBatch("org-1", "u1", fiftyOne)).rejects.toThrow("৫০");
   });
 

@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -112,37 +113,37 @@ describe("ORG5 — updateIdentity", () => {
 
   it("rejects a bad currency shape (too short, too long, digits)", async () => {
     const { svc, audit, org } = setup();
-    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "US" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "USDD" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "U1D" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "US" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "USDD" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { currency: "U1D" })).rejects.toBeInstanceOf(ApiException);
     expect(org.currency).toBe("BDT");
     expect(audit.calls).toHaveLength(0);
   });
 
   it("rejects a timezone Intl cannot resolve", async () => {
     const { svc, audit, org } = setup();
-    await expect(svc.updateIdentity("org-1", "owner-1", { timezone: "Mars/Olympus_Mons" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateIdentity("org-1", "owner-1", { timezone: "" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { timezone: "Mars/Olympus_Mons" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { timezone: "" })).rejects.toBeInstanceOf(ApiException);
     expect(org.timezone).toBe("Asia/Dhaka");
     expect(audit.calls).toHaveLength(0);
   });
 
   it("rejects a bad country code and an empty name", async () => {
     const { svc } = setup();
-    await expect(svc.updateIdentity("org-1", "owner-1", { country: "BGD" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateIdentity("org-1", "owner-1", { country: "B1" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateIdentity("org-1", "owner-1", { name: "   " })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { country: "BGD" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { country: "B1" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "owner-1", { name: "   " })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects an empty submission (no fields provided)", async () => {
     const { svc } = setup();
-    await expect(svc.updateIdentity("org-1", "owner-1", {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateIdentity("org-1", "owner-1", {})).rejects.toBeInstanceOf(ApiException);
   });
 
   it("non-admin member is refused (403); a non-member is not found", async () => {
     const { svc, audit, org } = setup();
-    await expect(svc.updateIdentity("org-1", "agent-1", { name: "Nope" })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.updateIdentity("org-1", "ghost-1", { name: "Nope" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateIdentity("org-1", "agent-1", { name: "Nope" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateIdentity("org-1", "ghost-1", { name: "Nope" })).rejects.toBeInstanceOf(ApiException);
     expect(org.name).toBe("Acme Trading");
     expect(audit.calls).toHaveLength(0);
   });

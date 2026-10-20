@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface QuickActionsSheetProps {
   isOpen: boolean;
@@ -18,13 +19,14 @@ export function QuickActionsSheet({
   onAddNote,
   onToggleResolve,
 }: QuickActionsSheetProps) {
+  const { t } = useLocale();
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in" onClick={onClose}>
       <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl animate-in slide-in-from-bottom duration-200" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <span className="text-base font-bold text-slate-900">দ্রুত অ্যাকশন</span>
+          <span className="text-base font-bold text-slate-900">{t("inbox.quickActionWord")}</span>
           <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={onClose}>✕</button>
         </div>
         <div className="grid grid-cols-2 gap-3 pt-4">
@@ -34,8 +36,8 @@ export function QuickActionsSheet({
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 text-lg">📄</span>
             <div>
-              <div className="font-bold text-slate-900">ইনভয়েস পাঠান</div>
-              <div className="text-[10px] text-slate-400">চ্যাট থেকে অর্ডার তৈরি</div>
+              <div className="font-bold text-slate-900">{t("inbox.sendInvoice")}</div>
+              <div className="text-[10px] text-slate-400">{t("inbox.createOrderFromChat")}</div>
             </div>
           </button>
           <button
@@ -44,8 +46,8 @@ export function QuickActionsSheet({
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 text-lg">📋</span>
             <div>
-              <div className="font-bold text-slate-900">টাস্ক তৈরি করুন</div>
-              <div className="text-[10px] text-slate-400">রিমাইন্ডার ও ফলোআপ</div>
+              <div className="font-bold text-slate-900">{t("inbox.createTaskBtn")}</div>
+              <div className="text-[10px] text-slate-400">{t("inbox.reminderFollowup")}</div>
             </div>
           </button>
           <button
@@ -54,8 +56,8 @@ export function QuickActionsSheet({
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 text-lg">📝</span>
             <div>
-              <div className="font-bold text-slate-900">নোট যোগ করুন</div>
-              <div className="text-[10px] text-slate-400">টিম প্রাইভেট হুইস্পার</div>
+              <div className="font-bold text-slate-900">{t("inbox.addNote")}</div>
+              <div className="text-[10px] text-slate-400">{t("inbox.teamPrivateWhisper")}</div>
             </div>
           </button>
           <button
@@ -64,8 +66,8 @@ export function QuickActionsSheet({
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 text-lg">✓</span>
             <div>
-              <div className="font-bold text-slate-900">মার্ক অ্যাজ রিজলভড</div>
-              <div className="text-[10px] text-slate-400">চ্যাট সমাধান করুন</div>
+              <div className="font-bold text-slate-900">{t("inbox.markResolved")}</div>
+              <div className="text-[10px] text-slate-400">{t("inbox.resolveChatAction")}</div>
             </div>
           </button>
         </div>

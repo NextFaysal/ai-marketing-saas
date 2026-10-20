@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { MENTION_TYPE_ICON, type MentionItem } from "@/lib/mentions";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * G6 @-mention picker — sibling of the PromptPicker with the same
@@ -20,6 +21,8 @@ export function MentionPicker({
   onPick: (item: MentionItem) => void;
   onDismiss: () => void;
 }) {
+  const { dict } = useLocale();
+  const S = dict.shared;
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -62,15 +65,15 @@ export function MentionPicker({
   }, [active]);
 
   return (
-    <div className="prompt-picker" role="listbox" aria-label="রেকর্ড বেছে নিন">
+    <div className="prompt-picker" role="listbox" aria-label={S.zzMnpAria}>
       <p className="px-3 pb-1 pt-2.5 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">
-        রেকর্ড উল্লেখ করুন — অর্ডার · কাস্টমার · পণ্য · ক্যাম্পেইন
+        {S.zzMnpHeader}
       </p>
       <div ref={listRef} className="max-h-60 overflow-y-auto px-1.5 pb-1.5">
         {loading && items.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-slate-400">খুঁজছি…</p>
+          <p className="px-2 py-3 text-sm text-slate-400">{S.zzMnpSearching}</p>
         ) : items.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-slate-400">কোনো রেকর্ড মেলেনি</p>
+          <p className="px-2 py-3 text-sm text-slate-400">{S.zzMnpEmpty}</p>
         ) : items.map((item, i) => (
           <div
             key={`${item.type}-${item.id}`}

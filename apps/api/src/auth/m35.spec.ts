@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { AuthService } from "./auth.service";
 import { totp } from "../common/totp";
 
@@ -33,14 +34,14 @@ describe("M35 tenant TOTP self-service", () => {
     expect(users[0].totpEnabled).toBe(false); // not enabled until confirmed
     expect(users[0].totpSecretEncrypted).not.toContain(enrolled.secret); // stored encrypted
 
-    await expect(svc.totpConfirm("u-1", "000000")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.totpConfirm("u-1", "000000")).rejects.toBeInstanceOf(ApiException);
     const code = totp(enrolled.secret);
     const confirmed = await svc.totpConfirm("u-1", code);
     expect(confirmed.totpEnabled).toBe(true);
     expect((await svc.totpStatus("u-1")).totpEnabled).toBe(true);
 
-    await expect(svc.totpEnroll("u-1")).rejects.toBeInstanceOf(BadRequestException); // already enabled
-    await expect(svc.totpDisable("u-1", "000000")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.totpEnroll("u-1")).rejects.toBeInstanceOf(ApiException); // already enabled
+    await expect(svc.totpDisable("u-1", "000000")).rejects.toBeInstanceOf(ApiException);
     const off = await svc.totpDisable("u-1", totp(enrolled.secret));
     expect(off.totpEnabled).toBe(false);
     expect(users[0].totpSecretEncrypted).toBeNull();
@@ -51,6 +52,6 @@ describe("M35 tenant TOTP self-service", () => {
 
   it("confirm without enrolment is refused", async () => {
     const { svc } = makeAuth();
-    await expect(svc.totpConfirm("u-1", "123456")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.totpConfirm("u-1", "123456")).rejects.toBeInstanceOf(ApiException);
   });
 });

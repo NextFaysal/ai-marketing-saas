@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import * as nodemailer from "nodemailer";
@@ -6,6 +6,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { encryptJson, decryptJson } from "../../integrations/crypto";
 import { InboxService } from "../inbox.service";
+import { badRequest, notFound } from "../../i18n/api-exception";
 
 export interface EmailCredentials {
   imapHost: string; imapPort: number;
@@ -46,7 +47,7 @@ export class EmailChannelService {
 
   async connect(organizationId: string, actorId: string, dto: EmailCredentials) {
     if (!dto.imapHost || !dto.smtpHost || !dto.user || !dto.password) {
-      throw new BadRequestException("IMAP host, SMTP host, user and password are all required");
+      throw badRequest("inbox.imapHostSmtpHostUserAnd");
     }
     const creds: EmailCredentials = {
       imapHost: dto.imapHost.trim(), imapPort: Number(dto.imapPort) || 993,
@@ -60,12 +61,12 @@ export class EmailChannelService {
       await imap.connect();
       await imap.logout();
     } catch (e) {
-      throw new BadRequestException(`IMAP login failed: ${e instanceof Error ? e.message : "connection error"}`);
+      throw badRequest("inbox.imapLoginFailed", { p1: e instanceof Error ? e.message : "connection error" });
     }
     try {
       await this.buildTransport(creds).verify();
     } catch (e) {
-      throw new BadRequestException(`SMTP verification failed: ${e instanceof Error ? e.message : "connection error"}`);
+      throw badRequest("inbox.smtpVerificationFailed", { p1: e instanceof Error ? e.message : "connection error" });
     }
     // CC7 (Connect Center): keyed by (organizationId, provider,
     // externalAccountId) — the key is the mailbox address, which
@@ -115,7 +116,7 @@ export class EmailChannelService {
       where: { organizationId, provider: "email", status: "CONNECTED" },
       include: { credential: true }, orderBy: { createdAt: "desc" },
     });
-    if (!integration?.credential) throw new NotFoundException("No connected email integration for this organization");
+    if (!integration?.credential) throw notFound("inbox.noConnectedEmailIntegrationForThis");
     // CC18: a tenant-paused email connection is skipped by the
     // scheduled sync — the skip marker is the job's result
     // (channel syncs keep no SyncJob rows to record it in).

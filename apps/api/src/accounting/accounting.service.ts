@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { PdfCanvas, buildPdf, moneyText } from "../courier/pdf";
 import { dhakaDateKey } from "../finance/finance-common";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * NF10 (FB4) — Full accounting upgrade: chart of accounts,
@@ -151,7 +152,7 @@ export function parseStatementDate(raw: unknown): Date | null {
 
 function monthRange(month: string): { month: string; start: Date; end: Date } {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month ?? "")) {
-    throw new BadRequestException("মাস YYYY-MM আকারে দিন (যেমন 2026-10)");
+    throw badRequest("accounting.monthFormatYmd");
   }
   const [y, m] = month.split("-").map(Number);
   const start = new Date(`${month}-01T00:00:00+06:00`);
@@ -203,7 +204,7 @@ export class AccountingService {
   private async accountByKey(orgId: string, systemKey: string): Promise<any> {
     const accounts = await this.ensureAccounts(orgId);
     const found = accounts.find((a: any) => a.systemKey === systemKey);
-    if (!found) throw new BadRequestException(`হিসাবের খাতটি পাওয়া যায়নি: ${systemKey}`);
+    if (!found) throw badRequest("accounting.ledgerAccountNotFound", { key: systemKey });
     return found;
   }
 
@@ -236,11 +237,11 @@ export class AccountingService {
     const code = String(dto?.code ?? "").trim();
     const name = String(dto?.name ?? "").trim();
     const type = String(dto?.type ?? "").trim();
-    if (!/^\d{3,10}$/.test(code)) throw new BadRequestException("অ্যাকাউন্ট কোড ৩–১০ সংখ্যার হতে হবে");
-    if (!name) throw new BadRequestException("অ্যাকাউন্টের নাম আবশ্যক");
-    if (!(ACCOUNT_TYPES as readonly string[]).includes(type)) throw new BadRequestException("অ্যাকাউন্টের ধরন asset | liability | equity | income | expense থেকে বেছে নিন");
+    if (!/^\d{3,10}$/.test(code)) throw badRequest("accounting.accountCodeFormat");
+    if (!name) throw badRequest("accounting.accountNameRequired");
+    if (!(ACCOUNT_TYPES as readonly string[]).includes(type)) throw badRequest("accounting.accountTypeChoices");
     const clash = await this.t("chartAccount").findFirst({ where: { organizationId: orgId, code } });
-    if (clash) throw new BadRequestException("এই কোডে ইতিমধ্যে একটি অ্যাকাউন্ট আছে");
+    if (clash) throw badRequest("accounting.accountCodeExists");
     const row = await this.t("chartAccount").create({ data: { organizationId: orgId, code, name, type, isSystem: false, systemKey: null } });
     await this.safeAudit({ organizationId: orgId, userId: actorId, action: "accounting.account_created", entityType: "ChartAccount", entityId: String(row.id), metadata: { code, type } });
     return { account: this.serializeAccount(row, 0n) };
@@ -252,21 +253,21 @@ export class AccountingService {
    * journal lines (history must keep its meaning). */
   async updateAccount(orgId: string, actorId: string, accountId: string, dto: { name?: string; type?: string }) {
     const account = await this.t("chartAccount").findFirst({ where: { id: accountId, organizationId: orgId } });
-    if (!account) throw new NotFoundException("অ্যাকাউন্টটি পাওয়া যায়নি");
+    if (!account) throw notFound("accounting.accountNotFoundAcc");
     const data: Record<string, any> = {};
     if (dto?.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("অ্যাকাউন্টের নাম আবশ্যক");
+      if (!name) throw badRequest("accounting.accountNameRequired");
       data.name = name;
     }
     if (dto?.type !== undefined && String(dto.type) !== String(account.type)) {
-      if (account.isSystem) throw new BadRequestException("সিস্টেম অ্যাকাউন্টের ধরন বদলানো যাবে না — শুধু নাম বদলানো যাবে");
-      if (!(ACCOUNT_TYPES as readonly string[]).includes(String(dto.type))) throw new BadRequestException("অ্যাকাউন্টের ধরন সঠিক নয়");
+      if (account.isSystem) throw badRequest("accounting.systemAccountTypeLocked");
+      if (!(ACCOUNT_TYPES as readonly string[]).includes(String(dto.type))) throw badRequest("accounting.accountTypeInvalid");
       const used = await this.t("journalLine").findFirst({ where: { accountId } }).catch(() => null);
-      if (used) throw new BadRequestException("জার্নালে ব্যবহৃত অ্যাকাউন্টের ধরন বদলানো যাবে না");
+      if (used) throw badRequest("accounting.usedAccountTypeLocked");
       data.type = String(dto.type);
     }
-    if (!Object.keys(data).length) throw new BadRequestException("কমপক্ষে একটি ক্ষেত্র পাঠান");
+    if (!Object.keys(data).length) throw badRequest("accounting.sendAtLeastOneField");
     const row = await this.t("chartAccount").update({ where: { id: accountId }, data });
     await this.safeAudit({ organizationId: orgId, userId: actorId, action: "accounting.account_updated", entityType: "ChartAccount", entityId: accountId, metadata: { fields: Object.keys(data) } });
     return { account: this.serializeAccount(row) };
@@ -274,10 +275,10 @@ export class AccountingService {
 
   async deleteAccount(orgId: string, actorId: string, accountId: string) {
     const account = await this.t("chartAccount").findFirst({ where: { id: accountId, organizationId: orgId } });
-    if (!account) throw new NotFoundException("অ্যাকাউন্টটি পাওয়া যায়নি");
-    if (account.isSystem) throw new BadRequestException("সিস্টেম অ্যাকাউন্ট মোছা যাবে না — শুধু নাম বদলানো যাবে");
+    if (!account) throw notFound("accounting.accountNotFoundAcc");
+    if (account.isSystem) throw badRequest("accounting.systemAccountNotDeletable");
     const used = await this.t("journalLine").findFirst({ where: { accountId } }).catch(() => null);
-    if (used) throw new BadRequestException("জার্নালে ব্যবহৃত অ্যাকাউন্ট মোছা যাবে না");
+    if (used) throw badRequest("accounting.usedAccountNotDeletable");
     await this.t("chartAccount").delete({ where: { id: accountId } });
     await this.safeAudit({ organizationId: orgId, userId: actorId, action: "accounting.account_deleted", entityType: "ChartAccount", entityId: accountId, metadata: {} });
     return { deleted: true };
@@ -305,23 +306,23 @@ export class AccountingService {
       }
     }
     const lines = input.lines ?? [];
-    if (lines.length < 2) throw new BadRequestException("জার্নাল এন্ট্রিতে কমপক্ষে ২টি লাইন থাকতে হবে");
+    if (lines.length < 2) throw badRequest("accounting.journalMinLines");
     let totalDebit = 0n, totalCredit = 0n;
     for (const l of lines) {
       const d = toBig(l.debitMinor), c = toBig(l.creditMinor);
-      if (d < 0n || c < 0n) throw new BadRequestException("ডেবিট/ক্রেডিট ঋণাত্মক হতে পারে না");
+      if (d < 0n || c < 0n) throw badRequest("accounting.debitCreditNegative");
       if ((d > 0n && c > 0n) || (d === 0n && c === 0n)) {
-        throw new BadRequestException("প্রতিটি লাইনে ডেবিট অথবা ক্রেডিট — ঠিক একটি পক্ষে পরিমাণ থাকতে হবে");
+        throw badRequest("accounting.journalLineOneSide");
       }
       totalDebit += d; totalCredit += c;
     }
     if (totalDebit === 0n || totalDebit !== totalCredit) {
-      throw new BadRequestException("জার্নাল এন্ট্রি ব্যালান্স হয়নি — মোট ডেবিট ও মোট ক্রেডিট সমান হতে হবে");
+      throw badRequest("accounting.journalNotBalanced");
     }
     // Every account must belong to THIS org.
     const accounts = await this.t("chartAccount").findMany({ where: { organizationId: orgId, id: { in: lines.map((l) => String(l.accountId)) } } });
     if (accounts.length !== new Set(lines.map((l) => String(l.accountId))).size) {
-      throw new BadRequestException("এক বা একাধিক অ্যাকাউন্ট এই organization-এর নয়");
+      throw badRequest("accounting.journalAccountNotOfOrg");
     }
     let entry: any;
     try {
@@ -357,16 +358,16 @@ export class AccountingService {
     date?: string; memo?: string;
     lines?: Array<{ accountId?: string; debitMinor?: unknown; creditMinor?: unknown }>;
   }) {
-    if (!dto?.date || !/^\d{4}-\d{2}-\d{2}$/.test(dto.date)) throw new BadRequestException("তারিখ YYYY-MM-DD আকারে দিন");
+    if (!dto?.date || !/^\d{4}-\d{2}-\d{2}$/.test(dto.date)) throw badRequest("accounting.dateFormatYmdAcc");
     const date = new Date(`${dto.date}T12:00:00+06:00`);
-    if (Number.isNaN(date.getTime()) || dhakaDateKey(date) !== dto.date) throw new BadRequestException("তারিখটি সঠিক নয়");
+    if (Number.isNaN(date.getTime()) || dhakaDateKey(date) !== dto.date) throw badRequest("accounting.dateInvalidAcc");
     await this.ensureAccounts(orgId);
     const lines = (dto.lines ?? []).map((l) => ({
       accountId: String(l.accountId ?? ""),
       debitMinor: toBig(l.debitMinor as any),
       creditMinor: toBig(l.creditMinor as any),
     }));
-    if (lines.some((l) => !l.accountId)) throw new BadRequestException("প্রতিটি লাইনে accountId আবশ্যক");
+    if (lines.some((l) => !l.accountId)) throw badRequest("accounting.journalLineAccountIdRequired");
     const { entry, lines: created } = await this.createJournalEntry(orgId, actorId, {
       date, memo: dto.memo ? String(dto.memo).slice(0, 500) : null,
       sourceType: "manual", sourceId: null, lines,
@@ -721,23 +722,23 @@ export class AccountingService {
     const amountColumn = String(mapping.amountColumn ?? "").trim();
     const descriptionColumn = mapping.descriptionColumn ? String(mapping.descriptionColumn).trim() : undefined;
     const directionColumn = mapping.directionColumn ? String(mapping.directionColumn).trim() : undefined;
-    if (!dateColumn || !amountColumn) throw new BadRequestException("ম্যাপিং-এ dateColumn ও amountColumn আবশ্যক");
-    if (typeof dto?.csvText !== "string" || !dto.csvText.trim()) throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+    if (!dateColumn || !amountColumn) throw badRequest("accounting.mappingColumnsRequired");
+    if (typeof dto?.csvText !== "string" || !dto.csvText.trim()) throw badRequest("accounting.csvNoHeader");
     const { createHash } = await import("crypto");
     const fileHash = createHash("sha256").update(dto.csvText).digest("hex");
     if (!dto.force) {
       const prior = await this.t("reconciliationImport").findFirst({ where: { organizationId: orgId, kind: "bank_statement", fileHash } });
-      if (prior) throw new BadRequestException("এই ফাইলটি আগেই import করা হয়েছে");
+      if (prior) throw badRequest("accounting.fileAlreadyImported");
     }
     const parsed = Papa.parse<Record<string, string>>(dto.csvText, { header: true, skipEmptyLines: "greedy", transformHeader: (h) => h.trim() });
     const headers = ((parsed.meta.fields ?? []) as string[]).map((h) => h.trim()).filter(Boolean);
-    if (!headers.length) throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+    if (!headers.length) throw badRequest("accounting.csvNoHeader");
     for (const col of [dateColumn, amountColumn, descriptionColumn, directionColumn]) {
-      if (col && !headers.includes(col)) throw new BadRequestException(`mapping-এর কলাম পাওয়া যায়নি: ${col}`);
+      if (col && !headers.includes(col)) throw badRequest("accounting.mappingColumnNotFound", { column: col });
     }
     const rows = (parsed.data ?? []).filter((r) => r && Object.values(r).some((v) => String(v ?? "").trim() !== ""));
-    if (!rows.length) throw new BadRequestException("CSV ফাইলে কোনো data row নেই");
-    if (rows.length > 5000) throw new BadRequestException("একবারে সর্বোচ্চ ৫০০০ সারি import করা যাবে");
+    if (!rows.length) throw badRequest("accounting.csvNoDataRows");
+    if (rows.length > 5000) throw badRequest("accounting.importRowsMax");
 
     const importRow = await this.t("reconciliationImport").create({
       data: {
@@ -853,7 +854,7 @@ export class AccountingService {
 
   async listStatementLines(orgId: string, importId: string, matchState?: string) {
     const imp = await this.t("reconciliationImport").findFirst({ where: { id: importId, organizationId: orgId, kind: "bank_statement" } });
-    if (!imp) throw new NotFoundException("স্টেটমেন্ট import-টি পাওয়া যায়নি");
+    if (!imp) throw notFound("accounting.statementImportNotFound");
     const where: any = { importId, organizationId: orgId };
     if (matchState) where.matchState = matchState;
     const rows = await this.t("reconciliationLine").findMany({ where, orderBy: { rowNumber: "asc" } });
@@ -866,21 +867,21 @@ export class AccountingService {
    * auto-confirms (spec-proven). */
   async resolveStatementLine(orgId: string, actorId: string, lineId: string, dto: { action?: string; refType?: string; refId?: string }) {
     const line = await this.t("reconciliationLine").findFirst({ where: { id: lineId, organizationId: orgId } });
-    if (!line) throw new NotFoundException("স্টেটমেন্ট লাইনটি পাওয়া যায়নি");
+    if (!line) throw notFound("accounting.statementLineNotFound");
     const imp = await this.t("reconciliationImport").findFirst({ where: { id: String(line.importId), organizationId: orgId, kind: "bank_statement" } });
-    if (!imp) throw new NotFoundException("স্টেটমেন্ট লাইনটি পাওয়া যায়নি");
+    if (!imp) throw notFound("accounting.statementLineNotFound");
     if (dto?.action === "confirm") {
       const refType = dto.refType ?? line.suggestedRefType;
       const refId = dto.refId ?? line.suggestedRefId;
-      if (!refType || !refId) throw new BadRequestException("মেলানোর জন্য কোনো প্রস্তাব বা রেকর্ড বেছে দেওয়া হয়নি");
+      if (!refType || !refId) throw badRequest("accounting.matchNothingChosen");
       if (refType === "journal_entry") {
         const entry = await this.t("journalEntry").findFirst({ where: { id: String(refId), organizationId: orgId } });
-        if (!entry) throw new BadRequestException("জার্নাল এন্ট্রিটি এই organization-এর নয়");
+        if (!entry) throw badRequest("accounting.journalEntryNotOfOrg");
       } else if (refType === "payment_verification") {
         const pv = await this.t("paymentVerification").findFirst({ where: { id: String(refId), organizationId: orgId } });
-        if (!pv) throw new BadRequestException("পেমেন্ট রেকর্ডটি এই organization-এর নয়");
+        if (!pv) throw badRequest("accounting.paymentRecordNotOfOrg");
       } else {
-        throw new BadRequestException("refType journal_entry অথবা payment_verification হতে হবে");
+        throw badRequest("accounting.refTypeInvalid");
       }
       const updated = await this.t("reconciliationLine").update({
         where: { id: lineId },
@@ -897,6 +898,6 @@ export class AccountingService {
       await this.safeAudit({ organizationId: orgId, userId: actorId, action: "accounting.statement_line_rejected", entityType: "ReconciliationLine", entityId: lineId, metadata: {} });
       return { line: this.serializeStatementLine(updated) };
     }
-    throw new BadRequestException(`অজানা action: ${dto?.action} — "confirm" বা "reject" দিন`);
+    throw badRequest("accounting.unknownActionConfirmReject", { action: dto?.action });
   }
 }

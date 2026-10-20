@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeAdKpis, chooseCostForDate, contributionProfit } from "./metrics";
+import { badRequest } from "../i18n/api-exception";
 
 export const REVENUE_EXCLUDED_STATUSES = ["cancelled", "refunded", "failed"];
 
@@ -8,11 +9,11 @@ export function parseRange(fromStr?: string, toStr?: string): { from: Date; toEx
   const today = new Date();
   const to = toStr ? new Date(`${toStr}T00:00:00.000Z`) : new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const from = fromStr ? new Date(`${fromStr}T00:00:00.000Z`) : new Date(to.getTime() - 29 * 86400000);
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw new BadRequestException("Invalid from/to date (expected YYYY-MM-DD)");
-  if (from > to) throw new BadRequestException("from must be before to");
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw badRequest("analytics.invalidFromToDateExpectedYyyy");
+  if (from > to) throw badRequest("analytics.fromMustBeBeforeTo");
   const toExclusive = new Date(to.getTime() + 86400000);
   const days = Math.round((toExclusive.getTime() - from.getTime()) / 86400000);
-  if (days > 366) throw new BadRequestException("Range too large: max 366 days");
+  if (days > 366) throw badRequest("analytics.rangeTooLargeMax366Days");
   return { from, toExclusive, days };
 }
 

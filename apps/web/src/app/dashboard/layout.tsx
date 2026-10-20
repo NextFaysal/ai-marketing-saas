@@ -29,10 +29,13 @@ import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 import { orgArchived, orgSuspended, type SwitcherOrg } from "@/lib/org-switcher";
 import OrgSwitcher from "./OrgSwitcher";
+import { LanguageSwitcher, LocaleProvider, useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
 
 interface NavGroup {
   id: string;
-  title: string;
+  /** Key into the i18n `shell` namespace (MB2 ML4). */
+  titleKey: string;
   icon: NavIconName;
   hrefs: string[];
 }
@@ -40,13 +43,13 @@ interface NavGroup {
 const GROUPS: NavGroup[] = [
   {
     id: "core",
-    title: "সারসংক্ষেপ ও AI",
+    titleKey: "groupCore",
     icon: "groupCore",
     hrefs: ["/dashboard", "/dashboard/ai", "/dashboard/reports", "/dashboard/portfolio", "/dashboard/agency"],
   },
   {
     id: "commerce",
-    title: "ইন্টিগ্রেশন ও প্রফিট",
+    titleKey: "groupCommerce",
     icon: "groupCommerce",
     hrefs: ["/dashboard/integrations", "/dashboard/attribution", "/dashboard/profit", "/dashboard/funnels", "/dashboard/order-notifications", "/dashboard/fraud"],
   },
@@ -54,25 +57,25 @@ const GROUPS: NavGroup[] = [
   // অপারেশন/বৃদ্ধি/টাকা/দোকান) — collapsible like every sibling group.
   ...COMMERCE_NAV_SECTIONS.map((s) => ({
     id: s.id,
-    title: s.title,
+    titleKey: s.titleKey,
     icon: "groupCommerce" as NavIconName,
     hrefs: [...s.hrefs],
   })),
   {
     id: "marketing",
-    title: "বিজ্ঞাপন ও ক্যাম্পেইন",
+    titleKey: "groupMarketing",
     icon: "groupMarketing",
     hrefs: ["/dashboard/campaigns", "/dashboard/campaign-builder", "/dashboard/ad-accounts", "/dashboard/social-posts", "/dashboard/creatives", "/dashboard/creative-studio", "/dashboard/video-studio", "/dashboard/audiences", "/dashboard/analytics", "/dashboard/competitors"],
   },
   {
     id: "crm",
-    title: "গ্রাহক ও অটোমেশন",
+    titleKey: "groupCrm",
     icon: "groupCrm",
     hrefs: ["/dashboard/inbox", "/dashboard/leads", "/dashboard/comments", "/dashboard/messaging", "/dashboard/automations", "/dashboard/workflows", "/dashboard/ai-instructions"],
   },
   {
     id: "settings",
-    title: "টিম ও সেটিংস",
+    titleKey: "groupSettings",
     icon: "groupSettings",
     hrefs: ["/dashboard/team", "/dashboard/settings", "/dashboard/settings/webhooks", "/dashboard/billing", "/dashboard/referral", "/dashboard/support", "/dashboard/changelog", "/dashboard/connections", "/dashboard/setup"],
   },
@@ -96,6 +99,8 @@ function NavContent({
   onNavigate?: () => void;
   searchQuery: string;
 }) {
+  const { dict, t } = useLocale();
+  const labelOf = (i: { labelKey: string; label: string }) => t(`shell.${i.labelKey}`) || i.label;
   const byHref = useMemo(
     () => new Map<string, (typeof NAV_ITEMS)[number]>([...NAV_ITEMS, ...COMMERCE_NAV_ITEMS].map((i) => [i.href as string, i])),
     [],
@@ -121,7 +126,7 @@ function NavContent({
           .filter(Boolean) as (typeof NAV_ITEMS)[number][];
 
         const filtered = isSearching
-          ? items.filter((i) => i.label.toLowerCase().includes(q) || i.href.toLowerCase().includes(q))
+          ? items.filter((i) => labelOf(i).toLowerCase().includes(q) || i.href.toLowerCase().includes(q))
           : items;
 
         if (filtered.length === 0) return null;
@@ -139,7 +144,7 @@ function NavContent({
             >
               <span className="flex items-center gap-1.5 truncate">
                 <GroupIcon className="h-3.5 w-3.5 opacity-75" />
-                <span>{group.title}</span>
+                <span>{t(`shell.${group.titleKey}`)}</span>
               </span>
               {!isSearching && (
                 <span className="text-[10px] text-slate-500 transition-transform duration-200">
@@ -155,16 +160,16 @@ function NavContent({
                   const ItemIcon = NAV_ICONS[item.icon];
                   const active = href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
                   if (!item.ready) {
-                    const phase = (item as { phase?: string }).phase ?? "শীঘ্রই";
+                    const phase = (item as { phase?: string }).phase ?? dict.shell.comingSoon;
                     return (
                       <div
                         key={href}
                         className="flex items-center justify-between rounded-xl px-2.5 py-2 text-[13px] font-medium text-slate-500/80"
-                        title={`আসছে: ${phase}`}
+                        title={t("shell.comingTitle", { phase })}
                       >
                         <span className="flex items-center gap-2.5 truncate">
                           <ItemIcon className="h-4 w-4 opacity-50" />
-                          <span className="truncate">{item.label}</span>
+                          <span className="truncate">{labelOf(item)}</span>
                         </span>
                         <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">
                           {phase}
@@ -187,7 +192,7 @@ function NavContent({
                     >
                       <span className="flex items-center gap-2.5 min-w-0">
                         <ItemIcon className={`h-[18px] w-[18px] transition-transform group-hover:scale-110 ${active ? "opacity-100" : "opacity-75"}`} />
-                        <span className="truncate">{item.label}</span>
+                        <span className="truncate">{labelOf(item)}</span>
                       </span>
                       {active && (
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white shadow-sm" />
@@ -234,6 +239,7 @@ function Brand({ branding }: { branding?: OrgBrandingLite | null }) {
 
 
 function NotificationBell() {
+  const { dict, locale } = useLocale();
   const [count, setCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<{ id: string; type: string; title: string; body?: string | null; conversationId?: string | null; readAt?: string | null; createdAt: string }[]>([]);
@@ -264,21 +270,21 @@ function NotificationBell() {
   }
   return (
     <div className="relative">
-      <button onClick={toggle} className="relative rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm" aria-label="নোটিফিকেশন">
+      <button onClick={toggle} className="relative rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm" aria-label={dict.shell.notifications}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/></svg>
         {count > 0 ? <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{count}</span> : null}
       </button>
       {open ? (
         <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border bg-white p-2 shadow-xl">
-          <div className="px-2 py-1 text-xs font-bold text-slate-500">নোটিফিকেশন</div>
-          {items.length === 0 ? <p className="px-2 py-3 text-sm text-slate-400">কোনো নোটিফিকেশন নেই</p> : items.map((n) => (
+          <div className="px-2 py-1 text-xs font-bold text-slate-500">{dict.shell.notifications}</div>
+          {items.length === 0 ? <p className="px-2 py-3 text-sm text-slate-400">{dict.shell.notificationsEmpty}</p> : items.map((n) => (
             <button key={n.id} onClick={() => readOne(n.id)} className={`block w-full rounded-xl px-2 py-2 text-left hover:bg-slate-50 ${n.readAt ? "opacity-60" : ""}`}>
               <div className="text-[13px] font-medium text-slate-800">{n.type === "urgent" ? <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-red-500 align-middle" /> : n.type === "mention" ? "@ " : <UserRound className="mr-1 inline h-3.5 w-3.5 -translate-y-px text-slate-500" />}{n.title}</div>
               {n.body ? <div className="truncate text-xs text-slate-500">{n.body}</div> : null}
-              <div className="text-[10px] text-slate-400">{new Date(n.createdAt).toLocaleString()}</div>
+              <div className="text-[10px] text-slate-400">{fmtDateTime(locale, n.createdAt)}</div>
             </button>
           ))}
-          <a href="/dashboard/inbox" className="block px-2 py-1.5 text-center text-xs font-semibold text-brand-600 hover:underline">ইনবক্সে যান</a>
+          <a href="/dashboard/inbox" className="block px-2 py-1.5 text-center text-xs font-semibold text-brand-600 hover:underline">{dict.shell.goToInbox}</a>
         </div>
       ) : null}
     </div>
@@ -292,6 +298,7 @@ function NotificationBell() {
  * discards the token — view-as tokens live 30 minutes max.
  */
 function ViewAsBanner() {
+  const { dict, t } = useLocale();
   const [info, setInfo] = useState<{ adminEmail: string; mode: string } | null>(null);
   useEffect(() => {
     try {
@@ -310,8 +317,8 @@ function ViewAsBanner() {
   return (
     <div className="px-4 pt-4 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
-        <span><Eye className="mr-1 inline h-4 w-4 -translate-y-px" /><b>Admin View-As সেশন চলছে</b> — {info.adminEmail} এই ওয়ার্কস্পেসটি {info.mode === "write" ? "Write" : "Read-only"} মোডে দেখছেন। {info.mode !== "write" ? "কোনো পরিবর্তন করা যাবে না।" : "পরিবর্তনগুলো Audit Log এ রেকর্ড হয়।"}</span>
-        <button onClick={end} className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">সেশন শেষ করুন</button>
+        <span><Eye className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.viewAsTitle}</b> — {t("shell.viewAsBody", { email: info.adminEmail, mode: info.mode === "write" ? dict.shell.viewAsModeWrite : dict.shell.viewAsModeRead })} {info.mode !== "write" ? dict.shell.viewAsReadNote : dict.shell.viewAsWriteNote}</span>
+        <button onClick={end} className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">{dict.shell.viewAsEnd}</button>
       </div>
     </div>
   );
@@ -325,6 +332,7 @@ function ViewAsBanner() {
  * may read it); failures render nothing (best-effort UI).
  */
 function PracticeBanner() {
+  const { dict } = useLocale();
   const [on, setOn] = useState(false);
   useEffect(() => {
     const orgId = getOrganizationId();
@@ -344,8 +352,8 @@ function PracticeBanner() {
   return (
     <div className="px-4 pt-4 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-400 bg-amber-100 px-4 py-3 text-sm text-amber-950">
-        <span><FlaskConical className="mr-1 inline h-4 w-4 -translate-y-px" /><b>Practice Mode চালু আছে</b> — কোনো কিছুই আসল customer-এর কাছে যাবে না। প্র্যাক্টিস বার্তা ও অর্ডার শুধু অনুশীলনের জন্য।</span>
-        <a href="/dashboard/setup" className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">Setup Guide-এ যান</a>
+        <span><FlaskConical className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.practiceTitle}</b> — {dict.shell.practiceBody}</span>
+        <a href="/dashboard/setup" className="ml-auto rounded-lg bg-amber-900 px-3 py-1.5 font-semibold text-white">{dict.shell.practiceLink}</a>
       </div>
     </div>
   );
@@ -360,19 +368,20 @@ function PracticeBanner() {
  * adds a matching spacer under <main> on mobile.
  */
 function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () => void }) {
+  const { dict } = useLocale();
   // If user is inside an active chat thread or conversation detail, keep bar tidy
   const items: { label: string; href: string; icon: NavIconName }[] = [
-    { label: "হোম", href: "/dashboard", icon: "overview" },
-    { label: "ইনবক্স", href: "/dashboard/inbox", icon: "inbox" },
-    { label: "অর্ডার", href: "/dashboard/orders", icon: "orders" },
-    { label: "POS", href: "/dashboard/pos", icon: "pos" },
-    { label: "ক্যাম্পেইন", href: "/dashboard/campaigns", icon: "campaigns" },
+    { label: dict.shell.mobileHome, href: "/dashboard", icon: "overview" },
+    { label: dict.shell.mobileInbox, href: "/dashboard/inbox", icon: "inbox" },
+    { label: dict.shell.mobileOrders, href: "/dashboard/orders", icon: "orders" },
+    { label: dict.shell.mobilePos, href: "/dashboard/pos", icon: "pos" },
+    { label: dict.shell.mobileCampaigns, href: "/dashboard/campaigns", icon: "campaigns" },
   ];
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 backdrop-blur-lg lg:hidden shadow-[0_-4px_20px_rgba(0,0,0,0.05)]"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      aria-label="মোবাইল নেভিগেশন"
+      aria-label={dict.shell.mobileNavLabel}
     >
       <div className="grid grid-cols-6 h-[58px]">
         {items.map((item) => {
@@ -398,10 +407,10 @@ function MobileBottomNav({ pathname, onMore }: { pathname: string; onMore: () =>
         <button
           onClick={onMore}
           className="relative flex flex-col items-center justify-center gap-0.5 text-[10.5px] font-semibold text-slate-500 hover:text-slate-800 transition active:scale-95"
-          aria-label="সকল মেনু"
+          aria-label={dict.shell.allMenus}
         >
           <Menu className="h-5 w-5" />
-          <span>মেনু</span>
+          <span>{dict.shell.mobileMenu}</span>
         </button>
       </div>
     </nav>
@@ -416,6 +425,7 @@ interface PlatformStatus {
 }
 
 function PlatformBanner() {
+  const { dict, t, locale } = useLocale();
   const [status, setStatus] = useState<PlatformStatus | null>(null);
   useEffect(() => {
     const oid = getOrganizationId();
@@ -427,16 +437,16 @@ function PlatformBanner() {
     <div className="space-y-2 px-4 pt-4 sm:px-6 lg:px-8">
       {w?.active ? (
         <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>নির্ধারিত রক্ষণাবেক্ষণ চলছে</b> ({new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত)। {w.message || "কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।"}{w.hardLockout ? " এই সময়ে নতুন পরিবর্তন সংরক্ষণ করা যাবে না।" : ""}{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.maintActiveTitle}</b> ({fmtDateTime(locale, w.endsAt)} {dict.shell.maintUntilSuffix})। {w.message || dict.shell.maintFallback}{w.hardLockout ? ` ${dict.shell.maintHardLockout}` : ""}{status.supportContact ? ` ${dict.shell.contactPrefix} ${status.supportContact}` : ""}
         </div>
       ) : status.maintenanceMode ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>রক্ষণাবেক্ষণ চলছে:</b> প্ল্যাটফর্ম টিম একটি নির্ধারিত রক্ষণাবেক্ষণ চালাচ্ছে। কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।{status.supportContact ? ` যোগাযোগ: ${status.supportContact}` : ""}
+          <Wrench className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.maintTitle}</b> {dict.shell.maintBody}{status.supportContact ? ` ${dict.shell.contactPrefix} ${status.supportContact}` : ""}
         </div>
       ) : null}
       {w?.upcoming ? (
         <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-          <CalendarDays className="mr-1 inline h-4 w-4 -translate-y-px" /><b>আসন্ন রক্ষণাবেক্ষণ:</b> {new Date(w.startsAt).toLocaleString("bn-BD")} থেকে {new Date(w.endsAt).toLocaleString("bn-BD")} পর্যন্ত। {w.message}
+          <CalendarDays className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.maintUpcomingTitle}</b> {t("shell.maintUpcomingRange", { starts: fmtDateTime(locale, w.startsAt), ends: fmtDateTime(locale, w.endsAt) })} {w.message}
         </div>
       ) : null}
       {status.announcement ? (
@@ -451,6 +461,7 @@ function PlatformBanner() {
 interface BillingLite { subscription: { plan: string; status: string; currentPeriodEnd: string | null } | null }
 
 function SubscriptionBanner() {
+  const { dict, t, locale } = useLocale();
   const [sub, setSub] = useState<BillingLite["subscription"]>(null);
   useEffect(() => {
     let tries = 0;
@@ -473,7 +484,7 @@ function SubscriptionBanner() {
     return (
       <div className="px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
-          <OctagonX className="mr-1 inline h-4 w-4 -translate-y-px" /><b>সাবস্ক্রিপশনের মেয়াদ পেরিয়ে গেছে (Past Due):</b> ওয়ার্কস্পেস এখন <b>শুধু দেখার</b> মোডে আছে — নতুন কিছু তৈরি/বদল করা যাবে না। পেমেন্ট বা প্ল্যানের জন্য <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজে</a> যান।
+          <OctagonX className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{dict.shell.pastDueTitle}</b> {dict.shell.pastDueBodyBefore} <b>{dict.shell.pastDueReadOnly}</b> {dict.shell.pastDueBodyAfter} <a className="font-semibold underline" href="/dashboard/billing">{dict.shell.billingPageLink}</a> {dict.shell.pastDueGoSuffix}
         </div>
       </div>
     );
@@ -482,7 +493,7 @@ function SubscriptionBanner() {
     return (
       <div className="px-4 pt-4 sm:px-6 lg:px-8">
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <Clock className="mr-1 inline h-4 w-4 -translate-y-px" /><b>ট্রায়াল শেষ হতে {daysLeft > 0 ? `${daysLeft} দিন` : "আজই"} বাকি</b> ({sub.plan} প্ল্যান)। চালিয়ে যেতে <a className="font-semibold underline" href="/dashboard/billing">বিলিং পেজ</a> থেকে প্ল্যান বেছে নিন।
+          <Clock className="mr-1 inline h-4 w-4 -translate-y-px" /><b>{daysLeft > 0 ? t("shell.trialEndsIn", { days: `${fmtNumber(locale, daysLeft)} ${dict.shell.trialDaysUnit}` }) : dict.shell.trialEndsToday}</b> {t("shell.trialPlanSuffix", { plan: sub.plan })} <a className="font-semibold underline" href="/dashboard/billing">{dict.shell.billingPageLink}</a> {dict.shell.trialChooseSuffix}
         </div>
       </div>
     );
@@ -502,6 +513,7 @@ function SubscriptionBanner() {
  * renders the children untouched.
  */
 function OrgStateGate({ children }: { children: React.ReactNode }) {
+  const { dict, t, locale } = useLocale();
   const [gate, setGate] = useState<"loading" | "open" | "suspended" | "archived" | "mfa" | "session">("loading");
   const [org, setOrg] = useState<SwitcherOrg | null>(null);
   const [supportContact, setSupportContact] = useState("");
@@ -564,7 +576,7 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
     try {
       await apiFetch(`/organizations/${id}/restore`, { method: "POST" });
       window.location.reload();
-    } catch (e) { setGateError(e instanceof Error ? e.message : "Restore করা যায়নি"); setBusy(""); }
+    } catch (e) { setGateError(e instanceof Error ? e.message : dict.shell.restoreErrorFallback); setBusy(""); }
   }
 
   async function createExport() {
@@ -573,7 +585,7 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
     try {
       await apiFetch(`/organizations/${id}/data-exports`, { method: "POST" });
       await loadExports();
-    } catch (e) { setGateError(e instanceof Error ? e.message : "এক্সপোর্ট শুরু করা যায়নি"); }
+    } catch (e) { setGateError(e instanceof Error ? e.message : dict.shell.exportErrorFallback); }
     finally { setBusy(""); }
   }
 
@@ -585,14 +597,14 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
       const res = await fetch(`${API_URL}/organizations/${id}/data-exports/${row.id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error("ডাউনলোড করা যায়নি — এক্সপোর্টটির মেয়াদ শেষ হয়ে থাকতে পারে।");
+      if (!res.ok) throw new Error(dict.shell.downloadExpiredError);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `org-export-${row.id}.json`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) { setGateError(e instanceof Error ? e.message : "ডাউনলোড করা যায়নি"); }
+    } catch (e) { setGateError(e instanceof Error ? e.message : dict.shell.downloadErrorFallback); }
     finally { setBusy(""); }
   }
 
@@ -601,7 +613,7 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
   // see (and switch away from) their other organizations.
   if (pathname.startsWith("/dashboard/portfolio")) return <>{children}</>;
   if (gate === "loading") {
-    return <p className="py-10 text-center text-sm text-slate-400">লোড হচ্ছে…</p>;
+    return <p className="py-10 text-center text-sm text-slate-400">{dict.common.loading}</p>;
   }
   if (gate === "open" || !org) return <>{children}</>;
 
@@ -612,18 +624,17 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
         <div className="card space-y-4 p-6 text-center sm:p-8">
           <div className="flex justify-center"><OctagonX className="h-11 w-11 text-rose-500" /></div>
           <h1 className="text-lg font-bold text-slate-900">
-            {deleted ? "এই Organization টি বন্ধ করে দেওয়া হয়েছে" : "এই Organization টি সাময়িকভাবে স্থগিত আছে"}
+            {deleted ? dict.shell.suspendedTitleDeleted : dict.shell.suspendedTitle}
           </h1>
           <p className="text-sm leading-relaxed text-slate-600">
-            প্ল্যাটফর্ম টিম <b>{org.name}</b>-এর কাজ আপাতত বন্ধ রেখেছে, তাই এই ওয়ার্কস্পেসে এখন ঢোকা যাচ্ছে না।
-            আপনার সব তথ্য (পণ্য, অর্ডার, গ্রাহক, হিসাব) <b>নিরাপদে সংরক্ষিত আছে — কিছুই মোছা হয়নি</b>।
-            {deleted ? " পুনরায় চালুর বিষয়ে সিদ্ধান্ত প্ল্যাটফর্ম টিমের।" : " স্থগিত অবস্থা উঠলেই সব আবার আগের মতো চলবে।"}
+            {t("shell.suspendedBody", { org: org.name })}
+            {deleted ? ` ${dict.shell.suspendedDeletedSuffix}` : ` ${dict.shell.suspendedActiveSuffix}`}
           </p>
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            ভুল হয়েছে মনে হলে বা বিস্তারিত জানতে সাপোর্টে যোগাযোগ করুন
+            {dict.shell.supportNote}
             {supportContact ? <> — <b>{supportContact}</b></> : null}।
           </p>
-          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন।</p>
+          <p className="text-xs text-slate-400">{dict.shell.switchOrgHint}</p>
         </div>
       </div>
     );
@@ -634,16 +645,14 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
       <div className="mx-auto max-w-xl py-10">
         <div className="card space-y-4 p-6 text-center sm:p-8">
           <div className="flex justify-center"><ShieldCheck className="h-11 w-11 text-sky-500" /></div>
-          <h1 className="text-lg font-bold text-slate-900">এই Organization-এ MFA (2FA) বাধ্যতামূলক</h1>
+          <h1 className="text-lg font-bold text-slate-900">{dict.shell.mfaTitle}</h1>
           <p className="text-sm leading-relaxed text-slate-600">
-            <b>{org.name}</b>-এর নিরাপত্তা নীতি বলছে: যার অ্যাকাউন্টে দ্বি-স্তর যাচাই (2FA) চালু নেই,
-            সে এই Organization-এ কাজ করতে পারবে না। আপনার অ্যাকাউন্টে এখনো 2FA চালু হয়নি —
-            চালু করলেই এই Organization আবার খুলে যাবে, কোনো তথ্য হারাবে না।
+            {t("shell.mfaBody", { org: org.name })}
           </p>
           <a className="btn-primary inline-block min-h-[44px] px-5 leading-[44px]" href="/dashboard/settings#hub-my-security">
-            🔐 এখনই 2FA চালু করুন
+            {dict.shell.mfaCta}
           </a>
-          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন — এই নিয়ম শুধু এই Organization-এর জন্যই।</p>
+          <p className="text-xs text-slate-400">{dict.shell.switchOrgHint} — {dict.shell.switchOrgHintRuleSuffix}</p>
         </div>
       </div>
     );
@@ -654,19 +663,18 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
       <div className="mx-auto max-w-xl py-10">
         <div className="card space-y-4 p-6 text-center sm:p-8">
           <div className="flex justify-center"><Clock className="h-11 w-11 text-sky-500" /></div>
-          <h1 className="text-lg font-bold text-slate-900">আপনার লগইন-সেশনটি এই Organization-এর জন্য মেয়াদোত্তীর্ণ</h1>
+          <h1 className="text-lg font-bold text-slate-900">{dict.shell.sessionTitle}</h1>
           <p className="text-sm leading-relaxed text-slate-600">
-            <b>{org.name}</b>-এর নিরাপত্তা নীতিতে লগইন-সেশনের সর্বোচ্চ বয়স বেঁধে দেওয়া আছে, আর আপনার
-            বর্তমান সেশন তার চেয়ে পুরনো। একবার লগআউট করে আবার লগইন করলেই এই Organization আবার খুলে যাবে।
+            {t("shell.sessionBody", { org: org.name })}
           </p>
           <button
             type="button"
             className="btn-primary min-h-[44px] px-5"
             onClick={() => { localStorage.clear(); window.location.href = "/login"; }}
           >
-            🔁 লগআউট করে আবার লগইন করুন
+            {dict.shell.sessionCta}
           </button>
-          <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন — এই নিয়ম শুধু এই Organization-এর জন্যই।</p>
+          <p className="text-xs text-slate-400">{dict.shell.switchOrgHint} — {dict.shell.switchOrgHintRuleSuffix}</p>
         </div>
       </div>
     );
@@ -677,39 +685,39 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
     <div className="mx-auto max-w-xl py-10">
       <div className="card space-y-4 p-6 text-center sm:p-8">
         <div className="flex justify-center"><Clock className="h-11 w-11 text-amber-500" /></div>
-        <h1 className="text-lg font-bold text-slate-900">এই Organization টি আর্কাইভ করা আছে</h1>
+        <h1 className="text-lg font-bold text-slate-900">{dict.shell.archivedTitle}</h1>
         <p className="text-sm leading-relaxed text-slate-600">
-          <b>{org.name}</b>-এর মালিক কাজ সাময়িকভাবে বন্ধ রেখেছেন (আর্কাইভ)। সব তথ্য অক্ষত আছে —
+          {t("shell.archivedBodyPrefix", { org: org.name })}
           {isOwner
-            ? " Restore করলেই আপনি ও আপনার টিম আবার কাজ শুরু করতে পারবেন।"
-            : " মালিক Restore করলে আবার ঢুকতে পারবেন।"}
+            ? ` ${dict.shell.archivedOwnerSuffix}`
+            : ` ${dict.shell.archivedMemberSuffix}`}
         </p>
         {org.archivedAt ? (
-          <p className="text-xs text-slate-400">আর্কাইভ করা হয়েছে: {new Date(org.archivedAt).toLocaleString("bn-BD")}</p>
+          <p className="text-xs text-slate-400">{dict.shell.archivedAtLabel} {fmtDateTime(locale, org.archivedAt)}</p>
         ) : null}
         {gateError ? <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{gateError}</div> : null}
         {isOwner ? (
           <div className="space-y-4 text-left">
             <button className="btn-primary min-h-[44px] w-full" disabled={busy !== ""} onClick={restore}>
-              {busy === "restore" ? "অপেক্ষা করুন…" : "♻️ Restore করুন — আবার চালু করুন"}
+              {busy === "restore" ? dict.common.wait : dict.shell.restoreCta}
             </button>
             <div className="rounded-xl bg-slate-50 p-4">
-              <h2 className="mb-1 text-sm font-semibold text-slate-800">ডেটা এক্সপোর্ট</h2>
-              <p className="mb-3 text-xs leading-relaxed text-slate-500">আর্কাইভ থাকা অবস্থাতেও প্রতিষ্ঠানের পুরো ডেটা এক্সপোর্ট করে ডাউনলোড করতে পারবেন।</p>
+              <h2 className="mb-1 text-sm font-semibold text-slate-800">{dict.shell.exportTitle}</h2>
+              <p className="mb-3 text-xs leading-relaxed text-slate-500">{dict.shell.exportHelp}</p>
               <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={createExport}>
-                {busy === "export" ? "অনুরোধ হচ্ছে…" : "এখনই এক্সপোর্ট করুন"}
+                {busy === "export" ? dict.shell.exportBusy : dict.shell.exportNow}
               </button>
               {exportsList.length ? (
                 <ul className="mt-3 space-y-1.5">
                   {exportsList.map((row) => (
                     <li key={row.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-100">
                       <span className="text-slate-600">
-                        {new Date(row.createdAt).toLocaleString("bn-BD")}
+                        {fmtDateTime(locale, row.createdAt)}
                         <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${row.status === "ready" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{row.status}</span>
                       </span>
                       {row.status === "ready" ? (
                         <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
-                          {busy === `dl-${row.id}` ? "হচ্ছে…" : "ডাউনলোড"}
+                          {busy === `dl-${row.id}` ? dict.shell.downloadingBusy : dict.common.download}
                         </button>
                       ) : null}
                     </li>
@@ -719,13 +727,14 @@ function OrgStateGate({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         ) : null}
-        <p className="text-xs text-slate-400">আপনার অন্য Organization থাকলে ওপরে-বামে Organization-এর নামে চাপ দিয়ে সেখানে বদলে নিতে পারবেন।</p>
+        <p className="text-xs text-slate-400">{dict.shell.switchOrgHint}</p>
       </div>
     </div>
   );
 }
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
+  const { dict, t, locale } = useLocale();
   const router = useRouter();
   const pathname = usePathname() ?? "/dashboard";
   const [ready, setReady] = useState(false);
@@ -754,9 +763,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/email", { method: "POST" });
       setVerifMsg(out.sent
-        ? "✅ যাচাইকরণ লিংক আবার পাঠানো হয়েছে — ইমেইল (ও Spam ফোল্ডার) চেক করুন।"
-        : "ইমেইল পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।");
-    } catch { setVerifMsg("ইমেইল পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।"); }
+        ? dict.shell.verifSentMsg
+        : dict.shell.verifSendFailMsg);
+    } catch { setVerifMsg(dict.shell.verifSendFailMsg); }
     finally { setVerifBusy(false); }
   }
 
@@ -830,7 +839,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3 text-sm text-slate-500">
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
-          <span className="font-medium">ড্যাশবোর্ড প্রস্তুত করা হচ্ছে...</span>
+          <span className="font-medium">{dict.shell.preparingDashboard}</span>
         </div>
       </div>
     );
@@ -844,24 +853,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex min-h-screen items-center justify-center p-4">
         <div className="card w-full max-w-md space-y-4 p-6 text-center">
           <div className="flex justify-center"><Mail className="h-10 w-10 text-indigo-500" /></div>
-          <h1 className="text-lg font-bold">আগে ইমেইল যাচাই করুন</h1>
+          <h1 className="text-lg font-bold">{dict.shell.verifTitle}</h1>
           <p className="text-sm leading-relaxed text-slate-500">
-            ড্যাশবোর্ড ব্যবহারের আগে আপনার ইমেইল যাচাই করা আবশ্যক। রেজিস্ট্রেশনের সময়
-            <b> {email || "আপনার ইমেইলে"} </b>
-            একটি যাচাইকরণ লিংক পাঠানো হয়েছে — লিংকে ক্লিক করলেই যাচাই সম্পন্ন হবে।
+            {dict.shell.verifBodyBefore}
+            <b> {email || dict.shell.yourEmailFallback} </b>
+            {dict.shell.verifBodyAfter}
           </p>
           {verifMsg ? <p className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-900">{verifMsg}</p> : null}
           <div className="flex flex-col gap-2">
             <button className="btn-primary min-h-[44px]" disabled={verifBusy} onClick={resendVerification}>
-              {verifBusy ? "অপেক্ষা করুন…" : "যাচাইকরণ লিংক আবার পাঠান"}
+              {verifBusy ? dict.common.wait : dict.shell.verifResend}
             </button>
             <button className="btn-secondary min-h-[44px]" disabled={verifBusy} onClick={async () => {
               setVerifBusy(true);
               const still = await checkVerification();
-              setVerifMsg(still ? "এখনো যাচাই হয়নি — ইমেইলের লিংকে ক্লিক করে আবার চেষ্টা করুন।" : "");
+              setVerifMsg(still ? dict.shell.verifStillMsg : "");
               setVerifBusy(false);
-            }}>আমি যাচাই করেছি, আবার চেক করুন</button>
-            <button className="text-sm text-slate-400 underline" onClick={() => { localStorage.clear(); router.push("/login"); }}>লগআউট</button>
+            }}>{dict.shell.verifRecheck}</button>
+            <button className="text-sm text-slate-400 underline" onClick={() => { localStorage.clear(); router.push("/login"); }}>{dict.shell.logout}</button>
           </div>
         </div>
       </div>
@@ -883,7 +892,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ফিচার বা মেনু খুঁজুন..."
+            placeholder={dict.shell.searchPlaceholder}
             className="w-full rounded-xl border border-white/10 bg-white/[0.06] pl-8 pr-7 py-1.5 text-[12.5px] text-white placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white/10 focus:outline-none transition"
           />
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -908,11 +917,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {initials}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[12px] font-semibold text-slate-200">{email || "ব্যবহারকারী"}</div>
-            <div className="text-[10px] text-slate-400">প্রোফাইল অ্যাক্টিভ</div>
+            <div className="truncate text-[12px] font-semibold text-slate-200">{email || dict.shell.userFallback}</div>
+            <div className="text-[10px] text-slate-400">{dict.shell.profileActive}</div>
           </div>
           <button
-            title="লগআউট"
+            title={dict.shell.logout}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-400"
             onClick={() => { localStorage.clear(); router.push("/login"); }}
           >
@@ -941,13 +950,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         dynamic rendering app-wide and breaking the shop's ISR.
         Subtree lang attributes are what screen readers apply to
         content, so this div is the correct place to declare it. */}
-    <div lang="bn" className="dashboard-root min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
+    <div lang={locale} className="dashboard-root min-h-screen bg-[#f8fafc] text-slate-900 lg:flex" style={brandVars}>
       {/* ED17 (EB7): dark-mode bootstrap — applies the stored/system
           theme class to this root before the subtree paints (see
           lib/theme.ts for the placement contract + fallback). */}
       <script dangerouslySetInnerHTML={{ __html: DASHBOARD_THEME_INIT_SCRIPT }} />
       {/* EB6/ED16: skip link — first focusable element in the layout. */}
-      <SkipLink href="#main-content">মূল কন্টেন্টে যান</SkipLink>
+      <SkipLink href="#main-content">{dict.shell.skipToContent}</SkipLink>
       {/* ED11 (EB4): route progress bar (soft-nav feedback). */}
       <RouteProgress />
       {/* Desktop sidebar */}
@@ -975,7 +984,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <button
               className="rounded-xl border border-slate-200/90 bg-white p-2 text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95 lg:hidden"
               onClick={() => setDrawer(true)}
-              aria-label="মেনু খুলুন"
+              aria-label={dict.shell.openMenu}
             >
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                 <path d="M4 7h16M4 12h16M4 17h16" />
@@ -996,9 +1005,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <CurrentIcon className="h-[18px] w-[18px]" />
-                <span className="truncate text-[15px] font-bold tracking-tight text-slate-900">{current?.label ?? "Dashboard"}</span>
+                <span className="truncate text-[15px] font-bold tracking-tight text-slate-900">{current ? t(`shell.${current.labelKey}`) : dict.shell.dashboard}</span>
               </div>
-              <div className="hidden text-[11px] text-slate-500 font-medium sm:block">AI Marketing Operating System</div>
+              <div className="hidden text-[11px] text-slate-500 font-medium sm:block">{dict.shell.subtitle}</div>
             </div>
 
             {/* Quick Link Pills on Tablet/Desktop */}
@@ -1011,7 +1020,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                <NAV_ICONS.inbox className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />ইনবক্স
+                <NAV_ICONS.inbox className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />{dict.shell.quickInbox}
               </a>
               <a
                 href="/dashboard/orders"
@@ -1021,13 +1030,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
-                <NAV_ICONS.orders className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />অর্ডার
+                <NAV_ICONS.orders className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />{dict.shell.quickOrders}
               </a>
               <a
                 href="/dashboard/campaign-builder"
                 className="rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
               >
-                <NAV_ICONS.adAccounts className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />ক্যাম্পেইন
+                <NAV_ICONS.adAccounts className="mr-1 inline h-3.5 w-3.5 -translate-y-px" />{dict.shell.quickCampaigns}
               </a>
             </div>
 
@@ -1036,6 +1045,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {/* OU1: Organization switcher — active memberships,
                   honest full-reload switching, create + portfolio. */}
               <OrgSwitcher />
+              {/* ML3 (MB1): dashboard language switcher — sets the
+                  user's personal locale preference via LocaleProvider. */}
+              <LanguageSwitcher />
               <InstallButton />
               {/* ED17 (EB7): dark-mode toggle (সিস্টেম/লাইট/ডার্ক). */}
               <ThemeToggle />
@@ -1044,7 +1056,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {/* Workspace Badge */}
               <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Workspace
+                {dict.shell.liveWorkspace}
               </span>
 
               {/* User Avatar & Menu */}
@@ -1062,33 +1074,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
                     <div className="absolute right-0 top-11 z-50 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl animate-fade-in">
                       <div className="px-3 py-2 border-b border-slate-100">
-                        <div className="text-xs font-semibold text-slate-800 truncate">{email || "অ্যাকাউন্ট"}</div>
-                        <div className="text-[10px] text-slate-500">অর্গানাইজেশন মেম্বার</div>
+                        <div className="text-xs font-semibold text-slate-800 truncate">{email || dict.shell.accountFallback}</div>
+                        <div className="text-[10px] text-slate-500">{dict.shell.orgMember}</div>
                       </div>
                       <div className="py-1 space-y-0.5">
                         <a
                           href="/dashboard/settings"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          <NAV_ICONS.orgSettings className="h-4 w-4" /> সেটিংস
+                          <NAV_ICONS.orgSettings className="h-4 w-4" /> {dict.shell.menuSettings}
                         </a>
                         <a
                           href="/dashboard/team"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          <NAV_ICONS.team className="h-4 w-4" /> টিম মেম্বার
+                          <NAV_ICONS.team className="h-4 w-4" /> {dict.shell.menuTeam}
                         </a>
                         <a
                           href="/dashboard/billing"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          <NAV_ICONS.billing className="h-4 w-4" /> বিলিং ও প্ল্যান
+                          <NAV_ICONS.billing className="h-4 w-4" /> {dict.shell.menuBilling}
                         </a>
                         <a
                           href="/dashboard/support"
                           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
                         >
-                          🎫 সাপোর্ট হাব
+                          {dict.shell.menuSupport}
                         </a>
                       </div>
                       <div className="pt-1 border-t border-slate-100">
@@ -1096,7 +1108,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                           onClick={() => { localStorage.clear(); router.push("/login"); }}
                           className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50"
                         >
-                          <LogOut className="h-4 w-4" /> লগআউট
+                          <LogOut className="h-4 w-4" /> {dict.shell.logout}
                         </button>
                       </div>
                     </div>
@@ -1133,6 +1145,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
+  );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <LocaleProvider>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </LocaleProvider>
   );
 }
 

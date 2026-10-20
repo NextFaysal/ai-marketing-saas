@@ -8,12 +8,15 @@ import {
   MediaBuyerRecommendation,
   PlanMetricInput,
 } from "@/lib/media-buyer-advisor";
+import { fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface MediaBuyerAdvisorProps {
   onProposalCreated?: () => void;
 }
 
 export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps) {
+  const { t, locale } = useLocale();
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<PlanMetricInput[]>([]);
   const [recommendations, setRecommendations] = useState<MediaBuyerRecommendation[]>([]);
@@ -32,10 +35,10 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
       );
       const items = Array.isArray(data?.items) ? data.items : [];
       setPlans(items);
-      const recs = generateMediaBuyerRecommendations(items);
+      const recs = generateMediaBuyerRecommendations(items, locale);
       setRecommendations(recs);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ক্যাম্পেইন ডেটা স্ক্যান করা যায়নি");
+      setError(e instanceof Error ? e.message : t("ai.mbaScanError"));
     } finally {
       setLoading(false);
     }
@@ -60,12 +63,10 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
           planId: rec.planId,
         }),
       });
-      setNotice(
-        `✅ "${rec.campaignName}"-এর জন্য এআই অ্যাকশন প্রস্তাব তৈরি হয়েছে! নিচে Proposals তালিকায় গিয়ে Approve করলেই এটি কার্যকর হবে।`
-      );
+      setNotice(t("ai.mbaProposalDone", { name: rec.campaignName }));
       if (onProposalCreated) onProposalCreated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "প্রস্তাব তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("ai.mbaProposalError"));
     } finally {
       setBusyId(null);
     }
@@ -85,14 +86,14 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-slate-900 text-base">
-                প্রেডিক্টিভ এআই মিডিয়া বায়ার (Daily Advisor)
+                {t("ai.mbaTitle")}
               </h3>
               <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700">
-                স্বয়ংক্রিয় বিশ্লেষণ
+                {t("ai.mbaAutoBadge")}
               </span>
             </div>
             <p className="text-xs text-slate-500">
-              লাইভ বিজ্ঞাপনের পারফরম্যান্স ও আরওএএস বিশ্লেষণ করে বাজেট বৃদ্ধি বা অপচয় রোধের পরামর্শ।
+              {t("ai.mbaIntro")}
             </p>
           </div>
         </div>
@@ -104,23 +105,23 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
           className="flex items-center gap-1.5 self-start rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
         >
           <span>🔄</span>
-          <span>{loading ? "স্ক্যান হচ্ছে..." : "রিয়েল-টাইম স্ক্যান চালান"}</span>
+          <span>{loading ? t("ai.mbaScanning") : t("ai.mbaScanNow")}</span>
         </button>
       </div>
 
       {/* Metrics Bar */}
       <div className="grid grid-cols-3 gap-3 text-center text-xs">
         <div className="rounded-xl bg-slate-50 p-2.5 border border-slate-100">
-          <div className="text-[10px] text-slate-400 uppercase font-semibold">মনিটরকৃত ক্যাম্পেইন</div>
-          <div className="text-base font-bold text-slate-800">{plans.length} টি</div>
+          <div className="text-[10px] text-slate-400 uppercase font-semibold">{t("ai.mbaMonitored")}</div>
+          <div className="text-base font-bold text-slate-800">{t("ai.mbaCountSuffix", { count: fmtNumber(locale, plans.length) })}</div>
         </div>
         <div className="rounded-xl bg-emerald-50 p-2.5 border border-emerald-100">
-          <div className="text-[10px] text-emerald-600 uppercase font-semibold">স্কেলিংয়ের সুযোগ</div>
-          <div className="text-base font-bold text-emerald-700">{opportunities} টি</div>
+          <div className="text-[10px] text-emerald-600 uppercase font-semibold">{t("ai.mbaOpportunities")}</div>
+          <div className="text-base font-bold text-emerald-700">{t("ai.mbaCountSuffix", { count: fmtNumber(locale, opportunities) })}</div>
         </div>
         <div className="rounded-xl bg-rose-50 p-2.5 border border-rose-100">
-          <div className="text-[10px] text-rose-600 uppercase font-semibold">জরুরি অ্যাকশন অ্যালার্ট</div>
-          <div className="text-base font-bold text-rose-700">{highAlerts} টি</div>
+          <div className="text-[10px] text-rose-600 uppercase font-semibold">{t("ai.mbaAlerts")}</div>
+          <div className="text-base font-bold text-rose-700">{t("ai.mbaCountSuffix", { count: fmtNumber(locale, highAlerts) })}</div>
         </div>
       </div>
 
@@ -143,14 +144,14 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
       {loading ? (
         <div className="p-8 text-center text-xs text-slate-400">
           <div className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-2" />
-          <p>আপনার বিজ্ঞাপনের মেট্রিকস বিশ্লেষণ করা হচ্ছে...</p>
+          <p>{t("ai.mbaAnalyzing")}</p>
         </div>
       ) : recommendations.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
           <span className="text-2xl mb-1 block">✨</span>
-          <p className="font-semibold text-slate-700">সব ক্যাম্পেইন স্বাভাবিক অবস্থায় চলছে</p>
+          <p className="font-semibold text-slate-700">{t("ai.mbaAllNormal")}</p>
           <p className="text-[11px] text-slate-400 mt-1">
-            কোনো ক্রিয়েটিভ ক্লান্তি বা অস্বাভাবিক বাজেট অপচয় পাওয়া যায়নি।
+            {t("ai.mbaAllNormalSub")}
           </p>
         </div>
       ) : (
@@ -206,7 +207,7 @@ export function MediaBuyerAdvisor({ onProposalCreated }: MediaBuyerAdvisorProps)
                         disabled={busyId === rec.id}
                         className="rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-rose-700 transition disabled:opacity-50"
                       >
-                        {busyId === rec.id ? "প্রস্তাব তৈরি হচ্ছে..." : rec.suggestedActionLabel}
+                        {busyId === rec.id ? t("ai.mbaCreating") : rec.suggestedActionLabel}
                       </button>
                     ) : rec.actionUrl ? (
                       <Link

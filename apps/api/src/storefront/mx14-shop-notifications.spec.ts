@@ -1,4 +1,5 @@
 import { NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ShopAccountService } from "./shop-account.service";
 import { hashShopSecret } from "./shop-auth.util";
 
@@ -123,9 +124,9 @@ describe("MX14 shop notification center", () => {
 
   it("no session → 401 for list, mark-read and mark-all (nothing is readable unauthenticated)", async () => {
     const { svc } = build();
-    await expect(svc.listNotifications("my-shop", "bogus")).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(svc.markNotificationRead("my-shop", null, "n-1")).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(svc.markAllNotificationsRead("my-shop", undefined)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(svc.listNotifications("my-shop", "bogus")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.markNotificationRead("my-shop", null, "n-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.markAllNotificationsRead("my-shop", undefined)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("mark-read stamps readAt on the notification AND readAt + deliveryStatus=read on the linked delivery; a second mark keeps the first stamp", async () => {
@@ -144,8 +145,8 @@ describe("MX14 shop notification center", () => {
 
   it("a customer CANNOT read or mark another customer's notification — the same 404 as a missing one, and nothing is stamped", async () => {
     const { svc, prisma } = build();
-    await expect(svc.markNotificationRead("my-shop", "tok-1", "n-3")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.markNotificationRead("my-shop", "tok-1", "n-404")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.markNotificationRead("my-shop", "tok-1", "n-3")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.markNotificationRead("my-shop", "tok-1", "n-404")).rejects.toBeInstanceOf(ApiException);
     const n3 = prisma.onsiteNotification.rows.find((n: any) => n.id === "n-3");
     expect(n3.readAt).toBeNull();
     const dlv3 = prisma.messageDelivery.rows.find((d: any) => d.id === "dlv-3");

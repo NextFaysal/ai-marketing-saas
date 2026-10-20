@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -7,6 +7,7 @@ import { decryptJson } from "../integrations/crypto";
 import { orgFlagEnabled } from "../common/feature-flags";
 import { MetaCapiClient } from "../conversions/capi.client";
 import { hashEmail, hashPhone } from "../conversions/conversions.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const TRIGGERS = ["placed", "cod_confirmed", "delivered"] as const;
 
@@ -75,14 +76,14 @@ export class OfflineConversionsService {
     adAccountId: string; conversionAction?: string; pixelCode?: string; trigger?: string; enabled?: boolean;
     datasetId?: string; leadFeedbackEnabled?: boolean;
   }) {
-    if (!["google", "tiktok", "meta"].includes(platform)) throw new BadRequestException("platform must be google, tiktok or meta");
+    if (!["google", "tiktok", "meta"].includes(platform)) throw badRequest("offlineConversions.platformMustBeGoogleTiktokOr");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found");
-    if (account.platform !== platform) throw new BadRequestException(`That ad account is a ${account.platform} account, not ${platform}`);
-    if (platform === "google" && !dto.conversionAction?.trim()) throw new BadRequestException("Google needs the offline conversion action id (from Google Ads > Goals > Conversions)");
-    if (platform === "tiktok" && !dto.pixelCode?.trim()) throw new BadRequestException("TikTok needs the Events API pixel code");
-    if (platform === "meta" && !dto.datasetId?.trim()) throw new BadRequestException("Meta needs the dataset (pixel) id that receives offline events (Events Manager > Data sources)");
-    if (dto.trigger && !(TRIGGERS as readonly string[]).includes(dto.trigger)) throw new BadRequestException("Invalid trigger");
+    if (!account) throw notFound("offlineConversions.adAccountNotFound");
+    if (account.platform !== platform) throw badRequest("offlineConversions.thatAdAccountIsAAccount", { accountPlatform: account.platform, platform: platform });
+    if (platform === "google" && !dto.conversionAction?.trim()) throw badRequest("offlineConversions.googleNeedsTheOfflineConversionAction");
+    if (platform === "tiktok" && !dto.pixelCode?.trim()) throw badRequest("offlineConversions.tiktokNeedsTheEventsApiPixel");
+    if (platform === "meta" && !dto.datasetId?.trim()) throw badRequest("offlineConversions.metaNeedsTheDatasetPixelId");
+    if (dto.trigger && !(TRIGGERS as readonly string[]).includes(dto.trigger)) throw badRequest("offlineConversions.invalidTrigger");
     const existing = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } });
     const data = {
       organizationId, platform, adAccountId: dto.adAccountId,
@@ -141,20 +142,20 @@ export class OfflineConversionsService {
 
   private async accountSecrets(organizationId: string, adAccountId: string) {
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
-    if (!account?.integrationId) throw new BadRequestException("Ad account is not connected via API");
+    if (!account?.integrationId) throw badRequest("offlineConversions.adAccountIsNotConnectedVia");
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException("Integration credentials are missing; reconnect the account");
+    if (!integration?.credential) throw badRequest("offlineConversions.integrationCredentialsAreMissingReconnectThe");
     return { account, secrets: decryptJson<any>(integration.credential.encryptedData) };
   }
 
   async uploadForOrder(organizationId: string, orderId: string, platform: "google" | "tiktok" | "meta") {
     const setting = await (this.prisma as any).offlineConversionSetting.findFirst({ where: { organizationId, platform } });
-    if (!setting) throw new BadRequestException(`No ${platform} offline conversion setting saved`);
-    if (!setting.enabled) throw new BadRequestException(`${platform} offline conversions are disabled`);
+    if (!setting) throw badRequest("offlineConversions.noOfflineConversionSettingSaved", { platform: platform });
+    if (!setting.enabled) throw badRequest("offlineConversions.offlineConversionsAreDisabled", { platform: platform });
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found");
+    if (!order) throw notFound("offlineConversions.orderNotFound");
     const eventId = `purchase-${order.externalNumber ?? order.externalId ?? order.id}`;
     const prior = await (this.prisma as any).offlineConversionLog.findFirst({ where: { organizationId, platform, eventId } });
     if (prior?.status === "sent") return { ...prior, alreadySent: true };
@@ -177,7 +178,7 @@ export class OfflineConversionsService {
     } catch (e) {
       const message = e instanceof Error ? e.message : "upload failed";
       await this.recordLog(organizationId, platform, eventId, orderId, "failed", message).catch(() => undefined);
-      throw new BadRequestException(`${platform} upload did NOT confirm: ${message}`);
+      throw badRequest("offlineConversions.uploadDidNotConfirm", { platform: platform, message: message });
     }
   }
 
@@ -310,7 +311,7 @@ export class OfflineConversionsService {
     } catch (e) {
       const message = e instanceof Error ? e.message : "upload failed";
       await this.recordLog(organizationId, "meta", eventId, order.id, "failed", message).catch(() => undefined);
-      throw new BadRequestException(`meta upload did NOT confirm: ${message}`);
+      throw badRequest("offlineConversions.metaUploadDidNotConfirm", { message: message });
     }
   }
 

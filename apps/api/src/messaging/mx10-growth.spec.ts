@@ -166,8 +166,8 @@ describe("MX10 double opt-in", () => {
 
   it("double opt-in without email channel or keyword is refused at form create; reserved keywords refused", async () => {
     const { svc } = build();
-    await expect(svc.createOptInForm("org-1", "u1", { name: "SMS only", channels: ["sms"], doubleOptIn: true })).rejects.toThrow(/confirmation path/);
-    await expect(svc.createOptInForm("org-1", "u1", { name: "Bad kw", channels: ["whatsapp"], doubleOptIn: true, keyword: "STOP" })).rejects.toThrow(/reserved/);
+    await expect(svc.createOptInForm("org-1", "u1", { name: "SMS only", channels: ["sms"], doubleOptIn: true })).rejects.toMatchObject({ code: "messaging.doubleOptInNeedsAConfirmation" });
+    await expect(svc.createOptInForm("org-1", "u1", { name: "Bad kw", channels: ["whatsapp"], doubleOptIn: true, keyword: "STOP" })).rejects.toMatchObject({ code: "messaging.keywordIsAReservedKeywordSTOP" });
   });
 
   it("WhatsApp keyword confirms a pending signup and never flips an opt-out", async () => {
@@ -232,7 +232,7 @@ describe("MX10 CSV import wizard", () => {
     expect(pref.status).toBe("opted_in");
     expect(pref.source).toBe("import");
     expect(tables.messageConsentEvent.rows.some((e: any) => e.address === "clean@example.com" && e.source === "import")).toBe(true);
-    await expect(svc.commitCsvImport("org-1", "u1", preview.importId)).rejects.toThrow(/already committed/);
+    await expect(svc.commitCsvImport("org-1", "u1", preview.importId)).rejects.toMatchObject({ code: "messaging.thisImportWasAlreadyCommittedPreview" });
   });
 
   it("commit keeps an existing opt-out supreme (lead lands, preference untouched)", async () => {

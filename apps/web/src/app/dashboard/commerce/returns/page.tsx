@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDateTime, fmtMoney, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -18,9 +20,9 @@ interface ReturnDetail extends ReturnRow { items: ReturnLine[] | null }
 
 const STATUSES = ["", "requested", "approved", "rejected", "return_shipped", "received", "completed"];
 const RESOLUTIONS = [
-  { value: "refund", label: "Refund (টাকা ফেরত)" },
-  { value: "exchange", label: "Exchange (বদলি পণ্য)" },
-  { value: "store_credit_note", label: "Store credit note (শুধু রেকর্ড)" },
+  { value: "refund", labelKey: "refundMoneyBack" },
+  { value: "exchange", labelKey: "exchangeReplacementProduct" },
+  { value: "store_credit_note", labelKey: "storeCreditNoteRecordOnly" },
 ];
 
 function statusBadge(status: string): string {
@@ -35,14 +37,15 @@ function statusBadge(status: string): string {
   }
 }
 
-function formatMoney(minor: string | null): string {
+function formatMoney(minor: string | null, locale: "bn" | "en" = "bn"): string {
   if (minor == null) return "—";
   const n = Number(minor);
   if (!Number.isFinite(n)) return minor;
-  return `৳${(n / 100).toFixed(2)}`;
+  return fmtMoney(locale, n / 100, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export default function ReturnsPage() {
+  const { dict, t, locale } = useLocale();
   const [items, setItems] = useState<ReturnRow[]>([]);
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState("");
@@ -59,7 +62,7 @@ export default function ReturnsPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
     try {
       const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
       const data = await apiFetch<{ items: ReturnRow[]; total: number }>(`/organizations/${orgId}/returns${qs}`);
@@ -67,7 +70,7 @@ export default function ReturnsPage() {
       setTotal(data.total);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রিটার্নের তালিকা লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadTheReturn);
     } finally { setLoading(false); }
   }, [statusFilter]);
 
@@ -84,7 +87,7 @@ export default function ReturnsPage() {
       await load();
     } catch (e) {
       // API errors are shown verbatim — never paraphrased as success.
-      setError(e instanceof Error ? e.message : "অ্যাকশনটি করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.theActionCouldNotBe);
     } finally { setBusy(""); }
   }
 
@@ -101,7 +104,7 @@ export default function ReturnsPage() {
       })));
       setReceiveId(row.id);
     } catch (e) {
-      setReceiveError(e instanceof Error ? e.message : "রিটার্নের বিবরণ লোড করা যায়নি");
+      setReceiveError(e instanceof Error ? e.message : dict.commerce.couldNotLoadReturnDetails);
     } finally { setBusy(""); }
   }
 
@@ -121,21 +124,19 @@ export default function ReturnsPage() {
       });
       setReceiveId("");
       setReceiveLines([]);
-      setNotice("পণ্য পাওয়া গেছে বলে চিহ্নিত হয়েছে।");
+      setNotice(dict.commerce.markedAsProductReceived);
       await load();
     } catch (e) {
-      setReceiveError(e instanceof Error ? e.message : "পণ্য পেয়েছি চিহ্নিত করা যায়নি");
+      setReceiveError(e instanceof Error ? e.message : dict.commerce.couldNotMarkAsReceived);
     } finally { setBusy(""); }
   }
 
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="page-title">রিটার্ন / RMA</h1>
+        <h1 className="page-title">{dict.commerce.returnsRMA}</h1>
         <p className="text-sm text-slate-500">
-          কাস্টমারের জমা দেওয়া রিটার্নের আবেদন যাচাই, অনুমোদন, রিটার্ন কুরিয়ার বুকিং, পণ্য পাওয়া ও সম্পন্ন করার তালিকা।
-          মোট {total}টি রিটার্ন।
-        </p>
+          {dict.commerce.theListToVerifyCustomers}{total}{dict.commerce.returns}</p>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
@@ -144,15 +145,14 @@ export default function ReturnsPage() {
 
       <div className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="block text-sm">অবস্থা
-            <select className="input mt-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              {STATUSES.map((s) => <option key={s || "all"} value={s}>{s === "" ? "সব" : s}</option>)}
+          <label className="block text-sm">{dict.commerce.status}<select className="input mt-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              {STATUSES.map((s) => <option key={s || "all"} value={s}>{s === "" ? dict.commerce.all : s}</option>)}
             </select>
           </label>
         </div>
 
-        {loading ? <p className="mt-4 text-sm text-slate-500">লোড হচ্ছে…</p> : null}
-        {!loading && items.length === 0 ? <p className="mt-4 text-sm text-slate-500">এই ফিল্টারে কোনো রিটার্ন নেই।</p> : null}
+        {loading ? <p className="mt-4 text-sm text-slate-500">{dict.common.loading}</p> : null}
+        {!loading && items.length === 0 ? <p className="mt-4 text-sm text-slate-500">{dict.commerce.noReturnsInThisFilter}</p> : null}
 
         <div className="mt-4 space-y-4">
           {items.map((r) => {
@@ -162,34 +162,33 @@ export default function ReturnsPage() {
               <div key={r.id} className="rounded-lg border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="text-sm">
-                    <span className="font-semibold">অর্ডার: {r.orderNumber ?? r.orderId}</span>
+                    <span className="font-semibold">{dict.commerce.order3}{r.orderNumber ?? r.orderId}</span>
                     <span className={`ml-3 rounded px-2 py-0.5 text-xs font-semibold ${statusBadge(r.status)}`}>{r.status}</span>
                     {/* EC28: source badge — customer self-service requests are
                         handled identically, just labelled. */}
                     {r.source === "customer" ? (
                       <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
-                        👤 গ্রাহক নিজে{r.requestType ? ` · ${r.requestType === "exchange" ? "এক্সচেঞ্জ" : "রিটার্ন"}` : ""}
+                        {dict.commerce.customerThemselves}{r.requestType ? ` · ${r.requestType === "exchange" ? dict.commerce.exchange : dict.commerce.return}` : ""}
                       </span>
                     ) : (
-                      <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">স্টাফ</span>
+                      <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">{dict.commerce.staff}</span>
                     )}
-                    <span className="mt-1 block text-xs text-slate-500">{new Date(r.createdAt).toLocaleString("bn-BD")}</span>
-                    {r.reason ? <span className="mt-1 block">কারণ: {r.reason}</span> : null}
+                    <span className="mt-1 block text-xs text-slate-500">{fmtDateTime(locale, new Date(r.createdAt))}</span>
+                    {r.reason ? <span className="mt-1 block">{dict.commerce.reason}{r.reason}</span> : null}
                     <span className="mt-1 block text-xs text-slate-600">
-                      Resolution: {r.resolution ?? "—"} · Restock সিদ্ধান্ত: {r.restockDecision ?? "—"}
-                      {r.refundAmountMinor != null ? ` · Refund পরিমাণ: ${formatMoney(r.refundAmountMinor)}` : ""}
+                      Resolution: {r.resolution ?? "—"} {dict.commerce.restockDecision}{r.restockDecision ?? "—"}
+                      {r.refundAmountMinor != null ? t("commerce.refundAmount", { formatMoney: formatMoney(r.refundAmountMinor, locale) }) : ""}
                     </span>
                     {r.resolution === "refund" ? (
                       <span className="mt-1 block text-xs text-slate-500">
-                        দ্রষ্টব্য: refund push স্টোর সেটিং অনুযায়ী হবে — স্টোরে refund push চালু না থাকলে refund শুধু এখানে রেকর্ড হবে, স্টোরে পাঠানো হবে না।
-                      </span>
+                        {dict.commerce.noteRefundPushesWillFollow}</span>
                     ) : null}
-                    {r.exchangeOrderId ? <span className="mt-1 block text-xs text-slate-600">Exchange অর্ডার ID: {r.exchangeOrderId}</span> : null}
+                    {r.exchangeOrderId ? <span className="mt-1 block text-xs text-slate-600">{dict.commerce.exchangeOrderID}{r.exchangeOrderId}</span> : null}
                     {r.returnShipmentId ? <span className="mt-1 block text-xs text-slate-600">Return shipment ID: {r.returnShipmentId}</span> : null}
                     <span className="mt-1 block text-xs text-slate-600">
-                      নোটিফিকেশন: <span className="font-mono font-semibold">{r.notificationStatus ?? "—"}</span>
+                      {dict.commerce.notification}<span className="font-mono font-semibold">{r.notificationStatus ?? "—"}</span>
                       {r.notificationStatus === "not_sent_no_channel" ? (
-                        <span className="block text-amber-700">কাস্টমারের কোনো চ্যানেল পাওয়া যায়নি — পাঠানো হয়নি</span>
+                        <span className="block text-amber-700">{dict.commerce.noCustomerChannelFoundNot}</span>
                       ) : null}
                     </span>
                   </div>
@@ -203,7 +202,7 @@ export default function ReturnsPage() {
                             value={resolution}
                             onChange={(e) => setResolutionById((prev) => ({ ...prev, [r.id]: e.target.value }))}
                           >
-                            {RESOLUTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {RESOLUTIONS.map((o) => <option key={o.value} value={o.value}>{dict.commerce[o.labelKey as keyof typeof dict.commerce]}</option>)}
                           </select>
                         </label>
                         <div className="flex gap-2">
@@ -211,23 +210,22 @@ export default function ReturnsPage() {
                             type="button"
                             className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                             disabled={busy !== ""}
-                            onClick={() => act(r, "decide", "/decide", { decision: "approve", resolution }, "রিটার্ন অনুমোদিত হয়েছে।")}
+                            onClick={() => act(r, "decide", "/decide", { decision: "approve", resolution }, dict.commerce.returnApproved)}
                           >
-                            {busy === `decide-${r.id}` ? "হচ্ছে…" : "অনুমোদন করুন"}
+                            {busy === `decide-${r.id}` ? dict.commerce.ing : dict.commerce.approve2}
                           </button>
                           <button
                             type="button"
                             className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-red-600 disabled:opacity-50"
                             disabled={busy !== ""}
-                            onClick={() => act(r, "decide", "/decide", { decision: "reject" }, "রিটার্ন প্রত্যাখ্যান করা হয়েছে।")}
+                            onClick={() => act(r, "decide", "/decide", { decision: "reject" }, dict.commerce.returnRejected)}
                           >
-                            প্রত্যাখ্যান করুন
-                          </button>
+                            {dict.commerce.reject}</button>
                         </div>
                       </>
                     ) : null}
                     {r.status === "requested" && !submitted ? (
-                      <span className="text-xs text-slate-500">কাস্টমার এখনো আবেদন জমা দেননি</span>
+                      <span className="text-xs text-slate-500">{dict.commerce.customerHasNotSubmittedThe}</span>
                     ) : null}
 
                     {r.status === "approved" ? (
@@ -235,9 +233,9 @@ export default function ReturnsPage() {
                         type="button"
                         className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                         disabled={busy !== ""}
-                        onClick={() => act(r, "book", "/book-return", { provider: "steadfast" }, "Return courier বুক করা হয়েছে।")}
+                        onClick={() => act(r, "book", "/book-return", { provider: "steadfast" }, dict.commerce.returnCourierBooked)}
                       >
-                        {busy === `book-${r.id}` ? "বুক হচ্ছে…" : "Return courier বুক করুন"}
+                        {busy === `book-${r.id}` ? dict.commerce.booking2 : dict.commerce.bookReturnCourier}
                       </button>
                     ) : null}
 
@@ -248,7 +246,7 @@ export default function ReturnsPage() {
                         disabled={busy !== ""}
                         onClick={() => openReceive(r)}
                       >
-                        {busy === `receive-open-${r.id}` ? "লোড হচ্ছে…" : "পণ্য পেয়েছি"}
+                        {busy === `receive-open-${r.id}` ? dict.common.loading : dict.commerce.productReceived}
                       </button>
                     ) : null}
 
@@ -257,9 +255,9 @@ export default function ReturnsPage() {
                         type="button"
                         className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                         disabled={busy !== ""}
-                        onClick={() => act(r, "complete", "/complete", {}, "রিটার্ন সম্পন্ন হয়েছে।")}
+                        onClick={() => act(r, "complete", "/complete", {}, dict.commerce.returnCompleted)}
                       >
-                        {busy === `complete-${r.id}` ? "হচ্ছে…" : "Complete করুন"}
+                        {busy === `complete-${r.id}` ? dict.commerce.ing : dict.commerce.complete2}
                       </button>
                     ) : null}
                   </div>
@@ -267,22 +265,21 @@ export default function ReturnsPage() {
 
                 {receiveId === r.id ? (
                   <div className="mt-4 rounded-lg bg-slate-50 p-3">
-                    <div className="text-sm font-semibold">পণ্য পেয়েছি — প্রতিটি লাইনের অবস্থা লিখুন</div>
+                    <div className="text-sm font-semibold">{dict.commerce.productReceivedWriteEachLine}</div>
                     {receiveLines.length === 0 ? (
-                      <p className="mt-2 text-sm text-slate-500">এই রিটার্নে কোনো আইটেম লাইন পাওয়া যায়নি।</p>
+                      <p className="mt-2 text-sm text-slate-500">{dict.commerce.noItemLinesFoundIn}</p>
                     ) : (
                       <ul className="mt-3 space-y-2">
                         {receiveLines.map((l, idx) => (
                           <li key={l.orderItemId} className="flex flex-wrap items-center gap-3 text-sm">
                             <span className="min-w-40">
                               <span className="font-mono text-xs">{l.orderItemId}</span>
-                              <span className="block text-xs text-slate-500">পরিমাণ: {l.quantity}</span>
+                              <span className="block text-xs text-slate-500">{dict.commerce.quantity2}{l.quantity}</span>
                             </span>
-                            <label className="block text-xs text-slate-600">অবস্থা (condition)
-                              <input
+                            <label className="block text-xs text-slate-600">{dict.commerce.condition}<input
                                 className="input mt-1"
                                 value={l.condition}
-                                placeholder="যেমন: ভালো / ক্ষতিগ্রস্ত"
+                                placeholder={dict.commerce.eGGoodDamaged}
                                 onChange={(e) => setReceiveLines((prev) => prev.map((x, i) => (i === idx ? { ...x, condition: e.target.value } : x)))}
                               />
                             </label>
@@ -292,8 +289,7 @@ export default function ReturnsPage() {
                                 checked={l.restock}
                                 onChange={(e) => setReceiveLines((prev) => prev.map((x, i) => (i === idx ? { ...x, restock: e.target.checked } : x)))}
                               />
-                              Restock করুন
-                            </label>
+                              {dict.commerce.restock}</label>
                           </li>
                         ))}
                       </ul>
@@ -305,11 +301,10 @@ export default function ReturnsPage() {
                         disabled={busy !== "" || receiveLines.length === 0}
                         onClick={() => submitReceived(r)}
                       >
-                        {busy === `received-${r.id}` ? "সেভ হচ্ছে…" : "পণ্য পেয়েছি নিশ্চিত করুন"}
+                        {busy === `received-${r.id}` ? dict.commerce.saving2 : dict.commerce.confirmProductReceived}
                       </button>
                       <button type="button" className="rounded-lg border px-3 py-1.5 text-sm" onClick={() => { setReceiveId(""); setReceiveLines([]); }}>
-                        বাতিল
-                      </button>
+                        {dict.common.cancel}</button>
                     </div>
                   </div>
                 ) : null}

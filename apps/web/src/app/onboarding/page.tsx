@@ -4,6 +4,10 @@ import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { createOrganizationSchema } from "@repo/contracts";
 import { slugifyShopName, localSlugProblem, shopSubdomainHost, SHOP_ADDRESS_SUFFIX } from "@/lib/shop-slug";
+import { pubT, publicDicts } from "@/lib/i18n/public";
+import { tr } from "@/lib/i18n/lookup";
+
+const t = pubT();
 
 const INDUSTRIES = ["Fashion & Apparel", "Electronics", "Beauty & Cosmetics", "Food & Grocery", "Home & Living", "Health", "Other"];
 
@@ -44,24 +48,24 @@ export default function OnboardingPage() {
       setSlugCheck({
         state: problem,
         message: problem === "reserved"
-          ? "এই নামটি সংরক্ষিত — প্ল্যাটফর্মের নিজের বা বিভ্রান্তিকর নাম হওয়ায় এটি ব্যবহার করা যাবে না।"
-          : "নামের আকার ঠিক নেই — ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও একক হাইফেন, ৩–৬০ অক্ষর।",
+          ? t.onboarding.slugReserved
+          : t.onboarding.slugInvalid,
       });
       return;
     }
     setSlugCheck({ state: "checking" });
     const seq = ++slugReqSeq.current;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const out = await apiFetch<SlugAvailability>(`/organizations/slug-available?slug=${encodeURIComponent(slug)}`);
         if (slugReqSeq.current !== seq) return; // a newer keystroke won
         setSlugCheck({ state: out.reason, message: out.message });
       } catch {
         if (slugReqSeq.current !== seq) return;
-        setSlugCheck({ state: "unknown", message: "এই মুহূর্তে নামটি যাচাই করা যাচ্ছে না — আবার চেষ্টা করুন।" });
+        setSlugCheck({ state: "unknown", message: t.onboarding.slugUnknown });
       }
     }, 400);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [slug, step]);
 
   const slugReady = slugCheck.state === "ok";
@@ -70,16 +74,16 @@ export default function OnboardingPage() {
     e.preventDefault(); setError("");
     const parsed = createOrganizationSchema.safeParse({ name, slug });
     if (!parsed.success) {
-      setError(name.trim().length < 2 ? "ব্যবসার নাম কমপক্ষে ২ অক্ষরের হতে হবে" : "দোকানের ঠিকানার নামটি ঠিক করুন");
+      setError(name.trim().length < 2 ? t.onboarding.nameTooShort : t.onboarding.fixSlug);
       return;
     }
-    if (!slugReady) { setError("দোকানের ঠিকানাটি খালি ও বৈধ না হলে এগোনো যাবে না"); return; }
+    if (!slugReady) { setError(t.onboarding.slugNotReady); return; }
     setLoading(true);
     try {
       const org = await apiFetch<{ id: string }>("/organizations", { method: "POST", body: JSON.stringify(parsed.data) });
       localStorage.setItem("organizationId", org.id);
       setOrgId(org.id); setStep(2);
-    } catch (err) { setError(err instanceof Error ? err.message : "Failed"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t.onboarding.failed); }
     finally { setLoading(false); }
   }
 
@@ -100,7 +104,7 @@ export default function OnboardingPage() {
         await apiFetch(`/organizations/${orgId}/policies`, { method: "POST", body: JSON.stringify({ type: "refund", title: "Refund & Return Policy", content: refund }) });
       }
       router.push("/dashboard");
-    } catch (err) { setError(err instanceof Error ? err.message : "Failed"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t.onboarding.failed); }
     finally { setLoading(false); }
   }
 
@@ -108,78 +112,79 @@ export default function OnboardingPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-10">
-      <div className="text-sm text-slate-400">ধাপ {step} / ২</div>
+      <div className="text-sm text-slate-400">{tr(publicDicts, "bn", "onboarding.stepLabel", { step, total: 2 })}</div>
       {step === 1 ? (
         <>
-          <h1 className="mt-1 text-2xl font-bold">আপনার ব্যবসা সেটআপ করুন</h1>
-          <p className="mt-1 text-sm text-slate-500">Organization তৈরি করুন, পরের ধাপে ব্যবসার বিস্তারিত তথ্য দিন।</p>
+          <h1 className="mt-1 text-2xl font-bold">{t.onboarding.setupTitle}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t.onboarding.setupSubtitle}</p>
           <form onSubmit={submitStep1} className="mt-6 space-y-4 card p-6">
-            <label className="block text-sm">ব্যবসার নাম
+            <label className="block text-sm">{t.onboarding.businessNameLabel}
               <input className={inputCls} value={name} onChange={(e) => {
                 setName(e.target.value);
                 if (!slugTouched) setSlug(slugifyShopName(e.target.value));
-              }} required placeholder="যেমন: Dhaka Fashion House" />
+              }} required placeholder={t.onboarding.businessNamePlaceholder} />
             </label>
-            <div className="block text-sm">আপনার দোকানের ঠিকানা
+            <div className="block text-sm">{t.onboarding.shopAddressLabel}
               <div className="mt-1 flex items-stretch overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:border-blue-500">
                 <input className="min-w-0 flex-1 px-3 py-2 outline-none" value={slug} onChange={(e) => {
                   setSlugTouched(true);
                   setSlug(e.target.value.toLowerCase());
-                }} placeholder="dhaka-fashion-house" aria-label="দোকানের ঠিকানার নাম" />
+                }} placeholder="dhaka-fashion-house" aria-label={t.onboarding.shopAddressAria} />
                 <span className="flex items-center bg-slate-50 px-3 text-slate-500">{SHOP_ADDRESS_SUFFIX}</span>
               </div>
-              {slugCheck.state === "checking" ? <p className="mt-1 text-xs text-slate-500">নামটি খালি আছে কিনা যাচাই হচ্ছে…</p> : null}
+              {slugCheck.state === "checking" ? <p className="mt-1 text-xs text-slate-500">{t.onboarding.slugChecking}</p> : null}
               {slugCheck.state === "ok" ? <p className="mt-1 text-xs text-emerald-600">✓ {slugCheck.message}</p> : null}
               {slugCheck.state === "taken" || slugCheck.state === "reserved" || slugCheck.state === "invalid" || slugCheck.state === "unknown" ? (
                 <p className="mt-1 text-xs text-red-600">{slugCheck.message}</p>
               ) : null}
-              <p className="mt-1 text-xs text-slate-400">ক্রেতারা এই ঠিকানায় আপনার দোকান পাবেন। এই ঠিকানা পরে বদলানো যাবে না, তাই যত্নে বেছে নিন।</p>
+              <p className="mt-1 text-xs text-slate-400">{t.onboarding.slugNote}</p>
             </div>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
-            <button className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50" disabled={loading || !slugReady}>{loading ? "অপেক্ষা করুন..." : "পরের ধাপ"}</button>
+            <button className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50" disabled={loading || !slugReady}>{loading ? t.onboarding.pleaseWait : t.onboarding.nextStep}</button>
           </form>
         </>
       ) : (
         <>
           <div className="mb-4 rounded-lg bg-emerald-50 p-4 text-sm text-emerald-800">
             <div className="flex flex-wrap items-center gap-2">
-              <span>আপনার দোকানের ঠিকানা: <b>{shopSubdomainHost(slug)}</b></span>
+              <span>{t.onboarding.yourShopAddress}<b>{shopSubdomainHost(slug)}</b></span>
               <button type="button" className="rounded-md bg-white px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200" onClick={async () => {
                 try { await navigator.clipboard.writeText(shopSubdomainHost(slug)); setCopied(true); } catch { setCopied(false); }
-              }}>{copied ? "✓ কপি হয়েছে" : "কপি করুন"}</button>
-              <a className="text-xs font-medium text-emerald-700 underline" href={`/shop/${slug}`} target="_blank" rel="noreferrer">বর্তমান দোকানের পেজ দেখুন</a>
+              }}>{copied ? t.onboarding.copied : t.onboarding.copy}</button>
+              <a className="text-xs font-medium text-emerald-700 underline" href={`/shop/${slug}`} target="_blank" rel="noreferrer">{t.onboarding.viewShopPage}</a>
             </div>
-            <p className="mt-1 text-xs">এই ঠিকানা পরে বদলানো যাবে না।</p>
+            <p className="mt-1 text-xs">{t.onboarding.addressFixedNote}</p>
           </div>
-          <h1 className="mt-1 text-2xl font-bold">ব্যবসার তথ্য দিন</h1>
-          <p className="mt-1 text-sm text-slate-500">এই তথ্য AI ব্যবহার করবে। ভুল তথ্য দিলে AI ভুল সাজেশন দেবে, তাই যা জানেন তাই দিন, বাকিটা পরে পূরণ করা যাবে।</p>
+          <h1 className="mt-1 text-2xl font-bold">{t.onboarding.profileTitle}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t.onboarding.profileSubtitle}</p>
           <form onSubmit={submitStep2} className="mt-6 space-y-4 card p-6">
-            <label className="block text-sm">ইন্ডাস্ট্রি
+            <label className="block text-sm">{t.onboarding.industryLabel}
               <select className={inputCls} value={profile.industry} onChange={(e) => setProfile({ ...profile, industry: e.target.value })}>
                 {INDUSTRIES.map((i) => <option key={i}>{i}</option>)}
               </select>
             </label>
-            <label className="block text-sm">ওয়েবসাইট (যদি থাকে)
+            <label className="block text-sm">{t.onboarding.websiteLabel}
               <input className={inputCls} value={profile.websiteUrl} onChange={(e) => setProfile({ ...profile, websiteUrl: e.target.value })} placeholder="https://..." />
             </label>
-            <label className="block text-sm">ব্যবসার বিবরণ
-              <textarea className={inputCls} rows={3} value={profile.description} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="কী বিক্রি করেন, কাদের কাছে?" />
+            <label className="block text-sm">{t.onboarding.descriptionLabel}
+              <textarea className={inputCls} rows={3} value={profile.description} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder={t.onboarding.descriptionPlaceholder} />
             </label>
-            <label className="block text-sm">মার্কেটিং লক্ষ্য
-              <textarea className={inputCls} rows={2} value={profile.goals} onChange={(e) => setProfile({ ...profile, goals: e.target.value })} placeholder="যেমন: মাসে ৫০০ অর্ডার, নতুন কাস্টমার বাড়ানো" />
+            <label className="block text-sm">{t.onboarding.goalsLabel}
+              <textarea className={inputCls} rows={2} value={profile.goals} onChange={(e) => setProfile({ ...profile, goals: e.target.value })} placeholder={t.onboarding.goalsPlaceholder} />
             </label>
-            <label className="block text-sm">ব্র্যান্ড ভয়েস
-              <input className={inputCls} value={profile.brandVoice} onChange={(e) => setProfile({ ...profile, brandVoice: e.target.value })} placeholder="যেমন: বন্ধুসুলভ, সহজ বাংলা, সম্মানজনক" />
+            <label className="block text-sm">{t.onboarding.brandVoiceLabel}
+              <input className={inputCls} value={profile.brandVoice} onChange={(e) => setProfile({ ...profile, brandVoice: e.target.value })} placeholder={t.onboarding.brandVoicePlaceholder} />
             </label>
-            <label className="block text-sm">শিপিং ও ডেলিভারি পলিসি
-              <textarea className={inputCls} rows={2} value={shipping} onChange={(e) => setShipping(e.target.value)} placeholder="যেমন: ঢাকার ভিতরে ৬০ টাকা, ২৪-৪৮ ঘণ্টা; বাইরে ১২০ টাকা, ২-৩ দিন" />
+            <label className="block text-sm">{t.onboarding.shippingLabel}
+              <textarea className={inputCls} rows={2} value={shipping} onChange={(e) => setShipping(e.target.value)} placeholder={t.onboarding.shippingPlaceholder} />
             </label>
-            <label className="block text-sm">রিফান্ড ও রিটার্ন পলিসি
-              <textarea className={inputCls} rows={2} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="যেমন: ত্রুটিপূর্ণ পণ্য ৭ দিনের মধ্যে বদলি" />
+            <label className="block text-sm">{t.onboarding.refundLabel}
+              <textarea className={inputCls} rows={2} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder={t.onboarding.refundPlaceholder} />
             </label>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
-            <button className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50" disabled={loading}>{loading ? "সেভ হচ্ছে..." : "শেষ করে ড্যাশবোর্ডে যান"}</button>
-            <button type="button" className="w-full text-sm text-slate-500" onClick={() => router.push("/dashboard")}>এখন এড়িয়ে যান</button>
+            <button className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50" disabled={loading}>{loading ? t.onboarding.saving : t.onboarding.finishButton}</button>
+            <button type="button" className="w-full text-sm text-slate-500" onClick={() => router.push("/dashboard")}>{t.onboarding.skipButton}</button>
+
           </form>
         </>
       )}

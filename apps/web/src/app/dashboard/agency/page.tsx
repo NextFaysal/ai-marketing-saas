@@ -1,11 +1,13 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { formatMinor } from "@repo/contracts";
+import { fmtDateTime, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
+import type { UiLocale } from "@/lib/i18n/dict";
 import {
-  AGENCY_COMMISSION_RECORDS_BN,
-  AGENCY_SUMMARY_ERROR_BN,
+  agencyCommissionRecords,
   agencyOrgChoices,
+  agencySummaryError,
   bdtToMinor,
   clientOrgChoices,
   roleLabelBn,
@@ -23,9 +25,9 @@ import {
 // cross-org analytics. ORG14 (cross-org team view) was never
 // built and is NOT built here. Commissions are RECORDS ONLY.
 
-const fmtM = (minor?: string | null): string => {
+const fmtM = (minor: string | null | undefined, locale: UiLocale): string => {
   if (minor == null) return "—";
-  try { return formatMinor(BigInt(minor)); } catch { return minor; }
+  try { return fmtMoneyMinor(locale, BigInt(minor)); } catch { return minor; }
 };
 
 const inputCls = "w-full rounded-lg border px-3 py-2 text-sm";
@@ -36,6 +38,9 @@ const btnGhost = "rounded-lg border px-3 py-2 text-sm font-semibold disabled:opa
 interface CreatedOrg { id: string; name: string; slug: string }
 
 export default function AgencyConsolePage() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.agency;
+  const fmtML = (minor?: string | null): string => fmtM(minor, locale);
   const [consoleData, setConsoleData] = useState<AgencyConsoleView | null>(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -62,7 +67,7 @@ export default function AgencyConsolePage() {
       setConsoleData(data);
       setAgencyOrgId((prev) => prev || agencyOrgChoices(data.orgs)[0]?.organization.id || "");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কনসোল লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.agLoadFailed);
     }
   }, []);
 
@@ -85,11 +90,11 @@ export default function AgencyConsolePage() {
         body: JSON.stringify({ name: newName.trim(), slug: newSlug.trim() }),
       });
       setCreatedOrg(created);
-      setMsg(`নতুন ক্লায়েন্ট প্রতিষ্ঠান তৈরি হয়েছে: ${created.name} (${created.slug}) — আপনি এর মালিক (OWNER)।`);
+      setMsg(t("agency.agCreatedMsg", { name: created.name, slug: created.slug }));
       setNewName(""); setNewSlug("");
       await loadConsole();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "প্রতিষ্ঠান তৈরি করা যায়নি");
+      setError(e instanceof Error ? e.message : D.agCreateFailed);
     } finally { setBusy(false); }
   }
 
@@ -104,7 +109,7 @@ export default function AgencyConsolePage() {
       // ORG9 behaviour: the raw link is shown ONCE (server stores only its hash).
       setInviteUrl(out.inviteUrl);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "আমন্ত্রণ লিংক তৈরি করা যায়নি");
+      setError(e instanceof Error ? e.message : D.agInviteFailed);
     } finally { setBusy(false); }
   }
 
@@ -112,9 +117,9 @@ export default function AgencyConsolePage() {
     setBusy(true); setError(""); setMsg("");
     try {
       const amountMinor = bdtToMinor(amountBdt);
-      if (!amountMinor) throw new Error("কমিশনের পরিমাণ (৳) সঠিকভাবে লিখুন — শূন্যের বেশি হতে হবে।");
-      if (!clientOrgId) throw new Error("ক্লায়েন্ট প্রতিষ্ঠান বেছে নিন।");
-      if (!periodLabel.trim()) throw new Error("সময়ের লেবেল লিখুন — যেমন “অক্টোবর ২০২৬”।");
+      if (!amountMinor) throw new Error(D.agAmountInvalid);
+      if (!clientOrgId) throw new Error(D.agClientRequired);
+      if (!periodLabel.trim()) throw new Error(D.agPeriodRequired);
       await apiFetch(`/organizations/${agencyOrgId}/agency-commissions`, {
         method: "POST",
         body: JSON.stringify({
@@ -124,11 +129,11 @@ export default function AgencyConsolePage() {
           note: note.trim() || undefined,
         }),
       });
-      setMsg("কমিশন রেকর্ড সংরক্ষিত হয়েছে।");
+      setMsg(D.agCommissionSaved);
       setPeriodLabel(""); setAmountBdt(""); setNote("");
       await loadEntries(agencyOrgId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কমিশন রেকর্ড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.agCommissionFailed);
     } finally { setBusy(false); }
   }
 
@@ -140,12 +145,9 @@ export default function AgencyConsolePage() {
   return (
     <div className="space-y-5">
       <section className="hero-panel p-5 sm:p-7">
-        <div className="text-sm font-medium text-white/80">এজেন্সি / রিসেলার</div>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">এজেন্সি কনসোল</h1>
-        <p className="mt-1 max-w-2xl text-sm text-white/75">
-          আপনি যেসব প্রতিষ্ঠানের সদস্য, শুধু সেগুলোই এখানে দেখা যাবে — প্রতিটি প্রতিষ্ঠানের
-          সংখ্যা তার নিজের ড্যাশবোর্ডের পথেই হিসাব করা। অন্য কারো প্রতিষ্ঠান এখানে আসে না।
-        </p>
+        <div className="text-sm font-medium text-white/80">{D.agEyebrow}</div>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">{D.agTitle}</h1>
+        <p className="mt-1 max-w-2xl text-sm text-white/75">{D.agSubtitle}</p>
       </section>
 
       {error ? <div className="alert alert-red"><span>⚠️</span><span>{error}</span></div> : null}
@@ -154,20 +156,20 @@ export default function AgencyConsolePage() {
       {/* Totals banner — labelled sums of the listed orgs only */}
       {totals ? (
         <div className="card p-5">
-          <div className="section-title">{totalsBannerLabel(totals.orgCount)}</div>
+          <div className="section-title">{totalsBannerLabel(totals.orgCount, locale)}</div>
           {totals.summariesFailed > 0 ? (
-            <p className="mt-1 text-xs text-amber-700">{totals.summariesFailed}টি প্রতিষ্ঠানের তথ্য লোড হয়নি — সেগুলো এই মোটে ধরা হয়নি।</p>
+            <p className="mt-1 text-xs text-amber-700">{t("agency.agSummariesFailed", { count: fmtNumber(locale, totals.summariesFailed) })}</p>
           ) : null}
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <div><div className="stat-label">আজকের অর্ডার</div><div className="stat-value">{totals.ordersToday}</div></div>
-            <div><div className="stat-label">আজকের আয়</div><div className="stat-value">{fmtM(totals.revenueTodayMinor)}</div></div>
-            <div><div className="stat-label">এই মাসের অর্ডার</div><div className="stat-value">{totals.ordersMonth}</div></div>
-            <div><div className="stat-label">এই মাসের আয়</div><div className="stat-value">{fmtM(totals.revenueMonthMinor)}</div></div>
-            <div><div className="stat-label">পেন্ডিং অর্ডার</div><div className="stat-value">{totals.pendingOrders}</div></div>
-            <div><div className="stat-label">অপঠিত মেসেজ</div><div className="stat-value">{totals.unreadInbox}</div></div>
+            <div><div className="stat-label">{D.agOrdersToday}</div><div className="stat-value">{fmtNumber(locale, totals.ordersToday)}</div></div>
+            <div><div className="stat-label">{D.agRevenueToday}</div><div className="stat-value">{fmtML(totals.revenueTodayMinor)}</div></div>
+            <div><div className="stat-label">{D.agOrdersMonth}</div><div className="stat-value">{fmtNumber(locale, totals.ordersMonth)}</div></div>
+            <div><div className="stat-label">{D.agRevenueMonth}</div><div className="stat-value">{fmtML(totals.revenueMonthMinor)}</div></div>
+            <div><div className="stat-label">{D.agPendingOrders}</div><div className="stat-value">{fmtNumber(locale, totals.pendingOrders)}</div></div>
+            <div><div className="stat-label">{D.agUnreadInbox}</div><div className="stat-value">{fmtNumber(locale, totals.unreadInbox)}</div></div>
           </div>
         </div>
-      ) : !error ? <p className="py-6 text-center text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+      ) : !error ? <p className="py-6 text-center text-sm text-slate-400">{dict.common.loading}</p> : null}
 
       {/* Per-org cards */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -178,70 +180,67 @@ export default function AgencyConsolePage() {
                 <div className="truncate font-semibold text-slate-900">{card.organization.name}</div>
                 <div className="text-xs text-slate-400">{card.organization.slug}</div>
               </div>
-              <span className="badge-slate shrink-0">{roleLabelBn(card.myRole)}</span>
+              <span className="badge-slate shrink-0">{roleLabelBn(card.myRole, locale)}</span>
             </div>
-            <div className="mt-1 text-xs text-slate-500">নিজের ভূমিকা: {roleLabelBn(card.myRole)}</div>
+            <div className="mt-1 text-xs text-slate-500">{t("agency.agMyRole", { role: roleLabelBn(card.myRole, locale) })}</div>
             {card.summary ? (
               <dl className="mt-3 space-y-1.5 text-sm">
-                <div className="flex justify-between"><dt className="text-slate-500">আজকের অর্ডার</dt><dd className="font-medium">{card.summary.ordersToday}টি</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">আজকের আয়</dt><dd className="font-medium">{fmtM(card.summary.revenueTodayMinor)}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">এই মাসের অর্ডার</dt><dd className="font-medium">{card.summary.ordersMonth}টি</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">এই মাসের আয়</dt><dd className="font-medium">{fmtM(card.summary.revenueMonthMinor)}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">পেন্ডিং অর্ডার</dt><dd className="font-medium">{card.summary.pendingOrders}টি</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">অপঠিত মেসেজ</dt><dd className="font-medium">{card.summary.unreadInbox}টি</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agOrdersToday}</dt><dd className="font-medium">{t("agency.agCountSuffix", { count: fmtNumber(locale, card.summary.ordersToday) })}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agRevenueToday}</dt><dd className="font-medium">{fmtML(card.summary.revenueTodayMinor)}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agOrdersMonth}</dt><dd className="font-medium">{t("agency.agCountSuffix", { count: fmtNumber(locale, card.summary.ordersMonth) })}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agRevenueMonth}</dt><dd className="font-medium">{fmtML(card.summary.revenueMonthMinor)}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agPendingOrders}</dt><dd className="font-medium">{t("agency.agCountSuffix", { count: fmtNumber(locale, card.summary.pendingOrders) })}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">{D.agUnreadInbox}</dt><dd className="font-medium">{t("agency.agCountSuffix", { count: fmtNumber(locale, card.summary.unreadInbox) })}</dd></div>
               </dl>
             ) : (
-              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{AGENCY_SUMMARY_ERROR_BN} — এই প্রতিষ্ঠানের সংখ্যা এখন পাওয়া যাচ্ছে না।</p>
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{agencySummaryError(locale)}{D.agSummaryMissingSuffix}</p>
             )}
           </div>
         ))}
       </div>
       {consoleData && orgs.length === 0 ? (
-        <p className="card p-5 text-sm text-slate-500">আপনি এখনো কোনো প্রতিষ্ঠানের সক্রিয় সদস্য নন।</p>
+        <p className="card p-5 text-sm text-slate-500">{D.agNoMemberships}</p>
       ) : null}
 
       {/* Create client org */}
       <div className="card p-5">
-        <div className="section-title">নতুন ক্লায়েন্ট প্রতিষ্ঠান তৈরি করুন</div>
-        <p className="mt-1 text-sm text-slate-500">
-          তৈরি করলে আপনিই এর মালিক (OWNER) হবেন। প্রতিষ্ঠানের সংখ্যার সীমা (থাকলে) ও স্লাগের
-          নিয়ম সাধারণ প্রতিষ্ঠান তৈরির মতোই প্রযোজ্য।
-        </p>
+        <div className="section-title">{D.agCreateTitle}</div>
+        <p className="mt-1 text-sm text-slate-500">{D.agCreateDesc}</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700" htmlFor="agency-new-name">নাম</label>
-            <input id="agency-new-name" className={inputCls} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="ক্লায়েন্টের দোকানের নাম" />
+            <label className="mb-1 block text-xs font-semibold text-slate-700" htmlFor="agency-new-name">{dict.common.name}</label>
+            <input id="agency-new-name" className={inputCls} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={D.agClientShopNamePh} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700" htmlFor="agency-new-slug">স্লাগ</label>
+            <label className="mb-1 block text-xs font-semibold text-slate-700" htmlFor="agency-new-slug">{D.agSlugLabel}</label>
             <input id="agency-new-slug" className={inputCls} value={newSlug} onChange={(e) => setNewSlug(e.target.value)} placeholder="client-shop" />
           </div>
         </div>
         <button className={btnCls + " mt-3"} disabled={busy || !newName.trim() || !newSlug.trim()} onClick={createClientOrg}>
-          প্রতিষ্ঠান তৈরি করুন
+          {D.agCreateBtn}
         </button>
         {createdOrg ? (
           <div className="mt-4 rounded-xl bg-slate-50 p-4">
-            <div className="text-sm font-semibold text-slate-800">তৈরি হয়েছে: {createdOrg.name} <span className="font-normal text-slate-400">({createdOrg.slug})</span></div>
+            <div className="text-sm font-semibold text-slate-800">{t("agency.agCreatedLabel", { name: createdOrg.name })} <span className="font-normal text-slate-400">({createdOrg.slug})</span></div>
             <div className="mt-3 flex flex-wrap items-end gap-2">
               <div>
-                <label className={labelCls} htmlFor="agency-invite-role">আমন্ত্রণের ভূমিকা</label>
+                <label className={labelCls} htmlFor="agency-invite-role">{D.agInviteRoleLabel}</label>
                 <select id="agency-invite-role" className={inputCls} value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-                  <option value="VIEWER">দর্শক (VIEWER)</option>
-                  <option value="SUPPORT_AGENT">সাপোর্ট এজেন্ট</option>
-                  <option value="MARKETING_MANAGER">মার্কেটিং ম্যানেজার</option>
-                  <option value="ADVERTISER">বিজ্ঞাপনদাতা</option>
-                  <option value="ANALYST">অ্যানালিস্ট</option>
-                  <option value="ADMIN">অ্যাডমিন (ADMIN)</option>
+                  <option value="VIEWER">{D.agRoleViewer}</option>
+                  <option value="SUPPORT_AGENT">{D.agRoleSupport}</option>
+                  <option value="MARKETING_MANAGER">{D.agRoleMarketing}</option>
+                  <option value="ADVERTISER">{D.agRoleAdvertiser}</option>
+                  <option value="ANALYST">{D.agRoleAnalyst}</option>
+                  <option value="ADMIN">{D.agRoleAdmin}</option>
                 </select>
               </div>
               <button className={btnGhost} disabled={busy} onClick={createInviteLink}>
-                ক্লায়েন্টের টিমের জন্য আমন্ত্রণ লিংক তৈরি করুন
+                {D.agInviteBtn}
               </button>
             </div>
             {inviteUrl ? (
               <div className="mt-3">
-                <p className="text-xs text-amber-700">লিংকটি এখনই কপি করে রাখুন — পরে আর দেখা যাবে না (সার্ভারে শুধু এর hash থাকে)। লিংকটি পেলে ক্লায়েন্ট যোগদানের অনুরোধ পাঠাতে পারবেন; অনুমোদন দিলেই তিনি সদস্য হবেন।</p>
+                <p className="text-xs text-amber-700">{D.agInviteNote}</p>
                 <code className="mt-1 block break-all rounded-lg bg-white px-3 py-2 text-xs ring-1 ring-slate-200">{inviteUrl}</code>
               </div>
             ) : null}
@@ -251,59 +250,59 @@ export default function AgencyConsolePage() {
 
       {/* Commissions — records only */}
       <div className="card p-5">
-        <div className="section-title">কমিশন রেকর্ড</div>
+        <div className="section-title">{D.agCommissionTitle}</div>
         <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
-          {AGENCY_COMMISSION_RECORDS_BN}
+          {agencyCommissionRecords(locale)}
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>
-            <label className={labelCls} htmlFor="agency-comm-agency">এজেন্সি প্রতিষ্ঠান (আপনি OWNER/ADMIN)</label>
+            <label className={labelCls} htmlFor="agency-comm-agency">{D.agCommAgencyLabel}</label>
             <select id="agency-comm-agency" className={inputCls} value={agencyOrgId} onChange={(e) => { setAgencyOrgId(e.target.value); setClientOrgId(""); }}>
-              <option value="">বেছে নিন…</option>
+              <option value="">{D.agChooseEllipsis}</option>
               {agencyChoices.map((o) => (
                 <option key={o.organization.id} value={o.organization.id}>{o.organization.name}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className={labelCls} htmlFor="agency-comm-client">ক্লায়েন্ট প্রতিষ্ঠান</label>
+            <label className={labelCls} htmlFor="agency-comm-client">{D.agCommClientLabel}</label>
             <select id="agency-comm-client" className={inputCls} value={clientOrgId} onChange={(e) => setClientOrgId(e.target.value)}>
-              <option value="">বেছে নিন…</option>
+              <option value="">{D.agChooseEllipsis}</option>
               {clientChoices.map((o) => (
                 <option key={o.organization.id} value={o.organization.id}>{o.organization.name}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className={labelCls} htmlFor="agency-comm-period">সময়ের লেবেল</label>
-            <input id="agency-comm-period" className={inputCls} value={periodLabel} onChange={(e) => setPeriodLabel(e.target.value)} placeholder="যেমন: অক্টোবর ২০২৬" maxLength={40} />
+            <label className={labelCls} htmlFor="agency-comm-period">{D.agPeriodLabel}</label>
+            <input id="agency-comm-period" className={inputCls} value={periodLabel} onChange={(e) => setPeriodLabel(e.target.value)} placeholder={D.agPeriodPh} maxLength={40} />
           </div>
           <div>
-            <label className={labelCls} htmlFor="agency-comm-amount">পরিমাণ (৳)</label>
+            <label className={labelCls} htmlFor="agency-comm-amount">{D.agAmountLabel}</label>
             <input id="agency-comm-amount" className={inputCls} value={amountBdt} onChange={(e) => setAmountBdt(e.target.value)} placeholder="1500" inputMode="decimal" />
           </div>
           <div className="sm:col-span-2">
-            <label className={labelCls} htmlFor="agency-comm-note">নোট (ঐচ্ছিক)</label>
-            <input id="agency-comm-note" className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder="যেকোনো মন্তব্য" />
+            <label className={labelCls} htmlFor="agency-comm-note">{D.agNoteLabel}</label>
+            <input id="agency-comm-note" className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder={D.agNotePh} />
           </div>
         </div>
         <button className={btnCls + " mt-3"} disabled={busy || !agencyOrgId} onClick={recordCommission}>
-          কমিশন রেকর্ড করুন
+          {D.agRecordBtn}
         </button>
 
         <div className="mt-5">
-          <div className="text-sm font-semibold text-slate-800">রেকর্ডসমূহ {agencyOrgId ? "" : "(আগে এজেন্সি প্রতিষ্ঠান বেছে নিন)"}</div>
+          <div className="text-sm font-semibold text-slate-800">{D.agRecordsTitle} {agencyOrgId ? "" : D.agRecordsPickFirst}</div>
           {entries.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">এখনো কোনো কমিশন রেকর্ড নেই।</p>
+            <p className="mt-2 text-sm text-slate-500">{D.agNoRecords}</p>
           ) : (
             <ul className="mt-2 divide-y divide-slate-100">
               {entries.map((e) => (
                 <li key={e.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5 text-sm">
                   <span className="font-medium text-slate-800">{e.periodLabel}</span>
-                  <span className="text-slate-500">ক্লায়েন্ট: {e.clientOrganizationName ?? e.clientOrganizationId}</span>
-                  <span className="text-slate-500">পরিমাণ <b className="text-slate-800">{fmtM(e.amountMinor)}</b></span>
+                  <span className="text-slate-500">{t("agency.agClientPrefix", { name: e.clientOrganizationName ?? e.clientOrganizationId })}</span>
+                  <span className="text-slate-500">{D.agAmountWord} <b className="text-slate-800">{fmtML(e.amountMinor)}</b></span>
                   {e.note ? <span className="text-slate-400">{e.note}</span> : null}
-                  <span className="text-xs text-slate-400">{new Date(e.createdAt).toLocaleString("bn-BD")}</span>
+                  <span className="text-xs text-slate-400">{fmtDateTime(locale, e.createdAt)}</span>
                 </li>
               ))}
             </ul>

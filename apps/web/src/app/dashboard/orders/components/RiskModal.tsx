@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import type { RiskDetail } from "./types";
 import { RISK_LABEL } from "./types";
 
@@ -9,6 +10,7 @@ interface RiskModalProps {
 }
 
 export function RiskModal({ riskDetail, onClose }: RiskModalProps) {
+  const { dict, t, locale } = useLocale();
   if (!riskDetail) return null;
 
   return (
@@ -18,14 +20,14 @@ export function RiskModal({ riskDetail, onClose }: RiskModalProps) {
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <h3 className="text-base font-bold text-slate-900">
-              ↩️ রিটার্ন ঝুঁকি — অর্ডার {riskDetail.orderLabel}
+              {dict.orders.returnRiskOrder}{riskDetail.orderLabel}
             </h3>
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                RISK_LABEL[riskDetail.band]?.cls ?? ""
+                RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL]?.cls ?? ""
               }`}
             >
-              {RISK_LABEL[riskDetail.band]?.text ?? riskDetail.band}
+              {RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL] ? dict.orders[RISK_LABEL[riskDetail.band as keyof typeof RISK_LABEL]!.textKey] : riskDetail.band}
               {riskDetail.score !== null && ` (${riskDetail.score}%)`}
             </span>
           </div>
@@ -40,7 +42,7 @@ export function RiskModal({ riskDetail, onClose }: RiskModalProps) {
 
         {/* Reasons */}
         <div className="space-y-3 text-xs">
-          <span className="font-bold text-slate-700">শনাক্তকৃত কারণসমূহ:</span>
+          <span className="font-bold text-slate-700">{dict.orders.identifiedReasons}</span>
           <ul className="list-disc space-y-1.5 pl-5 text-slate-600">
             {riskDetail.reasons.map((r, i) => (
               <li key={i}>{r}</li>
@@ -49,13 +51,12 @@ export function RiskModal({ riskDetail, onClose }: RiskModalProps) {
 
           {riskDetail.suggestion && (
             <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs font-semibold text-amber-900">
-              💡 পরামর্শ: {riskDetail.suggestion}
+              {dict.orders.suggestion2}{riskDetail.suggestion}
             </div>
           )}
 
           <p className="text-[11px] text-slate-400 pt-2 border-t border-slate-100">
-            * এই স্কোরটি গ্রাহকের পূর্বের ডেলিভারি ইতিহাস পর্যালোচনা করে তৈরি। সিদ্ধান্ত নেওয়ার সম্পূর্ণ ক্ষমতা আপনার।
-          </p>
+            {dict.orders.thisScoreIsMadeBy}</p>
         </div>
       </div>
     </div>

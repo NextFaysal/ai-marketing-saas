@@ -3,6 +3,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { API_URL, apiFetch, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useLocale } from "@/lib/i18n/provider";
+import type { UiLocale } from "@/lib/i18n/dict";
+import { fmtMoney, fmtNumber } from "@repo/contracts";
+import type { teamBn } from "@/lib/i18n/team";
 
 // Feature 5: Staff Sales Attribution Row
 interface StaffSalesRow {
@@ -76,23 +80,28 @@ interface Scorecard {
 }
 
 function Delta({ v, invert = false, suffix = "" }: { v: number | null; invert?: boolean; suffix?: string }) {
-  if (v === null || v === 0) return <span className="text-xs text-slate-400">আগের মতোই</span>;
+  const { dict, t, locale } = useLocale();
+  const D = dict.team;
+  if (v === null || v === 0) return <span className="text-xs text-slate-400">{D.pfDeltaSame}</span>;
   const good = invert ? v < 0 : v > 0;
   return (
     <span className={`text-xs font-medium ${good ? "text-emerald-600" : "text-red-500"}`}>
-      {v > 0 ? "▲" : "▼"} {Math.abs(v)}{suffix} আগের সময়ের চেয়ে
+      {t("team.pfDeltaVs", { arrow: v > 0 ? "▲" : "▼", value: fmtNumber(locale, Math.abs(v)), suffix })}
     </span>
   );
 }
 
-function mins(v: number | null): string {
-  return v === null ? "—" : `${v} মিনিট`;
+type TeamDict = typeof teamBn;
+function mins(v: number | null, locale: UiLocale, D: TeamDict, tr: (path: string, params?: Record<string, string | number>) => string): string {
+  return v === null ? "—" : tr("team.pfMins", { v: fmtNumber(locale, v) });
 }
-function pts(v: number | null): string {
-  return v === null ? "তথ্য নেই" : `${v}`;
+function pts(v: number | null, locale: UiLocale, D: TeamDict): string {
+  return v === null ? D.pfNoInfo : fmtNumber(locale, v);
 }
 
 export default function TeamPerformancePage() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.team;
   const [activeTab, setActiveTab] = useState<"sales" | "support">("sales");
   const [days, setDays] = useState(30);
   const [commissionRate, setCommissionRate] = useState(50);
@@ -120,7 +129,7 @@ export default function TeamPerformancePage() {
       setSalesData(res);
       setError("");
     } catch (err: any) {
-      setError(err?.message || "সেলস স্কোরবোর্ড লোড ব্যর্থ।");
+      setError(err?.message || D.pfSalesLoadFailed);
     } finally {
       setSalesLoading(false);
     }
@@ -129,7 +138,7 @@ export default function TeamPerformancePage() {
   const loadSupportCard = useCallback(async (d: number, tid: string) => {
     const orgId = getOrganizationId();
     if (!orgId) {
-      setError("কোনো Organization নির্বাচিত নেই।");
+      setError(D.tmNoOrg);
       return;
     }
     try {
@@ -140,7 +149,7 @@ export default function TeamPerformancePage() {
       );
       setError("");
     } catch (e: any) {
-      setError(e instanceof Error ? e.message : "লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.tmLoadFailed);
     }
   }, []);
 
@@ -198,17 +207,13 @@ export default function TeamPerformancePage() {
         <div>
           <div className="flex items-center gap-2">
             <Link href="/dashboard/team" className="text-xs text-brand-600 hover:underline">
-              ← টিম সেটিংস
+              {D.pfBackToTeam}
             </Link>
             <span className="text-slate-300">/</span>
-            <span className="text-xs font-semibold text-slate-500">পারফরম্যান্স ও অ্যাট্রিবিউশন</span>
+            <span className="text-xs font-semibold text-slate-500">{D.pfCrumb}</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-            টিম পারফরম্যান্স ও সেলস অ্যাট্রিবিউশন স্কোরবোর্ড
-          </h1>
-          <p className="text-xs text-slate-500">
-            কল সেন্টার ও ইনবক্স এজেন্টদের কনফার্ম করা অর্ডার, ডেলিভারি সাকসেস রেট এবং কমিশন হিসাব।
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">{D.pfTitle}</h1>
+          <p className="text-xs text-slate-500">{D.pfSubtitle}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -218,12 +223,12 @@ export default function TeamPerformancePage() {
               onClick={() => setDays(d)}
               className={d === days ? "btn-primary btn-sm text-xs font-bold" : "btn-secondary btn-sm text-xs"}
             >
-              শেষ {d} দিন
+              {t("team.pfLastDays", { days: fmtNumber(locale, d) })}
             </button>
           ))}
           {activeTab === "support" && (
             <button className="btn-secondary btn-sm text-xs" onClick={downloadSupportCsv}>
-              CSV ডাউনলোড
+              {D.pfCsvDownload}
             </button>
           )}
         </div>
@@ -242,10 +247,8 @@ export default function TeamPerformancePage() {
                 : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
-            <span>🛍️ সেলস ও ডেলিভারি অ্যাট্রিবিউশন</span>
-            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
-              সক্রিয়
-            </span>
+            <span>{D.pfTabSales}</span>
+            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">{D.pfActiveChip}</span>
           </button>
 
           <button
@@ -256,7 +259,7 @@ export default function TeamPerformancePage() {
                 : "border-transparent text-slate-500 hover:text-slate-700"
             }`}
           >
-            💬 ইনবক্স সাপোর্ট ও রেসপন্স স্কোরকার্ড
+            {D.pfTabSupport}
           </button>
         </nav>
       </div>
@@ -269,31 +272,31 @@ export default function TeamPerformancePage() {
           {/* KPI Summary Cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="card p-4">
-              <p className="text-xs font-medium text-slate-500">ডেলিভার্ড সেলস রেভিনিউ</p>
+              <p className="text-xs font-medium text-slate-500">{D.pfKpiRevenue}</p>
               <p className="mt-1 text-2xl font-bold text-slate-900">
-                ৳{totalDeliveredRevenue.toLocaleString("bn-BD")}
+                {fmtMoney(locale, totalDeliveredRevenue)}
               </p>
-              <p className="text-[11px] text-emerald-600 font-semibold">{totalDeliveredCount}টি অর্ডার সফল ডেলিভারি</p>
+              <p className="text-[11px] text-emerald-600 font-semibold">{t("team.pfOrdersDelivered", { count: fmtNumber(locale, totalDeliveredCount) })}</p>
             </div>
 
             <div className="card p-4">
-              <p className="text-xs font-medium text-slate-500">সামগ্রিক ডেলিভারি হার</p>
+              <p className="text-xs font-medium text-slate-500">{D.pfKpiDeliveryRate}</p>
               <p className="mt-1 text-2xl font-bold text-indigo-700">
-                {overallDeliveryRate}%
+                {fmtNumber(locale, Number(overallDeliveryRate), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
               </p>
-              <p className="text-[11px] text-slate-400">রিটার্ন হয়েছে {totalReturnedCount}টি অর্ডার</p>
+              <p className="text-[11px] text-slate-400">{t("team.pfKpiReturned", { count: fmtNumber(locale, totalReturnedCount) })}</p>
             </div>
 
             <div className="card p-4 border-emerald-100 bg-emerald-50/20">
-              <p className="text-xs font-medium text-emerald-800">মোট এজেন্ট কমিশন তহবিল</p>
+              <p className="text-xs font-medium text-emerald-800">{D.pfKpiCommissionPool}</p>
               <p className="mt-1 text-2xl font-bold text-emerald-900">
-                ৳{totalCommissionPool.toLocaleString("bn-BD")}
+                {fmtMoney(locale, totalCommissionPool)}
               </p>
-              <p className="text-[11px] text-emerald-700">প্রতি সফল ডেলিভারিতে ৳{commissionRate}</p>
+              <p className="text-[11px] text-emerald-700">{t("team.pfKpiPerDelivery", { amount: fmtMoney(locale, commissionRate) })}</p>
             </div>
 
             <div className="card p-4">
-              <label className="block text-xs font-medium text-slate-500">কমিশন রেট পরিবর্তন করুন</label>
+              <label className="block text-xs font-medium text-slate-500">{D.pfCommissionLabel}</label>
               <div className="mt-1 flex items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-700">৳</span>
                 <input
@@ -308,49 +311,49 @@ export default function TeamPerformancePage() {
                   onClick={() => void loadSalesScoreboard(days, commissionRate)}
                   className="btn-primary btn-sm text-xs font-semibold !py-1"
                 >
-                  আপডেট
+                  {D.pfUpdateBtn}
                 </button>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">প্রতি ডেলিভার্ড পার্সেলের ইনসেনটিভ</p>
+              <p className="text-[11px] text-slate-400 mt-1">{D.pfCommissionNote}</p>
             </div>
           </div>
 
           {/* Leaderboard Table */}
           {salesLoading ? (
-            <div className="card p-12 text-center text-xs text-slate-400">স্কোরবোর্ড লোড হচ্ছে...</div>
+            <div className="card p-12 text-center text-xs text-slate-400">{D.pfBoardLoading}</div>
           ) : !salesData || salesData.leaderboard.length === 0 ? (
             <div className="card p-12 text-center">
               <span className="text-4xl">👥</span>
-              <p className="mt-2 text-sm font-semibold text-slate-700">কোনো সেলস রেকর্ড পাওয়া যায়নি</p>
-              <p className="text-xs text-slate-400">এই সময়সীমায় কোনো অর্ডারে সেলস এজেন্ট ট্যাগ করা হয়নি।</p>
+              <p className="mt-2 text-sm font-semibold text-slate-700">{D.pfNoSalesTitle}</p>
+              <p className="text-xs text-slate-400">{D.pfNoSalesDesc}</p>
             </div>
           ) : (
             <div className="overflow-hidden card">
               <div className="border-b bg-slate-50 px-5 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
-                <span>স্টাফ সেলস লিডারবোর্ড (সর্বোচ্চ রেভিনিউ ক্রমানুসারে)</span>
-                <span className="text-slate-400 font-normal">শেষ {days} দিনের ডেলিভারি পারফরম্যান্স</span>
+                <span>{D.pfLeaderboardTitle}</span>
+                <span className="text-slate-400 font-normal">{t("team.pfLeaderboardSub", { days: fmtNumber(locale, days) })}</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[780px]">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
                     <tr>
-                      <th className="py-3 px-4">র‍্যাংক</th>
-                      <th className="py-3 px-4">এজেন্ট / স্টাফ</th>
-                      <th className="py-3 px-4 text-center">মোট হ্যান্ডেল</th>
-                      <th className="py-3 px-4 text-center">ডেলিভার্ড</th>
-                      <th className="py-3 px-4 text-center">রিটার্ন</th>
-                      <th className="py-3 px-4">ডেলিভারি সাকসেস হার</th>
-                      <th className="py-3 px-4 text-right">অর্জিত রেভিনিউ</th>
-                      <th className="py-3 px-4 text-right">অর্জিত কমিশন</th>
+                      <th className="py-3 px-4">{D.pfColRank}</th>
+                      <th className="py-3 px-4">{D.pfColAgent}</th>
+                      <th className="py-3 px-4 text-center">{D.pfColHandled}</th>
+                      <th className="py-3 px-4 text-center">{D.pfColDelivered}</th>
+                      <th className="py-3 px-4 text-center">{D.pfColReturn}</th>
+                      <th className="py-3 px-4">{D.pfColSuccessRate}</th>
+                      <th className="py-3 px-4 text-right">{D.pfColRevenue}</th>
+                      <th className="py-3 px-4 text-right">{D.pfColCommission}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {salesData.leaderboard.map((agent, index) => {
                       const isUnassigned = agent.agentId === "unassigned";
-                      let rankBadge = `${index + 1}`;
-                      if (index === 0 && !isUnassigned) rankBadge = "🥇 1";
-                      else if (index === 1 && !isUnassigned) rankBadge = "🥈 2";
-                      else if (index === 2 && !isUnassigned) rankBadge = "🥉 3";
+                      let rankBadge = fmtNumber(locale, index + 1);
+                      if (index === 0 && !isUnassigned) rankBadge = `🥇 ${fmtNumber(locale, 1)}`;
+                      else if (index === 1 && !isUnassigned) rankBadge = `🥈 ${fmtNumber(locale, 2)}`;
+                      else if (index === 2 && !isUnassigned) rankBadge = `🥉 ${fmtNumber(locale, 3)}`;
 
                       return (
                         <tr
@@ -371,18 +374,18 @@ export default function TeamPerformancePage() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-center font-medium">
-                            {agent.totalOrders}টি
+                            {t("team.tmCountSuffix", { count: fmtNumber(locale, agent.totalOrders) })}
                           </td>
                           <td className="py-3 px-4 text-center font-bold text-emerald-700">
-                            {agent.deliveredOrders}টি
+                            {t("team.tmCountSuffix", { count: fmtNumber(locale, agent.deliveredOrders) })}
                           </td>
                           <td className="py-3 px-4 text-center font-bold text-rose-600">
-                            {agent.returnedOrders}টি
+                            {t("team.tmCountSuffix", { count: fmtNumber(locale, agent.returnedOrders) })}
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-xs text-slate-700 w-12">
-                                {agent.deliveryRatePercent}%
+                                {fmtNumber(locale, agent.deliveryRatePercent)}%
                               </span>
                               <div className="w-24 bg-slate-200 rounded-full h-2 overflow-hidden">
                                 <div
@@ -399,10 +402,10 @@ export default function TeamPerformancePage() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-bold text-slate-900">
-                            ৳{agent.deliveredRevenueBdt.toLocaleString("bn-BD")}
+                            {fmtMoney(locale, agent.deliveredRevenueBdt)}
                           </td>
                           <td className="py-3 px-4 text-right font-bold text-emerald-700">
-                            ৳{agent.totalCommissionBdt.toLocaleString("bn-BD")}
+                            {fmtMoney(locale, agent.totalCommissionBdt)}
                           </td>
                         </tr>
                       );
@@ -426,10 +429,10 @@ export default function TeamPerformancePage() {
               value={teamId}
               onChange={(e) => setTeamId(e.target.value)}
             >
-              <option value="">সব টিম</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} টিম
+              <option value="">{D.pfAllTeams}</option>
+              {teams.map((tm) => (
+                <option key={tm.id} value={tm.id}>
+                  {t("team.pfTeamSuffix", { name: tm.name })}
                 </option>
               ))}
             </select>
@@ -437,11 +440,9 @@ export default function TeamPerformancePage() {
 
           {card ? (
             <div className="card p-4 text-xs text-slate-600 leading-relaxed">
-              <strong>হিসাব যেভাবে হয়:</strong> {card.formula} প্রতিটা Flag এর পাশে তার প্রমাণ দেওয়া আছে। আগের সমান দৈর্ঘ্যের সময়ের সাথে তুলনা দেখানো হয়েছে।
+              <strong>{D.pfFormulaLead}</strong> {card.formula}{D.pfFormulaTrail}
               {card.scopedTeamName ? (
-                <div className="mt-1 font-medium text-indigo-700">
-                  এখন শুধু "{card.scopedTeamName}" টিমের হিসাব দেখানো হচ্ছে।
-                </div>
+                <div className="mt-1 font-medium text-indigo-700">{t("team.pfScopedTeam", { name: card.scopedTeamName })}</div>
               ) : null}
             </div>
           ) : null}
@@ -449,9 +450,9 @@ export default function TeamPerformancePage() {
           {card?.fairness && card.fairness.totalAssigned > 0 ? (
             <div className="card p-4">
               <div className="mb-2 text-xs font-semibold">
-                ⚖️ কাজের ভাগ — ন্যায্যতা{" "}
+                {D.pfFairnessTitle}{" "}
                 <span className="ml-1 font-normal text-slate-400">
-                  সমান ভাগ হতো {card.fairness.equalSharePercent}% করে · সর্বোচ্চ–সর্বনিম্ন ব্যবধান {card.fairness.spreadPercent}%
+                  {t("team.pfFairnessNote", { equal: fmtNumber(locale, card.fairness.equalSharePercent), spread: fmtNumber(locale, card.fairness.spreadPercent) })}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -466,8 +467,7 @@ export default function TeamPerformancePage() {
                         heavy ? "bg-red-100 text-red-700" : light ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"
                       }`}
                     >
-                      {agent?.name ?? f.userId}: ভাগ {f.sharePercent}% ({f.deviationPercent > 0 ? "+" : ""}
-                      {f.deviationPercent}%)
+                      {t("team.pfShareText", { name: agent?.name ?? f.userId, share: fmtNumber(locale, f.sharePercent), dev: `${f.deviationPercent > 0 ? "+" : ""}${fmtNumber(locale, f.deviationPercent)}` })}
                     </span>
                   );
                 })}
@@ -475,46 +475,46 @@ export default function TeamPerformancePage() {
             </div>
           ) : null}
 
-          {!card && !error ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+          {!card && !error ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : null}
 
           {card ? (
             <div className="card overflow-x-auto p-5">
               <table className="w-full min-w-[880px] text-xs">
                 <thead>
                   <tr className="text-left text-slate-500 font-semibold border-b">
-                    <th className="py-2">র‍্যাংক</th>
-                    <th>সদস্য</th>
-                    <th>সূচক (১০০)</th>
-                    <th>বন্ধ</th>
-                    <th>Reply</th>
-                    <th>প্রথম জবাব</th>
-                    <th>সমাধান</th>
-                    <th>CSAT</th>
-                    <th>পর্যবেক্ষণ</th>
+                    <th className="py-2">{D.pfColRank}</th>
+                    <th>{dict.common.member}</th>
+                    <th>{t("team.pfColIndicator", { max: fmtNumber(locale, 100) })}</th>
+                    <th>{D.pfColClosed}</th>
+                    <th>{D.pfColReply}</th>
+                    <th>{D.pfColFirstResponse}</th>
+                    <th>{D.pfColResolution}</th>
+                    <th>{D.pfColCsat}</th>
+                    <th>{D.pfColFlags}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {card.agents.map((a) => (
                     <tr key={a.userId} className="hover:bg-slate-50 align-top">
-                      <td className="py-3 font-bold">{a.rank ?? "—"}</td>
+                      <td className="py-3 font-bold">{a.rank === null || a.rank === undefined ? "—" : fmtNumber(locale, a.rank)}</td>
                       <td className="py-3">
                         <span className="font-semibold text-slate-900">{a.name}</span>
                         <span className="text-[10px] text-slate-400 ml-1">({a.role})</span>
                         {a.activityState === "idle" ? (
-                          <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">এখন নিষ্ক্রিয়</span>
+                          <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">{D.pfIdleNow}</span>
                         ) : null}
                       </td>
                       <td className="py-3">
-                        <span className="text-base font-bold text-slate-900">{a.indicator}</span>
+                        <span className="text-base font-bold text-slate-900">{fmtNumber(locale, a.indicator)}</span>
                         <div className="text-[10px] text-slate-400">
-                          বন্ধ {pts(a.components.volume)}/৩০ · গতি {pts(a.components.speed)}/২৫ · সমাধান {pts(a.components.resolution)}/২০ · CSAT {pts(a.components.csat)}/২৫
+                          {t("team.pfComponents", { volume: pts(a.components.volume, locale, D), vmax: fmtNumber(locale, 30), speed: pts(a.components.speed, locale, D), smax: fmtNumber(locale, 25), resolution: pts(a.components.resolution, locale, D), rmax: fmtNumber(locale, 20), csat: pts(a.components.csat, locale, D), cmax: fmtNumber(locale, 25) })}
                         </div>
                       </td>
-                      <td className="py-3">{a.current.closed}টি<div><Delta v={a.deltas.closed} /></div></td>
-                      <td className="py-3">{a.current.replies}টি<div><Delta v={a.deltas.replies} /></div></td>
-                      <td className="py-3">{mins(a.current.avgFirstResponseMinutes)}<div><Delta v={a.deltas.avgFirstResponseMinutes} invert suffix=" মিনিট" /></div></td>
-                      <td className="py-3">{mins(a.current.avgResolutionMinutes)}<div><Delta v={a.deltas.avgResolutionMinutes} invert suffix=" মিনিট" /></div></td>
-                      <td className="py-3">{a.current.csatAvg === null ? "—" : `${a.current.csatAvg}/৫`}</td>
+                      <td className="py-3">{t("team.tmCountSuffix", { count: fmtNumber(locale, a.current.closed) })}<div><Delta v={a.deltas.closed} /></div></td>
+                      <td className="py-3">{t("team.tmCountSuffix", { count: fmtNumber(locale, a.current.replies) })}<div><Delta v={a.deltas.replies} /></div></td>
+                      <td className="py-3">{mins(a.current.avgFirstResponseMinutes, locale, D, t)}<div><Delta v={a.deltas.avgFirstResponseMinutes} invert suffix={D.pfMinuteSuffix} /></div></td>
+                      <td className="py-3">{mins(a.current.avgResolutionMinutes, locale, D, t)}<div><Delta v={a.deltas.avgResolutionMinutes} invert suffix={D.pfMinuteSuffix} /></div></td>
+                      <td className="py-3">{a.current.csatAvg === null ? "—" : t("team.pfCsatCell", { avg: fmtNumber(locale, a.current.csatAvg), max: fmtNumber(locale, 5) })}</td>
                       <td className="py-3">
                         {a.flags.length ? (
                           a.flags.map((f) => (
@@ -530,7 +530,7 @@ export default function TeamPerformancePage() {
                             </div>
                           ))
                         ) : (
-                          <span className="text-[10px] text-slate-400">কিছু নেই</span>
+                          <span className="text-[10px] text-slate-400">{D.pfNothing}</span>
                         )}
                       </td>
                     </tr>

@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { minorToMajor } from "../imports/csv";
 import { AbandonedCartRow, deriveAbandonedCarts } from "./abandoned-carts";
+import { badRequest } from "../i18n/api-exception";
 
 export interface AbandonedCartView extends AbandonedCartRow {
   storeName: string | null;
@@ -97,19 +98,17 @@ export class AbandonedCartsService {
   async sendRecovery(organizationId: string, actorId: string, visitorId: string) {
     const { carts } = await this.buildCarts(organizationId);
     const cart = carts.find((c) => c.visitorId === visitorId);
-    if (!cart) throw new BadRequestException("এই ভিজিটরের কোনো abandoned cart পাওয়া যায়নি");
+    if (!cart) throw badRequest("tracking.noAbandonedCartWasFoundFor");
 
     const to = cart.contact.email;
     if (!to) {
-      throw new BadRequestException(
-        "এই ভিজিটরের কোনো ইমেইল ঠিকানা নেই — recovery ইমেইল পাঠানো যাবে না (দোকানে TP.identify hook বসালে ইমেইল ধরা পড়বে)",
-      );
+      throw badRequest("tracking.thisVisitorHasNoEmailAddress");
     }
     if (cart.recoverySentAt) {
-      throw new BadRequestException("এই কার্টের জন্য recovery ইমেইল ইতিমধ্যে পাঠানো হয়েছে");
+      throw badRequest("tracking.aRecoveryEmailHasAlreadyBeen");
     }
     if (!this.email) {
-      throw new BadRequestException("ইমেইল পাঠানোর সুবিধা এই deployment-এ নেই");
+      throw badRequest("tracking.theEmailSendingFacilityIsNot");
     }
 
     const storeName = cart.storeName ?? "আমাদের দোকান";
@@ -143,7 +142,7 @@ export class AbandonedCartsService {
       providerMessageId = result.providerMessageId;
     } catch (err) {
       // No audit marker on failure — the cart remains recoverable.
-      throw new BadRequestException(`ইমেইল পাঠানো যায়নি: ${err instanceof Error ? err.message : String(err)}`);
+      throw badRequest("tracking.theEmailCouldNotBeSent", { p1: err instanceof Error ? err.message : String(err) });
     }
 
     if (this.audit) {

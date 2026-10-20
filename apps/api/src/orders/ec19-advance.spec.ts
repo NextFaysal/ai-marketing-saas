@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
 import { OrdersController } from "./orders.controller";
@@ -88,7 +89,7 @@ describe("EC19 OrdersService.recordAdvanceVerification", () => {
     ).rejects.toThrow(/70001.*70000|70000/);
     await expect(
       svc.recordAdvanceVerification("org-1", "staff-1", "o1", { amountMinor: "70001", method: "cash" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(pvRows).toHaveLength(1);
     expect(prisma.paymentVerification.create).toHaveBeenCalledTimes(1);
   });
@@ -97,10 +98,10 @@ describe("EC19 OrdersService.recordAdvanceVerification", () => {
     const { svc } = setup();
     await expect(
       svc.recordAdvanceVerification("org-2", "staff-1", "o1", { amountMinor: "1000", method: "cash" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.recordAdvanceVerification("org-1", "staff-1", "missing", { amountMinor: "1000", method: "cash" }),
-    ).rejects.toThrow("Order not found in this organization");
+    ).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 
   it("a duplicate approved transaction reference is rejected org-wide", async () => {
@@ -112,7 +113,7 @@ describe("EC19 OrdersService.recordAdvanceVerification", () => {
       svc.recordAdvanceVerification("org-1", "staff-2", "o1", {
         amountMinor: "5000", method: "bkash", reference: "TRXDUP",
       }),
-    ).rejects.toThrow("This transaction reference has already been recorded as a verified payment");
+    ).rejects.toMatchObject({ code: "orders.transactionAlreadyRecorded" });
     expect(pvRows).toHaveLength(1);
   });
 
@@ -133,11 +134,11 @@ describe("EC19 OrdersService.recordAdvanceVerification", () => {
   it("rejects non-numeric and non-positive amounts", async () => {
     const { svc } = setup();
     await expect(svc.recordAdvanceVerification("org-1", "s", "o1", { amountMinor: "abc", method: "cash" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.recordAdvanceVerification("org-1", "s", "o1", { amountMinor: "0", method: "cash" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.recordAdvanceVerification("org-1", "s", "o1", { amountMinor: "-5", method: "cash" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("getOne with no verifications returns advancePaidMinor 0 and the full amount due", async () => {

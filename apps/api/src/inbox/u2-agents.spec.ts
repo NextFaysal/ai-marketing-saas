@@ -80,7 +80,7 @@ describe("U2 teams + agent state", () => {
     const { service } = setup();
     const team = await service.createTeam(ORG, "owner", { name: "সেলস", channels: ["whatsapp", "bogus"] as any });
     expect(team.channels).toEqual(["whatsapp"]); // unknown channel filtered
-    await expect(service.setTeamMembers(ORG, "owner", team.id, [{ userId: "ghost" }])).rejects.toThrow(/not a member/);
+    await expect(service.setTeamMembers(ORG, "owner", team.id, [{ userId: "ghost" }])).rejects.toMatchObject({ code: "inbox.userIsNotAMemberOf" });
     const teams = await service.setTeamMembers(ORG, "owner", team.id, [{ userId: "agent-a", capacity: 5 }]);
     expect(teams[0].members).toHaveLength(1);
     expect(teams[0].members[0].capacity).toBe(5);

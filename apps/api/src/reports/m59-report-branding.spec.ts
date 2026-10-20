@@ -78,18 +78,18 @@ describe("M59 branded public report", () => {
 
   it("wrong token -> NotFound", async () => {
     const { service } = makeService();
-    await expect(service.publicReport("tok-nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicReport("tok-nope")).rejects.toMatchObject({ code: "reports.thisReportLinkIsInvalid" });
   });
 
   it("expired token -> NotFound", async () => {
     const { service } = makeService();
-    await expect(service.publicReport("tok-expired")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicReport("tok-expired")).rejects.toMatchObject({ code: "reports.thisReportLinkHasExpired" });
   });
 
   it("revoked link dies instantly (revoke deletes the row)", async () => {
     const { service } = makeService();
     await service.publicReport("tok-valid");
     await service.revoke("org-1", "s-1");
-    await expect(service.publicReport("tok-valid")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicReport("tok-valid")).rejects.toMatchObject({ code: "reports.thisReportLinkIsInvalid" });
   });
 });

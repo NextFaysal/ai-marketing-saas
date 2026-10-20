@@ -1,11 +1,4 @@
-import {
-  BadRequestException,
-  HttpException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  Optional,
-} from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { FraudShieldService } from "../orders/fraud-shield.service";
@@ -15,6 +8,8 @@ import { VoiceService } from "./voice.service";
 import { killSwitches } from "../common/platform-settings";
 import { createAgentNotification } from "../common/agent-notify";
 import { formatMinor } from "@repo/contracts";
+import { catalogText, catalogTextBn, resolveStaffLocale } from "../i18n/catalog/send-locale";
+import { ApiException, badRequest, notFound } from "../i18n";
 import {
   buildGreeting,
   step,
@@ -112,7 +107,7 @@ export class VoiceConversationService {
       const found = await p.orderVoiceCall.findUnique({ where: { id: callId } });
       if (found && found.organizationId === organizationId) call = found;
     }
-    if (!call) throw new NotFoundException("কলের রেকর্ড পাওয়া যায়নি");
+    if (!call) throw notFound("voice.callRecordNotFound");
     return call;
   }
 
@@ -203,14 +198,15 @@ export class VoiceConversationService {
       where: { id: orderId, organizationId },
       include: { customer: true, items: true, organization: true },
     });
-    if (!order) throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
+    if (!order) throw notFound("voice.orderNotFound");
     return order;
   }
 
   private async notifyStaff(
     organizationId: string,
-    title: string,
-    body: string,
+    titleKey: string,
+    bodyKey: string,
+    params: Record<string, unknown> = {},
   ): Promise<void> {
     const p = this.prisma as any;
     if (typeof p.membership?.findMany !== "function") return;
@@ -223,12 +219,15 @@ export class VoiceConversationService {
     });
     for (const m of members ?? []) {
       try {
+        // ML11: staff notifications render per-member in the
+        // staff locale (preferredLocale → org → bn).
+        const staffLocale = await resolveStaffLocale(this.prisma as any, m.userId, organizationId);
         await createAgentNotification(this.prisma, {
           organizationId,
           userId: m.userId,
           type: "urgent",
-          title,
-          body,
+          title: catalogText(titleKey, staffLocale, params),
+          body: catalogText(bodyKey, staffLocale, params),
         });
       } catch {
         // Notification failure never undoes the conversation action.
@@ -241,21 +240,16 @@ export class VoiceConversationService {
   async startConversation(organizationId: string, orderId: string, actorId: string) {
     const settings = await this.getSettings(organizationId);
     if (!settings.enabled || !settings.conversationAgentEnabled) {
-      throw new BadRequestException(
-        "ভয়েস কনভারসেশন এজেন্ট চালু নেই — প্রথমে ভয়েস সেটিংসে enabled ও conversationAgentEnabled চালু করুন",
-      );
+      throw badRequest("voice.agentNotEnabled");
     }
     const ks = await killSwitches(this.prisma as any);
     if (ks.aiDisabledOrgIds.includes(organizationId)) {
-      throw new HttpException(
-        "AI features are temporarily disabled for this organization by the platform team.",
-        403,
-      );
+      throw new ApiException("voice.aiDisabledForOrg", undefined, 403);
     }
 
     const order = await this.loadOrder(organizationId, orderId);
     if (!order.isCod) {
-      throw new BadRequestException("এটি একটি ক্যাশ অন ডেলিভারি (COD) অর্ডার নয়");
+      throw badRequest("voice.notCodOrder");
     }
 
     const p = this.prisma as any;
@@ -272,9 +266,7 @@ export class VoiceConversationService {
     }
     const maxAttempts = Number(settings.maxAttempts ?? 3);
     if (attempts >= maxAttempts) {
-      throw new BadRequestException(
-        `এই অর্ডারের জন্য সর্বোচ্চ ${maxAttempts} বার কল চেষ্টা করা হয়েছে — আর কল করা যাবে না`,
-      );
+      throw badRequest("voice.maxAttemptsReached", { max: maxAttempts });
     }
 
     const targetPhone =
@@ -283,9 +275,7 @@ export class VoiceConversationService {
         ? order.address.match(/01\d{9}/)?.[0] ?? null
         : null);
     if (!targetPhone) {
-      throw new BadRequestException(
-        "গ্রাহকের ফোন নম্বর পাওয়া যায়নি — সঠিক মোবাইল নম্বর নিশ্চিত করুন",
-      );
+      throw badRequest("voice.phoneMissing");
     }
 
     const facts = await this.buildFacts(organizationId, order);
@@ -604,30 +594,32 @@ export class VoiceConversationService {
           return {
             ok: false,
             outcome: null,
-            summary: `অর্ডার ${orderId}: ডেলিভারি সময়ের নোট যাচাই করা যায়নি`,
+            summary: catalogTextBn("voice.summaryDeliveryTimeUnverified", { orderId }),
           };
         }
         await this.notifyStaff(
           organizationId,
-          "ভয়েস কল: ডেলিভারি সময় পরিবর্তনের অনুরোধ",
-          `অর্ডার ${orderId}-এর গ্রাহক ভয়েস কলে ডেলিভারির সময় বদলাতে চেয়েছেন: ${action.timeText}। অর্ডারের অভ্যন্তরীণ নোটে এটি লেখা হয়েছে — অনুগ্রহ করে ব্যবস্থা নিন।`,
+          "voice.staffDeliveryTimeTitle",
+          "voice.staffDeliveryTimeBody",
+          { orderId, timeText: action.timeText },
         );
         return {
           ok: true,
           outcome: "delivery_time_changed",
-          summary: `অর্ডার ${orderId}: গ্রাহক ভয়েস কলে ডেলিভারির সময় বদলাতে চেয়েছেন — ${action.timeText}`,
+          summary: catalogTextBn("voice.summaryDeliveryTimeChanged", { orderId, timeText: action.timeText }),
         };
       }
       case "human": {
         await this.notifyStaff(
           organizationId,
-          "ভয়েস কল: গ্রাহক কর্মীর সঙ্গে কথা বলতে চান",
-          `অর্ডার ${orderId}-এর গ্রাহক ভয়েস কলে কর্মীর সঙ্গে কথা বলতে চেয়েছেন (${action.reason})। অনুগ্রহ করে গ্রাহককে কল করুন।`,
+          "voice.staffHumanTitle",
+          "voice.staffHumanBody",
+          { orderId, reason: action.reason },
         );
         return {
           ok: true,
           outcome: "human_handoff",
-          summary: `অর্ডার ${orderId}: গ্রাহককে কর্মীর কাছে হস্তান্তর করা হয়েছে (${action.reason})।`,
+          summary: catalogTextBn("voice.summaryHumanHandoff", { orderId, reason: action.reason }),
         };
       }
     }
@@ -645,9 +637,7 @@ export class VoiceConversationService {
       settings.conversationMode !== "twilio_relay" ||
       !settings.relayWebsocketUrl
     ) {
-      throw new BadRequestException(
-        "ConversationRelay কনফিগার করা নেই — conversationMode=twilio_relay ও relayWebsocketUrl সেট করুন (relay not configured)",
-      );
+      throw badRequest("voice.relayNotConfigured");
     }
     if (!msg || typeof (msg as any).type !== "string") return null;
     switch (msg.type) {
@@ -698,7 +688,7 @@ export class VoiceConversationService {
         : null;
     if (!call) {
       if (this.voiceService) return this.voiceService.generateTwiml(callId, baseUrl);
-      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="bn-BD">অর্ডার কল পাওয়া যায়নি।</Say></Response>`;
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="bn-BD">${catalogTextBn("voice.callNotFound")}</Say></Response>`;
     }
     const settings = await this.getSettings(call.organizationId);
     if (
@@ -707,7 +697,11 @@ export class VoiceConversationService {
     ) {
       // Relay not configured — honest fallback to the existing IVR.
       if (this.voiceService) return this.voiceService.generateTwiml(callId, baseUrl);
-      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="bn-BD">অর্ডার কল পাওয়া যায়নি।</Say></Response>`;
+      // D-MB4-9: even this last-resort fallback honours the
+      // configured conversationLanguage (bn-BD only when unset).
+      const fbLanguage = settings.conversationLanguage || "bn-BD";
+      const fbLocale = /^en-/i.test(fbLanguage) ? "en" : "bn";
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="${fbLanguage}">${catalogText("voice.callNotFound", fbLocale as any)}</Say></Response>`;
     }
     const language = settings.conversationLanguage || "bn-BD";
     const url = xmlEscape(String(settings.relayWebsocketUrl));

@@ -1,5 +1,7 @@
 "use client";
 import React, { Suspense, useEffect, useState } from "react";
+import { fmtDateTime, fmtMoney, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -46,9 +48,9 @@ interface BusinessProfile {
 }
 
 /** Money arrives as minor-unit strings — format per spec. */
-function fmt(v: string | number | null | undefined): string {
+function fmt(v: string | number | null | undefined, locale: "bn" | "en" = "bn"): string {
   const n = v == null ? 0 : Number(v);
-  return `৳${(Number.isFinite(n) ? n / 100 : 0).toFixed(2)}`;
+  return fmtMoney(locale, Number.isFinite(n) ? n / 100 : 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function customerName(order: PrintOrder): string {
@@ -70,6 +72,7 @@ function addressText(v: unknown): string {
 }
 
 function PrintInner() {
+  const { dict, t, locale } = useLocale();
   const params = useSearchParams();
   const orderId = params.get("orderId") ?? "";
   const kindParam = params.get("kind");
@@ -85,8 +88,8 @@ function PrintInner() {
   useEffect(() => {
     (async () => {
       const orgId = getOrganizationId();
-      if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
-      if (!orderId) { setError("অর্ডার আইডি পাওয়া যায়নি — orderId query param দরকার।"); setLoading(false); return; }
+      if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
+      if (!orderId) { setError(dict.commerce.orderIDNotFoundThe); setLoading(false); return; }
       try {
         setReceiptSettings(getStoredReceiptSettings(orgId));
         // EC23: an invoice prints from the invoice endpoint, which
@@ -109,14 +112,14 @@ function PrintInner() {
         setOrg(orgInfo);
         setProfile(prof);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "অর্ডার লোড করা যায়নি");
+        setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadTheOrder);
       } finally { setLoading(false); }
     })();
   }, [orderId]);
 
   const isSlip = kind === "slip";
   const isReceipt = kind === "receipt";
-  const businessName = org?.brandName || org?.name || "ব্যবসা";
+  const businessName = org?.brandName || org?.name || dict.commerce.business;
   const businessAddress = [profile?.address, profile?.city].filter(Boolean).join(", ");
   const orderDate = order?.placedAt ?? order?.createdAt ?? null;
   const taxMinor = Number(order?.taxMinor ?? 0);
@@ -127,20 +130,19 @@ function PrintInner() {
   const storeAddress = receiptSettings?.address || businessAddress;
   const storePhone = receiptSettings?.phone || profile?.contactPhone;
   const returnPolicy = receiptSettings?.returnPolicy || "";
-  const footerGreeting = receiptSettings?.footerGreeting || "ধন্যবাদ! আবার আসবেন 🙏";
+  const footerGreeting = receiptSettings?.footerGreeting || dict.commerce.thankYouComeAgain;
   const showBarcode = receiptSettings?.showBarcode !== false;
   const orderBarcodeSvg = showBarcode && order ? generateBarcodeSvg(order.externalNumber ?? order.id, 34) : "";
 
   return (
     <div className="mx-auto max-w-3xl bg-white p-6 text-slate-900">
       <div className="mb-6 flex items-center justify-between print:hidden">
-        <h1 className="page-title">{isReceipt ? `রসিদ (${paperWidth})` : isSlip ? "প্যাকিং স্লিপ" : "ইনভয়েস"}</h1>
+        <h1 className="page-title">{isReceipt ? t("commerce.receipt2", { paperWidth: paperWidth }) : isSlip ? dict.commerce.packingSlip : dict.commerce.invoice}</h1>
         <button type="button" className="btn-primary" onClick={() => window.print()} disabled={!order}>
-          প্রিন্ট করুন
-        </button>
+          {dict.commerce.print}</button>
       </div>
 
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
       {order && isReceipt ? (
@@ -153,12 +155,12 @@ function PrintInner() {
             <div className="text-xl font-bold">{storeDisplayName}</div>
             {storeTagline ? <p className="mt-0.5 text-xs text-slate-500 font-medium">{storeTagline}</p> : null}
             {storeAddress ? <p className="mt-1 text-xs text-slate-600">{storeAddress}</p> : null}
-            {storePhone ? <p className="text-xs text-slate-600">ফোন: {storePhone}</p> : null}
+            {storePhone ? <p className="text-xs text-slate-600">{dict.commerce.phone2}{storePhone}</p> : null}
             <p className="mt-2 text-xs">
-              রসিদ নং: <span className="font-semibold">{order.externalNumber ?? order.id}</span>
-              {orderDate ? <span> · {new Date(orderDate).toLocaleString("bn-BD")}</span> : null}
+              {dict.commerce.receiptNo}<span className="font-semibold">{order.externalNumber ?? order.id}</span>
+              {orderDate ? <span> · {fmtDateTime(locale, new Date(orderDate))}</span> : null}
             </p>
-            <p className="text-xs">ক্রেতা: {customerName(order)}{order.customer?.phone ? ` · ${order.customer.phone}` : ""}</p>
+            <p className="text-xs">{dict.commerce.buyer2}{customerName(order)}{order.customer?.phone ? ` · ${order.customer.phone}` : ""}</p>
           </header>
 
           <table className="mt-3 w-full text-xs">
@@ -169,32 +171,32 @@ function PrintInner() {
                     {item.isGift ? "🎁 " : ""}{item.name} × {item.quantity}
                     {item.sku ? <span className="block text-[10px] text-slate-400">{item.sku}</span> : null}
                   </td>
-                  <td className="py-1 text-right whitespace-nowrap">{item.isGift ? "৳০" : fmt(item.totalMinor)}</td>
+                  <td className="py-1 text-right whitespace-nowrap">{item.isGift ? dict.commerce.text1qvn : fmt(item.totalMinor, locale)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
           <div className="mt-3 space-y-1 border-t border-dashed pt-2 text-xs">
-            <div className="flex justify-between"><span>সাবটোটাল</span><span>{fmt(order.subtotalMinor)}</span></div>
+            <div className="flex justify-between"><span>{dict.commerce.subtotal}</span><span>{fmt(order.subtotalMinor, locale)}</span></div>
             {Number(order.discountMinor ?? 0) > 0 ? (
-              <div className="flex justify-between"><span>ছাড়</span><span>-{fmt(order.discountMinor)}</span></div>
+              <div className="flex justify-between"><span>{dict.commerce.discount}</span><span>-{fmt(order.discountMinor, locale)}</span></div>
             ) : null}
             {taxMinor > 0 ? (
-              <div className="flex justify-between"><span>কর</span><span>{fmt(order.taxMinor)}</span></div>
+              <div className="flex justify-between"><span>{dict.commerce.tax}</span><span>{fmt(order.taxMinor, locale)}</span></div>
             ) : null}
             <div className="flex justify-between border-t border-dashed pt-1.5 text-sm font-bold">
-              <span>মোট</span><span>{fmt(order.totalMinor)}</span>
+              <span>{dict.commerce.total}</span><span>{fmt(order.totalMinor, locale)}</span>
             </div>
             <div className="flex justify-between">
-              <span>পরিশোধিত</span>
-              <span>{fmt(String(Number(order.totalMinor ?? 0) - Number(order.amountDueMinor ?? 0)))}</span>
+              <span>{dict.commerce.paid}</span>
+              <span>{fmt(String(Number(order.totalMinor ?? 0) - Number(order.amountDueMinor ?? 0)), locale)}</span>
             </div>
             <div className="flex justify-between font-semibold">
-              <span>বাকি</span><span>{fmt(order.amountDueMinor)}</span>
+              <span>{dict.commerce.due}</span><span>{fmt(order.amountDueMinor, locale)}</span>
             </div>
             {order.paymentMethod ? (
-              <div className="flex justify-between"><span>পেমেন্ট পদ্ধতি</span><span>{order.paymentMethod}</span></div>
+              <div className="flex justify-between"><span>{dict.commerce.paymentMethod}</span><span>{order.paymentMethod}</span></div>
             ) : null}
           </div>
 
@@ -225,38 +227,38 @@ function PrintInner() {
           <header className="border-b pb-4">
             <div className="text-2xl font-bold">{businessName}</div>
             {!isSlip && invoice?.seller?.legalName ? (
-              <p className="mt-1 text-sm text-slate-600">আইনি নাম: {invoice.seller.legalName}</p>
+              <p className="mt-1 text-sm text-slate-600">{dict.commerce.legalName}{invoice.seller.legalName}</p>
             ) : null}
             {!isSlip && invoice?.seller?.tin ? (
               <p className="text-sm text-slate-600">TIN: {invoice.seller.tin}</p>
             ) : null}
             {!isSlip && invoice?.seller?.binVatNo ? (
-              <p className="text-sm text-slate-600">BIN / VAT নং: {invoice.seller.binVatNo}</p>
+              <p className="text-sm text-slate-600">{dict.commerce.bINVATNo}{invoice.seller.binVatNo}</p>
             ) : null}
             {businessAddress ? <p className="mt-1 text-sm text-slate-600">{businessAddress}</p> : null}
-            {profile?.contactPhone ? <p className="text-sm text-slate-600">ফোন: {profile.contactPhone}</p> : null}
-            {profile?.contactEmail ? <p className="text-sm text-slate-600">ইমেইল: {profile.contactEmail}</p> : null}
+            {profile?.contactPhone ? <p className="text-sm text-slate-600">{dict.commerce.phone2}{profile.contactPhone}</p> : null}
+            {profile?.contactEmail ? <p className="text-sm text-slate-600">{dict.commerce.email2}{profile.contactEmail}</p> : null}
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-              <span>{isSlip ? "প্যাকিং স্লিপ নং" : "ইনভয়েস নং"}: <span className="font-semibold">{isSlip ? (order.externalNumber ?? order.id) : (invoice?.invoiceNumber ?? order.externalNumber ?? order.id)}</span></span>
-              {orderDate ? <span>তারিখ: {new Date(orderDate).toLocaleString("bn-BD")}</span> : null}
-              <span>অবস্থা: {order.status}</span>
+              <span>{isSlip ? dict.commerce.packingSlipNo : dict.commerce.invoiceNo}: <span className="font-semibold">{isSlip ? (order.externalNumber ?? order.id) : (invoice?.invoiceNumber ?? order.externalNumber ?? order.id)}</span></span>
+              {orderDate ? <span>{dict.commerce.date2}{fmtDateTime(locale, new Date(orderDate))}</span> : null}
+              <span>{dict.commerce.status3}{order.status}</span>
             </div>
           </header>
 
           <section className="mt-4 text-sm">
-            <div className="font-semibold">কাস্টমার</div>
+            <div className="font-semibold">{dict.commerce.customer2}</div>
             <p className="mt-1">{customerName(order)}</p>
-            {order.customer?.phone ? <p>ফোন: {order.customer.phone}</p> : null}
-            {order.customer?.email ? <p>ইমেইল: {order.customer.email}</p> : null}
-            {order.address ? <p>ঠিকানা: {order.address}</p> : null}
+            {order.customer?.phone ? <p>{dict.commerce.phone2}{order.customer.phone}</p> : null}
+            {order.customer?.email ? <p>{dict.commerce.email2}{order.customer.email}</p> : null}
+            {order.address ? <p>{dict.commerce.address2}{order.address}</p> : null}
             {!order.address && addressText(order.customer?.address) ? (
-              <p>ঠিকানা: {addressText(order.customer?.address)}</p>
+              <p>{dict.commerce.address2}{addressText(order.customer?.address)}</p>
             ) : null}
           </section>
 
           {isSlip && order.giftMessage ? (
             <div className="mt-4 rounded-lg border-2 border-slate-900 p-3 text-center text-base font-bold">
-              🎁 গিফট বার্তা: {order.giftMessage}
+              {dict.commerce.giftMessage}{order.giftMessage}
             </div>
           ) : null}
 
@@ -264,8 +266,8 @@ function PrintInner() {
             <table className="mt-6 w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">আইটেম</th>
-                  <th className="py-2 text-right">পরিমাণ</th>
+                  <th className="py-2 pr-3">{dict.commerce.item}</th>
+                  <th className="py-2 text-right">{dict.commerce.quantity}</th>
                 </tr>
               </thead>
               <tbody>
@@ -273,8 +275,8 @@ function PrintInner() {
                   <tr key={item.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       {item.isGift ? "🎁 " : ""}{item.name}
-                      {item.isGift ? <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold">উপহার</span> : null}
-                      {item.bundleName ? <span className="block text-xs text-slate-500">বান্ডল: {item.bundleName}</span> : null}
+                      {item.isGift ? <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold">{dict.commerce.gift}</span> : null}
+                      {item.bundleName ? <span className="block text-xs text-slate-500">{dict.commerce.bundle2}{item.bundleName}</span> : null}
                       {item.sku ? <span className="block text-xs text-slate-400">SKU: {item.sku}</span> : null}
                     </td>
                     <td className="py-2 text-right">{item.quantity}</td>
@@ -287,10 +289,10 @@ function PrintInner() {
               <table className="mt-6 w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-slate-500">
-                    <th className="py-2 pr-3">আইটেম</th>
-                    <th className="py-2 pr-3 text-right">পরিমাণ</th>
-                    <th className="py-2 pr-3 text-right">একক দাম</th>
-                    <th className="py-2 text-right">লাইন মোট</th>
+                    <th className="py-2 pr-3">{dict.commerce.item}</th>
+                    <th className="py-2 pr-3 text-right">{dict.commerce.quantity}</th>
+                    <th className="py-2 pr-3 text-right">{dict.commerce.unitPrice}</th>
+                    <th className="py-2 text-right">{dict.commerce.lineTotal}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -298,13 +300,13 @@ function PrintInner() {
                     <tr key={item.id} className="border-b last:border-0">
                       <td className="py-2 pr-3">
                         {item.isGift ? "🎁 " : ""}{item.name}
-                        {item.isGift ? <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold">উপহার</span> : null}
-                        {item.bundleName ? <span className="block text-xs text-slate-500">বান্ডল: {item.bundleName}</span> : null}
+                        {item.isGift ? <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold">{dict.commerce.gift}</span> : null}
+                        {item.bundleName ? <span className="block text-xs text-slate-500">{dict.commerce.bundle2}{item.bundleName}</span> : null}
                         {item.sku ? <span className="block text-xs text-slate-400">SKU: {item.sku}</span> : null}
                       </td>
                       <td className="py-2 pr-3 text-right">{item.quantity}</td>
-                      <td className="py-2 pr-3 text-right">{item.isGift ? "৳০" : fmt(item.priceMinor)}</td>
-                      <td className="py-2 text-right">{item.isGift ? "৳০" : fmt(item.totalMinor)}</td>
+                      <td className="py-2 pr-3 text-right">{item.isGift ? dict.commerce.text1qvn : fmt(item.priceMinor, locale)}</td>
+                      <td className="py-2 text-right">{item.isGift ? dict.commerce.text1qvn : fmt(item.totalMinor, locale)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -312,32 +314,32 @@ function PrintInner() {
 
               {order.giftMessage ? (
                 <div className="mt-4 rounded-lg border-2 border-slate-900 p-3 text-center text-base font-bold">
-                  🎁 গিফট বার্তা: {order.giftMessage}
+                  {dict.commerce.giftMessage}{order.giftMessage}
                 </div>
               ) : null}
 
               <div className="mt-4 ml-auto w-64 space-y-1 text-sm">
-                <div className="flex justify-between"><span>সাবটোটাল</span><span>{fmt(order.subtotalMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.commerce.subtotal}</span><span>{fmt(order.subtotalMinor, locale)}</span></div>
                 {Number(order.giftWrapMinor ?? 0) > 0 ? (
-                  <div className="flex justify-between"><span>গিফট র‍্যাপ</span><span>{fmt(order.giftWrapMinor)}</span></div>
+                  <div className="flex justify-between"><span>{dict.commerce.giftWrap}</span><span>{fmt(order.giftWrapMinor, locale)}</span></div>
                 ) : null}
-                <div className="flex justify-between"><span>ডেলিভারি / শিপিং</span><span>{fmt(order.shippingMinor)}</span></div>
-                <div className="flex justify-between"><span>ছাড়</span><span>-{fmt(order.discountMinor)}</span></div>
+                <div className="flex justify-between"><span>{dict.commerce.deliveryShipping}</span><span>{fmt(order.shippingMinor, locale)}</span></div>
+                <div className="flex justify-between"><span>{dict.commerce.discount}</span><span>-{fmt(order.discountMinor, locale)}</span></div>
                 {taxMinor > 0 ? (
-                  <div className="flex justify-between"><span>কর</span><span>{fmt(order.taxMinor)}</span></div>
+                  <div className="flex justify-between"><span>{dict.commerce.tax}</span><span>{fmt(order.taxMinor, locale)}</span></div>
                 ) : null}
                 <div className="flex justify-between border-t pt-2 text-base font-bold">
-                  <span>মোট</span><span>{fmt(order.totalMinor)}</span>
+                  <span>{dict.commerce.total}</span><span>{fmt(order.totalMinor, locale)}</span>
                 </div>
               </div>
 
               {invoice?.taxBreakdown && invoice.taxBreakdown.length > 0 ? (
                 <div className="mt-4 ml-auto w-64 space-y-1 text-xs text-slate-600">
-                  <div className="font-semibold text-slate-700">কর বিবরণ (VAT)</div>
+                  <div className="font-semibold text-slate-700">{dict.commerce.taxDetailsVAT}</div>
                   {invoice.taxBreakdown.map((b) => (
                     <div key={b.rateBps} className="flex justify-between">
-                      <span>VAT {b.rateBps / 100}% — করযোগ্য {fmt(b.taxableMinor)}</span>
-                      <span>{fmt(b.taxMinor)}</span>
+                      <span>VAT {b.rateBps / 100}{dict.commerce.taxable}{fmt(b.taxableMinor, locale)}</span>
+                      <span>{fmt(b.taxMinor, locale)}</span>
                     </div>
                   ))}
                 </div>
@@ -345,10 +347,10 @@ function PrintInner() {
 
               {order.isCod ? (
                 <div className="mt-6 rounded-lg border-2 border-slate-900 p-4 text-center text-lg font-bold">
-                  COD — ডেলিভারির সময় প্রাপ্য: {fmt(order.totalMinor)}
+                  {dict.commerce.cODPayableOnDelivery}{fmt(order.totalMinor, locale)}
                 </div>
               ) : order.paymentMethod ? (
-                <p className="mt-6 text-sm text-slate-600">পেমেন্ট পদ্ধতি: {order.paymentMethod}</p>
+                <p className="mt-6 text-sm text-slate-600">{dict.commerce.paymentMethod2}{order.paymentMethod}</p>
               ) : null}
             </>
           )}
@@ -359,8 +361,9 @@ function PrintInner() {
 }
 
 export default function CommercePrintPage() {
+  const { dict, t, locale } = useLocale();
   return (
-    <Suspense fallback={<p className="p-6 text-sm text-slate-500">লোড হচ্ছে…</p>}>
+    <Suspense fallback={<p className="p-6 text-sm text-slate-500">{dict.common.loading}</p>}>
       <PrintInner />
     </Suspense>
   );

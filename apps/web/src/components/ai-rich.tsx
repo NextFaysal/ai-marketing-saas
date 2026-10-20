@@ -1,5 +1,27 @@
 "use client";
 import React from "react";
+import { sharedBn, sharedEn } from "@/lib/i18n/shared";
+import { interpolate } from "@/lib/i18n/lookup";
+import { useLocale } from "@/lib/i18n/provider";
+
+/**
+ * MB2 F3-β: field/column labels live in the `shared` dictionary
+ * (zzAir* keys). The pure builders take a trailing locale param
+ * defaulting to "bn" (the shared-lib pattern), so existing
+ * callers and tests are byte-identical on the default. The React
+ * components resolve the locale through the provider when one is
+ * mounted (dashboard) and fall back to bn outside it (unit tests
+ * render these components without a provider).
+ */
+type RichLocale = "bn" | "en";
+const SD = (locale?: string): typeof sharedBn => (locale === "en" ? sharedEn : sharedBn);
+function useRichLocale(): RichLocale {
+  try {
+    return useLocale().locale === "en" ? "en" : "bn";
+  } catch {
+    return "bn";
+  }
+}
 
 /**
  * A2 rich answers (AP1) — deterministic rendering of the STORED tool
@@ -69,38 +91,40 @@ function numericValue(v: unknown): number | null {
   return null;
 }
 
-const OVERVIEW_FIELDS: { key: string; label: string; percent?: boolean }[] = [
-  { key: "orders", label: "অর্ডার" },
-  { key: "revenue", label: "Revenue" },
-  { key: "adSpend", label: "Ad Spend" },
-  { key: "averageOrderValue", label: "গড় অর্ডার মূল্য" },
-  { key: "contributionProfit", label: "Contribution Profit" },
-  { key: "contributionMarginPercent", label: "Margin", percent: true },
-  { key: "mer", label: "MER" },
-  { key: "platformRoas", label: "Platform ROAS" },
-  { key: "cogsCoveragePercent", label: "COGS Coverage", percent: true },
-  { key: "platformConversions", label: "Platform Conversions" },
+const OVERVIEW_FIELDS: { key: string; labelKey: keyof typeof sharedBn; percent?: boolean }[] = [
+  { key: "orders", labelKey: "zzAirOrders" },
+  { key: "revenue", labelKey: "zzAirRevenue" },
+  { key: "adSpend", labelKey: "zzAirAdSpend" },
+  { key: "averageOrderValue", labelKey: "zzAirAvgOrderValue" },
+  { key: "contributionProfit", labelKey: "zzAirContributionProfit" },
+  { key: "contributionMarginPercent", labelKey: "zzAirMargin", percent: true },
+  { key: "mer", labelKey: "zzAirMer" },
+  { key: "platformRoas", labelKey: "zzAirPlatformRoas" },
+  { key: "cogsCoveragePercent", labelKey: "zzAirCogsCoverage", percent: true },
+  { key: "platformConversions", labelKey: "zzAirPlatformConversions" },
 ];
 
-function overviewBlock(display: Record<string, unknown>): RichBlock | null {
+function overviewBlock(display: Record<string, unknown>, locale: RichLocale = "bn"): RichBlock | null {
+  const sd = SD(locale);
   const tiles: { label: string; value: string }[] = [];
   for (const f of OVERVIEW_FIELDS) {
     const raw = display[f.key];
     const text = fmtScalar(raw);
     if (!present(raw) || text === null) continue;
-    tiles.push({ label: f.label, value: f.percent && typeof raw === "number" ? `${text}%` : text });
+    tiles.push({ label: sd[f.labelKey], value: f.percent && typeof raw === "number" ? `${text}%` : text });
   }
   return tiles.length ? { kind: "stats", tool: "get_analytics_overview", tiles } : null;
 }
 
-const COMPARE_FIELDS: { key: string; label: string }[] = [
-  { key: "orders", label: "অর্ডার" },
-  { key: "revenue", label: "Revenue" },
-  { key: "adSpend", label: "Ad Spend" },
-  { key: "contributionProfit", label: "Profit" },
+const COMPARE_FIELDS: { key: string; labelKey: keyof typeof sharedBn }[] = [
+  { key: "orders", labelKey: "zzAirOrders" },
+  { key: "revenue", labelKey: "zzAirRevenue" },
+  { key: "adSpend", labelKey: "zzAirAdSpend" },
+  { key: "contributionProfit", labelKey: "zzAirProfit" },
 ];
 
-function compareBlock(display: Record<string, unknown>): RichBlock | null {
+function compareBlock(display: Record<string, unknown>, locale: RichLocale = "bn"): RichBlock | null {
+  const sd = SD(locale);
   if (!isRecord(display.current) || !isRecord(display.previous)) return null;
   const deltas = isRecord(display.deltasPercent) ? display.deltasPercent : {};
   const tiles: { label: string; current: string; previous: string; deltaPercent: number | null }[] = [];
@@ -110,7 +134,7 @@ function compareBlock(display: Record<string, unknown>): RichBlock | null {
     if (cur === null && prev === null) continue;
     const d = deltas[f.key];
     tiles.push({
-      label: f.label,
+      label: sd[f.labelKey],
       current: cur ?? "—",
       previous: prev ?? "—",
       deltaPercent: typeof d === "number" && Number.isFinite(d) ? d : null,
@@ -139,7 +163,8 @@ function barRows(
   }));
 }
 
-function campaignsBlock(display: Record<string, unknown>): RichBlock | null {
+function campaignsBlock(display: Record<string, unknown>, locale: RichLocale = "bn"): RichBlock | null {
+  const sd = SD(locale);
   const rows = barRows(display.campaigns, (c) => {
     const label = fmtScalar(c.name);
     const spendText = fmtScalar(c.spend);
@@ -147,7 +172,7 @@ function campaignsBlock(display: Record<string, unknown>): RichBlock | null {
     if (spendText !== null && spendNum !== null) return { label, valueText: spendText, numeric: spendNum };
     const clicks = numericValue(c.clicks);
     const clicksText = fmtScalar(c.clicks);
-    return { label, valueText: clicksText !== null ? `Clicks ${clicksText}` : null, numeric: clicks };
+    return { label, valueText: clicksText !== null ? interpolate(sd.zzAirClicks, { count: clicksText }) : null, numeric: clicks };
   });
   return rows.length ? { kind: "bars", tool: "get_campaign_performance", rows } : null;
 }
@@ -163,25 +188,27 @@ function productProfitBlock(display: Record<string, unknown>): RichBlock | null 
   return rows.length ? { kind: "bars", tool: "get_product_profit", rows } : null;
 }
 
-function courierBlock(display: Record<string, unknown>): RichBlock | null {
+function courierBlock(display: Record<string, unknown>, locale: RichLocale = "bn"): RichBlock | null {
+  const sd = SD(locale);
   const rows = barRows(display.providers, (p) => {
     const label = fmtScalar(p.provider);
     const totalText = fmtScalar(p.total);
-    if (totalText !== null) return { label, valueText: `${totalText}টি শিপমেন্ট`, numeric: numericValue(p.total) };
+    if (totalText !== null) return { label, valueText: interpolate(sd.zzAirShipments, { count: totalText }), numeric: numericValue(p.total) };
     const deliveredText = fmtScalar(p.delivered);
-    return { label, valueText: deliveredText !== null ? `${deliveredText}টি ডেলিভারি` : null, numeric: numericValue(p.delivered) };
+    return { label, valueText: deliveredText !== null ? interpolate(sd.zzAirDeliveries, { count: deliveredText }) : null, numeric: numericValue(p.delivered) };
   });
   return rows.length ? { kind: "bars", tool: "get_courier_performance", rows } : null;
 }
 
-const PRODUCT_COLUMNS: { key: string; label: string }[] = [
-  { key: "name", label: "নাম" },
-  { key: "sku", label: "SKU" },
-  { key: "price", label: "দাম" },
-  { key: "stock", label: "স্টক" },
+const PRODUCT_COLUMNS: { key: string; labelKey: keyof typeof sharedBn }[] = [
+  { key: "name", labelKey: "zzAirColName" },
+  { key: "sku", labelKey: "zzAirColSku" },
+  { key: "price", labelKey: "zzAirColPrice" },
+  { key: "stock", labelKey: "zzAirColStock" },
 ];
 
-function productsBlock(display: Record<string, unknown>): RichBlock | null {
+function productsBlock(display: Record<string, unknown>, locale: RichLocale = "bn"): RichBlock | null {
+  const sd = SD(locale);
   if (!Array.isArray(display.products)) return null;
   const items = display.products.filter(isRecord);
   if (items.length === 0) return null;
@@ -189,24 +216,24 @@ function productsBlock(display: Record<string, unknown>): RichBlock | null {
   const columns = PRODUCT_COLUMNS.filter((c) => items.some((p) => present(p[c.key]) && fmtScalar(p[c.key]) !== null));
   if (columns.length === 0) return null;
   const rows = items.map((p) => columns.map((c) => fmtScalar(p[c.key]) ?? "—"));
-  return { kind: "table", tool: "list_products", columns: columns.map((c) => c.label), rows };
+  return { kind: "table", tool: "list_products", columns: columns.map((c) => sd[c.labelKey]), rows };
 }
 
 /** Map stored tool-call summaries to rich blocks. Unknown tools,
  *  missing displays, error entries and "__*" markers yield nothing. */
-export function buildRichBlocks(toolCalls: readonly AiToolCallEntry[] | null | undefined): RichBlock[] {
+export function buildRichBlocks(toolCalls: readonly AiToolCallEntry[] | null | undefined, locale: RichLocale = "bn"): RichBlock[] {
   const blocks: RichBlock[] = [];
   for (const entry of visibleToolCalls(toolCalls ?? [])) {
     if (entry.status && entry.status !== "success") continue;
     if (!isRecord(entry.display)) continue;
     let block: RichBlock | null = null;
     switch (entry.tool) {
-      case "get_analytics_overview": block = overviewBlock(entry.display); break;
-      case "compare_periods": block = compareBlock(entry.display); break;
-      case "get_campaign_performance": block = campaignsBlock(entry.display); break;
+      case "get_analytics_overview": block = overviewBlock(entry.display, locale); break;
+      case "compare_periods": block = compareBlock(entry.display, locale); break;
+      case "get_campaign_performance": block = campaignsBlock(entry.display, locale); break;
       case "get_product_profit": block = productProfitBlock(entry.display); break;
-      case "get_courier_performance": block = courierBlock(entry.display); break;
-      case "list_products": block = productsBlock(entry.display); break;
+      case "get_courier_performance": block = courierBlock(entry.display, locale); break;
+      case "list_products": block = productsBlock(entry.display, locale); break;
       default: block = null;
     }
     if (block) blocks.push(block);
@@ -228,12 +255,13 @@ export function buildRichBlocks(toolCalls: readonly AiToolCallEntry[] | null | u
  * message, so this stays truthful after a reload).
  */
 export function AiMessageAttachment({ name, kind, text }: { name: string; kind: string; text?: string | null }) {
+  const sd = SD(useRichLocale());
   return (
     <details className="ai-attach">
       <summary className="ai-attach-summary">
         <span aria-hidden="true">{kind === "image" ? "🖼️" : "📎"}</span>
         <span className="min-w-0 flex-1 truncate">{name}</span>
-        {kind === "image" ? <span className="badge badge-slate">AI বর্ণনা</span> : null}
+        {kind === "image" ? <span className="badge badge-slate">{sd.zzAirAiDescription}</span> : null}
       </summary>
       {text ? <pre className="ai-attach-text">{text}</pre> : null}
     </details>
@@ -241,25 +269,28 @@ export function AiMessageAttachment({ name, kind, text }: { name: string; kind: 
 }
 
 export function AiToolTransparency({ toolCalls }: { toolCalls?: readonly { tool: string; status?: string }[] | null }) {
+  const sd = SD(useRichLocale());
   const visible = visibleToolCalls(toolCalls);
   const stopped = hasStoppedMarker(toolCalls);
   if (visible.length === 0 && !stopped) return null;
   return (
     <div className="ai-tool-card">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">ব্যবহৃত টুল</span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{sd.zzAirUsedTools}</span>
       {visible.map((t, i) => (
         <span key={`${t.tool}-${i}`} className="ai-tool-chip">
           {t.tool}
           <span className={`ai-tool-status ${t.status === "success" ? "ai-tool-status-ok" : "ai-tool-status-err"}`}>{t.status}</span>
         </span>
       ))}
-      {stopped ? <span className="ai-tool-chip"><span className="ai-tool-status ai-tool-status-stopped">থামানো হয়েছে</span></span> : null}
+      {stopped ? <span className="ai-tool-chip"><span className="ai-tool-status ai-tool-status-stopped">{sd.zzAirStopped}</span></span> : null}
     </div>
   );
 }
 
 export function AiRichAnswer({ toolCalls }: { toolCalls?: readonly AiToolCallEntry[] | null }) {
-  const blocks = buildRichBlocks(toolCalls);
+  const locale = useRichLocale();
+  const sd = SD(locale);
+  const blocks = buildRichBlocks(toolCalls, locale);
   if (blocks.length === 0) return null;
   return (
     <div className="ai-rich">
@@ -284,7 +315,7 @@ export function AiRichAnswer({ toolCalls }: { toolCalls?: readonly AiToolCallEnt
                   <span className="ai-stat-label">{t.label}</span>
                   <span className="ai-stat-value">{t.current}</span>
                   <span className="ai-stat-hint">
-                    আগে: {t.previous}
+                    {interpolate(sd.zzAirBefore, { previous: t.previous })}
                     {t.deltaPercent !== null ? (
                       <span className={t.deltaPercent >= 0 ? "ai-delta-up" : "ai-delta-down"}>
                         {" "}{t.deltaPercent >= 0 ? "▲" : "▼"} {Math.abs(t.deltaPercent)}%

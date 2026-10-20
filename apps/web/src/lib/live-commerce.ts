@@ -2,7 +2,29 @@
 // only (labels, payload builders, pin-list ordering): the page
 // owns fetching and state, everything testable lives here —
 // same pattern as lib/pos-scan.ts / lib/social-posts-su11.ts.
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import type { UiLocale } from "./i18n/dict";
 import { fmtMoneyBn, fmtNumBn } from "./money-bn";
+
+// MB6: locale-aware formatting for the helpers below. The bn
+// path stays on money-bn BYTE-IDENTICALLY (spec-pinned, incl.
+// the always-two-fraction-digits money form contracts
+// fmtMoneyMinor drops for whole taka); only "en" routes to
+// the contracts formatters.
+function fmtNumLoc(n: number, locale: UiLocale): string {
+  return locale === "en" ? fmtNumber("en", n) : fmtNumBn(n);
+}
+
+function fmtMoneyLoc(minor: string | bigint | number | null | undefined, locale: UiLocale): string {
+  if (locale !== "en") return fmtMoneyBn(minor);
+  if (minor === null || minor === undefined || minor === "") return "—";
+  try {
+    return fmtMoneyMinor("en", typeof minor === "bigint" ? minor : BigInt(String(minor).trim()));
+  } catch {
+    const v = Number(minor);
+    return Number.isFinite(v) ? fmtMoneyMinor("en", BigInt(Math.round(v))) : "—";
+  }
+}
 
 /** GET live-sessions / POST live-sessions response row
  * (live-commerce.service pubSession). priceMinor is a STRING
@@ -112,23 +134,24 @@ export interface LiveCatalogProduct {
   imageUrl?: string | null;
 }
 
-export function sessionStatusChip(status: string): { label: string; cls: string } {
+export function sessionStatusChip(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
   switch (status) {
     case "live":
-      return { label: "লাইভ", cls: "bg-red-100 text-red-700" };
+      return { label: locale === "en" ? "Live" : "লাইভ", cls: "bg-red-100 text-red-700" };
     case "ended":
-      return { label: "শেষ", cls: "bg-slate-200 text-slate-600" };
+      return { label: locale === "en" ? "Ended" : "শেষ", cls: "bg-slate-200 text-slate-600" };
     default:
-      return { label: "সূচিত", cls: "bg-sky-100 text-sky-700" };
+      return { label: locale === "en" ? "Scheduled" : "সূচিত", cls: "bg-sky-100 text-sky-700" };
   }
 }
 
 /** Source badge: a meta session says "Meta"; anything else is
- * labelled manual — honestly, never dressed up as synced. */
-export function sessionSourceBadge(session: Pick<LiveSessionView, "source">): { label: string; cls: string } {
+ * labelled manual — honestly, never dressed up as synced.
+ * MB6: optional locale (default "bn", byte-identical bn output). */
+export function sessionSourceBadge(session: Pick<LiveSessionView, "source">, locale: UiLocale = "bn"): { label: string; cls: string } {
   return session.source === "meta"
     ? { label: "Meta", cls: "bg-indigo-100 text-indigo-700" }
-    : { label: "ম্যানুয়াল মোড", cls: "bg-amber-100 text-amber-700" };
+    : { label: locale === "en" ? "Manual mode" : "ম্যানুয়াল মোড", cls: "bg-amber-100 text-amber-700" };
 }
 
 /**
@@ -139,13 +162,13 @@ export function sessionSourceBadge(session: Pick<LiveSessionView, "source">): { 
  * - manual session → comments are hand-entered;
  * - provider ok → null (comments really are flowing from Meta).
  */
-export function commentsModeNotice(res: Pick<LiveCommentsResponse, "mode" | "providerStatus"> | null | undefined): string | null {
+export function commentsModeNotice(res: Pick<LiveCommentsResponse, "mode" | "providerStatus"> | null | undefined, locale: UiLocale = "bn"): string | null {
   if (!res) return null;
   if (res.providerStatus === "unavailable") {
-    return "Meta থেকে লাইভ কমেন্ট আসছে না — ম্যানুয়াল মোড";
+    return locale === "en" ? "Live comments are not coming from Meta — manual mode" : "Meta থেকে লাইভ কমেন্ট আসছে না — ম্যানুয়াল মোড";
   }
   if (res.providerStatus === "not_applicable" || res.mode === "manual") {
-    return "ম্যানুয়াল মোড — কমেন্ট হাতে যোগ করা হচ্ছে";
+    return locale === "en" ? "Manual mode — comments are added by hand" : "ম্যানুয়াল মোড — কমেন্ট হাতে যোগ করা হচ্ছে";
   }
   return null;
 }
@@ -210,16 +233,34 @@ export function buildCommentOrderPayload(input: CommentOrderFormInput) {
 }
 
 /** Notice for a comment→order result: the duplicate path says
- * so plainly and names the existing order id. */
-export function commentOrderNotice(res: CommentOrderResult): string {
+ * so plainly and names the existing order id. MB6: optional
+ * locale (default "bn", byte-identical bn output). The en
+ * duplicate line still starts with "This comment" so the page's
+ * startsWith(dict.commerce.thisComment) tone check keeps
+ * working in both locales. */
+export function commentOrderNotice(res: CommentOrderResult, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    return res.alreadyExisted
+      ? `This comment already created an order — Order ID: ${res.orderId}`
+      : `Order created — Order ID: ${res.orderId}`;
+  }
   return res.alreadyExisted
     ? `এই কমেন্ট থেকে আগেই অর্ডার তৈরি হয়েছে — অর্ডার ID: ${res.orderId}`
     : `অর্ডার তৈরি হয়েছে — অর্ডার ID: ${res.orderId}`;
 }
 
-/** Recap stat rows (Bengali labels + bn-BD formatting), built
- * ONLY from the recap endpoint's fields. */
-export function recapRows(recap: LiveRecap): { label: string; value: string }[] {
+/** Recap stat rows, built ONLY from the recap endpoint's
+ * fields. MB6: optional locale (default "bn", byte-identical
+ * bn labels + bn-BD formatting). */
+export function recapRows(recap: LiveRecap, locale: UiLocale = "bn"): { label: string; value: string }[] {
+  if (locale === "en") {
+    return [
+      { label: "Total comments", value: fmtNumLoc(recap.commentCount, locale) },
+      { label: "Commenters", value: fmtNumLoc(recap.distinctCommenters, locale) },
+      { label: "Orders", value: fmtNumLoc(recap.orderCount, locale) },
+      { label: "Revenue", value: fmtMoneyLoc(recap.revenueMinor, locale) },
+    ];
+  }
   return [
     { label: "মোট কমেন্ট", value: fmtNumBn(recap.commentCount) },
     { label: "কমেন্টকারী", value: fmtNumBn(recap.distinctCommenters) },
@@ -229,7 +270,13 @@ export function recapRows(recap: LiveRecap): { label: string; value: string }[] 
 }
 
 /** Follow-up result line: the API's matched/unmatched counts
- * plus its own note, verbatim. */
-export function followUpSummary(res: FollowUpSegmentResult): string {
+ * plus its own note, verbatim. MB6: optional locale (default
+ * "bn", byte-identical bn output). */
+export function followUpSummary(res: FollowUpSegmentResult, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    const matched = fmtNumLoc(res.matchedCustomerCount, locale);
+    const unmatched = fmtNumLoc(res.unmatchedCount, locale);
+    return `Follow-up audience created: ${matched} ${res.matchedCustomerCount === 1 ? "buyer" : "buyers"} matched, ${unmatched} did not match. ${res.note}`;
+  }
   return `ফলো-আপ অডিয়েন্স তৈরি হয়েছে: ${fmtNumBn(res.matchedCustomerCount)} জন ক্রেতা মিলেছে, ${fmtNumBn(res.unmatchedCount)} জন মেলেনি। ${res.note}`;
 }

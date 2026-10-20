@@ -14,6 +14,14 @@
  * social-publish.service). The preview is a preview only: it never
  * changes the caption that gets saved.
  */
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
 
 export type ComposerPlatform = "meta_page" | "instagram" | "tiktok" | "youtube";
 
@@ -50,7 +58,11 @@ export function platformLabel(platform: string): string {
 const WEEKDAY_LABELS_BN = ["রবিবার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"] as const;
 
 /** Weekday label, 0 = রবিবার (Sunday) … 6 = শনিবার (Saturday). Out of range → "". */
-export function weekdayLabelBn(weekday: number): string {
+export function weekdayLabelBn(weekday: number, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    if (weekday < 0 || weekday > 6) return "";
+    return new Intl.DateTimeFormat("en-IN", { weekday: "long" }).format(new Date(2024, 0, 7 + weekday));
+  }
   return WEEKDAY_LABELS_BN[weekday] ?? "";
 }
 
@@ -78,17 +90,17 @@ export interface PlatformPreview {
   warnings: string[];
 }
 
-function mediaSummaryBn(mediaKinds: ComposerMediaKind[]): string {
+function mediaSummaryBn(mediaKinds: ComposerMediaKind[], locale: UiLocale = "bn"): string {
   const images = mediaKinds.filter((k) => k === "image").length;
   const videos = mediaKinds.filter((k) => k === "video").length;
-  if (images === 0 && videos === 0) return "শুধু লেখা";
+  if (images === 0 && videos === 0) return L(locale, "compTextOnly");
   const parts: string[] = [];
-  if (images > 0) parts.push(`${bnNum(images)}টি ছবি`);
-  if (videos > 0) parts.push(`${bnNum(videos)}টি ভিডিও`);
-  return parts.join(" ও ");
+  if (images > 0) parts.push(L(locale, "compImages", { count: fmtNumber(locale, images) }));
+  if (videos > 0) parts.push(L(locale, "compVideos", { count: fmtNumber(locale, videos) }));
+  return parts.join(L(locale, "compJoin"));
 }
 
-export function buildPlatformPreview(platform: string, input: PlatformPreviewInput): PlatformPreview {
+export function buildPlatformPreview(platform: string, input: PlatformPreviewInput, locale: UiLocale = "bn"): PlatformPreview {
   const caption = input.caption ?? "";
   const mediaKinds = input.mediaKinds ?? [];
   const images = mediaKinds.filter((k) => k === "image").length;
@@ -104,16 +116,16 @@ export function buildPlatformPreview(platform: string, input: PlatformPreviewInp
     // Instagram captions are capped at 2,200 characters by the platform.
     captionShown = caption.slice(0, 2200);
     if (mediaKinds.length === 0) {
-      warnings.push("Instagram-এ মিডিয়া ছাড়া পোস্ট করা যায় না — অন্তত একটি ছবি বা ভিডিও যোগ করুন।");
+      warnings.push(L(locale, "compWarnIgNoMedia"));
     }
     if (mediaKinds.length > 10) {
-      warnings.push(`Instagram-এ সর্বোচ্চ ১০টি মিডিয়া দেওয়া যায় — এখন ${bnNum(mediaKinds.length)}টি আছে।`);
+      warnings.push(L(locale, "compWarnIgMax", { count: fmtNumber(locale, mediaKinds.length) }));
     }
   }
 
   if (platform === "tiktok") {
     if (!(mediaKinds.length === 1 && videos === 1)) {
-      warnings.push("TikTok-এ ঠিক একটি ভিডিও লাগে — ছবি বা একাধিক মিডিয়া থাকলে এই পোস্টটি TikTok-এ প্রকাশ করা যাবে না।");
+      warnings.push(L(locale, "compWarnTiktok"));
     }
   }
 
@@ -123,16 +135,16 @@ export function buildPlatformPreview(platform: string, input: PlatformPreviewInp
     description = caption;
     captionShown = title;
     if (firstLine.length > 100) {
-      warnings.push("YouTube-এর শিরোনাম (ক্যাপশনের প্রথম লাইন) ১০০ অক্ষরের বেশি হতে পারে না — প্রথম লাইনটি ছোট করুন।");
+      warnings.push(L(locale, "compWarnYtTitle"));
     }
     if (!(mediaKinds.length === 1 && videos === 1)) {
-      warnings.push("YouTube-এ ঠিক একটি ভিডিও লাগে — ছবি বা একাধিক মিডিয়া থাকলে এই পোস্টটি YouTube-এ আপলোড করা যাবে না।");
+      warnings.push(L(locale, "compWarnYtVideo"));
     }
   }
 
   if (platform === "meta_page") {
     if (videos > 0 && mediaKinds.length > 1) {
-      warnings.push("Facebook-এ ভিডিওর সাথে অন্য মিডিয়া মেশানো যায় না — হয় শুধু ভিডিওটি রাখুন, নয়তো ভিডিওটি সরিয়ে ছবিগুলো রাখুন।");
+      warnings.push(L(locale, "compWarnFbMix"));
     }
   }
 
@@ -143,7 +155,7 @@ export function buildPlatformPreview(platform: string, input: PlatformPreviewInp
     captionShown,
     title,
     description,
-    mediaSummary: mediaSummaryBn(mediaKinds),
+    mediaSummary: mediaSummaryBn(mediaKinds, locale),
     firstCommentShown: isFirstCommentApplicable(platform) && firstComment ? firstComment : null,
     warnings,
   };

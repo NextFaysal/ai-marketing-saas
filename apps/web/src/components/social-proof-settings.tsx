@@ -5,6 +5,8 @@ import { getOrganizationId } from "@/lib/org";
 import {
   minorToMinTotalTaka, minTotalTakaToMinor, type SocialProofSetting,
 } from "@/lib/ab7";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 
 // AB7 (AX17) — social-proof settings card for the storefront
 // settings area. Own endpoints:
@@ -16,6 +18,8 @@ import {
 // real orders are ever shown — no fabricated proof.
 
 export function SocialProofSettingsCard() {
+  const { dict, t, locale } = useLocale();
+  const S = dict.shared;
   const [enabled, setEnabled] = useState(false);
   const [lookbackHours, setLookbackHours] = useState("24");
   const [intervalSec, setIntervalSec] = useState("20");
@@ -45,7 +49,7 @@ export function SocialProofSettingsCard() {
   function parseIntField(label: string, value: string, min: number): number | null {
     const n = parseInt(value || "", 10);
     if (!Number.isInteger(n) || n < min) {
-      setError(`${label} সঠিক সংখ্যা দিন (${min} বা বেশি)।`);
+      setError(t("shared.zzSpsInvalidNumber", { label, min: fmtNumber(locale, min) }));
       return null;
     }
     return n;
@@ -54,15 +58,15 @@ export function SocialProofSettingsCard() {
   async function save() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setError(""); setNotice("");
-    const lookback = parseIntField("খোঁজার সময়সীমা (ঘণ্টা)", lookbackHours, 1); if (lookback === null) return;
-    const interval = parseIntField("দেখানোর ব্যবধান (সেকেন্ড)", intervalSec, 1); if (interval === null) return;
-    const display = parseIntField("কতক্ষণ দেখাবে (সেকেন্ড)", displaySec, 1); if (display === null) return;
-    const maxSession = parseIntField("সেশনে সর্বোচ্চ কয়বার", maxPerSession, 1); if (maxSession === null) return;
+    const lookback = parseIntField(S.zzSpsLabelLookback, lookbackHours, 1); if (lookback === null) return;
+    const interval = parseIntField(S.zzSpsLabelInterval, intervalSec, 1); if (interval === null) return;
+    const display = parseIntField(S.zzSpsLabelDisplay, displaySec, 1); if (display === null) return;
+    const maxSession = parseIntField(S.zzSpsLabelMaxSession, maxPerSession, 1); if (maxSession === null) return;
     let minTotalMinor: string | null = null;
     if (minTotalTaka.trim()) {
       minTotalMinor = minTotalTakaToMinor(minTotalTaka);
       if (minTotalMinor === null) {
-        setError("সর্বনিম্ন অর্ডার মূল্য টাকায় সঠিক সংখ্যা দিন (যেমন: ৫০০), অথবা খালি রাখুন।");
+        setError(S.zzSpsMinTotalError);
         return;
       }
     }
@@ -80,52 +84,51 @@ export function SocialProofSettingsCard() {
         }),
       });
       setImpressions(typeof s.impressions === "number" ? s.impressions : impressions);
-      setNotice("সোশ্যাল প্রুফ সেটিংস সংরক্ষণ হয়েছে।");
+      setNotice(S.zzSpsSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : S.zzSpsSaveFailed); }
     finally { setBusy(false); }
   }
 
   return (
     <section className="card space-y-4 p-5">
       <div>
-        <div className="font-semibold">🛍️ সোশ্যাল প্রুফ (কেনাকাটার বিজ্ঞপ্তি)</div>
+        <div className="font-semibold">{S.zzSpsTitle}</div>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          দোকানে সাম্প্রতিক আসল কেনাকাটার ছোট বিজ্ঞপ্তি ("কিছুক্ষণ আগে একজন ক্রেতা এই পণ্যটি কিনেছেন")
-          ভিজিটরদের দেখানো হয় — কখন, কতক্ষণ ও কয়বার দেখাবে তা এখান থেকে ঠিক করুন।
+          {S.zzSpsIntro}
         </p>
         <p className="mt-1 rounded-lg bg-emerald-50 p-3 text-xs font-semibold leading-relaxed text-emerald-800">
-          এখানে শুধুমাত্র আপনার দোকানের আসল অর্ডার দেখানো হয় — ভুয়া বা সাজানো প্রমাণ তৈরি করা হয় না।
+          {S.zzSpsHonesty}
         </p>
         <p className="text-xs text-slate-500">
-          মোট ইমপ্রেশন: <b>{impressions ?? 0}</b>বার দেখানো হয়েছে।
+          {S.zzSpsImpressionsPrefix}<b>{fmtNumber(locale, impressions ?? 0)}</b>{S.zzSpsImpressionsSuffix}
         </p>
       </div>
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
       <label className="flex items-center gap-2 text-sm font-semibold">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        সোশ্যাল প্রুফ চালু করুন
+        {S.zzSpsEnable}
       </label>
       <div className="grid gap-3 md:grid-cols-3">
-        <label className="block text-sm">কত ঘণ্টা পেছনের অর্ডার দেখাবে
+        <label className="block text-sm">{S.zzSpsFieldLookback}
           <input className="input mt-1" type="number" min="1" value={lookbackHours} onChange={(e) => setLookbackHours(e.target.value)} disabled={!enabled} />
         </label>
-        <label className="block text-sm">দেখানোর ব্যবধান (সেকেন্ড)
+        <label className="block text-sm">{S.zzSpsLabelInterval}
           <input className="input mt-1" type="number" min="1" value={intervalSec} onChange={(e) => setIntervalSec(e.target.value)} disabled={!enabled} />
         </label>
-        <label className="block text-sm">একবার কতক্ষণ দেখাবে (সেকেন্ড)
+        <label className="block text-sm">{S.zzSpsFieldDisplay}
           <input className="input mt-1" type="number" min="1" value={displaySec} onChange={(e) => setDisplaySec(e.target.value)} disabled={!enabled} />
         </label>
-        <label className="block text-sm">এক সেশনে সর্বোচ্চ কয়বার
+        <label className="block text-sm">{S.zzSpsFieldMax}
           <input className="input mt-1" type="number" min="1" value={maxPerSession} onChange={(e) => setMaxPerSession(e.target.value)} disabled={!enabled} />
         </label>
-        <label className="block text-sm">সর্বনিম্ন অর্ডার মূল্য (টাকা, খালি = নেই)
-          <input className="input mt-1" inputMode="decimal" value={minTotalTaka} onChange={(e) => setMinTotalTaka(e.target.value)} placeholder="যেমন: ৫০০" disabled={!enabled} />
+        <label className="block text-sm">{S.zzSpsFieldMinTotal}
+          <input className="input mt-1" inputMode="decimal" value={minTotalTaka} onChange={(e) => setMinTotalTaka(e.target.value)} placeholder={S.zzSpsPlaceholder500} disabled={!enabled} />
         </label>
       </div>
       <button type="button" className="btn-primary disabled:opacity-50" disabled={busy} onClick={() => void save()}>
-        {busy ? "সংরক্ষণ হচ্ছে…" : "সোশ্যাল প্রুফ সেটিংস সংরক্ষণ করুন"}
+        {busy ? S.zzSpsSaving : S.zzSpsSaveBtn}
       </button>
     </section>
   );

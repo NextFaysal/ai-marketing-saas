@@ -274,7 +274,7 @@ describe("SocialImageService.generateAiImage", () => {
     const err = await svc.generateAiImage(ORG, ACTOR, { prompt: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(HttpException);
     expect((err as HttpException).getStatus()).toBe(429);
-    expect(err.message).toContain("Daily AI generation limit reached for this organization (1)");
+    expect(err.message).toContain("এই organization-এর জন্য daily AI generation limit পূর্ণ হয়েছে (1)");
     expect(prisma.aIUsageRecord.rows).toHaveLength(1); // only the seed
   });
 
@@ -287,8 +287,8 @@ describe("SocialImageService.generateAiImage", () => {
     const { svc } = buildService(prisma);
     stubProvider(svc, async () => okPngResult());
     const err = await svc.generateAiImage(ORG, ACTOR, { prompt: "x", productId: "prod-other" }).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
-    expect(err.message).toContain("Product not found in this organization");
+    expect(err).toMatchObject({ code: "social.productNotFoundInThisOrganization" });
+    expect(err.message).toContain("এই organization-এ product পাওয়া যায়নি");
   });
 });
 
@@ -389,7 +389,7 @@ describe("SocialImageService.createTemplateImage", () => {
     // success/failure matrix lives in social-pp3.spec.ts.)
     const { svc } = setup();
     const err = await svc.createTemplateImage(ORG, ACTOR, { productId: "prod-1", headline: "Sale" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.thisProductHasNoImageUrl" });
     expect(err.message).toContain("কোনো ছবির URL নেই");
     expect(err.message).not.toContain("import করার ব্যবস্থা এখনো নেই");
     const err2 = await svc.createTemplateImage(ORG, ACTOR, { headline: "Sale" }).catch((e) => e);
@@ -411,10 +411,10 @@ describe("SocialImageService.createTemplateImage", () => {
       createdAt: new Date(), updatedAt: new Date(),
     });
     const videoErr = await svc.createTemplateImage(ORG, ACTOR, { mediaAssetId: "asset-video", headline: "Sale" }).catch((e) => e);
-    expect(videoErr).toBeInstanceOf(BadRequestException);
+    expect(videoErr).toMatchObject({ code: "social.templatePosterImageAsset" });
     expect(videoErr.message).toContain("ছবি (image) asset লাগবে");
     const foreignErr = await svc.createTemplateImage(ORG, ACTOR, { mediaAssetId: "asset-foreign", headline: "Sale" }).catch((e) => e);
-    expect(foreignErr).toBeInstanceOf(NotFoundException);
+    expect(foreignErr).toMatchObject({ code: "social.mediaAssetNotFoundInThis" });
     await expect(svc.createTemplateImage(ORG, ACTOR, { mediaAssetId: "asset-1", headline: "   " }))
       .rejects.toThrow("Poster-এর Headline দিন।");
     await expect(svc.createTemplateImage(ORG, ACTOR, { mediaAssetId: "asset-1", headline: "x".repeat(121) }))
@@ -463,8 +463,8 @@ describe("Admin image config — verify-before-save", () => {
       json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }),
     }));
     const err = await svc.updatePlatformConfig(actor, "image", { provider: "gemini", apiKey: "bad-key" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Image provider verification FAILED — the setting was NOT saved:");
+    expect(err).toMatchObject({ code: "admin.imageProviderVerificationFailedTheSetting" });
+    expect(err.message).toContain("Image provider verification FAILED — setting-টি সেভ হয়নি:");
     expect(err.message).toContain("Gemini image request failed (400): API key not valid.");
     expect(prisma.rows.find((r: any) => r.key === "imageConfig")).toBeUndefined();
   });
@@ -496,7 +496,7 @@ describe("Admin image config — verify-before-save", () => {
     const audit = { log: async () => undefined } as any;
     const svc = new AdminService(prisma, audit);
     await expect(svc.updatePlatformConfig(actor, "image", { provider: "dall-e" }))
-      .rejects.toThrow("image provider must be gemini");
+      .rejects.toMatchObject({ code: "admin.imageProviderMustBeGemini" });
     (global as any).fetch = jest.fn(async () => { throw new Error("fetch must not be called"); });
     const view: any = await svc.updatePlatformConfig(actor, "image", { provider: "" });
     expect(view.imageVerification).toBeUndefined();

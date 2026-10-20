@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { formatMinor } from "@repo/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { dhakaDayKey, dhakaDayStartUtc } from "../crm/lead-followups";
 import { SocialImportService } from "./social-import.service";
+import { badRequest } from "../i18n/api-exception";
 
 export type AutoDraftKind = "new_product" | "sale" | "back_in_stock" | "review_milestone";
 
@@ -203,10 +204,10 @@ export class SocialCommerceDraftService {
           try {
             parsed = new URL(trimmed);
           } catch {
-            throw new BadRequestException("RSS Feed URL-টি সঠিক http/https ঠিকানা নয়।");
+            throw badRequest("social.theRssFeedUrlIsNot");
           }
           if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            throw new BadRequestException("RSS Feed URL-টি সঠিক http/https ঠিকানা নয়।");
+            throw badRequest("social.theRssFeedUrlIsNot");
           }
           data.rssFeedUrl = trimmed;
         }
@@ -215,7 +216,7 @@ export class SocialCommerceDraftService {
     if (dto.maxDraftsPerDay !== undefined) {
       const cap = Number(dto.maxDraftsPerDay);
       if (!Number.isInteger(cap) || cap < 1 || cap > 20) {
-        throw new BadRequestException("প্রতিদিনের সর্বোচ্চ Draft সংখ্যা ১ থেকে ২০-এর মধ্যে হতে হবে।");
+        throw badRequest("social.theDailyMaximumDraftCountMust");
       }
       data.maxDraftsPerDay = cap;
     }
@@ -227,7 +228,7 @@ export class SocialCommerceDraftService {
           where: { id: dto.socialAccountId, organizationId, status: "connected" },
         });
         if (!account) {
-          throw new BadRequestException("নির্বাচিত Social অ্যাকাউন্টটি এই Organization-এর সংযুক্ত (connected) অ্যাকাউন্ট নয়।");
+          throw badRequest("social.theSelectedSocialAccountIsNot");
         }
         data.socialAccountId = dto.socialAccountId;
       }

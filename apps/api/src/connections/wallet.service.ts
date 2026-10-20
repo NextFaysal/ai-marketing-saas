@@ -10,6 +10,7 @@ import { effectiveBkashConfig, effectivePayoutFourEyesThresholdMinor, effectiveS
 import { StepUpService, stepUpMarker } from "./step-up.service";
 import { buildPdf, moneyText, PdfCanvas } from "../courier/pdf";
 import { dhakaDayKey, dhakaDayStartUtc } from "../crm/lead-followups";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC10 — Platform Payment + Wallet.
@@ -56,7 +57,7 @@ const HELD_STATUSES = ["pending", "approved"];
 
 function parseMinor(value: unknown, field = "amountMinor"): bigint {
   const raw = typeof value === "bigint" ? value.toString() : String(value ?? "").trim();
-  if (!/^-?\d+$/.test(raw)) throw new BadRequestException(`${field} must be an integer amount in minor units`);
+  if (!/^-?\d+$/.test(raw)) throw badRequest("connections.fieldIntegerMinorAmount", { field: field });
   return BigInt(raw);
 }
 
@@ -137,12 +138,12 @@ export class WalletService {
   async setPlatformEnabled(organizationId: string, actorId: string, providerRaw: string, isEnabled: boolean) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (!(PLATFORM_PAYMENT_PROVIDERS as readonly string[]).includes(provider)) {
-      throw new BadRequestException("প্ল্যাটফর্ম গেটওয়ে হিসেবে শুধু sslcommerz ও bkash চালু করা যায় — Nagad-এর কোনো প্ল্যাটফর্ম API চেকআউট সংযুক্ত নয়, Rocket ম্যানুয়াল নম্বরের পথ।");
+      throw badRequest("connections.platformGatewayProvidersOnly");
     }
     if (isEnabled) {
       const offered = this.platformProviders().find((p) => p.provider === provider)?.offered === true;
       if (!offered) {
-        throw new BadRequestException("প্ল্যাটফর্মের এই গেটওয়েটি এখনো কনফিগার করা হয়নি — প্ল্যাটফর্ম অ্যাডমিন গেটওয়ে যোগ না করা পর্যন্ত এটি চালু করা যাবে না।");
+        throw badRequest("connections.platformGatewayNotConfiguredAdmin");
       }
     }
     const existing = await (this.prisma as any).platformPaymentEnablement.findFirst({ where: { organizationId, provider } }).catch(() => null);
@@ -347,13 +348,13 @@ export class WalletService {
    * bank name. */
   private assertDestinationDetails(method: string, destination: any): void {
     if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
-      throw new BadRequestException("Payout গন্তব্যের তথ্য প্রয়োজন।");
+      throw badRequest("connections.payoutDestinationDetailsRequired");
     }
     if (method === "bkash" && !String(destination.number ?? "").trim()) {
-      throw new BadRequestException("bKash payout-এর জন্য নম্বর প্রয়োজন।");
+      throw badRequest("connections.bkashPayoutNumberRequired");
     }
     if (method === "bank" && (!String(destination.accountNumber ?? "").trim() || !String(destination.bankName ?? "").trim())) {
-      throw new BadRequestException("Bank payout-এর জন্য অ্যাকাউন্ট নম্বর ও ব্যাংকের নাম প্রয়োজন।");
+      throw badRequest("connections.bankPayoutDetailsRequired");
     }
   }
 
@@ -373,7 +374,7 @@ export class WalletService {
     // creation (a refused check creates nothing).
     const stepUp = await this.stepUp.check(actorId, dto?.totpCode);
     const amount = parseMinor(dto?.amountMinor);
-    if (amount <= 0n) throw new BadRequestException("Payout-এর পরিমাণ শূন্যের বেশি হতে হবে।");
+    if (amount <= 0n) throw badRequest("connections.payoutAmountPositive");
     // CC26: a saved destination supplies the method + details
     // (snapshotted onto the request — later edits to the
     // destination never rewrite this request); without one the
@@ -385,13 +386,13 @@ export class WalletService {
       const dest = await (this.prisma as any).payoutDestination.findFirst({
         where: { id: String(dto.destinationId), organizationId },
       }).catch(() => null);
-      if (!dest) throw new NotFoundException("Payout destination not found");
+      if (!dest) throw notFound("connections.payoutDestinationNotFound");
       method = String(dest.method);
       destination = dest.details;
       destinationId = dest.id;
     } else {
       method = String(dto?.method ?? "").trim().toLowerCase();
-      if (method !== "bkash" && method !== "bank") throw new BadRequestException("Payout method হতে হবে bkash অথবা bank।");
+      if (method !== "bkash" && method !== "bank") throw badRequest("connections.payoutMethodInvalid");
       destination = dto?.destination;
       this.assertDestinationDetails(method, destination);
     }
@@ -400,7 +401,7 @@ export class WalletService {
       const balance = BigInt(wallet.balanceMinor);
       const held = await this.heldMinor(client, organizationId);
       if (amount > balance - held) {
-        throw new BadRequestException(`উপলব্ধ ব্যালেন্সের বেশি payout চাওয়া যাবে না — ব্যালেন্স ${balance}, আটকে থাকা (pending/approved) ${held}, উপলব্ধ ${balance - held}।`);
+        throw badRequest("connections.payoutExceedsAvailable", { balance: balance, held: held, available: balance - held });
       }
       return client.payoutRequest.create({
         data: { organizationId, walletId: wallet.id, amountMinor: amount, method, destination, destinationId, status: "pending", requestedById: actorId },
@@ -416,9 +417,9 @@ export class WalletService {
 
   async cancelPayoutRequest(organizationId: string, actorId: string, requestId: string) {
     const row = await (this.prisma as any).payoutRequest.findFirst({ where: { id: requestId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Payout request not found");
+    if (!row) throw notFound("connections.payoutRequestNotFound");
     if (row.status !== "pending") {
-      throw new BadRequestException("শুধু pending অনুরোধই নিজে বাতিল করা যায় — approved অনুরোধের জন্য অ্যাডমিনের সিদ্ধান্ত লাগবে।");
+      throw badRequest("connections.payoutCancelPendingOnly");
     }
     const updated = await (this.prisma as any).payoutRequest.update({ where: { id: row.id }, data: { status: "cancelled" } });
     await this.audit.log({
@@ -469,15 +470,15 @@ export class WalletService {
     const row = await (this.prisma as any).payoutDestination.findFirst({
       where: { id: destinationId, organizationId },
     }).catch(() => null);
-    if (!row) throw new NotFoundException("Payout destination not found");
+    if (!row) throw notFound("connections.payoutDestinationNotFound");
     return this.destinationView(row, false);
   }
 
   async createDestination(organizationId: string, actorId: string, dto: { label?: string; method?: string; details?: any; isDefault?: boolean }) {
     const label = String(dto?.label ?? "").trim();
-    if (!label) throw new BadRequestException("Destination-এর একটি নাম (label) প্রয়োজন।");
+    if (!label) throw badRequest("connections.destinationLabelNeeded");
     const method = String(dto?.method ?? "").trim().toLowerCase();
-    if (method !== "bkash" && method !== "bank") throw new BadRequestException("Destination method হতে হবে bkash অথবা bank।");
+    if (method !== "bkash" && method !== "bank") throw badRequest("connections.destinationMethodInvalid");
     this.assertDestinationDetails(method, dto?.details);
     const created = await this.tx(async (client) => {
       const existing = await client.payoutDestination.findMany({ where: { organizationId } });
@@ -502,11 +503,11 @@ export class WalletService {
   async updateDestination(organizationId: string, actorId: string, destinationId: string, dto: { label?: string; details?: any; isDefault?: boolean }) {
     const p: any = this.prisma as any;
     const row = await p.payoutDestination.findFirst({ where: { id: destinationId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Payout destination not found");
+    if (!row) throw notFound("connections.payoutDestinationNotFound");
     const data: Record<string, unknown> = {};
     if (dto?.label !== undefined) {
       const label = String(dto.label).trim();
-      if (!label) throw new BadRequestException("Destination-এর একটি নাম (label) প্রয়োজন।");
+      if (!label) throw badRequest("connections.destinationLabelNeeded");
       data.label = label;
     }
     if (dto?.details !== undefined) {
@@ -539,7 +540,7 @@ export class WalletService {
   async deleteDestination(organizationId: string, actorId: string, destinationId: string) {
     const p: any = this.prisma as any;
     const row = await p.payoutDestination.findFirst({ where: { id: destinationId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Payout destination not found");
+    if (!row) throw notFound("connections.payoutDestinationNotFound");
     await this.tx(async (client) => {
       await client.payoutDestination.delete({ where: { id: row.id } });
       // A schedule pointing at a deleted destination falls
@@ -578,28 +579,28 @@ export class WalletService {
     thresholdMinor?: unknown; destinationId?: string | null;
   }) {
     const cadence = String(dto?.cadence ?? "").trim().toLowerCase();
-    if (cadence !== "weekly" && cadence !== "monthly") throw new BadRequestException("Schedule cadence হতে হবে weekly অথবা monthly।");
+    if (cadence !== "weekly" && cadence !== "monthly") throw badRequest("connections.scheduleCadenceInvalid");
     let dayOfWeek: number | null = null;
     let dayOfMonth: number | null = null;
     if (cadence === "weekly") {
       dayOfWeek = Number(dto?.dayOfWeek);
       if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
-        throw new BadRequestException("Weekly schedule-এর জন্য dayOfWeek (0=রবিবার .. 6=শনিবার) প্রয়োজন।");
+        throw badRequest("connections.weeklyNeedsDayOfWeek");
       }
     } else {
       dayOfMonth = Number(dto?.dayOfMonth);
       if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 28) {
-        throw new BadRequestException("Monthly schedule-এর জন্য dayOfMonth (1..28) প্রয়োজন।");
+        throw badRequest("connections.monthlyNeedsDayOfMonth");
       }
     }
     const threshold = parseMinor(dto?.thresholdMinor ?? "0", "thresholdMinor");
-    if (threshold < 0n) throw new BadRequestException("thresholdMinor ঋণাত্মক হতে পারবে না।");
+    if (threshold < 0n) throw badRequest("connections.thresholdMinorNegative");
     let destinationId: string | null = null;
     if (dto?.destinationId) {
       const dest = await (this.prisma as any).payoutDestination.findFirst({
         where: { id: String(dto.destinationId), organizationId },
       }).catch(() => null);
-      if (!dest) throw new NotFoundException("Payout destination not found");
+      if (!dest) throw notFound("connections.payoutDestinationNotFound");
       destinationId = dest.id;
     }
     const data = {
@@ -716,21 +717,21 @@ export class WalletService {
 
   async adminDecidePayout(admin: { id: string }, requestId: string, action: "approve" | "reject", note?: string) {
     if (action === "reject" && !String(note ?? "").trim()) {
-      throw new BadRequestException("Reject করতে হলে কারণ (note) আবশ্যক — tenant তা দেখতে পাবে।");
+      throw badRequest("connections.rejectReasonRequired");
     }
     const result = await this.tx(async (client) => {
       const row = await client.payoutRequest.findFirst({ where: { id: requestId } });
-      if (!row) throw new NotFoundException("Payout request not found");
+      if (!row) throw notFound("connections.payoutRequestNotFound");
       if (action === "approve") {
-        if (row.status !== "pending") throw new BadRequestException(`শুধু pending অনুরোধ approve করা যায় (বর্তমান: ${row.status})।`);
+        if (row.status !== "pending") throw badRequest("connections.payoutApprovePendingOnly", { status: row.status });
         // Re-validate at decision time: the balance or other
         // holds may have changed since the request was made.
         const wallet = await client.walletAccount.findUnique({ where: { organizationId: row.organizationId } });
-        if (!wallet) throw new BadRequestException("Wallet পাওয়া যায়নি।");
+        if (!wallet) throw badRequest("connections.walletNotFound");
         const balance = BigInt(wallet.balanceMinor);
         const heldOthers = await this.heldMinor(client, row.organizationId, row.id);
         if (BigInt(row.amountMinor) > balance - heldOthers) {
-          throw new BadRequestException("বর্তমান উপলব্ধ ব্যালেন্স এই payout-এর জন্য যথেষ্ট নয় — approve করা যাবে না।");
+          throw badRequest("connections.payoutApproveInsufficientBalance");
         }
         return client.payoutRequest.update({
           where: { id: row.id },
@@ -741,7 +742,7 @@ export class WalletService {
         });
       }
       if (row.status !== "pending" && row.status !== "approved") {
-        throw new BadRequestException(`এই অনুরোধের সিদ্ধান্ত ইতিমধ্যে হয়ে গেছে (বর্তমান: ${row.status})।`);
+        throw badRequest("connections.payoutAlreadyDecided", { status: row.status });
       }
       // Rejecting frees the hold automatically: the available
       // formula only counts pending | approved rows.
@@ -760,7 +761,7 @@ export class WalletService {
 
   async adminMarkPaid(admin: { id: string }, requestId: string, payoutRef?: string) {
     const ref = String(payoutRef ?? "").trim();
-    if (!ref) throw new BadRequestException("Mark-paid করতে হলে আসল payout-এর reference (payoutRef) আবশ্যক।");
+    if (!ref) throw badRequest("connections.markPaidReferenceRequired");
     // CC23 four-eyes: when the operator has set
     // walletConfig.payoutFourEyesThresholdMinor and this
     // payout is at/above it, the admin who APPROVED the
@@ -775,18 +776,16 @@ export class WalletService {
       const peek = await (this.prisma as any).payoutRequest.findFirst({ where: { id: requestId } }).catch(() => null);
       if (peek && peek.approvedById && String(peek.approvedById) === String(admin.id)
         && BigInt(peek.amountMinor) >= BigInt(fourEyesThreshold)) {
-        throw new BadRequestException(
-          `চার-চোখের নিয়ম (four-eyes): এই payout-এর পরিমাণ (${String(peek.amountMinor)} minor) নির্ধারিত সীমা ${fourEyesThreshold} minor বা তার বেশি, এবং অনুরোধটি আপনিই approve করেছেন — অন্য একজন admin-কে দিয়ে mark-paid করাতে হবে।`,
-        );
+        throw badRequest("connections.payoutFourEyesRule", { amount: String(peek.amountMinor), threshold: fourEyesThreshold });
       }
     }
     const result = await this.tx(async (client) => {
       const row = await client.payoutRequest.findFirst({ where: { id: requestId } });
-      if (!row) throw new NotFoundException("Payout request not found");
-      if (row.status === "paid") throw new BadRequestException("এই payout ইতিমধ্যে paid — আবার debit করা হবে না।");
-      if (row.status !== "approved") throw new BadRequestException(`শুধু approved অনুরোধই paid করা যায় (বর্তমান: ${row.status})।`);
+      if (!row) throw notFound("connections.payoutRequestNotFound");
+      if (row.status === "paid") throw badRequest("connections.payoutAlreadyPaid");
+      if (row.status !== "approved") throw badRequest("connections.payoutPayApprovedOnly", { status: row.status });
       const wallet = await client.walletAccount.findUnique({ where: { organizationId: row.organizationId } });
-      if (!wallet) throw new BadRequestException("Wallet পাওয়া যায়নি।");
+      if (!wallet) throw badRequest("connections.walletNotFound");
       const amount = BigInt(row.amountMinor);
       const balance = BigInt(wallet.balanceMinor);
       // Final overdraw guard, inside the same transaction: even
@@ -794,7 +793,7 @@ export class WalletService {
       // leave beyond (balance − other holds).
       const heldOthers = await this.heldMinor(client, row.organizationId, row.id);
       if (amount > balance - heldOthers || amount > balance) {
-        throw new BadRequestException("বর্তমান ব্যালেন্স এই payout-এর জন্য যথেষ্ট নয় — paid করা যাবে না।");
+        throw badRequest("connections.payoutPayInsufficientBalance");
       }
       const balanceAfter = balance - amount;
       await client.walletTransaction.create({
@@ -847,7 +846,7 @@ export class WalletService {
   async recordPayoutLegalConfirmation(admin: { id: string }, dto: { reference?: string; note?: string }) {
     const reference = String(dto?.reference ?? "").trim();
     if (!reference) {
-      throw new BadRequestException("Legal-review confirmation রেকর্ড করতে হলে reference আবশ্যক — reviewer / law-firm-এর নাম অথবা memo reference ছাড়া confirmation রেকর্ড করা যাবে না।");
+      throw badRequest("connections.legalReviewReferenceRequired");
     }
     const row = await this.tx(async (client) => {
       const existing = await readPayoutLegalGate(client);
@@ -874,7 +873,7 @@ export class WalletService {
   async revokePayoutLegalConfirmation(admin: { id: string }) {
     const existing = await readPayoutLegalGate(this.prisma as any);
     if (!existing?.legalConfirmedAt) {
-      throw new BadRequestException("কোনো legal-review confirmation রেকর্ড করা নেই — revoke করার কিছু নেই।");
+      throw badRequest("connections.legalReviewNothingToRevoke");
     }
     const row = await (this.prisma as any).payoutLegalGate.update({
       where: { id: existing.id },
@@ -899,7 +898,7 @@ export class WalletService {
   async setPayoutAutomationEnabled(admin: { id: string }, enabled: boolean) {
     const existing = await readPayoutLegalGate(this.prisma as any);
     const state = payoutLegalGateState(existing);
-    if (enabled && !state.recorded) throw new BadRequestException(PAYOUT_GATE_NO_CONFIRMATION_MSG);
+    if (enabled && !state.recorded) throw badRequest("connections.payoutGateNoConfirmation");
     const data = enabled
       ? { automationEnabled: true, automationEnabledById: admin.id, automationEnabledAt: new Date() }
       : { automationEnabled: false, automationEnabledById: null, automationEnabledAt: null };
@@ -953,16 +952,16 @@ export class WalletService {
     const p: any = this.prisma as any;
     await assertPayoutAutomationAllowed(p);
     const request = await p.payoutRequest.findFirst({ where: { id: requestId } }).catch(() => null);
-    if (!request) throw new NotFoundException("Payout request not found");
+    if (!request) throw notFound("connections.payoutRequestNotFound");
     if (request.status === "paid") {
-      throw new BadRequestException("এই payout ইতিমধ্যে paid — নতুন instruction তৈরি করা যাবে না।");
+      throw badRequest("connections.payoutPaidNoInstruction");
     }
     if (request.status !== "approved") {
-      throw new BadRequestException(`শুধু approved payout-এর জন্যই bank instruction তৈরি করা যায় (বর্তমান: ${request.status}) — আগে admin approve লাগবে।`);
+      throw badRequest("connections.instructionApprovedOnly", { status: request.status });
     }
     const existing = await p.payoutExecution.findFirst({ where: { payoutRequestId: request.id } }).catch(() => null);
     if (existing?.status === "confirmed") {
-      throw new BadRequestException("এই payout-এর execution ইতিমধ্যে confirmed — আবার execute করা যাবে না।");
+      throw badRequest("connections.executionAlreadyConfirmed");
     }
     if (existing?.status === "instruction_issued") {
       return this.executionView(existing); // duplicate issue attempt = the same instruction, no second row
@@ -1008,9 +1007,9 @@ export class WalletService {
     const p: any = this.prisma as any;
     await assertPayoutAutomationAllowed(p);
     const ref = String(bankReference ?? "").trim();
-    if (!ref) throw new BadRequestException("Execution confirm করতে হলে ব্যাংকের reference (bankReference) আবশ্যক — ব্যাংক থেকে পাওয়া reference ছাড়া payout paid ধরা যাবে না।");
+    if (!ref) throw badRequest("connections.executionBankReferenceRequired");
     const execution = await p.payoutExecution.findFirst({ where: { payoutRequestId: requestId } }).catch(() => null);
-    if (!execution) throw new NotFoundException("এই payout-এর কোনো bank instruction নেই — আগে instruction তৈরি করুন।");
+    if (!execution) throw notFound("connections.payoutNoBankInstruction");
     if (execution.status === "confirmed") {
       // Duplicate confirmation: converge on the stored truth,
       // never a second debit (adminMarkPaid would refuse too).
@@ -1018,7 +1017,7 @@ export class WalletService {
       return { execution: this.executionView(execution), payout: request ? this.payoutView(request) : null, alreadyConfirmed: true };
     }
     if (execution.status !== "instruction_issued") {
-      throw new BadRequestException(`এই execution-টি confirm করা যাবে না (বর্তমান: ${execution.status}) — failed হলে নতুন instruction তৈরি করুন।`);
+      throw badRequest("connections.executionNotConfirmable", { status: execution.status });
     }
     const payout = await this.adminMarkPaid(admin, requestId, ref);
     const updated = await p.payoutExecution.update({
@@ -1045,11 +1044,11 @@ export class WalletService {
     const p: any = this.prisma as any;
     await assertPayoutAutomationAllowed(p);
     const failureReason = String(reason ?? "").trim();
-    if (!failureReason) throw new BadRequestException("Execution failed হিসেবে রেকর্ড করতে হলে কারণ (reason) আবশ্যক।");
+    if (!failureReason) throw badRequest("connections.executionFailReasonRequired");
     const execution = await p.payoutExecution.findFirst({ where: { payoutRequestId: requestId } }).catch(() => null);
-    if (!execution) throw new NotFoundException("এই payout-এর কোনো bank instruction নেই।");
+    if (!execution) throw notFound("connections.payoutNoBankInstructionShort");
     if (execution.status === "confirmed") {
-      throw new BadRequestException("Confirmed execution-কে failed করা যাবে না — টাকা ইতিমধ্যে বেরিয়ে গেছে হিসেবে রেকর্ড আছে।");
+      throw badRequest("connections.confirmedExecutionNotFailable");
     }
     if (execution.status === "failed") return this.executionView(execution);
     const updated = await p.payoutExecution.update({
@@ -1074,15 +1073,15 @@ export class WalletService {
    */
   async adminAdjustWallet(admin: { id: string }, organizationId: string, dto: { amountMinor?: unknown; note?: string }) {
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("Adjustment-এর জন্য note আবশ্যক — কারণ ছাড়া কোনো সংশোধন হবে না।");
+    if (!note) throw badRequest("connections.walletAdjustmentNoteRequired");
     const amount = parseMinor(dto?.amountMinor);
-    if (amount === 0n) throw new BadRequestException("Adjustment-এর পরিমাণ শূন্য হতে পারবে না।");
+    if (amount === 0n) throw badRequest("connections.walletAdjustmentAmountZero");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const entry = await this.tx(async (client) => {
       const wallet = await this.getOrCreateWallet(client, organizationId);
       const balanceAfter = BigInt(wallet.balanceMinor) + amount;
-      if (balanceAfter < 0n) throw new BadRequestException("এই adjustment ব্যালেন্সকে নেগেটিভ করে দেবে — করা যাবে না।");
+      if (balanceAfter < 0n) throw badRequest("connections.walletAdjustmentNegative");
       const row = await client.walletTransaction.create({
         data: {
           organizationId, walletId: wallet.id, type: "adjustment",

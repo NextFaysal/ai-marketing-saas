@@ -1,4 +1,5 @@
 import { NotFoundException } from "@nestjs/common";
+import { notFound } from "../i18n";
 
 /**
  * AB8 (AX25) — shared organization data-bundle builder.
@@ -154,7 +155,7 @@ export async function buildOrgDataBundle(
 ): Promise<OrgDataBundleResult> {
   const p = prisma as any;
   const org = await p.organization.findUnique({ where: { id: organizationId } });
-  if (!org) throw new NotFoundException("Organization not found");
+  if (!org) throw notFound("common.orgNotFound");
   const where = { organizationId };
 
   const [profilePage, membershipsPage, productsPage, ordersPage, customersPage, leadsPage,

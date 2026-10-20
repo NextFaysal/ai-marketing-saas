@@ -4,6 +4,10 @@ import {
   generateBarcodeSvg,
   type BarcodeLabelData,
 } from "@/lib/pos-receipt";
+import { useLocale } from "@/lib/i18n/provider";
+import { dicts, getDict } from "@/lib/i18n/dict";
+import { tr, type TrParams } from "@/lib/i18n/lookup";
+import type { UiLocale } from "@repo/contracts";
 
 export interface PosBarcodeModalProps {
   open: boolean;
@@ -23,33 +27,20 @@ export function openBarcodePrint(
   price: string,
   count: number,
   layout: "single_sticker" | "a4_sheet_24",
-  storeName?: string | null
+  storeName?: string | null,
+  locale: UiLocale = "bn"
 ) {
+  const dict = getDict(locale);
+  const tt = (path: string, params?: TrParams) => tr(dicts, locale, path, params) ?? path;
   const svg = generateBarcodeSvg(skuOrBarcode || "12345678", 36);
   const w = window.open("", "_blank");
   if (!w) return;
   const itemsHtml = Array.from({ length: count })
     .map(() => {
       if (layout === "single_sticker") {
-        return `
-          <div class="sticker single">
-            <div class="store-name">${storeName || "আমাদের শপ"}</div>
-            <div class="name">${productName}</div>
-            <div class="barcode">${svg}</div>
-            <div class="sku">${skuOrBarcode}</div>
-            <div class="price">৳${price}</div>
-          </div>
-        `;
+        return tt("pos.divClassStickerSingleDiv", { receiptSettings: storeName || dict.pos.ourShop, productName: productName, svg: svg, skuOrBarcode: skuOrBarcode, price: price });
       }
-      return `
-        <div class="sticker grid-item">
-          <div class="store-name">${storeName || "আমাদের শপ"}</div>
-          <div class="name">${productName}</div>
-          <div class="barcode">${svg}</div>
-          <div class="sku">${skuOrBarcode}</div>
-          <div class="price">৳${price}</div>
-        </div>
-      `;
+      return tt("pos.divClassStickerGridItem", { receiptSettings: storeName || dict.pos.ourShop, productName: productName, svg: svg, skuOrBarcode: skuOrBarcode, price: price });
     })
     .join("");
 
@@ -73,22 +64,7 @@ export function openBarcodePrint(
          .sku { font-size: 9px; font-family: monospace; color: #64748b; }
          .price { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 1mm; }`;
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>বারকোড লেবেল প্রিন্ট - ${productName}</title>
-<style>
-${pageCss}
-</style>
-</head>
-<body>
-  ${layout === "a4_sheet_24" ? `<div class="grid-container">${itemsHtml}</div>` : itemsHtml}
-  <script>
-    window.onload = function() { window.print(); };
-  </script>
-</body>
-</html>`;
+  const html = tt("pos.dOCTYPEHtmlHtmlHeadMeta", { productName: productName, pageCss: pageCss, p2: layout === "a4_sheet_24" ? `<div class="grid-container">${itemsHtml}</div>` : itemsHtml });
   w.document.open();
   w.document.write(html);
   w.document.close();
@@ -105,6 +81,7 @@ export function PosBarcodeModal({
   setBarcodeQty,
   storeName,
 }: PosBarcodeModalProps) {
+  const { dict, locale } = useLocale();
   if (!open) return null;
 
   return (
@@ -112,8 +89,8 @@ export function PosBarcodeModal({
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
-            <h2 className="text-base font-bold text-slate-800">🏷️ বারকোড স্টিকার ও প্রাইস ট্যাগ প্রিন্টিং</h2>
-            <p className="text-xs text-slate-500">সিঙ্গেল থার্মাল স্টিকার (৫০মিমি×৩০মিমি) বা A4 ২৪-স্টিকার শীটে প্রিন্ট করুন</p>
+            <h2 className="text-base font-bold text-slate-800">{dict.pos.barcodeStickerPriceTagPrinting}</h2>
+            <p className="text-xs text-slate-500">{dict.pos.printOnASingleThermal}</p>
           </div>
           <button
             type="button"
@@ -127,7 +104,7 @@ export function PosBarcodeModal({
         <div className="grid flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-2">
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-700">প্রিন্ট লেআউট</label>
+              <label className="block text-xs font-semibold text-slate-700">{dict.pos.printLayout}</label>
               <div className="mt-1.5 flex gap-2">
                 <button
                   type="button"
@@ -138,7 +115,7 @@ export function PosBarcodeModal({
                       : "border-slate-200 text-slate-600 hover:bg-slate-50"
                   }`}
                 >
-                  🏷️ সিঙ্গেল থার্মাল স্টিকার (50×30mm)
+                  {dict.pos.singleThermalSticker5030mm}
                 </button>
                 <button
                   type="button"
@@ -149,47 +126,47 @@ export function PosBarcodeModal({
                       : "border-slate-200 text-slate-600 hover:bg-slate-50"
                   }`}
                 >
-                  📄 A4 শীট (২৪টি লেবেল - ৩×৮)
+                  {dict.pos.a4Sheet24Labels3}
                 </button>
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700">পণ্যের নাম</label>
+              <label className="block text-xs font-semibold text-slate-700">{dict.pos.productName}</label>
               <input
                 type="text"
                 value={barcodeLabelData.productName}
                 onChange={(e) => setBarcodeLabelData((d) => ({ ...d, productName: e.target.value }))}
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium"
-                placeholder="পণ্যের নাম"
+                placeholder={dict.pos.productName}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700">SKU / বারকোড কোড</label>
+                <label className="block text-xs font-semibold text-slate-700">{dict.pos.sKUBarcodeCode}</label>
                 <input
                   type="text"
                   value={barcodeLabelData.skuOrBarcode}
                   onChange={(e) => setBarcodeLabelData((d) => ({ ...d, skuOrBarcode: e.target.value }))}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono"
-                  placeholder="যেমন: PRD-1002"
+                  placeholder={dict.pos.eGPRD1002}
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700">মূল্য (৳)</label>
+                <label className="block text-xs font-semibold text-slate-700">{dict.pos.price}</label>
                 <input
                   type="text"
                   value={barcodeLabelData.priceFormatted}
                   onChange={(e) => setBarcodeLabelData((d) => ({ ...d, priceFormatted: e.target.value }))}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold"
-                  placeholder="যেমন: ১২৫০"
+                  placeholder={dict.pos.text1agmws}
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700">ক্যাটাগরি (ঐচ্ছিক)</label>
+              <label className="block text-xs font-semibold text-slate-700">{dict.common.category} ({dict.common.optional})</label>
               <input
                 type="text"
                 value={barcodeLabelData.category || ""}
@@ -200,7 +177,7 @@ export function PosBarcodeModal({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700">কয়টি কপি প্রিন্ট করবেন?</label>
+              <label className="block text-xs font-semibold text-slate-700">{dict.pos.numberOfLabelsQuantity}</label>
               <div className="mt-1.5 flex items-center gap-2">
                 <input
                   type="number"
@@ -220,14 +197,14 @@ export function PosBarcodeModal({
           {/* Barcode Sticker Preview */}
           <div className="flex flex-col items-center justify-start rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
             <span className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              স্টিকার লাইভ প্রিভিউ ({barcodeLayout === "single_sticker" ? "৫০×৩০ মিমি" : "A4 লেবেল"})
+              {dict.pos.stickerPreviewActualSizeScale}
             </span>
             <div className="flex flex-col items-center justify-between rounded-lg border border-slate-300 bg-white p-3 text-center shadow-md" style={{ width: "220px", minHeight: "135px" }}>
               <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                {storeName || "আমাদের শপ"}
+                {storeName || dict.pos.ourShop}
               </div>
               <div className="text-xs font-bold text-slate-900 truncate max-w-full">
-                {barcodeLabelData.productName || "পণ্যের নাম"}
+                {barcodeLabelData.productName || dict.pos.product}
               </div>
               <div
                 className="my-1.5 [&>svg]:max-w-full [&>svg]:h-9"
@@ -237,7 +214,7 @@ export function PosBarcodeModal({
                 {barcodeLabelData.skuOrBarcode || "12345678"}
               </div>
               <div className="mt-1 text-sm font-extrabold text-slate-900">
-                ৳{barcodeLabelData.priceFormatted || "০"}
+                {dict.pos.text1yr}{barcodeLabelData.priceFormatted || dict.pos.text1ye}
               </div>
             </div>
           </div>
@@ -245,7 +222,7 @@ export function PosBarcodeModal({
 
         <div className="flex items-center justify-between border-t bg-slate-50 px-6 py-3.5">
           <span className="text-xs text-slate-500">
-            যেকোনো সাধারণ বা থার্মাল লেবেল প্রিন্টারে সরাসরি প্রিন্ট হবে
+            {dict.pos.printsDirectlyOnAnyStandard}
           </span>
           <div className="flex gap-2">
             <button
@@ -253,7 +230,7 @@ export function PosBarcodeModal({
               className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               onClick={onClose}
             >
-              বন্ধ করুন
+              {dict.pos.close}
             </button>
             <button
               type="button"
@@ -264,10 +241,11 @@ export function PosBarcodeModal({
                 barcodeLabelData.priceFormatted,
                 barcodeQty,
                 barcodeLayout,
-                storeName
+                storeName,
+                locale
               )}
             >
-              🖨️ প্রিন্ট করুন ({barcodeQty}টি লেবেল)
+              {dict.pos.print}{barcodeQty}{dict.pos.labels}
             </button>
           </div>
         </div>

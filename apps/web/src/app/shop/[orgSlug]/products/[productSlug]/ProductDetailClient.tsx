@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopProduct } from "@/lib/storefront-server";
 import { fetchCart, getCartToken, patchCartLine } from "@/lib/storefront-cart";
@@ -367,16 +367,16 @@ export function ProductDetailClient({
       if (product.isGiftCard) {
         const amount = gcAmountMinor();
         if (amount == null) {
-          setGcHint("গিফট কার্ডের পরিমাণটি সঠিকভাবে লিখুন।");
+          setGcHint(t.pdp.gcHintInvalid);
           return false;
         }
         if (gcCustom.trim() && gcConfig?.allowCustomAmount) {
           if (gcConfig.minAmountMinor != null && amount < gcConfig.minAmountMinor) {
-            setGcHint(`সর্বনিম্ন পরিমাণ ${priceText(String(gcConfig.minAmountMinor))} — এর কমে কার্ড কেনা যাবে না।`);
+            setGcHint(`${t.pdp.gcHintMinPrefix}${priceText(String(gcConfig.minAmountMinor))}${t.pdp.gcHintMinSuffix}`);
             return false;
           }
           if (gcConfig.maxAmountMinor != null && amount > gcConfig.maxAmountMinor) {
-            setGcHint(`সর্বোচ্চ পরিমাণ ${priceText(String(gcConfig.maxAmountMinor))} — এর বেশি কার্ড কেনা যাবে না।`);
+            setGcHint(`${t.pdp.gcHintMaxPrefix}${priceText(String(gcConfig.maxAmountMinor))}${t.pdp.gcHintMaxSuffix}`);
             return false;
           }
         }
@@ -566,7 +566,7 @@ export function ProductDetailClient({
                 onClick={() => setEmiModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-xs"
               >
-                <span>💳 ০% ইএমআই কিস্তি ক্যালকুলেটর</span>
+                <span>{t.pdp.toolEmi}</span>
               </button>
             ) : null}
             {isElectronics ? (
@@ -576,14 +576,14 @@ export function ProductDetailClient({
                   onClick={() => setCompareModalOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 transition shadow-xs"
                 >
-                  <span>⚖️ গ্যাজেট তুলনা</span>
+                  <span>{t.pdp.toolCompare}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setWarrantyLookupOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-xs"
                 >
-                  <span>🔍 ওয়ারেন্টি চেক</span>
+                  <span>{t.pdp.toolWarranty}</span>
                 </button>
               </>
             ) : null}
@@ -593,7 +593,7 @@ export function ProductDetailClient({
                 onClick={() => setPurityCertOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-xs"
               >
-                <span>🌿 ১০০% অর্গানিক ল্যাব টেস্ট সনদ</span>
+                <span>{t.pdp.toolPurity}</span>
               </button>
             ) : null}
             {isBeauty ? (
@@ -603,14 +603,14 @@ export function ProductDetailClient({
                   onClick={() => setAuthModalOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-pink-50 px-3 py-1 text-xs font-bold text-rose-900 hover:bg-pink-100 transition shadow-xs"
                 >
-                  <span>🔒 ১০০% অরিজিনাল অথেন্টিসিটি সনদ</span>
+                  <span>{t.pdp.toolAuthenticity}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setSkinQuizOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-white px-3 py-1 text-xs font-bold text-rose-800 hover:bg-pink-50 transition shadow-xs"
                 >
-                  <span>🪄 স্কিন কনসার্ন ম্যাচিং</span>
+                  <span>{t.pdp.toolSkinMatch}</span>
                 </button>
               </>
             ) : null}
@@ -621,14 +621,14 @@ export function ProductDetailClient({
                   onClick={() => setFurnitureWarrantyOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-900 hover:bg-amber-100 transition shadow-xs"
                 >
-                  <span>🛡️ ১০ বছর কাঠামোগত ওয়ারেন্টি</span>
+                  <span>{t.pdp.toolFurnitureWarranty}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setVisualizerOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-bold text-amber-800 hover:bg-amber-50 transition shadow-xs"
                 >
-                  <span>📐 ৩ডি রুম ভিজ্যুয়ালাইজার</span>
+                  <span>{t.pdp.toolRoomViz}</span>
                 </button>
               </>
             ) : null}
@@ -638,7 +638,7 @@ export function ProductDetailClient({
                 onClick={() => setLookInsideModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-100/80 px-3.5 py-1 text-xs font-extrabold text-amber-950 hover:bg-amber-200 transition shadow-xs"
               >
-                <span>📖 একটু পড়ে দেখুন (ফ্রি প্রিভিউ)</span>
+                <span>{t.pdp.toolLookInside}</span>
               </button>
             ) : null}
             {isKids ? (
@@ -647,7 +647,7 @@ export function ProductDetailClient({
                 onClick={() => setKidsSafetyModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-3.5 py-1 text-xs font-bold text-sky-900 hover:bg-sky-100 transition shadow-xs"
               >
-                <span>🍼 ১০০% নন-টক্সিক ও সুরক্ষা সনদ</span>
+                <span>{t.pdp.toolKidsSafety}</span>
               </button>
             ) : null}
             {isAutomotive ? (
@@ -656,7 +656,7 @@ export function ProductDetailClient({
                 onClick={() => setFitmentModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-zinc-900 px-3.5 py-1 text-xs font-bold text-red-400 hover:bg-zinc-800 transition shadow-xs font-mono"
               >
-                <span>🏍️ বাইক মডেল ফিটমেন্ট চেকার</span>
+                <span>{t.pdp.toolFitment}</span>
               </button>
             ) : null}
             {isSports ? (
@@ -665,7 +665,7 @@ export function ProductDetailClient({
                 onClick={() => setAssemblyModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-full border border-sky-400 bg-sky-50 px-3.5 py-1 text-xs font-bold text-sky-900 hover:bg-sky-100 transition shadow-xs"
               >
-                <span>🛠️ ফ্রি হোম অ্যাসেম্বলি ও টেকনিশিয়ান</span>
+                <span>{t.pdp.toolAssembly}</span>
               </button>
             ) : null}
             {isJewelry ? (
@@ -675,27 +675,27 @@ export function ProductDetailClient({
                   onClick={() => setCertModalOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-50 px-3.5 py-1 text-xs font-bold text-amber-950 hover:bg-amber-100 transition shadow-xs"
                 >
-                  <span>⚜️ হলমার্ক ও ডায়মন্ড সনদ</span>
+                  <span>{t.pdp.toolHallmark}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRingSizeModalOpen(true)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-stone-900 px-3.5 py-1 text-xs font-bold text-amber-300 hover:bg-stone-800 transition shadow-xs"
                 >
-                  <span>💍 রিং সাইজ গাইড</span>
+                  <span>{t.pdp.toolRingSize}</span>
                 </button>
               </>
             ) : null}
             {product.preorder ? (
               <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">
-                প্রি-অর্ডার{product.preorder.releaseDate ? ` · ${new Date(product.preorder.releaseDate).toLocaleDateString("bn-BD")}` : ""}
+                {t.pdp.preorder}{product.preorder.releaseDate ? ` · ${fmtDate(locale === "en" ? "en" : "bn", product.preorder.releaseDate)}` : ""}
               </span>
             ) : null}
             {product.digital ? (
-              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">ডিজিটাল পণ্য</span>
+              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">{t.pdp.digitalBadge}</span>
             ) : null}
             {product.isGiftCard ? (
-              <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[11px] font-bold text-pink-700">🎁 গিফট কার্ড</span>
+              <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[11px] font-bold text-pink-700">{t.pdp.giftCardBadge}</span>
             ) : null}
           </div>
           {/* NF5: converted DISPLAY price for the base price
@@ -722,12 +722,9 @@ export function ProductDetailClient({
             stock semantics (a gift card is minted value). */}
         {product.isGiftCard ? (
           <div className="space-y-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-4">
-            <p className="text-sm font-bold text-pink-900">🎁 গিফট কার্ডের পরিমাণ বেছে নিন</p>
+            <p className="text-sm font-bold text-pink-900">{t.pdp.gcTitle}</p>
             <p className="text-xs leading-relaxed text-slate-600">
-              এটি একটি গিফট কার্ড — কেনার পর অর্ডার ডেলিভারি সম্পন্ন হলে কোডটি পাওয়া যাবে।
-              প্রাপকের ইমেইল বা ফোন দিলে কোডটি সরাসরি প্রাপকের কাছে পাঠানো হবে; না দিলে
-              ক্রেতা নিজের অর্ডারের ট্র্যাকিং পেজে কোডটি দেখতে পাবেন।
-            </p>
+              {t.pdp.gcBody}</p>
             {gcPresets.length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {gcPresets.map((preset) => {
@@ -747,7 +744,7 @@ export function ProductDetailClient({
             ) : null}
             {gcConfig?.allowCustomAmount ? (
               <div>
-                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-custom-amount">নিজের পছন্দমতো পরিমাণ (৳)</label>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-custom-amount">{t.pdp.gcCustomLabel}</label>
                 <input
                   id="gc-custom-amount"
                   type="number"
@@ -755,32 +752,32 @@ export function ProductDetailClient({
                   step="0.01"
                   value={gcCustom}
                   onChange={(e) => { setGcCustom(e.target.value); setGcHint(""); }}
-                  placeholder="যেমন: ৭৫০"
+                  placeholder={t.pdp.gcCustomPlaceholder}
                   className="w-full rounded-xl border border-pink-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none"
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
-                  {gcConfig.minAmountMinor != null ? `সর্বনিম্ন ${priceText(String(gcConfig.minAmountMinor))}` : ""}
+                  {gcConfig.minAmountMinor != null ? `${t.pdp.gcMinPrefix}${priceText(String(gcConfig.minAmountMinor))}` : ""}
                   {gcConfig.minAmountMinor != null && gcConfig.maxAmountMinor != null ? " · " : ""}
-                  {gcConfig.maxAmountMinor != null ? `সর্বোচ্চ ${priceText(String(gcConfig.maxAmountMinor))}` : ""}
-                  {(gcConfig.minAmountMinor != null || gcConfig.maxAmountMinor != null) ? " — চূড়ান্ত যাচাই সার্ভারেই হবে।" : "চূড়ান্ত যাচাই সার্ভারেই হবে।"}
+                  {gcConfig.maxAmountMinor != null ? `${t.pdp.gcMaxPrefix}${priceText(String(gcConfig.maxAmountMinor))}` : ""}
+                  {(gcConfig.minAmountMinor != null || gcConfig.maxAmountMinor != null) ? t.pdp.gcVerifyNote : t.pdp.gcVerifyNotePlain}
                 </p>
               </div>
             ) : null}
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-name">প্রাপকের নাম (ঐচ্ছিক)</label>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-name">{t.pdp.gcRecipientName}</label>
                 <input id="gc-recipient-name" value={gcName} onChange={(e) => setGcName(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-phone">প্রাপকের ফোন (ঐচ্ছিক)</label>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-phone">{t.pdp.gcRecipientPhone}</label>
                 <input id="gc-recipient-phone" type="tel" value={gcPhone} onChange={(e) => setGcPhone(e.target.value)} placeholder="01XXXXXXXXX" className="w-full rounded-xl border border-slate-300 bg-white p-2.5 font-mono text-sm focus:border-pink-500 focus:outline-none" />
               </div>
               <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-email">প্রাপকের ইমেইল (ঐচ্ছিক)</label>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-email">{t.pdp.gcRecipientEmail}</label>
                 <input id="gc-recipient-email" type="email" value={gcEmail} onChange={(e) => setGcEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
               </div>
               <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-message">বার্তা (ঐচ্ছিক)</label>
+                <label className="mb-1 block text-xs font-bold text-slate-700" htmlFor="gc-recipient-message">{t.pdp.gcMessage}</label>
                 <textarea id="gc-recipient-message" rows={2} maxLength={500} value={gcMessage} onChange={(e) => setGcMessage(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm focus:border-pink-500 focus:outline-none" />
               </div>
             </div>
@@ -790,7 +787,7 @@ export function ProductDetailClient({
 
         {/* Beauty Shade Swatch Selector */}
         {isBeauty && !product.isGiftCard ? (
-          <BeautyShadeSelector
+          <BeautyShadeSelector locale={locale}
             selectedShade={selectedShade}
             onSelectShade={(s) => setSelectedShade(s)}
           />
@@ -798,7 +795,7 @@ export function ProductDetailClient({
 
         {/* Grocery Weight / Pack Size Selector */}
         {isGrocery && !product.isGiftCard ? (
-          <GroceryWeightSelector
+          <GroceryWeightSelector locale={locale}
             selectedWeight={selectedWeight}
             onSelectWeight={(w) => setSelectedWeight(w)}
           />
@@ -806,7 +803,7 @@ export function ProductDetailClient({
 
         {/* Furniture Wood Finish Selector */}
         {isFurniture && !product.isGiftCard ? (
-          <FurnitureFinishSelector
+          <FurnitureFinishSelector locale={locale}
             selectedFinish={selectedFinish}
             onSelectFinish={(f) => setSelectedFinish(f)}
           />
@@ -814,7 +811,7 @@ export function ProductDetailClient({
 
         {/* Books Binding & Edition Selector */}
         {isBooks && !product.isGiftCard ? (
-          <BooksBindingSelector
+          <BooksBindingSelector locale={locale}
             selectedBinding={selectedBinding}
             onSelectBinding={(b) => setSelectedBinding(b)}
           />
@@ -822,7 +819,7 @@ export function ProductDetailClient({
 
         {/* Kids Age Group Selector */}
         {isKids && !product.isGiftCard ? (
-          <KidsAgeSelector
+          <KidsAgeSelector locale={locale}
             selectedAge={selectedAgeGroup}
             onSelectAge={(a) => setSelectedAgeGroup(a)}
           />
@@ -830,7 +827,7 @@ export function ProductDetailClient({
 
         {/* Automotive Engine Oil Grade & Viscosity Selector */}
         {isAutomotive && !product.isGiftCard ? (
-          <AutomotiveViscositySelector
+          <AutomotiveViscositySelector locale={locale}
             selectedGrade={selectedViscosity}
             onSelectGrade={(g) => setSelectedViscosity(g)}
           />
@@ -838,7 +835,7 @@ export function ProductDetailClient({
 
         {/* Sports Weight & Capacity Selector */}
         {isSports && !product.isGiftCard ? (
-          <SportsWeightSelector
+          <SportsWeightSelector locale={locale}
             selectedWeight={selectedGymWeight}
             onChangeWeight={(w) => setSelectedGymWeight(w)}
           />
@@ -847,18 +844,18 @@ export function ProductDetailClient({
         {/* Jewelry Karat & Metal Selector */}
         {isJewelry && !product.isGiftCard ? (
           <div className="space-y-3">
-            <JewelryKaratSelector
+            <JewelryKaratSelector locale={locale}
               selectedKarat={selectedKarat}
               onChangeKarat={(k) => setSelectedKarat(k)}
             />
             <div className="flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/60 p-3 text-xs">
-              <span className="font-bold text-stone-800">নির্বাচিত রিং/চুড়ি সাইজ:</span>
+              <span className="font-bold text-stone-800">{t.pdp.ringSizeSelected}</span>
               <button
                 type="button"
                 onClick={() => setRingSizeModalOpen(true)}
                 className="font-bold text-amber-800 underline hover:text-amber-950"
               >
-                {selectedRingSize} (পরিবর্তন)
+                {selectedRingSize}{t.pdp.changeSuffix}
               </button>
             </div>
           </div>
@@ -869,10 +866,10 @@ export function ProductDetailClient({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="text-xs font-bold text-slate-800" htmlFor="variant">
                 {isGrocery
-                  ? "প্যাকেজিং ধরন বেছে নিন:"
+                  ? t.pdp.packagingLabel
                   : isBeauty
-                    ? "সাইজ বা ভলিউম (মিলি) বেছে নিন:"
-                    : "সাইজ / ভ্যারিয়েন্ট বেছে নিন:"}
+                    ? t.pdp.volumeLabel
+                    : t.pdp.variantLabel}
               </label>
               {isFashion ? (
                 <div className="flex items-center gap-2">
@@ -881,14 +878,14 @@ export function ProductDetailClient({
                     onClick={() => setFitModalOpen(true)}
                     className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-100 transition shadow-xs"
                   >
-                    ✨ সাইজ ফাইন্ডার (Find My Fit)
+                    {t.pdp.sizeFinder}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSizeGuideOpen(true)}
                     className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline"
                   >
-                    📏 সাইজ চার্ট
+                    {t.pdp.sizeChart}
                   </button>
                 </div>
               ) : null}
@@ -910,7 +907,7 @@ export function ProductDetailClient({
                         setVariantId(isSelected ? "" : v.id);
                       }
                     }}
-                    title={isOut ? "স্টক শেষ — রিস্টক অ্যালার্ট পেতে ক্লিক করুন" : v.name}
+                    title={isOut ? t.pdp.restockTitle : v.name}
                     className={`rounded-xl border px-3.5 py-2 text-xs font-bold transition ${
                       isSelected
                         ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
@@ -934,28 +931,28 @@ export function ProductDetailClient({
           </div>
         ) : !product.isGiftCard ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-stone-50 p-3 text-xs">
-            <span className="text-stone-600">সাইজ নির্ধারণে সহায়তা প্রয়োজন?</span>
+            <span className="text-stone-600">{t.pdp.sizeHelp}</span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setFitModalOpen(true)}
                 className="font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-md hover:bg-amber-200"
               >
-                ✨ সাইজ ফাইন্ডার
+                {t.pdp.sizeFinderShort}
               </button>
               <button
                 type="button"
                 onClick={() => setSizeGuideOpen(true)}
                 className="font-bold text-indigo-600 hover:text-indigo-800 underline"
               >
-                📏 সাইজ চার্ট
+                {t.pdp.sizeChart}
               </button>
             </div>
           </div>
         ) : null}
 
         <div className="flex items-center justify-between border-y py-3">
-          <span className="text-xs font-bold text-slate-700">{product.isGiftCard ? "কয়টি কার্ড" : t.product.quantity}</span>
+          <span className="text-xs font-bold text-slate-700">{product.isGiftCard ? t.pdp.cardQty : t.product.quantity}</span>
           <div className="flex items-center overflow-hidden rounded-lg border">
             <button type="button" onClick={() => setQuantity(Math.max(1, quantity - 1))} className="bg-slate-50 px-3 py-1 font-bold text-slate-600 hover:bg-slate-100">−</button>
             <span className="px-4 py-1 text-sm font-bold text-slate-900">{quantity}</span>
@@ -994,7 +991,7 @@ export function ProductDetailClient({
             need their recipient flow, so they stay on the normal
             checkout. */}
         {!product.isGiftCard && !outOfStock ? (
-          <ExpressCheckout
+          <ExpressCheckout locale={locale}
             orgSlug={orgSlug}
             ensureCart={async () => {
               const cart = await fetchCart(orgSlug);
@@ -1009,7 +1006,7 @@ export function ProductDetailClient({
                 includeBump,
               });
               const token = getCartToken(orgSlug);
-              if (!token) throw new Error("কার্ট তৈরি করা যায়নি — আবার চেষ্টা করুন।");
+              if (!token) throw new Error(t.pdp.cartCreateFailed);
               return token;
             }}
           />
@@ -1032,7 +1029,7 @@ export function ProductDetailClient({
             <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24">
               <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.711 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
             </svg>
-            <span>WhatsApp-এ সরাসরি অর্ডার করুন</span>
+            <span>{t.pdp.whatsappOrder}</span>
           </a>
         ) : null}
         <p className="text-center text-[11px] text-slate-400">{t.product.priceNote}</p>
@@ -1042,19 +1039,19 @@ export function ProductDetailClient({
           <div className="mt-4 space-y-2.5 rounded-2xl border border-stone-200 bg-stone-50/80 p-4 text-xs text-stone-700">
             <div className="flex items-center gap-2.5 font-bold text-stone-900">
               <span>🚚</span>
-              <span>ঢাকার ভিতর ২৪-৪৮ ঘণ্টা এক্সপ্রেস হোম ডেলিভারি, ঢাকার বাইরে ২-৩ দিন</span>
+              <span>{t.pdp.fashionTrust1}</span>
             </div>
             <div className="flex items-center gap-2.5">
               <span>🔄</span>
-              <span>৭ দিনের সহজ সাইজ বা কালার এক্সচেঞ্জ গ্যারান্টি</span>
+              <span>{t.pdp.fashionTrust2}</span>
             </div>
             <div className="flex items-center gap-2.5">
               <span>💵</span>
-              <span>ক্যাশ অন ডেলিভারি (COD) ও বিকাশ পেমেন্ট সুবিধা</span>
+              <span>{t.pdp.fashionTrust3}</span>
             </div>
             <div className="flex items-center gap-2.5">
               <span>🧵</span>
-              <span>১০০% প্রিমিয়াম কোয়ালিটি ও অরিজিনাল ফেব্রিক ফিনিশ</span>
+              <span>{t.pdp.fashionTrust4}</span>
             </div>
           </div>
         ) : null}
@@ -1062,15 +1059,15 @@ export function ProductDetailClient({
         {/* Grocery 1-Hour Slot Picker & Nutrition Facts */}
         {isGrocery && !product.isGiftCard ? (
           <div className="mt-4 space-y-3">
-            <GroceryDeliverySlotPicker />
-            <GroceryNutritionFacts />
+            <GroceryDeliverySlotPicker locale={locale} />
+            <GroceryNutritionFacts locale={locale} />
           </div>
         ) : null}
 
         {/* Beauty Active Ingredients & Usage Guide */}
         {isBeauty && !product.isGiftCard ? (
           <div className="mt-4 space-y-3">
-            <BeautyIngredientsGuide />
+            <BeautyIngredientsGuide locale={locale} />
           </div>
         ) : null}
 
@@ -1080,18 +1077,18 @@ export function ProductDetailClient({
             <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-xs text-amber-900 space-y-2">
               <div className="flex items-center gap-2 font-bold text-amber-950">
                 <span>🛋️</span>
-                <span>সম্পূর্ণ ফ্রি হোম ফিটিং এবং এক্সপার্ট অ্যাসেম্বলি সার্ভিস অন্তর্ভুক্ত</span>
+                <span>{t.pdp.furnitureTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🚚</span>
-                <span>সারাদেশে নিরাপদ ডোরস্টেপ ফার্নিচার ডেলিভারি ভ্যান</span>
+                <span>{t.pdp.furnitureTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🪵</span>
-                <span>১০০% সিজনড সলিড কাঠ ও ইকো-ফ্রেন্ডলি ল্যাকার পলিশ</span>
+                <span>{t.pdp.furnitureTrust3}</span>
               </div>
             </div>
-            <FurnitureDimensionSpecs />
+            <FurnitureDimensionSpecs locale={locale} />
           </div>
         ) : null}
 
@@ -1101,19 +1098,19 @@ export function ProductDetailClient({
             <div className="rounded-2xl border border-amber-900/10 bg-[#fbf9f4] p-4 text-xs text-amber-950 space-y-2">
               <div className="flex items-center gap-2 font-bold">
                 <span>📖</span>
-                <span>১০০% আসল প্রকাশনীর মূল সংস্করণ ও নির্ভুল বাঁধাই গ্যারান্টি</span>
+                <span>{t.pdp.booksTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🚚</span>
-                <span>সারা দেশে ক্যাশ অন ডেলিভারি ও দ্রুত হোম ডেলিভারি</span>
+                <span>{t.pdp.booksTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🔖</span>
-                <span>প্রতিটি বইয়ের সাথে আকর্ষণীয় এক্সক্লুসিভ বুকমার্ক ফ্রি</span>
+                <span>{t.pdp.booksTrust3}</span>
               </div>
             </div>
-            <BooksAuthorBox authorName={product.brand?.name ?? "হুমায়ূন আহমেদ"} />
-            <BooksDetailSpecs />
+            <BooksAuthorBox locale={locale} authorName={product.brand?.name ?? "হুমায়ূন আহমেদ"} />
+            <BooksDetailSpecs locale={locale} />
           </div>
         ) : null}
 
@@ -1123,18 +1120,18 @@ export function ProductDetailClient({
             <div className="rounded-3xl border border-sky-100 bg-[#f7fbff] p-4 text-xs text-slate-800 space-y-2">
               <div className="flex items-center gap-2 font-bold text-sky-900">
                 <span>🍼</span>
-                <span>১০০% BPA-Free ও ফুড-গ্রেড সিলিকন / অর্গানিক সুতি উপাদান</span>
+                <span>{t.pdp.kidsTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🧸</span>
-                <span>চোকিং-হ্যাজার্ড টেস্টেড — কোনো ধারালো কোণা বা আলগা পার্টস নেই</span>
+                <span>{t.pdp.kidsTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🚚</span>
-                <span>সারাদেশে হোম ডেলিভারি ও সাইজ না মিললে সহজ রিটার্ন</span>
+                <span>{t.pdp.kidsTrust3}</span>
               </div>
             </div>
-            <KidsSafetySpecs />
+            <KidsSafetySpecs locale={locale} />
           </div>
         ) : null}
 
@@ -1144,18 +1141,18 @@ export function ProductDetailClient({
             <div className="rounded-2xl border border-zinc-800 bg-[#16181d] p-4 text-xs text-zinc-300 space-y-2">
               <div className="flex items-center gap-2 font-bold text-white">
                 <span>⚙️</span>
-                <span>১০০% জেনুইন পার্টস ও স্ক্র্যাচ কিউআর সিকিউরিটি কোড</span>
+                <span>{t.pdp.autoTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🏍️</span>
-                <span>মডেল অনুযায়ী সরাসরি ফিটমেন্ট গ্যারান্টি (১০০% নো-মডিফিকেশন)</span>
+                <span>{t.pdp.autoTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🚚</span>
-                <span>সারা দেশে ৪৮ ঘণ্টায় সুপারফাস্ট কুরিয়ার পার্সেল ডেলিভারি</span>
+                <span>{t.pdp.autoTrust3}</span>
               </div>
             </div>
-            <AutomotivePartSpecs />
+            <AutomotivePartSpecs locale={locale} />
           </div>
         ) : null}
 
@@ -1165,18 +1162,18 @@ export function ProductDetailClient({
             <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-xs text-sky-950 space-y-2">
               <div className="flex items-center gap-2 font-bold text-sky-900">
                 <span>🏆</span>
-                <span>১০০% অরিজিনাল অ্যাথলেটিক গিয়ার ও ডিরেক্ট ব্র্যান্ড ওয়ারেন্টি</span>
+                <span>{t.pdp.sportsTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🛠️</span>
-                <span>ফ্রি হোম জিম সেটআপ ও সার্টিফাইড টেকনিশিয়ান ইন্সটলেশন সার্ভিস</span>
+                <span>{t.pdp.sportsTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🚚</span>
-                <span>হেভি ফ্রেইট ইকুইপমেন্ট ডেলিভারি ও সেফটি ইন্সপেকশন ট্রায়াল</span>
+                <span>{t.pdp.sportsTrust3}</span>
               </div>
             </div>
-            <SportsEquipmentSpecs />
+            <SportsEquipmentSpecs locale={locale} />
           </div>
         ) : null}
 
@@ -1186,19 +1183,19 @@ export function ProductDetailClient({
             <div className="rounded-2xl border border-amber-500/30 bg-stone-950 p-4 text-xs text-amber-100 space-y-2">
               <div className="flex items-center gap-2 font-bold text-amber-300">
                 <span>⚜️</span>
-                <span>১০০% বিএসটিআই হলমার্ক সার্টিফাইড ও ক্যাডমিয়াম মুক্ত খাঁটি সোনা</span>
+                <span>{t.pdp.jewelryTrust1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>💎</span>
-                <span>আইজিআই/জিআইএ সনদপ্রাপ্ত আসল ডায়মন্ড ও লেজার ইনস্ক্রিপশন কোড</span>
+                <span>{t.pdp.jewelryTrust2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🔄</span>
-                <span>১০০% এক্সচেঞ্জ ভ্যালু ও আজীবন বাইব্যাক ক্যাশ গ্যারান্টি</span>
+                <span>{t.pdp.jewelryTrust3}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>🛡️</span>
-                <span>সারাদেশে বিশেষায়িত আর্মার্ড কুরিয়ারে ফুল-ইন্সুরড ডেলিভারি</span>
+                <span>{t.pdp.jewelryTrust4}</span>
               </div>
             </div>
           </div>
@@ -1206,27 +1203,27 @@ export function ProductDetailClient({
 
         {/* Fashion Model Stats Card */}
         {isFashion && !product.isGiftCard ? (
-          <FashionModelStats />
+          <FashionModelStats locale={locale} />
         ) : null}
 
         {/* Fashion Fabric & Wash Care Guide */}
         {isFashion && !product.isGiftCard ? (
-          <FashionFabricCareGuide />
+          <FashionFabricCareGuide locale={locale} />
         ) : null}
 
         {/* Electronics Official Warranty Box */}
         {isElectronics && !product.isGiftCard ? (
-          <ElectronicsWarrantyBox />
+          <ElectronicsWarrantyBox locale={locale} />
         ) : null}
 
         {/* Electronics Device Compatibility Checker */}
         {isElectronics && !product.isGiftCard ? (
-          <ElectronicsCompatibilityChecker />
+          <ElectronicsCompatibilityChecker locale={locale} />
         ) : null}
 
         {/* Electronics Branch & Showroom Stock */}
         {isElectronics && !product.isGiftCard ? (
-          <ElectronicsBranchStock productName={product.name} />
+          <ElectronicsBranchStock locale={locale} productName={product.name} />
         ) : null}
 
         {/* EC28: back-in-stock alert — only while actually out of stock. */}
@@ -1243,7 +1240,7 @@ export function ProductDetailClient({
       {/* Complete The Look Outfit Bundle Builder (Fashion) */}
       {isFashion && relatedProducts.length > 0 && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <FashionCompleteTheLook
+          <FashionCompleteTheLook locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
             relatedProducts={relatedProducts}
@@ -1254,7 +1251,7 @@ export function ProductDetailClient({
       {/* Essentials Protection & Charger Combo Pack (Electronics) */}
       {isElectronics && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <ElectronicsAccessoriesCombo
+          <ElectronicsAccessoriesCombo locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1264,7 +1261,7 @@ export function ProductDetailClient({
       {/* Monthly Family Bazar Bundle (Grocery) */}
       {isGrocery && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <GroceryMonthlyBazarBundle
+          <GroceryMonthlyBazarBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1274,7 +1271,7 @@ export function ProductDetailClient({
       {/* Complete 3-Step Skincare Routine Bundle (Beauty) */}
       {isBeauty && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <BeautyRoutineBundle
+          <BeautyRoutineBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1284,7 +1281,7 @@ export function ProductDetailClient({
       {/* Complete Room Set Decor Bundle (Furniture) */}
       {isFurniture && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <FurnitureRoomSetBundle
+          <FurnitureRoomSetBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1294,7 +1291,7 @@ export function ProductDetailClient({
       {/* Complete 3-Book Reading Bundle (Books) */}
       {isBooks && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <BooksReadingBundle
+          <BooksReadingBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1304,7 +1301,7 @@ export function ProductDetailClient({
       {/* Complete Newborn / Toddler Gift Hamper Bundle (Kids) */}
       {isKids && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <KidsGiftHamperBundle
+          <KidsGiftHamperBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1314,7 +1311,7 @@ export function ProductDetailClient({
       {/* Complete Periodic Bike Service & Tune-Up Bundle (Automotive) */}
       {isAutomotive && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <AutomotiveTuneupBundle
+          <AutomotiveTuneupBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1324,7 +1321,7 @@ export function ProductDetailClient({
       {/* Complete Workout & Strength Combo Bundle (Sports) */}
       {isSports && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <SportsWorkoutBundle
+          <SportsWorkoutBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1334,7 +1331,7 @@ export function ProductDetailClient({
       {/* Complete Royal Bridal Jewelry Suite (Jewelry) */}
       {isJewelry && !product.isGiftCard ? (
         <div className="lg:col-span-2 mt-6">
-          <JewelryBridalBundle
+          <JewelryBridalBundle locale={locale}
             orgSlug={orgSlug}
             mainProduct={product}
           />
@@ -1342,11 +1339,11 @@ export function ProductDetailClient({
       ) : null}
 
       {/* Sizing Modal */}
-      {sizeGuideOpen ? <FashionSizeGuideModal open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} /> : null}
+      {sizeGuideOpen ? <FashionSizeGuideModal locale={locale} open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} /> : null}
 
       {/* Find My Fit AI Assistant Modal */}
       {fitModalOpen ? (
-        <FashionFitAssistantModal
+        <FashionFitAssistantModal locale={locale}
           open={fitModalOpen}
           onClose={() => setFitModalOpen(false)}
           availableSizes={product.variants.map((v) => v.name)}
@@ -1363,7 +1360,7 @@ export function ProductDetailClient({
 
       {/* Restock Notification Alert Modal */}
       {restockOpen ? (
-        <FashionRestockAlertModal
+        <FashionRestockAlertModal locale={locale}
           open={restockOpen}
           onClose={() => setRestockOpen(false)}
           productName={product.name}
@@ -1373,7 +1370,7 @@ export function ProductDetailClient({
 
       {/* Electronics EMI Calculator Modal */}
       {emiModalOpen ? (
-        <ElectronicsEmiCalculatorModal
+        <ElectronicsEmiCalculatorModal locale={locale}
           open={emiModalOpen}
           onClose={() => setEmiModalOpen(false)}
           productPriceMinor={unitMinor}
@@ -1383,7 +1380,7 @@ export function ProductDetailClient({
 
       {/* Electronics Gadget Compare Modal */}
       {compareModalOpen ? (
-        <ElectronicsCompareModal
+        <ElectronicsCompareModal locale={locale}
           open={compareModalOpen}
           onClose={() => setCompareModalOpen(false)}
           productA={product}
@@ -1394,7 +1391,7 @@ export function ProductDetailClient({
 
       {/* Electronics Online Warranty Lookup Modal */}
       {warrantyLookupOpen ? (
-        <ElectronicsWarrantyLookupModal
+        <ElectronicsWarrantyLookupModal locale={locale}
           open={warrantyLookupOpen}
           onClose={() => setWarrantyLookupOpen(false)}
         />
@@ -1402,7 +1399,7 @@ export function ProductDetailClient({
 
       {/* Grocery Purity Lab Test Certificate Modal */}
       {purityCertOpen ? (
-        <GroceryPurityCertModal
+        <GroceryPurityCertModal locale={locale}
           open={purityCertOpen}
           onClose={() => setPurityCertOpen(false)}
           productName={product.name}
@@ -1411,14 +1408,14 @@ export function ProductDetailClient({
 
       {/* Beauty Authenticity & Skin Quiz Modals */}
       {authModalOpen ? (
-        <BeautyAuthenticityModal
+        <BeautyAuthenticityModal locale={locale}
           open={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
           productName={product.name}
         />
       ) : null}
       {skinQuizOpen ? (
-        <BeautySkinQuizModal
+        <BeautySkinQuizModal locale={locale}
           open={skinQuizOpen}
           onClose={() => setSkinQuizOpen(false)}
         />
@@ -1426,14 +1423,14 @@ export function ProductDetailClient({
 
       {/* Furniture Warranty & Room Visualizer Modals */}
       {furnitureWarrantyOpen ? (
-        <FurnitureWarrantyModal
+        <FurnitureWarrantyModal locale={locale}
           open={furnitureWarrantyOpen}
           onClose={() => setFurnitureWarrantyOpen(false)}
           productName={product.name}
         />
       ) : null}
       {visualizerOpen ? (
-        <FurnitureRoomVisualizerModal
+        <FurnitureRoomVisualizerModal locale={locale}
           open={visualizerOpen}
           onClose={() => setVisualizerOpen(false)}
           productName={product.name}
@@ -1442,7 +1439,7 @@ export function ProductDetailClient({
 
       {/* Books Look Inside Reader Modal */}
       {lookInsideModalOpen ? (
-        <BooksLookInsideModal
+        <BooksLookInsideModal locale={locale}
           open={lookInsideModalOpen}
           onClose={() => setLookInsideModalOpen(false)}
           productName={product.name}
@@ -1451,7 +1448,7 @@ export function ProductDetailClient({
 
       {/* Kids Safety & Pediatric Certificate Modal */}
       {kidsSafetyModalOpen ? (
-        <KidsSafetyModal
+        <KidsSafetyModal locale={locale}
           open={kidsSafetyModalOpen}
           onClose={() => setKidsSafetyModalOpen(false)}
           productName={product.name}
@@ -1460,7 +1457,7 @@ export function ProductDetailClient({
 
       {/* Automotive Fitment Checker Modal */}
       {fitmentModalOpen ? (
-        <AutomotiveFitmentModal
+        <AutomotiveFitmentModal locale={locale}
           open={fitmentModalOpen}
           onClose={() => setFitmentModalOpen(false)}
           productName={product.name}
@@ -1469,7 +1466,7 @@ export function ProductDetailClient({
 
       {/* Sports Home Gym Assembly Modal */}
       {assemblyModalOpen ? (
-        <SportsAssemblyModal
+        <SportsAssemblyModal locale={locale}
           open={assemblyModalOpen}
           onClose={() => setAssemblyModalOpen(false)}
           productName={product.name}
@@ -1478,14 +1475,14 @@ export function ProductDetailClient({
 
       {/* Jewelry Certificate & Ring Size Modals */}
       {certModalOpen ? (
-        <JewelryCertificateModal
+        <JewelryCertificateModal locale={locale}
           open={certModalOpen}
           onClose={() => setCertModalOpen(false)}
           productName={product.name}
         />
       ) : null}
       {ringSizeModalOpen ? (
-        <JewelryRingSizeModal
+        <JewelryRingSizeModal locale={locale}
           open={ringSizeModalOpen}
           onClose={() => setRingSizeModalOpen(false)}
           productName={product.name}

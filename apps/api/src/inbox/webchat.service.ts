@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -8,6 +8,7 @@ import { LeadAssignmentService } from "../crm/lead-assignment.service";
 import { parseProductCard } from "./product-card";
 import { nextDeliveryPatch } from "./message-lifecycle";
 import { MediaStore } from "./media-store";
+import { badRequest, notFound, unauthorized } from "../i18n/api-exception";
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -32,7 +33,7 @@ export class WebchatService {
 
   // ----- Site management (authenticated) -----
   async createSite(organizationId: string, actorId: string, dto: { name: string; domain?: string; greeting?: string; color?: string }) {
-    if (!dto.name?.trim()) throw new BadRequestException("Site name is required");
+    if (!dto.name?.trim()) throw badRequest("inbox.siteNameIsRequired");
     const integration = await (this.prisma as any).integration.create({
       data: { organizationId, provider: "webchat", status: "CONNECTED", externalAccountId: dto.domain ?? null },
     });
@@ -53,20 +54,20 @@ export class WebchatService {
 
   async setSiteEnabled(organizationId: string, siteId: string, enabled: boolean) {
     const site = await (this.prisma as any).widgetSite.findFirst({ where: { id: siteId, organizationId } });
-    if (!site) throw new NotFoundException("Widget site not found");
+    if (!site) throw notFound("inbox.widgetSiteNotFound");
     return (this.prisma as any).widgetSite.update({ where: { id: siteId }, data: { enabled } });
   }
 
   // ----- Public widget API (site key + session token) -----
   private async siteByKey(key: string) {
     const site = await (this.prisma as any).widgetSite.findFirst({ where: { widgetKey: key } });
-    if (!site || !site.enabled) throw new NotFoundException("Chat is not available for this site");
+    if (!site || !site.enabled) throw notFound("inbox.chatIsNotAvailableForThis");
     return site;
   }
 
   async startSession(key: string, dto: { visitorId: string; name?: string }) {
     const site = await this.siteByKey(key);
-    if (!dto.visitorId?.trim()) throw new BadRequestException("visitorId is required");
+    if (!dto.visitorId?.trim()) throw badRequest("inbox.visitoridIsRequired");
     const token = randomBytes(32).toString("hex");
     const existing = await (this.prisma as any).liveChatSession.findFirst({
       where: { widgetSiteId: site.id, visitorId: dto.visitorId.trim() },
@@ -105,19 +106,19 @@ export class WebchatService {
 
   private async sessionByToken(key: string, token: string) {
     const site = await this.siteByKey(key);
-    if (!token) throw new UnauthorizedException("Missing chat session token");
+    if (!token) throw unauthorized("inbox.missingChatSessionToken");
     const session = await (this.prisma as any).liveChatSession.findFirst({
       where: { widgetSiteId: site.id, visitorTokenHash: tokenHash(token) },
     });
-    if (!session) throw new UnauthorizedException("Invalid chat session token");
+    if (!session) throw unauthorized("inbox.invalidChatSessionToken");
     return { site, session };
   }
 
   async postMessage(key: string, dto: { token: string; text: string }) {
     const { site, session } = await this.sessionByToken(key, dto.token);
     const text = dto.text?.trim();
-    if (!text) throw new BadRequestException("Message text is required");
-    if (text.length > 2000) throw new BadRequestException("Message is too long (max 2000 characters)");
+    if (!text) throw badRequest("inbox.messageTextIsRequired");
+    if (text.length > 2000) throw badRequest("inbox.messageIsTooLongMax2000");
     const message = await (this.prisma as any).channelMessage.create({
       data: {
         conversationId: session.conversationId, direction: "in", type: "text",
@@ -168,7 +169,7 @@ export class WebchatService {
    */
   async streamFor(key: string, token: string) {
     const { session } = await this.sessionByToken(key, token);
-    if (!this.realtime) throw new BadRequestException("Realtime is not available in this deployment");
+    if (!this.realtime) throw badRequest("inbox.realtimeIsNotAvailableInThis");
     return this.realtime.streamVisitor(session.conversationId);
   }
 
@@ -234,9 +235,9 @@ export class WebchatService {
     const message = await (this.prisma as any).channelMessage.findFirst({
       where: { id: messageId, conversationId: session.conversationId },
     });
-    if (!message?.mediaStorageKey) throw new NotFoundException("Media not found for this conversation");
+    if (!message?.mediaStorageKey) throw notFound("inbox.mediaNotFoundForThisConversation");
     const bytes = await MediaStore.fromEnv().get(message.mediaStorageKey).catch(() => null);
-    if (!bytes) throw new NotFoundException("Media not found for this conversation");
+    if (!bytes) throw notFound("inbox.mediaNotFoundForThisConversation");
     return { bytes, contentType: message.mediaContentType ?? "application/octet-stream" };
   }
 }

@@ -49,16 +49,18 @@ export function ShopPopupDeferred({
  * treatment as the popup (renders nothing until its own
  * trigger fires; it requests the ED9 overlay-queue slot under
  * the "promo" id so it never stacks over the shop popup). */
-export function ShopPromotionsDeferred({ orgSlug }: { orgSlug: string }) {
-  return <ShopPromotionsLazy orgSlug={orgSlug} />;
+export function ShopPromotionsDeferred({ orgSlug, locale }: { orgSlug: string; locale?: ShopLocale | string }) {
+  return <ShopPromotionsLazy orgSlug={orgSlug} locale={locale} />;
 }
 
 export function ShopSocialProofDeferred({
   orgSlug,
   themeId,
+  locale,
 }: {
   orgSlug: string;
   themeId?: ShopThemeId | string;
+  locale?: ShopLocale | string;
 }) {
-  return <ShopSocialProofLazy orgSlug={orgSlug} themeId={themeId} />;
+  return <ShopSocialProofLazy orgSlug={orgSlug} themeId={themeId} locale={locale} />;
 }

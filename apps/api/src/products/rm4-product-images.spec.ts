@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { createHash } from "node:crypto";
 import { ProductsService, PRODUCT_IMAGE_UPLOAD_MAX_BYTES } from "./products.service";
 import { ProductImageMirrorService } from "./product-image-mirror.service";
@@ -158,14 +159,14 @@ describe("RM4 presign", () => {
     const svc = makeService(prisma, new FakeStorage(), new StorageRegistryService(prisma as any));
     await expect(
       svc.presignProductImage("org-1", "u1", product.id, { fileName: "a.gif", contentType: "image/gif", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.presignProductImage("org-1", "u1", product.id, {
         fileName: "a.png",
         contentType: "image/png",
         sizeBytes: PRODUCT_IMAGE_UPLOAD_MAX_BYTES + 1,
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("refuses honestly in local mode — no fake upload URL", async () => {
@@ -176,7 +177,7 @@ describe("RM4 presign", () => {
     const svc = makeService(prisma, storage, new StorageRegistryService(prisma as any));
     await expect(
       svc.presignProductImage("org-1", "u1", product.id, { fileName: "a.png", contentType: "image/png", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("404s for a product of another org", async () => {
@@ -185,7 +186,7 @@ describe("RM4 presign", () => {
     const svc = makeService(prisma, new FakeStorage(), new StorageRegistryService(prisma as any));
     await expect(
       svc.presignProductImage("org-1", "u1", product.id, { fileName: "a.png", contentType: "image/png", sizeBytes: 100 }),
-    ).rejects.toThrow(/not found/i);
+    ).rejects.toMatchObject({ code: "products.productNotFoundInOrg", status: 404 });
   });
 
   it("hands out a quarantine key + presigned URL for a valid declaration", async () => {
@@ -271,7 +272,7 @@ describe("RM4 complete", () => {
     const pre = await presignAndLand(svc, storage, product.id, JPEG, "image/png");
     await expect(
       svc.completeProductImage("org-1", "u1", product.id, { key: pre.key, contentType: "image/png", sizeBytes: JPEG.length }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(prisma.productImage.rows.length).toBe(0);
     expect(prisma.storedFile.rows.length).toBe(0);
     expect(storage.objects.size).toBe(0);
@@ -290,7 +291,7 @@ describe("RM4 complete", () => {
     await storage.put("public", pre.key, PNG, "image/png");
     await expect(
       svc.completeProductImage("org-1", "u1", product.id, { key: pre.key, contentType: "image/png", sizeBytes: PNG.length + 5 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(storage.objects.size).toBe(0);
     expect(prisma.productImage.rows.length).toBe(0);
   });
@@ -305,14 +306,14 @@ describe("RM4 complete", () => {
         contentType: "image/png",
         sizeBytes: 10,
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.completeProductImage("org-1", "u1", product.id, {
         key: "_quarantine/org-2/product/abc",
         contentType: "image/png",
         sizeBytes: 10,
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("deleting a CDN-backed gallery image trashes its registry row but leaves the object for RM11", async () => {

@@ -1,5 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtMoney, fmtNumber } from "@repo/contracts";
 import { usePathname } from "next/navigation";
 import { useOverlayGrant } from "@/lib/shop-overlay-queue";
 import {
@@ -54,13 +56,14 @@ function setFrequencyMarker(campaignId: string, frequencyDays: number) {
   }
 }
 
-function moneyLabel(priceMinor: string): string {
+function moneyLabel(priceMinor: string, locale: ShopLocale = "bn"): string {
   const n = Number(priceMinor);
   if (!Number.isFinite(n)) return "";
-  return `৳${(n / 100).toLocaleString("en-IN")}`;
+  return fmtMoney(locale, n / 100);
 }
 
-export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
+export function ShopPromotions({ orgSlug, locale = "bn" }: { orgSlug: string; locale?: ShopLocale | string }) {
+  const t = shopT(locale);
   const pathname = usePathname();
   const [campaign, setCampaign] = useState<PublicPromoCampaign | null>(null);
   const [wantsShow, setWantsShow] = useState(false);
@@ -149,7 +152,7 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
       <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900">
         <div className="mb-3 flex items-start justify-between gap-3">
           <h3 className="text-lg font-bold">{campaign.name}</h3>
-          <button type="button" onClick={close} aria-label="বন্ধ করুন" className="text-xl leading-none">×</button>
+          <button type="button" onClick={close} aria-label={t.promotions.close} className="text-xl leading-none">×</button>
         </div>
         {children}
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
@@ -161,18 +164,18 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
     <div className="space-y-2">
       <input
         className="w-full rounded-md border px-3 py-2 text-sm dark:bg-slate-800"
-        placeholder="আপনার নাম (ঐচ্ছিক)"
+        placeholder={t.promotions.namePlaceholder}
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
       <input
         className="w-full rounded-md border px-3 py-2 text-sm dark:bg-slate-800"
-        placeholder="মোবাইল নম্বর (01XXXXXXXXX)"
+        placeholder={t.promotions.phonePlaceholder}
         inputMode="tel"
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
       />
-      <p className="text-xs text-slate-500">একটি নম্বর দিয়ে একবারই অংশ নেওয়া যাবে।</p>
+      <p className="text-xs text-slate-500">{t.promotions.oncePerNumber}</p>
     </div>
   );
 
@@ -184,15 +187,15 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
           <p className="font-semibold">{spinResult.segmentLabel}</p>
           {spinResult.couponCode ? (
             <p className="text-sm">
-              আপনার কুপন কোড: <span className="rounded bg-amber-100 px-2 py-1 font-mono font-bold">{spinResult.couponCode}</span>
-              <br />চেকআউটে কোডটি ব্যবহার করুন।
+              {t.promotions.yourCouponPrefix}<span className="rounded bg-amber-100 px-2 py-1 font-mono font-bold">{spinResult.couponCode}</span>
+              <br />{t.promotions.useAtCheckout}
             </p>
           ) : (
-            <p className="text-sm text-slate-500">এবার কিছু পাননি — কেনাকাটা করার জন্য ধন্যবাদ!</p>
+            <p className="text-sm text-slate-500">{t.promotions.noWin}</p>
           )}
           <button type="button" onClick={close} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
-            ঠিক আছে
-          </button>
+              {t.promotions.ok}
+            </button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -214,13 +217,13 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
                 setSpinResult(res.play);
                 setFrequencyMarker(campaign.id, campaign.placement.frequencyDays);
               } catch (e) {
-                setError(e instanceof Error ? e.message : "আবার চেষ্টা করুন");
+                setError(e instanceof Error ? e.message : t.promotions.tryAgain);
               } finally {
                 setBusy(false);
               }
             }}
           >
-            {busy ? "ঘুরছে…" : "স্পিন করুন"}
+            {busy ? t.promotions.spinning : t.promotions.spin}
           </button>
         </div>
       ),
@@ -232,19 +235,19 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
     return wrap(
       quizResult ? (
         <div className="space-y-3">
-          <p className="font-semibold">আপনার জন্য বাছাই করা পণ্য:</p>
+          <p className="font-semibold">{t.promotions.pickedForYou}</p>
           {quizResult.products.length === 0 ? (
-            <p className="text-sm text-slate-500">এই মুহূর্তে মিলে যাওয়া পণ্য নেই।</p>
+            <p className="text-sm text-slate-500">{t.promotions.noMatch}</p>
           ) : (
             <ul className="space-y-2">
               {quizResult.products.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-3 rounded-md border p-2">
                   <span className="text-sm font-medium">{p.name}</span>
-                  <span className="text-sm">{moneyLabel(p.priceMinor)}</span>
+                  <span className="text-sm">{moneyLabel(p.priceMinor, locale === "en" ? "en" : "bn")}</span>
                   {p.slug && (
                     <a className="text-sm font-semibold text-emerald-700" href={`/shop/${orgSlug}/products/${p.slug}`}>
-                      দেখুন
-                    </a>
+              {t.promotions.view}
+            </a>
                   )}
                 </li>
               ))}
@@ -252,12 +255,12 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
           )}
           {quizResult.couponCode && (
             <p className="text-sm">
-              কুইজ শেষ করার কুপন: <span className="rounded bg-amber-100 px-2 py-1 font-mono font-bold">{quizResult.couponCode}</span>
+              {t.promotions.quizCouponPrefix}<span className="rounded bg-amber-100 px-2 py-1 font-mono font-bold">{quizResult.couponCode}</span>
             </p>
           )}
           <button type="button" onClick={close} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
-            ঠিক আছে
-          </button>
+              {t.promotions.ok}
+            </button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -296,13 +299,13 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
                 setQuizResult({ couponCode: res.play.couponCode, products: res.products });
                 setFrequencyMarker(campaign.id, campaign.placement.frequencyDays);
               } catch (e) {
-                setError(e instanceof Error ? e.message : "আবার চেষ্টা করুন");
+                setError(e instanceof Error ? e.message : t.promotions.tryAgain);
               } finally {
                 setBusy(false);
               }
             }}
           >
-            {busy ? "পাঠানো হচ্ছে…" : "ফলাফল দেখুন"}
+            {busy ? t.promotions.sending : t.promotions.seeResult}
           </button>
         </div>
       ),
@@ -315,12 +318,12 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
     <div className="space-y-3">
       {campaign.product && (
         <p className="text-sm">
-          <span className="font-semibold">{campaign.product.name}</span> — {moneyLabel(campaign.product.priceMinor)}
+          <span className="font-semibold">{campaign.product.name}</span> — {moneyLabel(campaign.product.priceMinor, locale === "en" ? "en" : "bn")}
         </p>
       )}
       <p className="text-sm">
-        ছাড়: <span className="font-semibold">{campaign.discountLabel}</span> · যোগ দিয়েছেন{" "}
-        <span className="font-semibold">{gb.joinedCount}</span> / {campaign.requiredBuyers} জন
+        {t.promotions.discountLabel}<span className="font-semibold">{campaign.discountLabel}</span>{t.promotions.joinedMid}{" "}
+        <span className="font-semibold">{fmtNumber(locale === "en" ? "en" : "bn", gb.joinedCount)}</span> / {campaign.requiredBuyers != null ? fmtNumber(locale === "en" ? "en" : "bn", campaign.requiredBuyers) : ""}{t.promotions.joinedSuffix}
       </p>
       <div className="h-2 w-full rounded bg-slate-200">
         <div
@@ -333,12 +336,12 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
       </p>
       {gb.status === "unlocked" && gb.couponCode ? (
         <p className="text-sm">
-          🎉 গ্রুপ পূর্ণ হয়েছে! আপনার কুপন কোড:{" "}
+          {t.promotions.groupCompletePrefix}{" "}
           <span className="rounded bg-amber-100 px-2 py-1 font-mono font-bold">{gb.couponCode}</span>
-          <br />চেকআউটে এই কোডে ছাড় পাবেন।
+          <br />{t.promotions.groupCompleteSuffix}
         </p>
       ) : gb.status === "expired_unmet" ? (
-        <p className="text-sm text-slate-500">দুঃখিত — সময়ের মধ্যে যথেষ্ট ক্রেতা যোগ দেননি, তাই এই গ্রুপ বাইয়ে ছাড় চালু হয়নি। কোনো টাকা নেওয়া হয়নি।</p>
+        <p className="text-sm text-slate-500">{t.promotions.groupFailed}</p>
       ) : (
         <>
           {phoneFields}
@@ -357,16 +360,16 @@ export function ShopPromotions({ orgSlug }: { orgSlug: string }) {
                   couponCode: res.join.couponCode,
                 });
                 if (res.join.alreadyJoined) {
-                  setError("আপনি আগেই যোগ দিয়েছেন — একই নম্বরে একবারই যোগ দেওয়া যায়।");
+                  setError(t.promotions.alreadyJoined);
                 }
               } catch (e) {
-                setError(e instanceof Error ? e.message : "আবার চেষ্টা করুন");
+                setError(e instanceof Error ? e.message : t.promotions.tryAgain);
               } finally {
                 setBusy(false);
               }
             }}
           >
-            {busy ? "যোগ দিচ্ছেন…" : "গ্রুপ বাইয়ে যোগ দিন"}
+            {busy ? t.promotions.joining : t.promotions.joinGroupBuy}
           </button>
         </>
       )}

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CHECKOUT_FIELD_SURFACES, CHECKOUT_FIELD_TYPES } from "./checkout-fields";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB4 (AX5b) — staff CRUD for merchant-defined custom checkout
@@ -33,9 +34,7 @@ const KEY_RE = /^[a-z0-9][a-z0-9_]{1,39}$/;
 function validateKey(raw: unknown): string {
   const key = typeof raw === "string" ? raw : "";
   if (!KEY_RE.test(key)) {
-    throw new BadRequestException(
-      "ফিল্ডের key সঠিক নয় — ছোট হাতের ইংরেজি অক্ষর/সংখ্যা দিয়ে শুরু করে শুধু ছোট হাতের অক্ষর, সংখ্যা ও আন্ডারস্কোর (_) ব্যবহার করুন (২–৪০ অক্ষর)",
-    );
+    throw badRequest("storefront.fieldKeyInvalid");
   }
   return key;
 }
@@ -43,7 +42,7 @@ function validateKey(raw: unknown): string {
 function validateLabel(raw: unknown): string {
   const label = typeof raw === "string" ? raw.trim() : "";
   if (label.length < 2 || label.length > 80) {
-    throw new BadRequestException("ফিল্ডের লেবেল ২–৮০ অক্ষরের হতে হবে");
+    throw badRequest("storefront.fieldLabelLength");
   }
   return label;
 }
@@ -51,7 +50,7 @@ function validateLabel(raw: unknown): string {
 function validateType(raw: unknown): string {
   const type = typeof raw === "string" ? raw : "";
   if (!(CHECKOUT_FIELD_TYPES as readonly string[]).includes(type)) {
-    throw new BadRequestException("ফিল্ডের ধরন সঠিক নয় — text, textarea, select বা checkbox হতে হবে");
+    throw badRequest("storefront.fieldTypeInvalid");
   }
   return type;
 }
@@ -60,7 +59,7 @@ function validateAppliesTo(raw: unknown): string {
   if (raw === undefined || raw === null || raw === "") return "all";
   const appliesTo = typeof raw === "string" ? raw : "";
   if (!(CHECKOUT_FIELD_SURFACES as readonly string[]).includes(appliesTo)) {
-    throw new BadRequestException("ফিল্ডটি কোন চেকআউটে প্রযোজ্য (appliesTo) তা সঠিক নয় — shop, single, landing বা all হতে হবে");
+    throw badRequest("storefront.fieldAppliesToInvalid");
   }
   return appliesTo;
 }
@@ -68,22 +67,22 @@ function validateAppliesTo(raw: unknown): string {
 /** select options: ≥1 non-empty trimmed unique strings, ≤30, each ≤80 chars. */
 function validateOptions(raw: unknown): string[] {
   if (!Array.isArray(raw) || raw.length === 0) {
-    throw new BadRequestException("select ধরনের ফিল্ডের জন্য অন্তত একটি বিকল্প (options) দিতে হবে");
+    throw badRequest("storefront.selectFieldNeedsOption");
   }
   if (raw.length > 30) {
-    throw new BadRequestException("select ফিল্ডে সর্বোচ্চ ৩০টি বিকল্প দেওয়া যাবে");
+    throw badRequest("storefront.selectFieldMaxOptions");
   }
   const out: string[] = [];
   for (const item of raw) {
     if (typeof item !== "string" || !item.trim()) {
-      throw new BadRequestException("select ফিল্ডের প্রতিটি বিকল্প খালি নয় এমন লেখা হতে হবে");
+      throw badRequest("storefront.selectOptionEmpty");
     }
     const value = item.trim();
     if (value.length > 80) {
-      throw new BadRequestException("select ফিল্ডের প্রতিটি বিকল্প সর্বোচ্চ ৮০ অক্ষরের হতে হবে");
+      throw badRequest("storefront.selectOptionTooLong");
     }
     if (out.includes(value)) {
-      throw new BadRequestException("select ফিল্ডের বিকল্পগুলো আলাদা হতে হবে — একই বিকল্প দুবার দেওয়া যাবে না");
+      throw badRequest("storefront.selectOptionDuplicate");
     }
     out.push(value);
   }
@@ -92,7 +91,7 @@ function validateOptions(raw: unknown): string[] {
 
 function validateBool(raw: unknown, field: string): boolean {
   if (typeof raw !== "boolean") {
-    throw new BadRequestException(`${field} অবশ্যই true বা false হতে হবে`);
+    throw badRequest("storefront.fieldMustBeTrueFalse", { field: field });
   }
   return raw;
 }
@@ -100,7 +99,7 @@ function validateBool(raw: unknown, field: string): boolean {
 function validateSortOrder(raw: unknown): number {
   if (raw === undefined || raw === null) return 0;
   if (!Number.isInteger(raw)) {
-    throw new BadRequestException("sortOrder অবশ্যই পূর্ণসংখ্যা হতে হবে");
+    throw badRequest("storefront.sortOrderMustBeInteger");
   }
   return Number(raw);
 }
@@ -174,7 +173,7 @@ export class CheckoutFieldsService {
       .findFirst({ where: { organizationId: orgId, key } })
       .catch(() => null);
     if (existing) {
-      throw new BadRequestException("এই key দিয়ে ইতিমধ্যে একটি ফিল্ড আছে");
+      throw badRequest("storefront.fieldKeyExists");
     }
 
     const field = await this.t("checkoutFieldDef").create({
@@ -206,7 +205,7 @@ export class CheckoutFieldsService {
     const field = await this.t("checkoutFieldDef").findFirst({
       where: { id: fieldId, organizationId: orgId },
     });
-    if (!field) throw new NotFoundException("চেকআউট ফিল্ডটি পাওয়া যায়নি");
+    if (!field) throw notFound("storefront.checkoutFieldNotFound");
     return field;
   }
 
@@ -215,7 +214,7 @@ export class CheckoutFieldsService {
     // KEY IS IMMUTABLE — a key change would orphan the answers
     // already stored on placed orders under the old key.
     if (dto?.key !== undefined && dto.key !== field.key) {
-      throw new BadRequestException("ফিল্ডের key বদলানো যাবে না — key বদলালে আগের অর্ডারের উত্তরগুলো মিলবে না");
+      throw badRequest("storefront.fieldKeyImmutable");
     }
     const data: Record<string, any> = {};
     if (dto?.label !== undefined) data.label = validateLabel(dto.label);

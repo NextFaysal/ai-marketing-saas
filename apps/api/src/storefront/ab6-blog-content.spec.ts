@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException, ValidationPipe } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { ProductsService } from "../products/products.service";
 import { CreateProductDto } from "../products/products.dto";
@@ -206,13 +207,13 @@ describe("AB6 AX12 blog API", () => {
     expect(staff.posts.map((x: any) => x.id)).toContain(created.post.id);
     const staffDrafts: any = await svc.listBlogPosts("org-1", "draft");
     expect(staffDrafts.posts).toHaveLength(1);
-    await expect(svc.listBlogPosts("org-1", "bogus")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.listBlogPosts("org-1", "bogus")).rejects.toBeInstanceOf(ApiException);
 
     const pubList0: any = await svc.listPublicBlogPosts("shop-one");
     expect(pubList0.posts).toHaveLength(0);
     expect(pubList0.settings.shopName).toBe("ShopOne");
     expect(pubList0.organization.slug).toBe("shop-one");
-    await expect(svc.getPublicBlogPost("shop-one", "first-post")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getPublicBlogPost("shop-one", "first-post")).rejects.toBeInstanceOf(ApiException);
 
     const published: any = await svc.updateBlogPost("org-1", "user-1", created.post.id, { status: "published" } as any);
     expect(published.post.status).toBe("published");
@@ -230,7 +231,7 @@ describe("AB6 AX12 blog API", () => {
     expect(unpub.post.status).toBe("draft");
     // publishedAt records the LAST publish — kept on unpublish.
     expect(unpub.post.publishedAt).not.toBeNull();
-    await expect(svc.getPublicBlogPost("shop-one", "first-post")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getPublicBlogPost("shop-one", "first-post")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("slug clash 400, unknown block type 400, tag limits 400, foreign-org update 404", async () => {
@@ -238,19 +239,19 @@ describe("AB6 AX12 blog API", () => {
     const a: any = await svc.createBlogPost("org-1", "user-1", { title: "Alpha Post" } as any);
     await expect(
       svc.createBlogPost("org-1", "user-1", { title: "Other", slug: "alpha-post" } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.createBlogPost("org-1", "user-1", { title: "Bad Blocks", blocks: [{ type: "nope", data: {} }] } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.createBlogPost("org-1", "user-1", { title: "Too Many Tags", tags: Array.from({ length: 11 }, (_, i) => `t${i}`) } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.createBlogPost("org-1", "user-1", { title: "Long Tag", tags: ["x".repeat(41)] } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.updateBlogPost("org-2", "user-1", a.post.id, { title: "Hijack" } as any),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
     // Delete works and returns the documented shape.
     const del: any = await svc.deleteBlogPost("org-1", "user-1", a.post.id);
     expect(del).toEqual({ deleted: true, postId: a.post.id });

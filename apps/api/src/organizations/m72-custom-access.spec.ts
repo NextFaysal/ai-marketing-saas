@@ -1,4 +1,5 @@
 import { ForbiddenException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { RolesGuard } from "../common/roles.guard";
 import { PERMISSION_AREA_KEY, ROLES_KEY } from "../common/decorators";
 import { effectiveAccess, normalizeOverrides } from "../common/permission-catalog";
@@ -25,34 +26,34 @@ describe("M72 RolesGuard custom access", () => {
   it("untagged endpoints keep pure role behavior", () => {
     const g = guardWith({ roles: ["OWNER", "ADMIN"] });
     expect(g.canActivate(ctx(member("ADMIN")))).toBe(true);
-    expect(() => g.canActivate(ctx(member("VIEWER", { grants: ["team"] })))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(member("VIEWER", { grants: ["team"] })))).toThrow(ApiException);
   });
 
   it("a grant admits below-role on a tagged endpoint", () => {
     const g = guardWith({ roles: ["OWNER", "ADMIN"], area: "billing" });
     expect(g.canActivate(ctx(member("VIEWER", { grants: ["billing"] })))).toBe(true);
-    expect(() => g.canActivate(ctx(member("VIEWER")))).toThrow(ForbiddenException);
-    expect(() => g.canActivate(ctx(member("VIEWER", { grants: ["inbox"] })))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(member("VIEWER")))).toThrow(ApiException);
+    expect(() => g.canActivate(ctx(member("VIEWER", { grants: ["inbox"] })))).toThrow(ApiException);
   });
 
   it("a deny blocks even when the role passes", () => {
     const g = guardWith({ roles: ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"], area: "inbox" });
     expect(g.canActivate(ctx(member("SUPPORT_AGENT")))).toBe(true);
-    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { denies: ["inbox"] })))).toThrow(/custom access/);
+    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { denies: ["inbox"] })))).toThrow(expect.objectContaining({ code: "common.areaClosedByCustomRule", status: 403 }));
     // deny wins over a simultaneous grant too
-    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { grants: ["inbox"], denies: ["inbox"] })))).toThrow(/custom access/);
+    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { grants: ["inbox"], denies: ["inbox"] })))).toThrow(expect.objectContaining({ code: "common.areaClosedByCustomRule", status: 403 }));
   });
 
   it("owner-only gates are never grantable, and the OWNER is immune to denies", () => {
     const g = guardWith({ roles: ["OWNER"], area: "team" });
-    expect(() => g.canActivate(ctx(member("ADMIN", { grants: ["team"] })))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(member("ADMIN", { grants: ["team"] })))).toThrow(ApiException);
     expect(g.canActivate(ctx(member("OWNER", { denies: ["team"] })))).toBe(true);
   });
 
   it("a deny closes a tagged endpoint even when it has no @Roles (inbox list case)", () => {
     const g = guardWith({ area: "inbox" });
     expect(g.canActivate(ctx(member("SUPPORT_AGENT")))).toBe(true);
-    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { denies: ["inbox"] })))).toThrow(/custom access/);
+    expect(() => g.canActivate(ctx(member("SUPPORT_AGENT", { denies: ["inbox"] })))).toThrow(expect.objectContaining({ code: "common.areaClosedByCustomRule", status: 403 }));
     // ...but a grant alone cannot conjure access where membership is absent
     expect(g.canActivate(ctx(member("VIEWER", { grants: ["inbox"] })))).toBe(true); // no @Roles: open to members by default
   });
@@ -108,14 +109,14 @@ describe("M72 member access service", () => {
     expect(out.effective.find((e: any) => e.key === "billing").source).toBe("grant");
     expect(audit.calls[0].action).toBe("org.member_access_updated");
     expect(audit.calls[0].metadata.grantsAdded).toEqual(["billing"]);
-    await expect(svc.updateMemberAccess("org", "boss", "boss", { grants: ["inbox"] })).rejects.toThrow(/owner's access cannot/);
-    await expect(svc.updateMemberAccess("org", "boss", "agent", { grants: ["mars"] })).rejects.toThrow(/Unknown permission areas/);
+    await expect(svc.updateMemberAccess("org", "boss", "boss", { grants: ["inbox"] })).rejects.toMatchObject({ code: "organizations.ownerAccessNotCustomizable", status: 400 });
+    await expect(svc.updateMemberAccess("org", "boss", "agent", { grants: ["mars"] })).rejects.toMatchObject({ code: "organizations.unknownPermissionAreas", status: 400 });
   });
 
   it("a member can view their own access but not someone else's", async () => {
     const { svc } = db();
     const own: any = await svc.getMemberAccess("org", "agent", "agent");
     expect(own.role).toBe("SUPPORT_AGENT");
-    await expect(svc.getMemberAccess("org", "agent", "boss")).rejects.toThrow(/only view your own/);
+    await expect(svc.getMemberAccess("org", "agent", "boss")).rejects.toMatchObject({ code: "organizations.viewOwnAccessOnly", status: 403 });
   });
 });

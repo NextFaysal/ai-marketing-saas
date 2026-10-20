@@ -9,6 +9,8 @@ import {
   alertKindMeta,
   formatWhen,
 } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 
 /**
  * CC12 — connection alerts + monitoring controls.
@@ -24,19 +26,21 @@ import {
  * doctor joins the sweep.
  */
 
-const CATEGORY_OPTIONS: { key: string; label: string }[] = [
-  { key: "messaging", label: "মেসেজিং" },
-  { key: "social", label: "সোশ্যাল" },
-  { key: "ads", label: "বিজ্ঞাপন" },
-  { key: "commerce", label: "কমার্স" },
-  { key: "courier", label: "কুরিয়ার" },
-  { key: "senders", label: "প্রেরক" },
-  { key: "ai", label: "AI" },
-  { key: "payment", label: "পেমেন্ট" },
-  { key: "business", label: "ব্যবসা" },
+const CATEGORY_OPTIONS: { key: string; labelKey: string }[] = [
+  { key: "messaging", labelKey: "alCatMessaging" },
+  { key: "social", labelKey: "alCatSocial" },
+  { key: "ads", labelKey: "alCatAds" },
+  { key: "commerce", labelKey: "alCatCommerce" },
+  { key: "courier", labelKey: "alCatCourier" },
+  { key: "senders", labelKey: "alCatSenders" },
+  { key: "ai", labelKey: "alCatAi" },
+  { key: "payment", labelKey: "alCatPayment" },
+  { key: "business", labelKey: "alCatBusiness" },
 ];
 
 export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
   const [alerts, setAlerts] = useState<ConnectionAlertView[]>([]);
   const [unread, setUnread] = useState(0);
   const [prefs, setPrefs] = useState<AlertPreferencesView | null>(null);
@@ -67,10 +71,10 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
       const res = await apiFetch<{ totalTargets: number; ranTargets: number; skippedBeyondCap: number; runs: { overall: string }[] }>(`${base()}/diagnose-all`, { method: "POST" });
       const fails = res.runs.filter((r) => r.overall === "fail").length;
       const partials = res.runs.filter((r) => r.overall === "partial").length;
-      setNotice(`সব পরীক্ষা শেষ: ${res.ranTargets}/${res.totalTargets}টি অ্যাকাউন্ট পরীক্ষা হয়েছে${res.skippedBeyondCap > 0 ? ` (সীমার কারণে ${res.skippedBeyondCap}টি বাদ)` : ""} — ব্যর্থ ${fails}টি, আংশিক ${partials}টি।`);
+      setNotice(t("connections.alDiagDone", { ran: fmtNumber(locale, res.ranTargets), total: fmtNumber(locale, res.totalTargets), skipped: res.skippedBeyondCap > 0 ? t("connections.alDiagSkipped", { count: fmtNumber(locale, res.skippedBeyondCap) }) : "", fails: fmtNumber(locale, fails), partials: fmtNumber(locale, partials) }));
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সব পরীক্ষা চালানো যায়নি");
+      setError(e instanceof Error ? e.message : D.alDiagFailed);
     } finally { setBusy(""); }
   }
 
@@ -78,11 +82,11 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
     setBusy("sweep"); setError(""); setNotice("");
     try {
       const res = await apiFetch<{ checked: number; alertsCreated: number; doctorRuns: number }>(`${base()}/run-sweep`, { method: "POST" });
-      setNotice(`পর্যবেক্ষণ শেষ: ${res.checked}টি অ্যাকাউন্ট দেখা হয়েছে, ${res.alertsCreated}টি নতুন অ্যালার্ট${res.doctorRuns > 0 ? `, ${res.doctorRuns}টি live পরীক্ষা` : ""}।`);
+      setNotice(t("connections.alSweepDone", { checked: fmtNumber(locale, res.checked), alerts: fmtNumber(locale, res.alertsCreated), doctor: res.doctorRuns > 0 ? t("connections.alSweepDoctor", { count: fmtNumber(locale, res.doctorRuns) }) : "" }));
       await load();
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পর্যবেক্ষণ চালানো যায়নি");
+      setError(e instanceof Error ? e.message : D.alSweepFailed);
     } finally { setBusy(""); }
   }
 
@@ -112,9 +116,9 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
         body: JSON.stringify(prefs),
       });
       setPrefs(saved);
-      setNotice("অ্যালার্ট সেটিং সেভ হয়েছে।");
+      setNotice(D.alPrefsSaved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিং সেভ হয়নি");
+      setError(e instanceof Error ? e.message : D.alPrefsSaveFailed);
     } finally { setBusy(""); }
   }
 
@@ -129,25 +133,24 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
     <section className="card space-y-3 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold text-slate-800">
-          🔔 কানেকশন অ্যালার্ট ও পর্যবেক্ষণ
-          {unread > 0 ? <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">{unread}টি পড়া হয়নি</span> : null}
+          {D.alTitle}
+          {unread > 0 ? <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">{t("connections.alUnread", { count: fmtNumber(locale, unread) })}</span> : null}
         </h2>
         <div className="flex flex-wrap gap-1.5">
           <button type="button" disabled={busy === "all"} onClick={() => void diagnoseAll()} className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
-            {busy === "all" ? "পরীক্ষা চলছে…" : "🩺 সব পরীক্ষা করুন"}
+            {busy === "all" ? D.alDiagnosing : D.alDiagnoseAll}
           </button>
           <button type="button" disabled={busy === "sweep"} onClick={() => void runSweep()} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">
-            {busy === "sweep" ? "চলছে…" : "এখনই পর্যবেক্ষণ চালান"}
+            {busy === "sweep" ? D.alRunning : D.alRunSweep}
           </button>
-          <button type="button" onClick={() => setShowPrefs((v) => !v)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">⚙️ অ্যালার্ট সেটিং</button>
+          <button type="button" onClick={() => setShowPrefs((v) => !v)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">{D.alSettingsBtn}</button>
           {unread > 0 ? (
-            <button type="button" disabled={busy === "readall"} onClick={() => void markAllRead()} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">সব পড়া হয়েছে ধরুন</button>
+            <button type="button" disabled={busy === "readall"} onClick={() => void markAllRead()} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">{D.alMarkAllRead}</button>
           ) : null}
         </div>
       </div>
       <p className="text-[13px] text-slate-500">
-        পর্যবেক্ষণ (scheduled job) অবস্থার <b>পরিবর্তন</b> দেখলেই অ্যালার্ট দেয় — একই সমস্যা বারবার নয়; ঠিক হয়ে গেলে তাও জানায়।
-        ইমেইল যায় সংস্থার OWNER/ADMIN-দের কাছে; "পৌঁছেছে" ধরা হয় কেবল মেইল provider-এর আসল message id পেলেই।
+        {D.alIntroA}<b>{D.alIntroBold}</b>{D.alIntroB}
       </p>
       {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
       {notice ? <p className="text-sm font-medium text-green-700">{notice}</p> : null}
@@ -156,17 +159,17 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
         <div className="space-y-3 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-100">
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={prefs.emailEnabled} onChange={(e) => setPrefs({ ...prefs, emailEnabled: e.target.checked })} />
-            ইমেইল অ্যালার্ট চালু (OWNER/ADMIN)
+            {D.alEmailEnabled}
           </label>
           <div>
-            <p className="mb-1 text-xs font-semibold text-slate-500">কোন ক্যাটাগরিতে অ্যালার্ট আসবে</p>
+            <p className="mb-1 text-xs font-semibold text-slate-500">{D.alCategoriesTitle}</p>
             <div className="flex flex-wrap gap-2">
               {CATEGORY_OPTIONS.map((c) => {
                 const active = prefs.categories === null || prefs.categories.includes(c.key);
                 return (
                   <label key={c.key} className="flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">
                     <input type="checkbox" checked={active} onChange={() => toggleCategory(c.key)} />
-                    {c.label}
+                    {D[c.labelKey as keyof typeof D]}
                   </label>
                 );
               })}
@@ -174,11 +177,11 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={prefs.doctorEnabled} onChange={(e) => setPrefs({ ...prefs, doctorEnabled: e.target.checked })} />
-            পর্যবেক্ষণে live Doctor পরীক্ষাও চালাও (provider API কল লাগে — তাই ডিফল্ট বন্ধ)
+            {D.alDoctorEnabled}
           </label>
           {prefs.doctorEnabled ? (
             <label className="flex items-center gap-2 text-sm text-slate-700">
-              প্রতি অ্যাকাউন্টে live পরীক্ষার ব্যবধান (ঘণ্টা):
+              {D.alDoctorInterval}
               <input
                 type="number" min={1} max={720} value={prefs.doctorIntervalHours}
                 onChange={(e) => setPrefs({ ...prefs, doctorIntervalHours: Math.max(1, Math.min(720, Number(e.target.value) || 24)) })}
@@ -187,17 +190,17 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
             </label>
           ) : null}
           <button type="button" disabled={busy === "prefs"} onClick={() => void savePrefs()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {busy === "prefs" ? "সেভ হচ্ছে…" : "সেটিং সেভ করুন"}
+            {busy === "prefs" ? D.maSaving : D.alSavePrefs}
           </button>
         </div>
       ) : null}
 
       {alerts.length === 0 ? (
-        <p className="text-sm text-slate-400">কোনো অ্যালার্ট এখনও আসেনি — সব কানেকশন ঠিক থাকলে এখানে কিছু আসবেও না।</p>
+        <p className="text-sm text-slate-400">{D.alEmpty}</p>
       ) : (
         <ul className="divide-y divide-slate-100">
           {alerts.map((alert) => {
-            const meta = alertKindMeta(alert.kind);
+            const meta = alertKindMeta(alert.kind, locale);
             return (
               <li key={alert.id} className={`flex flex-wrap items-start gap-2 py-2 ${alert.readAt ? "opacity-60" : ""}`}>
                 <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.cls}`}>{meta.label}</span>
@@ -205,12 +208,12 @@ export function AlertsPanel({ onChanged }: { onChanged?: () => void }) {
                   <span className="block text-sm font-medium text-slate-700">{alert.title}</span>
                   {alert.body ? <span className="block text-xs text-slate-500">{alert.body}</span> : null}
                   <span className="block text-[11px] text-slate-400">
-                    {formatWhen(alert.createdAt)} · {alert.emailSentCount > 0 ? `ইমেইল পৌঁছেছে ${alert.emailSentCount} জনের কাছে` : "ইমেইল পৌঁছায়নি"}
-                    {alert.emailError ? ` — ত্রুটি: ${alert.emailError}` : ""}
+                    {formatWhen(alert.createdAt, locale)} · {alert.emailSentCount > 0 ? t("connections.alEmailReached", { count: fmtNumber(locale, alert.emailSentCount) }) : D.alEmailNotDelivered}
+                    {alert.emailError ? t("connections.alErrorSuffix", { error: alert.emailError }) : ""}
                   </span>
                 </span>
                 {!alert.readAt ? (
-                  <button type="button" onClick={() => void markRead(alert.id)} className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">পড়া হয়েছে</button>
+                  <button type="button" onClick={() => void markRead(alert.id)} className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">{D.alMarkRead}</button>
                 ) : null}
               </li>
             );

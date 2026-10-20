@@ -14,6 +14,10 @@ export class CreateTemplateDto {
   // MX7: block-builder source (email only) — shape-only typing;
   // validated strictly by messaging/email-blocks.ts in the service.
   @IsOptional() blocks?: unknown;
+  // MB5 (ML14): per-locale variants { bn?, en? } — shape-only
+  // typing; validated strictly by messaging/template-variants.ts
+  // in the service.
+  @IsOptional() variants?: unknown;
 }
 export class UpdateTemplateDto {
   @IsOptional() @IsString() name?: string;
@@ -22,6 +26,8 @@ export class UpdateTemplateDto {
   @IsOptional() @IsString() htmlBody?: string;
   // MX7: block-builder source (email only); explicit null detaches.
   @IsOptional() blocks?: unknown;
+  // MB5 (ML14): per-locale variants; explicit null clears them.
+  @IsOptional() variants?: unknown;
 }
 
 /** MX7: content-library saved block — one validated email block. */

@@ -96,7 +96,7 @@ describe("Phase H - campaigns service", () => {
     expect(storedSet.targeting.interests).toEqual(["Fashion"]);
     expect(storedSet.targeting.customAudienceIds).toEqual(["238500"]);
     await svc.addAd("org-1", plan.id, adSet.id, { name: "A1", primaryText: "text", linkUrl: "https://x.com" });
-    await expect(svc.addAd("org-1", plan.id, adSet.id, { name: "Bad", primaryText: "t", linkUrl: "https://x.com", format: "carousel", carouselCards: [{ title: "only", linkUrl: "https://x.com" }] })).rejects.toThrow(/2-10 cards/);
+    await expect(svc.addAd("org-1", plan.id, adSet.id, { name: "Bad", primaryText: "t", linkUrl: "https://x.com", format: "carousel", carouselCards: [{ title: "only", linkUrl: "https://x.com" }] })).rejects.toMatchObject({ code: "campaigns.aCarouselAdNeeds210" });
     await expect(svc.addAd("org-1", plan.id, adSet.id, { name: "Bad2", primaryText: "t", linkUrl: "https://x.com", format: "video" })).rejects.toThrow(/videoAssetId/);
 
     const copy: any = await svc.duplicatePlan("org-1", "u1", plan.id);
@@ -190,7 +190,7 @@ describe("Phase H - audiences service", () => {
   it("refuses an empty source honestly", async () => {
     const prisma = basePrisma();
     const svc = new AudiencesService(prisma, audit);
-    await expect(svc.createCustom("org-1", "u1", { adAccountId: "acc-1", name: "Empty", source: "leads" })).rejects.toThrow(/No contacts/);
+    await expect(svc.createCustom("org-1", "u1", { adAccountId: "acc-1", name: "Empty", source: "leads" })).rejects.toMatchObject({ code: "audiences.noContactsWithAnEmailOr" });
   });
 });
 

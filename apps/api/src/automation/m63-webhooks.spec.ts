@@ -91,6 +91,6 @@ describe("M63 internal webhook re-entry", () => {
   it("the secret check still governs the webhook surface", async () => {
     const ctrl = controller({ inbox: { handleWebhook: jest.fn() } });
     await expect(ctrl.processWebhook("wrong", { source: "meta", integrationId: "i1" }))
-      .rejects.toThrow(/Invalid internal secret/);
+      .rejects.toMatchObject({ code: "automation.invalidInternalSecret" });
   });
 });

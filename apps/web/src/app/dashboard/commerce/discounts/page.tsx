@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate, fmtMoney } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -33,23 +35,23 @@ interface ProductOpt { id: string; name: string }
 interface CategoryOpt { id: string; name: string }
 
 const ORIGIN_LABEL: Record<string, string> = {
-  manual: "ম্যানুয়াল",
+  manual: "manual",
   woocommerce: "WooCommerce",
   shopify: "Shopify",
-  abandoned_recovery: "পরিত্যক্ত কার্ট পুনরুদ্ধার",
+  abandoned_recovery: "abandonedCartRecovery",
 };
 
 const splitIds = (text: string): string[] =>
   text.split(",").map((x) => x.trim()).filter(Boolean);
 
 const KIND_LABEL: Record<string, string> = {
-  percent: "শতাংশ (%)",
-  fixed: "নির্দিষ্ট টাকা",
-  free_shipping: "ফ্রি ডেলিভারি",
+  percent: "percentage",
+  fixed: "fixedAmount2",
+  free_shipping: "freeDelivery",
 };
 
-const money = (minor?: string | null) =>
-  minor == null ? "—" : `৳${(Number(minor) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+const money = (minor?: string | null, locale: "bn" | "en" = "bn") =>
+  minor == null ? "—" : fmtMoney(locale, Number(minor) / 100, { maximumFractionDigits: 2 });
 
 function syncChip(s: DiscountSync) {
   const cls = s.syncStatus === "synced" ? "bg-green-100 text-green-700"
@@ -62,6 +64,7 @@ function syncChip(s: DiscountSync) {
 }
 
 export default function DiscountsPage() {
+  const { dict, t, locale } = useLocale();
   const [discounts, setDiscounts] = useState<Discount[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [products, setProducts] = useState<ProductOpt[]>([]);
@@ -116,7 +119,7 @@ export default function DiscountsPage() {
       setProducts(p.items ?? []);
       setCategories(c ?? []);
       setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.loadingFailed); }
     finally { setLoading(false); }
   }, [originFilter]);
   useEffect(() => { load(); }, [load]);
@@ -168,11 +171,11 @@ export default function DiscountsPage() {
         : await apiFetch<{ pushes?: { storeId: string; enqueued: boolean; reason?: string }[] }>(`/organizations/${orgId}/commerce/discounts`, { method: "POST", body: JSON.stringify(body) });
       const skipped = (out.pushes ?? []).filter((p) => !p.enqueued);
       setNotice(skipped.length
-        ? `সেভ হয়েছে। তবে ${skipped.length}টি স্টোরে push হয়নি (${skipped.map((p) => p.reason ?? "").join(", ")}) — mirror মোডের স্টোরে push যায় না।`
-        : "ডিসকাউন্ট সেভ হয়েছে।");
+        ? t("commerce.savedButItWasNot", { length: skipped.length, skipped: skipped.map((p) => p.reason ?? "").join(", ") })
+        : dict.commerce.discountSaved);
       resetForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সেভ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed3); }
     finally { setBusy(""); }
   }
 
@@ -184,7 +187,7 @@ export default function DiscountsPage() {
         method: "POST", body: JSON.stringify({ active: !d.active }),
       });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.failed); }
     finally { setBusy(""); }
   }
 
@@ -194,9 +197,9 @@ export default function DiscountsPage() {
     try {
       const out = await apiFetch<{ fetched: number; created: number; updated: number; skipped: number }>(
         `/organizations/${orgId}/commerce/discounts/pull/${storeId}`, { method: "POST" });
-      setNotice(`স্টোর থেকে কুপন টানা হয়েছে: মোট ${out.fetched}, নতুন ${out.created}, আপডেট ${out.updated}, বাদ ${out.skipped} (Shopify-র automatic/BXGY ডিসকাউন্ট টানা হয় না — শুধু basic code)।`);
+      setNotice(t("commerce.couponsPulledFromTheStore", { fetched: out.fetched, created: out.created, updated: out.updated, skipped: out.skipped }));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "টানা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.pullFailed); }
     finally { setBusy(""); }
   }
 
@@ -211,9 +214,9 @@ export default function DiscountsPage() {
           kind: genKind, value: genKind === "free_shipping" ? 0 : parseInt(genValue || "0", 10) || 0,
         }),
       });
-      setGenResult(`${out.created}টি কোড তৈরি হয়েছে: ${out.codes.slice(0, 12).join(", ")}${out.codes.length > 12 ? " …" : ""}`);
+      setGenResult(t("commerce.codesCreated", { created: out.created, out: out.codes.slice(0, 12).join(", "), out2: out.codes.length > 12 ? " …" : "" }));
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "তৈরি ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.creationFailed); }
     finally { setBusy(""); }
   }
 
@@ -224,20 +227,20 @@ export default function DiscountsPage() {
   const renderDiscountSource = (d: Discount) => (
     <>
       <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${d.origin === "abandoned_recovery" ? "bg-amber-100 text-amber-800" : d.origin === "manual" ? "bg-slate-100 text-slate-600" : "bg-indigo-100 text-indigo-700"}`}>
-        {ORIGIN_LABEL[d.origin] ?? d.origin}
+        {ORIGIN_LABEL[d.origin] ? dict.commerce[ORIGIN_LABEL[d.origin] as keyof typeof dict.commerce] : d.origin}
       </span>
       {d.sourceRef ? <div className="mt-1 font-mono text-[10px] text-slate-400">{d.sourceRef}</div> : null}
-      {d.appOnly ? <div className="mt-1 text-[11px] font-semibold text-indigo-600">শুধু অ্যাপে দেখানো হবে</div> : null}
-      {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু প্রথম অর্ডারে</div> : null}
-      {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">শুধু পুরনো কাস্টমারের</div> : null}
-      {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">প্রতি কাস্টমার সর্বোচ্চ {d.perCustomerLimit}বার</div> : null}
-      {d.maxOrderMinor ? <div className="mt-1 text-[11px] text-slate-500">সর্বোচ্চ অর্ডার {money(d.maxOrderMinor)}</div> : null}
+      {d.appOnly ? <div className="mt-1 text-[11px] font-semibold text-indigo-600">{dict.commerce.shownInTheAppOnly}</div> : null}
+      {d.firstOrderOnly ? <div className="mt-1 text-[11px] text-slate-500">{dict.commerce.firstOrderOnly}</div> : null}
+      {d.repeatCustomerOnly ? <div className="mt-1 text-[11px] text-slate-500">{dict.commerce.oldCustomersOnly}</div> : null}
+      {d.perCustomerLimit != null ? <div className="mt-1 text-[11px] text-slate-500">{dict.commerce.maximumPerCustomer}{d.perCustomerLimit}{dict.commerce.times}</div> : null}
+      {d.maxOrderMinor ? <div className="mt-1 text-[11px] text-slate-500">{dict.commerce.maximumOrders}{money(d.maxOrderMinor)}</div> : null}
     </>
   );
   const renderDiscountActions = (d: Discount) => (
     <div className="flex gap-2">
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(d)}>সম্পাদনা</button>
-      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(d)}>{d.active ? "বন্ধ করুন" : "চালু করুন"}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold" onClick={() => startEdit(d)}>{dict.commerce.edit}</button>
+      <button className="inline-flex min-h-[44px] items-center rounded-lg border px-2 py-1 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => toggleActive(d)}>{d.active ? dict.commerce.close : dict.commerce.enable}</button>
     </div>
   );
 
@@ -245,11 +248,9 @@ export default function DiscountsPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">Discounts — স্টোর ডিসকাউন্ট ও কুপন</h1>
+          <h1 className="page-title">{dict.commerce.discountsStoreDiscountsCoupons}</h1>
           <p className="text-sm text-slate-500">
-            আপনার নিজের স্টোরের কুপন এখান থেকে তৈরি করুন — WooCommerce/Shopify-তে push হবে (co-manage/full-manage স্টোরে),
-            আর public checkout-এ কাস্টমার কোডটি ব্যবহার করতে পারবেন। এটি SaaS প্ল্যানের কুপন নয়।
-          </p>
+            {dict.commerce.createCouponsForYourOwn}</p>
         </div>
         <Link href="/dashboard/commerce/sync" className="btn-primary">Sync Center →</Link>
       </div>
@@ -257,83 +258,67 @@ export default function DiscountsPage() {
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <div className="card p-5 space-y-4">
-        <div className="font-semibold">{editingId ? "ডিসকাউন্ট সম্পাদনা" : "নতুন ডিসকাউন্ট"}</div>
+        <div className="font-semibold">{editingId ? dict.commerce.editDiscount : dict.commerce.newDiscount}</div>
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="block text-sm">কোড
-            <input className="input mt-1" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="EID10" />
+          <label className="block text-sm">{dict.commerce.code}<input className="input mt-1" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="EID10" />
           </label>
-          <label className="block text-sm">ধরন
-            <select className="input mt-1" value={kind} onChange={(e) => setKind(e.target.value)}>
-              {Object.entries(KIND_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <label className="block text-sm">{dict.commerce.type}<select className="input mt-1" value={kind} onChange={(e) => setKind(e.target.value)}>
+              {Object.entries(KIND_LABEL).map(([v, l]) => <option key={v} value={v}>{dict.commerce[l as keyof typeof dict.commerce]}</option>)}
             </select>
           </label>
-          <label className="block text-sm">{kind === "percent" ? "শতাংশ (১–৯০)" : kind === "fixed" ? "টাকার পরিমাণ (পয়সায় নয়, টাকায়)" : "মান (free shipping-এ লাগে না)"}
+          <label className="block text-sm">{kind === "percent" ? dict.commerce.percentage190 : kind === "fixed" ? dict.commerce.amountInTakaNotPoisha : dict.commerce.valueNotNeededForFree}
             <input className="input mt-1" type="number" value={value} disabled={kind === "free_shipping"} onChange={(e) => setValue(e.target.value)} />
           </label>
-          <label className="block text-sm">সর্বনিম্ন অর্ডার (টাকা, খালি = নেই)
-            <input className="input mt-1" type="number" value={minOrder} onChange={(e) => setMinOrder(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.minimumOrderTakaEmptyNone}<input className="input mt-1" type="number" value={minOrder} onChange={(e) => setMinOrder(e.target.value)} />
           </label>
-          <label className="block text-sm">কার্যকর শুরু (খালি = এখনই)
-            <input className="input mt-1" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.effectiveFromEmptyNow}<input className="input mt-1" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
           </label>
-          <label className="block text-sm">মেয়াদ শেষ (খালি = অসীম)
-            <input className="input mt-1" type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.expiresEmptyUnlimited}<input className="input mt-1" type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
           </label>
-          <label className="block text-sm">ব্যবহারের সীমা (খালি = অসীম)
-            <input className="input mt-1" type="number" value={usageLimit} onChange={(e) => setUsageLimit(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.usageLimitEmptyUnlimited}<input className="input mt-1" type="number" value={usageLimit} onChange={(e) => setUsageLimit(e.target.value)} />
           </label>
-          <label className="block text-sm">প্রযোজ্য হবে
-            <select className="input mt-1" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeIds([]); }}>
-              <option value="all">সব পণ্যে</option>
-              <option value="products">নির্দিষ্ট পণ্যে</option>
-              <option value="categories">নির্দিষ্ট ক্যাটাগরিতে</option>
+          <label className="block text-sm">{dict.commerce.willApplyTo}<select className="input mt-1" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeIds([]); }}>
+              <option value="all">{dict.commerce.allProducts}</option>
+              <option value="products">{dict.commerce.specificProducts2}</option>
+              <option value="categories">{dict.commerce.specificCategories}</option>
             </select>
           </label>
-          <label className="block text-sm">সর্বোচ্চ অর্ডার (টাকা, খালি = নেই)
-            <input className="input mt-1" type="number" value={maxOrder} onChange={(e) => setMaxOrder(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.maximumOrderTakaEmptyNone}<input className="input mt-1" type="number" value={maxOrder} onChange={(e) => setMaxOrder(e.target.value)} />
           </label>
-          <label className="block text-sm">প্রতি কাস্টমারের সীমা (খালি = অসীম)
-            <input className="input mt-1" type="number" min="1" value={perCustomerLimit} onChange={(e) => setPerCustomerLimit(e.target.value)} />
-            <span className="mt-1 block text-xs font-normal text-slate-500">সীমাটি অর্ডারে সংরক্ষিত কুপন-কোড স্ট্যাম্প থেকে গণনা করা হয়</span>
+          <label className="block text-sm">{dict.commerce.perCustomerLimitEmptyUnlimited}<input className="input mt-1" type="number" min="1" value={perCustomerLimit} onChange={(e) => setPerCustomerLimit(e.target.value)} />
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.theLimitIsCountedFrom}</span>
           </label>
         </div>
         <div className="flex flex-wrap gap-4 text-sm">
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={firstOrderOnly} onChange={(e) => setFirstOrderOnly(e.target.checked)} />
-            শুধু প্রথম অর্ডারে (firstOrderOnly)
-          </label>
+            {dict.commerce.firstOrderOnlyFirstOrderOnly}</label>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={repeatCustomerOnly} onChange={(e) => setRepeatCustomerOnly(e.target.checked)} />
-            শুধু পুরনো কাস্টমারের জন্য (repeatCustomerOnly)
-          </label>
+            {dict.commerce.repeatCustomersOnlyRepeatCustomerOnly}</label>
         </div>
         {/* NF14 (FB5): app-only offer toggle + the honesty note,
             verbatim in meaning — display rule, NOT a code block. */}
         <div className="rounded-xl bg-indigo-50 p-4 text-sm dark:bg-slate-800">
           <label className="flex items-center gap-2 font-medium">
             <input type="checkbox" checked={appOnly} onChange={(e) => setAppOnly(e.target.checked)} />
-            অ্যাপ-অনলি অফার (appOnly)
-          </label>
+            {dict.commerce.appOnlyOfferAppOnly}</label>
           <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-            অ্যাপ-অনলি অফার: এই অফারটি শুধু দোকানের ইনস্টল করা অ্যাপে (standalone মোডে) দেখানো হবে।
-            তবে কোডটি শেয়ার হলে ওয়েবেও কাজ করবে — এটি শুধু প্রদর্শনের নিয়ম, কোড বন্ধ করার ব্যবস্থা নয়।
-          </p>
+            {dict.commerce.appOnlyOfferThisOffer}</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm">বাদ যাবে এমন পণ্য (আইডি)
-            <input className="input mt-1" value={excludedProductIdsText} onChange={(e) => setExcludedProductIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
-            <span className="mt-1 block text-xs font-normal text-slate-500">কমা দিয়ে আলাদা করে পণ্যের আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+          <label className="block text-sm">{dict.commerce.excludedProductsIDs}<input className="input mt-1" value={excludedProductIdsText} onChange={(e) => setExcludedProductIdsText(e.target.value)} placeholder={dict.commerce.iDID} />
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.giveProductIDsSeparatedBy}</span>
           </label>
-          <label className="block text-sm">বাদ যাবে এমন ক্যাটাগরি (আইডি)
-            <input className="input mt-1" value={excludedCategoryIdsText} onChange={(e) => setExcludedCategoryIdsText(e.target.value)} placeholder="আইডি, আইডি, …" />
-            <span className="mt-1 block text-xs font-normal text-slate-500">কমা দিয়ে আলাদা করে ক্যাটাগরির আইডি দিন — কার্টে বাদ-তালিকার যেকোনো একটি ক্যাটাগরির পণ্য থাকলেই কুপনটি কাজ করবে না।</span>
+          <label className="block text-sm">{dict.commerce.excludedCategoriesIDs}<input className="input mt-1" value={excludedCategoryIdsText} onChange={(e) => setExcludedCategoryIdsText(e.target.value)} placeholder={dict.commerce.iDID} />
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.giveCategoryIDsSeparatedBy}</span>
           </label>
         </div>
         {scopeType !== "all" ? (
           <div>
-            <div className="text-sm font-medium">{scopeType === "products" ? "পণ্য বেছে নিন" : "ক্যাটাগরি বেছে নিন"}</div>
+            <div className="text-sm font-medium">{scopeType === "products" ? dict.commerce.selectAProduct : dict.commerce.selectACategory}</div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {scopeOptions.length === 0 ? <span className="text-xs text-slate-500">কোনো অপশন নেই</span> : scopeOptions.map((o) => {
+              {scopeOptions.length === 0 ? <span className="text-xs text-slate-500">{dict.commerce.noOptions}</span> : scopeOptions.map((o) => {
                 const on = scopeIds.includes(o.id);
                 return (
                   <button key={o.id} type="button" onClick={() => setScopeIds(on ? scopeIds.filter((x) => x !== o.id) : [...scopeIds, o.id])}
@@ -346,7 +331,7 @@ export default function DiscountsPage() {
           </div>
         ) : null}
         <div>
-          <div className="text-sm font-medium">কোন স্টোরে push হবে</div>
+          <div className="text-sm font-medium">{dict.commerce.whichStoreItWillPush}</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {stores.map((s) => {
               const on = targetStores.includes(s.id);
@@ -354,65 +339,61 @@ export default function DiscountsPage() {
               return (
                 <button key={s.id} type="button" onClick={() => setTargetStores(on ? targetStores.filter((x) => x !== s.id) : [...targetStores, s.id])}
                   className={`inline-flex min-h-[44px] items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${on ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}>
-                  {s.name} ({mode}){mode === "mirror" ? " — push যাবে না" : ""}
+                  {s.name} ({mode}){mode === "mirror" ? dict.commerce.willNotPush : ""}
                 </button>
               );
             })}
           </div>
         </div>
         <div className="flex gap-2">
-          <button className="btn-primary" disabled={busy !== "" || !code.trim()} onClick={save}>{busy === "save" ? "সেভ হচ্ছে…" : editingId ? "আপডেট করুন" : "তৈরি করুন"}</button>
-          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>বাতিল</button> : null}
+          <button className="btn-primary" disabled={busy !== "" || !code.trim()} onClick={save}>{busy === "save" ? dict.commerce.saving2 : editingId ? dict.commerce.update : dict.commerce.create}</button>
+          {editingId ? <button className="rounded-lg border px-3 py-2 text-sm" onClick={resetForm}>{dict.common.cancel}</button> : null}
         </div>
       </div>
 
       <div className="card p-5 space-y-3">
-        <div className="font-semibold">ক্যাম্পেইন কোড তৈরি (একসাথে অনেকগুলো)</div>
+        <div className="font-semibold">{dict.commerce.campaignCodeGenerationManyAt}</div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="block text-sm">Prefix
             <input className="input mt-1 w-28" value={genPrefix} onChange={(e) => setGenPrefix(e.target.value.toUpperCase())} />
           </label>
-          <label className="block text-sm">সংখ্যা (সর্বোচ্চ ৫০০)
-            <input className="input mt-1 w-24" type="number" value={genCount} onChange={(e) => setGenCount(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.countMaximum500}<input className="input mt-1 w-24" type="number" value={genCount} onChange={(e) => setGenCount(e.target.value)} />
           </label>
-          <label className="block text-sm">ধরন
-            <select className="input mt-1" value={genKind} onChange={(e) => setGenKind(e.target.value)}>
-              {Object.entries(KIND_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <label className="block text-sm">{dict.commerce.type}<select className="input mt-1" value={genKind} onChange={(e) => setGenKind(e.target.value)}>
+              {Object.entries(KIND_LABEL).map(([v, l]) => <option key={v} value={v}>{dict.commerce[l as keyof typeof dict.commerce]}</option>)}
             </select>
           </label>
-          <label className="block text-sm">মান
-            <input className="input mt-1 w-24" type="number" value={genValue} disabled={genKind === "free_shipping"} onChange={(e) => setGenValue(e.target.value)} />
+          <label className="block text-sm">{dict.commerce.value}<input className="input mt-1 w-24" type="number" value={genValue} disabled={genKind === "free_shipping"} onChange={(e) => setGenValue(e.target.value)} />
           </label>
-          <button className="btn-primary" disabled={busy !== ""} onClick={generate}>{busy === "gen" ? "তৈরি হচ্ছে…" : "কোড তৈরি করুন"}</button>
+          <button className="btn-primary" disabled={busy !== ""} onClick={generate}>{busy === "gen" ? dict.commerce.creating : dict.commerce.generateCodes}</button>
         </div>
         {genResult ? <p className="text-sm text-green-700">{genResult}</p> : null}
-        <p className="text-xs text-slate-500">এই কোডগুলো broadcast/ইনবক্স ক্যাম্পেইনে হাতে ব্যবহার করা যাবে; broadcast ইঞ্জিন থেকে স্বয়ংক্রিয় পাঠানো এই ব্যাচের বাইরে।</p>
+        <p className="text-xs text-slate-500">{dict.commerce.theseCodesCanBeUsed}</p>
       </div>
 
       <div className="card p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="font-semibold">সব ডিসকাউন্ট ({discounts.length})</div>
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">উৎস
-              <select className="input w-auto py-1 text-xs" value={originFilter} onChange={(e) => setOriginFilter(e.target.value)}>
-                <option value="">সব উৎস</option>
-                <option value="manual">ম্যানুয়াল</option>
+            <div className="font-semibold">{dict.commerce.allDiscounts}{discounts.length})</div>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">{dict.commerce.source}<select className="input w-auto py-1 text-xs" value={originFilter} onChange={(e) => setOriginFilter(e.target.value)}>
+                <option value="">{dict.commerce.allSources}</option>
+                <option value="manual">{dict.commerce.manual}</option>
                 <option value="woocommerce">WooCommerce</option>
                 <option value="shopify">Shopify</option>
-                <option value="abandoned_recovery">পরিত্যক্ত কার্ট পুনরুদ্ধার</option>
+                <option value="abandoned_recovery">{dict.commerce.abandonedCartRecovery}</option>
               </select>
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
             {stores.filter((s) => s.platform === "WOOCOMMERCE" || s.platform === "SHOPIFY").map((s) => (
               <button key={s.id} className="inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" disabled={busy !== ""} onClick={() => pull(s.id)}>
-                {busy === `pull-${s.id}` ? "টানা হচ্ছে…" : `⬇ ${s.name} থেকে কুপন টানুন`}
+                {busy === `pull-${s.id}` ? dict.commerce.pulling : t("commerce.pullCouponsFrom", { name: s.name })}
               </button>
             ))}
           </div>
         </div>
-        {loading ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : discounts.length === 0 ? (
-          <p className="text-sm text-slate-500">এখনো কোনো ডিসকাউন্ট নেই।</p>
+        {loading ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : discounts.length === 0 ? (
+          <p className="text-sm text-slate-500">{dict.commerce.noDiscountsYet}</p>
         ) : (
           <ResponsiveTable
             table={
@@ -420,22 +401,22 @@ export default function DiscountsPage() {
                 <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 font-medium">কোড</th><th className="py-2 font-medium">ধরন / মান</th>
-                  <th className="py-2 font-medium">সময়সীমা</th><th className="py-2 font-medium">ব্যবহার</th>
-                  <th className="py-2 font-medium">উৎস</th><th className="py-2 font-medium">স্টোর Sync</th><th className="py-2 font-medium">অ্যাকশন</th>
+                  <th className="py-2 font-medium">{dict.commerce.code}</th><th className="py-2 font-medium">{dict.commerce.typeValue}</th>
+                  <th className="py-2 font-medium">{dict.commerce.deadline}</th><th className="py-2 font-medium">{dict.commerce.uses}</th>
+                  <th className="py-2 font-medium">{dict.commerce.source}</th><th className="py-2 font-medium">{dict.commerce.storeSync}</th><th className="py-2 font-medium">{dict.commerce.action}</th>
                 </tr>
               </thead>
               <tbody>
                 {discounts.map((d) => (
                   <tr key={d.id} className="border-b last:border-0 align-top">
-                    <td className="py-2 font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">বন্ধ</span> : null}</td>
-                    <td className="py-2">{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</td>
-                    <td className="py-2 text-xs text-slate-500">{d.startsAt ? new Date(d.startsAt).toLocaleDateString("bn-BD") : "—"} → {d.endsAt ? new Date(d.endsAt).toLocaleDateString("bn-BD") : "অসীম"}</td>
+                    <td className="py-2 font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">{dict.commerce.closed}</span> : null}</td>
+                    <td className="py-2">{KIND_LABEL[d.kind] ? dict.commerce[KIND_LABEL[d.kind] as keyof typeof dict.commerce] : d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value), locale)}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">{dict.commerce.atLeast}{money(d.minOrderMinor, locale)} {dict.commerce.inTheOrder}</div> : null}</td>
+                    <td className="py-2 text-xs text-slate-500">{d.startsAt ? fmtDate(locale, new Date(d.startsAt)) : "—"} → {d.endsAt ? fmtDate(locale, new Date(d.endsAt)) : dict.commerce.unlimited}</td>
                     <td className="py-2">{d.usedCount}{d.usageLimit != null ? ` / ${d.usageLimit}` : ""}</td>
                     <td className="py-2 text-xs">
                       {renderDiscountSource(d)}
                     </td>
-                    <td className="py-2"><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></td>
+                    <td className="py-2"><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">{dict.commerce.notInAnyStore}</span> : (d.syncs ?? []).map(syncChip)}</div></td>
                     <td className="py-2">
                       {renderDiscountActions(d)}
                     </td>
@@ -448,25 +429,25 @@ export default function DiscountsPage() {
             cards={discounts.map((d) => (
               <div key={d.id} className="rounded-lg border p-3">
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">বন্ধ</span> : null}</span>
+                  <span className="font-mono font-semibold">{d.code}{!d.active ? <span className="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">{dict.commerce.closed}</span> : null}</span>
                   <span>{d.usedCount}{d.usageLimit != null ? ` / ${d.usageLimit}` : ""}</span>
                 </div>
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">ধরন / মান</dt>
-                    <dd>{KIND_LABEL[d.kind] ?? d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value))}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">কমপক্ষে {money(d.minOrderMinor)} অর্ডারে</div> : null}</dd>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.typeValue}</dt>
+                    <dd>{KIND_LABEL[d.kind] ? dict.commerce[KIND_LABEL[d.kind] as keyof typeof dict.commerce] : d.kind}{d.kind === "percent" ? `: ${d.value}%` : d.kind === "fixed" ? `: ${money(String(d.value), locale)}` : ""}{d.minOrderMinor ? <div className="text-xs text-slate-500">{dict.commerce.atLeast}{money(d.minOrderMinor, locale)} {dict.commerce.inTheOrder}</div> : null}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">সময়সীমা</dt>
-                    <dd className="text-xs text-slate-500">{d.startsAt ? new Date(d.startsAt).toLocaleDateString("bn-BD") : "—"} → {d.endsAt ? new Date(d.endsAt).toLocaleDateString("bn-BD") : "অসীম"}</dd>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.deadline}</dt>
+                    <dd className="text-xs text-slate-500">{d.startsAt ? fmtDate(locale, new Date(d.startsAt)) : "—"} → {d.endsAt ? fmtDate(locale, new Date(d.endsAt)) : dict.commerce.unlimited}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">উৎস</dt>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.source}</dt>
                     <dd className="text-xs">{renderDiscountSource(d)}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">স্টোর Sync</dt>
-                    <dd><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">কোনো স্টোরে নেই</span> : (d.syncs ?? []).map(syncChip)}</div></dd>
+                    <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.storeSync}</dt>
+                    <dd><div className="flex flex-wrap gap-1">{(d.syncs ?? []).length === 0 ? <span className="text-xs text-slate-500">{dict.commerce.notInAnyStore}</span> : (d.syncs ?? []).map(syncChip)}</div></dd>
                   </div>
                 </dl>
                 <div className="mt-2">{renderDiscountActions(d)}</div>

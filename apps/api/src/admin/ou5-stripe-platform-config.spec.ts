@@ -107,7 +107,7 @@ describe("OU5 platform Stripe config — save + safe view + sealing", () => {
     const audit = recordingAudit();
     const svc = new AdminService(prisma, audit as any);
     await expect(svc.updatePlatformConfig(actor, "stripe", { secretKey: "sk_test_wrong", webhookSecret: WHSEC }))
-      .rejects.toThrow(/NOT saved:.*Invalid API Key provided/);
+      .rejects.toMatchObject({ code: "admin.stripeVerificationFailedTheSettingWas3" });
     expect(prisma.rows.find((r: any) => r.key === "stripeConfig")).toBeUndefined();
     expect(audit.calls.some((c) => c.action === "admin.platform_config_verify_failed")).toBe(true);
   });

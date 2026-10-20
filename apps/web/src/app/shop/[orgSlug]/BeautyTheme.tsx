@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { type ShopLocale, shopT } from "@/lib/shop-i18n";
@@ -22,27 +22,28 @@ export function formatBeautyPrice(minor: string): string {
 // ----------------------------------------------------
 // 1. Beauty Trust & Authenticity Bar (4 Pillars)
 // ----------------------------------------------------
-export function BeautyAuthenticityBadge() {
+export function BeautyAuthenticityBadge({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const pillars = [
     {
       icon: "🔒",
-      title: "১০০% অরিজিনাল গ্যারান্টি",
-      subtitle: "সরাসরি কোরিয়া, ইউএসএ ও ইউকে ডিস্ট্রিবিউটর",
+      title: t.themeBeauty.trust1Title,
+      subtitle: t.themeBeauty.trust1Sub,
     },
     {
       icon: "🧪",
-      title: "ডার্মাটোলজিক্যালি টেস্টেড",
-      subtitle: "পারদ, স্টেরয়েড ও ক্ষতিকর কেমিক্যালমুক্ত",
+      title: t.themeBeauty.trust2Title,
+      subtitle: t.themeBeauty.trust2Sub,
     },
     {
       icon: "📦",
-      title: "বাবল সুরক্ষিত প্যাকেজিং",
-      subtitle: "কাচের সিরাম ও বোতল ভাঙা প্রতিরোধী প্রটেকশন",
+      title: t.themeBeauty.trust3Title,
+      subtitle: t.themeBeauty.trust3Sub,
     },
     {
       icon: "🔄",
-      title: "আনবক্সিং মানিব্যাক পলিসি",
-      subtitle: "নকল প্রমাণে ৩ গুণ টাকা ফেরতের নিশ্চয়তা",
+      title: t.themeBeauty.trust4Title,
+      subtitle: t.themeBeauty.trust4Sub,
     },
   ];
 
@@ -78,6 +79,7 @@ export function BeautyProductCard({
   product: ShopProduct;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -123,7 +125,7 @@ export function BeautyProductCard({
             </span>
           ) : null}
           <span className="rounded-lg bg-rose-950/80 px-2 py-0.5 text-[9px] font-bold text-white backdrop-blur-xs">
-            ✨ ১০০% জেনুইন
+            {t.themeBeauty.genuineBadge}
           </span>
         </div>
 
@@ -153,10 +155,10 @@ export function BeautyProductCard({
         <div>
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-semibold text-rose-700">
-              {product.category || "স্কিনকেয়ার"}
+              {product.category || t.themeBeauty.skincareFallback}
             </span>
             <span className="rounded-full bg-pink-50 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-              {isOutOfStock ? "স্টক শেষ" : "● স্টকে আছে"}
+              {isOutOfStock ? t.themeBeauty.outOfStock : t.themeBeauty.inStock}
             </span>
           </div>
 
@@ -195,11 +197,11 @@ export function BeautyProductCard({
             }`}
           >
             {added ? (
-              <span>✓ ব্যাগে যোগ হয়েছে</span>
+              <span>{t.themeBeauty.addedToBag}</span>
             ) : (
               <>
                 <span>🛍️</span>
-                <span>{isOutOfStock ? "স্টক শেষ" : busy ? "যোগ হচ্ছে…" : "ব্যাগে নিন"}</span>
+                <span>{isOutOfStock ? t.themeBeauty.outOfStock : busy ? t.themeBeauty.adding : t.themeBeauty.addToBag}</span>
               </>
             )}
           </button>
@@ -215,10 +217,13 @@ export function BeautyProductCard({
 export function BeautyShadeSelector({
   selectedShade = "Ivory Fair",
   onSelectShade,
+  locale = "bn",
 }: {
   selectedShade?: string;
   onSelectShade?: (shadeName: string) => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const shades = [
     { name: "Fair Ivory 110", color: "#F7E2D0", tone: "Cool Fair" },
     { name: "Classic Beige 120", color: "#E7BA99", tone: "Neutral Light" },
@@ -231,9 +236,9 @@ export function BeautyShadeSelector({
     <div className="space-y-2.5 rounded-2xl border border-rose-100 bg-pink-50/30 p-3.5">
       <div className="flex items-center justify-between text-xs">
         <label className="font-bold text-slate-900">
-          আপনার ত্বকের শেড বেছে নিন: <span className="text-rose-700">{selectedShade}</span>
+          {t.themeBeauty.shadeLabel}<span className="text-rose-700">{selectedShade}</span>
         </label>
-        <span className="text-[11px] font-bold text-rose-800">ন্যাচারাল ফিনিশ</span>
+        <span className="text-[11px] font-bold text-rose-800">{t.themeBeauty.naturalFinish}</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-2.5">
@@ -269,10 +274,13 @@ export function BeautyShadeSelector({
 export function BeautyRoutineBundle({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [cleanser, setCleanser] = useState(true);
   const [serum, setSerum] = useState(true);
   const [sunscreen, setSunscreen] = useState(true);
@@ -319,10 +327,10 @@ export function BeautyRoutineBundle({
           </span>
           <div>
             <h3 className="text-sm font-black text-slate-900">
-              কমপ্লিট ৩-স্টেপ স্কিনকেয়ার রুটিন (Glass Skin Routine)
+              {t.themeBeauty.routineTitle}
             </h3>
             <p className="text-[11px] text-slate-500">
-              ক্লিনজার + টার্গেটেড সিরাম + সানস্ক্রিন একসাথে ব্যবহারে দ্রুততম গ্লো রেজাল্ট
+              {t.themeBeauty.routineSub}
             </p>
           </div>
         </div>
@@ -348,7 +356,7 @@ export function BeautyRoutineBundle({
           />
           <div>
             <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800">
-              স্টেপ ১: ক্লিনজার
+              {t.themeBeauty.step1}
             </span>
             <p className="mt-1 text-xs font-bold text-slate-900">সিকা সুদিং ফোমিং ফেসওয়াশ</p>
             <p className="text-xs font-extrabold text-rose-900">+ ৳৭৫০</p>
@@ -358,7 +366,7 @@ export function BeautyRoutineBundle({
         {/* Step 2: Main Product (Targeted Serum / Moisturizer) */}
         <div className="rounded-2xl border-2 border-rose-900 bg-white p-3 shadow-xs">
           <span className="rounded bg-rose-900 px-1.5 py-0.2 text-[9px] font-black text-white">
-            স্টেপ ২: মূল সিরাম (নির্বাচিত)
+            {t.themeBeauty.step2}
           </span>
           <p className="mt-1 line-clamp-1 text-xs font-black text-slate-900">{mainProduct.name}</p>
           <p className="text-xs font-extrabold text-rose-900">{formatBeautyPrice(mainProduct.priceMinor)}</p>
@@ -380,7 +388,7 @@ export function BeautyRoutineBundle({
           />
           <div>
             <span className="rounded bg-rose-100 px-1.5 py-0.2 text-[9px] font-black text-rose-800">
-              স্টেপ ৩: সান প্রটেকশন
+              {t.themeBeauty.step3}
             </span>
             <p className="mt-1 text-xs font-bold text-slate-900">হায়ালুরনিক ওয়াটার সানস্ক্রিন SPF 50+</p>
             <p className="text-xs font-extrabold text-rose-900">+ ৳১,১৫০</p>
@@ -401,17 +409,17 @@ export function BeautyRoutineBundle({
               (৳৩৫০ সেভ হচ্ছে)
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">সম্পূর্ণ রুটিন সেট একসাথে বাবল প্রটেকশনে ডেলিভারি হবে</p>
+          <p className="text-[11px] text-slate-500">{t.themeBeauty.routineNote}</p>
         </div>
 
         {added ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-emerald-800">✓ সম্পূর্ণ রুটিন ব্যাগে যোগ হয়েছে!</span>
+            <span className="text-xs font-bold text-emerald-800">{t.themeBeauty.routineAdded}</span>
             <Link
               href={`/shop/${orgSlug}/cart`}
               className="rounded-xl bg-rose-900 px-4 py-2 text-xs font-bold text-white hover:bg-rose-950"
             >
-              কার্ট দেখুন
+              {t.themeBeauty.viewCart}
             </Link>
           </div>
         ) : (
@@ -421,7 +429,7 @@ export function BeautyRoutineBundle({
             disabled={busy}
             className="rounded-xl bg-rose-900 px-5 py-3 text-xs font-black text-white shadow-md shadow-rose-900/20 hover:bg-rose-950 transition disabled:opacity-50"
           >
-            {busy ? "যোগ হচ্ছে…" : "এক ক্লিকে সম্পূর্ণ ৩-স্টেপ রুটিন কিনুন"}
+            {busy ? t.themeBeauty.routineBusy : t.themeBeauty.routineBuy}
           </button>
         )}
       </div>
@@ -432,12 +440,13 @@ export function BeautyRoutineBundle({
 // ----------------------------------------------------
 // 5. Active Ingredients & Dermatologist Usage Guide
 // ----------------------------------------------------
-export function BeautyIngredientsGuide() {
+export function BeautyIngredientsGuide({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="rounded-2xl border border-rose-100 bg-white p-4 text-xs space-y-3 shadow-xs">
       <div className="flex items-center justify-between border-b border-rose-50 pb-2">
-        <h4 className="font-black text-slate-900">অ্যাক্টিভ ইনগ্রেডিয়েন্টস ও ব্যবহারের নিয়ম:</h4>
-        <span className="text-[10px] text-rose-700 font-bold">ল্যাব ভেরিফায়েড ফর্মুলা</span>
+        <h4 className="font-black text-slate-900">{t.themeBeauty.ingredientsHeading}</h4>
+        <span className="text-[10px] text-rose-700 font-bold">{t.themeBeauty.labVerified}</span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-[11px]">
@@ -456,14 +465,14 @@ export function BeautyIngredientsGuide() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-rose-50 text-[11px] text-slate-600">
-        <span className="font-bold text-slate-800">ব্যবহারের সময়:</span>
+        <span className="font-bold text-slate-800">{t.themeBeauty.usageTimeLabel}</span>
         <span className="rounded-full bg-amber-50 px-2.5 py-0.5 font-bold text-amber-900">
-          ☀️ সকাল (AM)
+          {t.themeBeauty.amLabel}
         </span>
         <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 font-bold text-indigo-900">
-          🌙 রাত (PM)
+          {t.themeBeauty.pmLabel}
         </span>
-        <span className="text-slate-400">· সকল ধরনের ত্বকের জন্য উপযোগী</span>
+        <span className="text-slate-400">{t.themeBeauty.allSkinTypes}</span>
       </div>
     </div>
   );
@@ -476,11 +485,14 @@ export function BeautyAuthenticityModal({
   open,
   onClose,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   if (!open) return null;
 
   return (
@@ -500,7 +512,7 @@ export function BeautyAuthenticityModal({
             🔒
           </span>
           <div>
-            <h3 className="text-base font-black text-slate-900">১০০% অরিজিনাল অথেন্টিসিটি সনদ</h3>
+            <h3 className="text-base font-black text-slate-900">{t.themeBeauty.authTitle}</h3>
             <p className="line-clamp-1 text-xs text-slate-500">{productName}</p>
           </div>
         </div>
@@ -508,26 +520,26 @@ export function BeautyAuthenticityModal({
         <div className="mt-5 space-y-3 text-xs text-slate-700">
           <div className="rounded-2xl border border-rose-200 bg-pink-50/60 p-4 space-y-2">
             <div className="flex items-center justify-between border-b border-rose-200/60 pb-2">
-              <span className="font-bold text-slate-900">সোর্সিং ও আমদানিকারক:</span>
-              <span className="font-black text-rose-900">অথোরাইজড গ্লোবাল ডিস্ট্রিবিউটর</span>
+              <span className="font-bold text-slate-900">{t.themeBeauty.authSourceLabel}</span>
+              <span className="font-black text-rose-900">{t.themeBeauty.authSourceValue}</span>
             </div>
-            <p><strong>আমদানি চ্যানেল:</strong> দক্ষিণ কোরিয়া, যুক্তরাজ্য ও মার্কিন যুক্তরাষ্ট্রের অফিশিয়াল চ্যানেল থেকে সরাসরি আমদানিকৃত।</p>
-            <p><strong>ব্যাচ কোড ও কিউআর:</strong> প্যাকেটের গায়ে থাকা অরিজিনাল বারকোড ও ব্যাচ নাম্বার চেক করে যেকোনো অথেনটিকেশন অ্যাপে যাচাই করতে পারবেন।</p>
-            <p><strong>মানিব্যাক পলিসি:</strong> নকল বা গ্রে-মার্কেট প্রসাধনী প্রমাণিত হলে ৩ গুণ টাকা রিফান্ড গ্যারান্টি।</p>
+            <p><strong>{t.themeBeauty.authChannelPrefix}</strong> দক্ষিণ কোরিয়া, যুক্তরাজ্য ও মার্কিন যুক্তরাষ্ট্রের অফিশিয়াল চ্যানেল থেকে সরাসরি আমদানিকৃত।</p>
+            <p><strong>{t.themeBeauty.authBatchPrefix}</strong> প্যাকেটের গায়ে থাকা অরিজিনাল বারকোড ও ব্যাচ নাম্বার চেক করে যেকোনো অথেনটিকেশন অ্যাপে যাচাই করতে পারবেন।</p>
+            <p><strong>{t.themeBeauty.authPolicyPrefix}</strong> নকল বা গ্রে-মার্কেট প্রসাধনী প্রমাণিত হলে ৩ গুণ টাকা রিফান্ড গ্যারান্টি।</p>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">বিএসটিআই ছাড়পত্র</p>
-              <p className="text-slate-400 text-[10px]">BSTI টেস্টেড</p>
+              <p className="font-bold text-slate-900">{t.themeBeauty.feat1Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeBeauty.feat1Sub}</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">পারদ ও লেড মুক্ত</p>
-              <p className="text-slate-400 text-[10px]">০% ক্ষতিকর উপাদান</p>
+              <p className="font-bold text-slate-900">{t.themeBeauty.feat2Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeBeauty.feat2Sub}</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-2.5">
-              <p className="font-bold text-slate-900">তাজা এক্সপায়ারি</p>
-              <p className="text-slate-400 text-[10px]">২০২৬-২০২৭ ডেট</p>
+              <p className="font-bold text-slate-900">{t.themeBeauty.feat3Title}</p>
+              <p className="text-slate-400 text-[10px]">{t.themeBeauty.feat3Sub}</p>
             </div>
           </div>
         </div>
@@ -542,10 +554,13 @@ export function BeautyAuthenticityModal({
 export function BeautySkinQuizModal({
   open,
   onClose,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [skinType, setSkinType] = useState("oily");
   const [concern, setConcern] = useState("acne");
   const [submitted, setSubmitted] = useState(false);
@@ -569,8 +584,8 @@ export function BeautySkinQuizModal({
             🪄
           </span>
           <div>
-            <h3 className="text-base font-black text-slate-900">স্মার্ট স্কিন কনসার্ন অ্যাডভাইজর</h3>
-            <p className="text-xs text-slate-500">আপনার ত্বকের ধরন অনুযায়ী পারফেক্ট প্রোডাক্ট সাজেশন পান</p>
+            <h3 className="text-base font-black text-slate-900">{t.themeBeauty.advisorTitle}</h3>
+            <p className="text-xs text-slate-500">{t.themeBeauty.advisorSub}</p>
           </div>
         </div>
 
@@ -578,13 +593,13 @@ export function BeautySkinQuizModal({
           <div className="space-y-4 text-xs">
             {/* Question 1: Skin Type */}
             <div className="space-y-2">
-              <label className="font-bold text-slate-800">১. আপনার ত্বকের ধরন কোনটি?</label>
+              <label className="font-bold text-slate-800">{t.themeBeauty.q1Label}</label>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  { id: "oily", label: "তৈলাক্ত (Oily)" },
-                  { id: "dry", label: "শুষ্ক (Dry)" },
-                  { id: "combination", label: "মিশ্র (Combo)" },
-                  { id: "sensitive", label: "সংবেদনশীল" },
+                  { id: "oily", label: t.themeBeauty.skinOily },
+                  { id: "dry", label: t.themeBeauty.skinDry },
+                  { id: "combination", label: t.themeBeauty.skinCombo },
+                  { id: "sensitive", label: t.themeBeauty.skinSensitive },
                 ].map((t) => (
                   <button
                     key={t.id}
@@ -604,13 +619,13 @@ export function BeautySkinQuizModal({
 
             {/* Question 2: Main Concern */}
             <div className="space-y-2">
-              <label className="font-bold text-slate-800">২. আপনার প্রধান ত্বকের সমস্যা কোনটি?</label>
+              <label className="font-bold text-slate-800">{t.themeBeauty.q2Label}</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { id: "acne", label: "ব্রণ ও পোরস (Acne Care)" },
-                  { id: "pigment", label: "কালো দাগ ও পিগমেন্টেশন" },
-                  { id: "glow", label: "উজ্জ্বলতা ও গ্লাস স্কিন" },
-                  { id: "barrier", label: "ড্যামেজড স্কিন ব্যারিয়ার" },
+                  { id: "acne", label: t.themeBeauty.concernAcne },
+                  { id: "pigment", label: t.themeBeauty.concernPigment },
+                  { id: "glow", label: t.themeBeauty.concernGlow },
+                  { id: "barrier", label: t.themeBeauty.concernBarrier },
                 ].map((c) => (
                   <button
                     key={c.id}
@@ -633,21 +648,21 @@ export function BeautySkinQuizModal({
               onClick={() => setSubmitted(true)}
               className="w-full rounded-2xl bg-rose-900 py-3 text-xs font-black text-white shadow-md hover:bg-rose-950"
             >
-              সাজেশন দেখুন →
+              {t.themeBeauty.advisorCta}
             </button>
           </div>
         ) : (
           <div className="space-y-3 rounded-2xl border border-rose-200 bg-pink-50/50 p-4 text-xs">
-            <h4 className="font-black text-rose-950">✨ আপনার জন্য বিশেষজ্ঞ পরামর্শ:</h4>
+            <h4 className="font-black text-rose-950">{t.themeBeauty.advisorResultTitle}</h4>
             <p className="text-slate-700 leading-relaxed">
-              আপনার নির্বাচিত <strong>{skinType}</strong> ত্বকের জন্য স্যালিসিলিক অ্যাসিড (BHA) অথবা নিয়াসিনামাইড সিরাম অত্যন্ত কার্যকর। প্রতিদিন সকালে সানস্ক্রিন এবং রাতে সিকা ময়েশ্চারাইজার ব্যবহারের পরামর্শ দেওয়া হচ্ছে।
+              {t.themeBeauty.advisorResultPrefix}<strong>{skinType}</strong>{t.themeBeauty.advisorResultSuffix}
             </p>
             <button
               type="button"
               onClick={onClose}
               className="mt-2 w-full rounded-xl bg-rose-900 py-2.5 text-xs font-bold text-white hover:bg-rose-950"
             >
-              ম্যাচিং প্রোডাক্ট দেখুন
+              {t.themeBeauty.advisorProducts}
             </button>
           </div>
         )}
@@ -668,6 +683,7 @@ export function BeautyThemeHome({
   orgSlug: string;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const { settings, products, flashSales, categories, brands, pagination } = home;
   const page = pagination.page;
   const [skinQuizOpen, setSkinQuizOpen] = useState(false);
@@ -687,19 +703,19 @@ export function BeautyThemeHome({
       <div className="bg-rose-950 text-white text-xs py-2 px-4">
         <div className="mx-auto max-w-7xl flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-bold">
-            <span>✨ ১০০% অরিজিনাল কোরিয়ান ও আন্তর্জাতিক কসমেটিক্স</span>
+            <span>{t.themeBeauty.topOriginal}</span>
             <span className="hidden sm:inline">·</span>
-            <span className="text-pink-300">সরাসরি অথোরাইজড চ্যানেল থেকে সংগৃহীত</span>
+            <span className="text-pink-300">{t.themeBeauty.topChannel}</span>
           </div>
           <div className="flex items-center gap-2 font-semibold text-[11px]">
-            <span>📞 বিউটি কনসালটেশন: 01XXXXXXXXX</span>
+            <span>{t.themeBeauty.topConsult}01XXXXXXXXX</span>
             <span>·</span>
             <button
               type="button"
               onClick={() => setSkinQuizOpen(true)}
               className="bg-rose-800 hover:bg-rose-700 px-2.5 py-0.5 rounded-full font-bold underline"
             >
-              স্কিন কুইজ দিন
+              {t.themeBeauty.skinQuiz}
             </button>
           </div>
         </div>
@@ -715,25 +731,25 @@ export function BeautyThemeHome({
                 <span>AUTHENTIC SKINCARE & LUXURY BEAUTY</span>
               </div>
               <h1 className="text-3xl font-black tracking-tight text-white sm:text-5xl font-serif">
-                {settings.shopName || "আপনার ত্বকের জন্য খাঁটি ও বিশ্বস্ত প্রসাধন"}
+                {settings.shopName || t.themeBeauty.heroTaglineFallback}
               </h1>
               <p className="max-w-xl text-xs sm:text-sm text-pink-100 leading-relaxed">
                 {settings.metaDescription ||
-                  "কোরিয়ান গ্লাস স্কিন সিক্রেট, ইউকে ও ইউএসএ অরিজিনাল সিরাম, ময়েশ্চারাইজার ও মেকআপ। প্রতিটি পণ্যে ১০০% অরিজিনালিটি ও অথেন্টিসিটি নিশ্চয়তা।"}
+                  t.themeBeauty.heroDescFallback}
               </p>
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <a
                   href="#beauty-featured"
                   className="rounded-xl bg-white px-6 py-3 text-xs font-black text-rose-950 shadow-md transition hover:bg-pink-50"
                 >
-                  বেস্ট সেলিং স্কিনকেয়ার →
+                  {t.themeBeauty.heroCta}
                 </a>
                 <button
                   type="button"
                   onClick={() => setSkinQuizOpen(true)}
                   className="rounded-xl border border-pink-300/40 bg-rose-900/40 px-5 py-3 text-xs font-bold text-white backdrop-blur-sm hover:bg-rose-900/60"
                 >
-                  🪄 স্কিন টাইপ ম্যাচ করুন
+                  {t.themeBeauty.heroMatch}
                 </button>
               </div>
             </div>
@@ -744,11 +760,11 @@ export function BeautyThemeHome({
                 <span className="text-5xl">✨</span>
                 <h3 className="text-lg font-black text-white font-serif">K-Beauty & Glass Skin</h3>
                 <p className="text-xs text-pink-200 max-w-xs">
-                  COSRX, Beauty of Joseon, Anua এবং The Ordinary এর মতো জনপ্রিয় গ্লোবাল ব্র্যান্ড
+                  {t.themeBeauty.brandsLine}
                 </p>
                 <div className="flex justify-center gap-2 text-[10px] font-bold text-pink-100">
-                  <span className="rounded-full bg-white/20 px-2.5 py-1">ডার্মাটোলজিস্ট টেস্টেড</span>
-                  <span className="rounded-full bg-white/20 px-2.5 py-1">১০০% অথেনটিক</span>
+                  <span className="rounded-full bg-white/20 px-2.5 py-1">{t.themeBeauty.chipDerma}</span>
+                  <span className="rounded-full bg-white/20 px-2.5 py-1">{t.themeBeauty.chipAuthentic}</span>
                 </div>
               </div>
             </div>
@@ -756,15 +772,15 @@ export function BeautyThemeHome({
         </section>
 
         {/* 3. 4 Pillars Trust Bar */}
-        <BeautyAuthenticityBadge />
+        <BeautyAuthenticityBadge locale={locale} />
 
         {/* 4. Skin Concerns Category Strip */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-black text-slate-900 font-serif">
-              ত্বকের সমস্যা ও প্রয়োজন অনুযায়ী বেছে নিন:
+              {t.themeBeauty.concernsHeading}
             </h3>
-            <span className="text-xs font-bold text-rose-700">টার্গেটেড সমাধান</span>
+            <span className="text-xs font-bold text-rose-700">{t.themeBeauty.concernsSub}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
@@ -793,9 +809,9 @@ export function BeautyThemeHome({
                 <span className="text-2xl">🔥</span>
                 <div>
                   <h3 className="text-lg font-black text-rose-950 font-serif">
-                    {flashSales.sales[0].name || "বিউটি মেগা সেল — সীমিত সময়ের অফার"}
+                    {flashSales.sales[0].name || t.themeBeauty.flashFallback}
                   </h3>
-                  <p className="text-xs text-rose-700">জনপ্রিয় আন্তর্জাতিক ব্র্যান্ডের উপর সর্বোচ্চ ছাড়</p>
+                  <p className="text-xs text-rose-700">{t.themeBeauty.flashSub}</p>
                 </div>
               </div>
               <FlashCountdown endsAt={flashSales.sales[0].endsAt} serverNow={flashSales.serverNow} locale={locale} />
@@ -819,10 +835,10 @@ export function BeautyThemeHome({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-black text-slate-900 sm:text-2xl font-serif">
-                জনপ্রিয় কসমেটিক্স ও স্কিনকেয়ার কালেকশন
+                {t.themeBeauty.collectionHeading}
               </h2>
               <p className="text-xs text-slate-500">
-                ১০০% অরিজিনাল সনদ ও ডার্মাটোলজিক্যাল ভেরিফিকেশন সহ
+                {t.themeBeauty.collectionSub}
               </p>
             </div>
             <SortSelect orgSlug={orgSlug} locale={locale} value="featured" />
@@ -847,18 +863,18 @@ export function BeautyThemeHome({
                   href={`/shop/${orgSlug}?page=${page - 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  আগের পেজ
+                  {t.themeBeauty.prevPage}
                 </Link>
               )}
               <span className="text-xs font-semibold text-slate-500">
-                পেজ {pagination.page} / {pagination.totalPages}
+                {t.themeBeauty.pagePrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.page)} / {fmtNumber(locale === "en" ? "en" : "bn", pagination.totalPages)}
               </span>
               {page < pagination.totalPages && (
                 <Link
                   href={`/shop/${orgSlug}?page=${page + 1}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
                 >
-                  পরের পেজ
+                  {t.themeBeauty.nextPage}
                 </Link>
               )}
             </nav>
@@ -867,7 +883,7 @@ export function BeautyThemeHome({
       </div>
 
       {/* Skin Quiz Modal */}
-      <BeautySkinQuizModal open={skinQuizOpen} onClose={() => setSkinQuizOpen(false)} />
+      <BeautySkinQuizModal locale={locale} open={skinQuizOpen} onClose={() => setSkinQuizOpen(false)} />
     </div>
   );
 }

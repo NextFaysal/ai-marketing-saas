@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { formatMinor } from "@repo/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { VisionService } from "../ai/vision.service";
 import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { PRODUCT_DESCRIBE_PROMPT, parseProductDescription, rankProductCandidates } from "./product-match";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** How many of the org's products the scorer may consider. The
  *  catalog search is a text overlap over rows already in memory —
@@ -53,26 +54,26 @@ export class ProductRecognitionService {
     }
     if (message.mediaUrl) {
       const res = await fetch(message.mediaUrl);
-      if (!res.ok) throw new BadRequestException(`ছবিটি আনা যায়নি (${res.status})`);
+      if (!res.ok) throw badRequest("cx8.theImageCouldNotBeFetched", { resStatus: res.status });
       return {
         bytes: Buffer.from(await res.arrayBuffer()),
         contentType: res.headers.get("content-type") ?? message.mediaContentType ?? "image/jpeg",
       };
     }
-    throw new BadRequestException("এই মেসেজের ছবির কপি সংরক্ষিত নেই — ছবিটি আবার পাঠাতে বলুন");
+    throw badRequest("cx8.noSavedCopyOfThisMessage");
   }
 
   async recognize(organizationId: string, userId: string, conversationId: string, messageId: string) {
     const conv = await (this.prisma as any).channelConversation.findFirst({
       where: { id: conversationId, organizationId },
     });
-    if (!conv) throw new NotFoundException("Conversation not found in this organization");
+    if (!conv) throw notFound("cx8.conversationNotFoundInThisOrganization");
     const message = await (this.prisma as any).channelMessage.findFirst({
       where: { id: messageId, conversationId },
     });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message) throw notFound("cx8.messageNotFoundInThisConversation");
     if (message.direction !== "in" || message.type !== "image") {
-      throw new BadRequestException("শুধু গ্রাহকের পাঠানো ছবির জন্যই প্রোডাক্ট খোঁজা যাবে");
+      throw badRequest("cx8.productsCanOnlyBeSearchedFrom");
     }
 
     const { bytes, contentType } = await this.loadImageBytes(message);

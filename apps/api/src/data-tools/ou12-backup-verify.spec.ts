@@ -130,8 +130,8 @@ describe("OU12 verifyBackup", () => {
 
   it("wrong slug → refused BEFORE the file is read; nothing is recorded", async () => {
     const { svc, prisma, store, audit } = makeSvc(Buffer.from(JSON.stringify(soundBundle()), "utf8"));
-    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "not-the-slug")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "not-the-slug")).rejects.toMatchObject({ code: "dataTools.slug" });
+    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "")).rejects.toMatchObject({ code: "dataTools.slug" });
     expect(store.getCalls).toBe(0);
     expect(prisma.dataExport.rows[0].backupVerifiedAt).toBeNull();
     expect(audit.calls).toHaveLength(0);
@@ -140,8 +140,8 @@ describe("OU12 verifyBackup", () => {
   it("a foreign org's export is a 404, exactly like a missing one", async () => {
     const { svc, prisma } = makeSvc(Buffer.from(JSON.stringify(soundBundle()), "utf8"));
     prisma.dataExport.rows[0].organizationId = "org-2";
-    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "acme-shop")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.verifyBackup("org-1", "u-owner", "exp-missing", "acme-shop")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.verifyBackup("org-1", "u-owner", "exp-1", "acme-shop")).rejects.toMatchObject({ code: "dataTools.exportNotFound" });
+    await expect(svc.verifyBackup("org-1", "u-owner", "exp-missing", "acme-shop")).rejects.toMatchObject({ code: "dataTools.exportNotFound" });
   });
 
   it("missing stored bytes → NOT ok with stored_file_missing, and the failure is recorded (never hidden)", async () => {

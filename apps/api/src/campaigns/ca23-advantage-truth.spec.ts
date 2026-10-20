@@ -239,6 +239,6 @@ describe("CA23 app promotion", () => {
   it("the Advantage+ toggle refuses a traffic plan but accepts sales and app plans", async () => {
     const svc: any = new CampaignsService(fakePrisma() as any, auditStub, devLlm);
     const traffic = await svc.createPlan("org-1", "u", { name: "T", objective: "OUTCOME_TRAFFIC", adAccountId: "acc-1" });
-    await expect(svc.setAdvantagePlus("org-1", "u", traffic.id, true)).rejects.toThrow("OUTCOME_SALES or OUTCOME_APP_PROMOTION");
+    await expect(svc.setAdvantagePlus("org-1", "u", traffic.id, true)).rejects.toMatchObject({ code: "campaigns.advantageRunsOnTheSalesOr" });
   });
 });

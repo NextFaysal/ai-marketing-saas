@@ -110,7 +110,7 @@ describe("CB5 performance loop", () => {
     const { plan } = await publishedPlan(svc, tables);
     const row = tables.campaignPlan.rows.find((r: any) => r.id === plan.id);
     row.status = "approved"; row.externalCampaignId = null;
-    await expect(svc.scheduleLaunch("org", plan.id, "u1", new Date(Date.now() - 1000).toISOString())).rejects.toThrow(/future/);
+    await expect(svc.scheduleLaunch("org", plan.id, "u1", new Date(Date.now() - 1000).toISOString())).rejects.toMatchObject({ code: "campaigns.launchTimeMustBeAtLeast" });
     await svc.scheduleLaunch("org", plan.id, "u1", new Date(Date.now() + 3600_000).toISOString());
     expect(row.publishAt).toBeTruthy();
     row.publishAt = new Date(Date.now() - 1000); // due now

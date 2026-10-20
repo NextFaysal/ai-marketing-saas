@@ -7,6 +7,14 @@
  * or null — null renders as "—", never a fabricated 0).
  */
 import { minorToTaka } from "./orders-on1";
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
 
 export interface AnalyticsPayload {
   from: string;
@@ -102,10 +110,10 @@ export function formatPct(v: number | null | undefined): string {
 }
 
 /** Money minor string → "৳x" display via the ON1 formatter. */
-export function formatMoneyMinor(minor: string | null | undefined): string {
+export function formatMoneyMinor(minor: string | null | undefined, locale: LibLocale = "bn"): string {
   if (minor === null || minor === undefined) return "—";
   const t = minorToTaka(minor);
-  return t === "" ? "—" : `৳${t}`;
+  return t === "" ? "—" : interpolate(D(locale).text198xo1, { t: t });
 }
 
 /** Proportional bar width (%) for a district row vs the top row. */
@@ -115,10 +123,10 @@ export function districtBarPct(orders: number, maxOrders: number): number {
 }
 
 /** One digest recipient result → a Bengali status label. */
-export function digestResultLabel(r: DigestRecipientResult): string {
-  const channel = r.channel === "sms" ? "SMS" : "ইমেইল";
-  if (r.ok) return `${channel}: পাঠানো হয়েছে ✓`;
-  if (r.skipped && r.error === "no_phone_on_record") return `${channel}: ফোন নম্বর রেকর্ডে নেই — পাঠানো হয়নি`;
-  if (r.skipped) return `${channel}: পাঠানো হয়নি (${r.error ?? "বাদ দেওয়া হয়েছে"})`;
-  return `${channel}: ব্যর্থ হয়েছে (${r.error ?? "অজানা ত্রুটি"})`;
+export function digestResultLabel(r: DigestRecipientResult, locale: LibLocale = "bn"): string {
+  const channel = r.channel === "sms" ? "SMS" : D(locale).email;
+  if (r.ok) return interpolate(D(locale).sent2, { channel: channel });
+  if (r.skipped && r.error === "no_phone_on_record") return interpolate(D(locale).noPhoneNumberOnRecord, { channel: channel });
+  if (r.skipped) return interpolate(D(locale).notSent, { channel: channel, r: r.error ?? D(locale).skipped2 });
+  return interpolate(D(locale).failed4, { channel: channel, r: r.error ?? D(locale).unknownError });
 }

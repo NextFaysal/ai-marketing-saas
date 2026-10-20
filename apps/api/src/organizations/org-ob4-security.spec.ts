@@ -114,19 +114,19 @@ describe("ORG11 — security policy read/write", () => {
 
   it("GET refuses non-members", async () => {
     const { svc } = makeService();
-    await expect(svc.getSecurityPolicy("org-1", "u-new")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getSecurityPolicy("org-1", "u-new")).rejects.toMatchObject({ code: "connections.userNotOrgMember", status: 404 });
   });
 
   it("PATCH is OWNER-only at the service layer too", async () => {
     const { svc, p } = makeService();
-    await expect(svc.updateSecurityPolicy("org-1", "u-admin", { sessionMaxAgeHours: 24 })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.updateSecurityPolicy("org-1", "u-new", { sessionMaxAgeHours: 24 })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateSecurityPolicy("org-1", "u-admin", { sessionMaxAgeHours: 24 })).rejects.toMatchObject({ status: 403 });
+    await expect(svc.updateSecurityPolicy("org-1", "u-new", { sessionMaxAgeHours: 24 })).rejects.toMatchObject({ code: "connections.userNotOrgMember", status: 404 });
     expect(p.organization.rows[0].sessionMaxAgeHours).toBeNull();
   });
 
   it("self-lockout guard: an OWNER without MFA cannot switch requireMfa ON", async () => {
     const { svc, p } = makeService();
-    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { requireMfa: true })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { requireMfa: true })).rejects.toMatchObject({ status: 400 });
     await expect(svc.updateSecurityPolicy("org-1", "u-owner", { requireMfa: true })).rejects.toThrow(/আগে নিজের অ্যাকাউন্টে MFA/);
     expect(p.organization.rows[0].requireMfa).toBe(false);
   });
@@ -151,9 +151,9 @@ describe("ORG11 — security policy read/write", () => {
 
   it("session cap validation: 1..720 integers, or null to clear", async () => {
     const { svc, p } = makeService();
-    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 0 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 721 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 2.5 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 0 })).rejects.toMatchObject({ status: 400 });
+    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 721 })).rejects.toMatchObject({ status: 400 });
+    await expect(svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 2.5 })).rejects.toMatchObject({ status: 400 });
     const set = await svc.updateSecurityPolicy("org-1", "u-owner", { sessionMaxAgeHours: 24 });
     expect(set.sessionMaxAgeHours).toBe(24);
     expect(p.organization.rows[0].sessionMaxAgeHours).toBe(24);
@@ -214,7 +214,7 @@ describe("ORG12 — per-user owned-org cap in create()", () => {
     await expect(svc.create("u-new", { name: "Mine", slug: "mine-shop" } as any)).resolves.toBeTruthy();
     expect(p.membership.rows.filter((m: any) => m.userId === "u-new" && m.role === "OWNER").length).toBe(2);
     // Now at the cap — the next create is refused and names the limit.
-    await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).rejects.toMatchObject({ status: 400 });
     await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).rejects.toThrow(/সর্বোচ্চ 2টি/);
     expect(p.organization.rows.some((o: any) => o.slug === "third-shop")).toBe(false);
   });
@@ -225,7 +225,7 @@ describe("ORG12 — per-user owned-org cap in create()", () => {
       { id: "x-2", userId: "u-new", organizationId: "org-8", role: "OWNER", status: "ACTIVE" },
     ];
     const { svc, p } = makeService({ settings: [{ key: "maxOrgsPerUser", value: 2 }], memberships });
-    await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).rejects.toMatchObject({ status: 400 });
     p.systemSetting.rows[0].value = 3;
     await expect(svc.create("u-new", { name: "Third", slug: "third-shop" } as any)).resolves.toBeTruthy();
   });

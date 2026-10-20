@@ -328,13 +328,13 @@ describe("EC32 payouts (FIFO)", () => {
     const { svc } = payoutSetup();
     await expect(
       svc.recordPayout("org-1", "actor-1", "partner-1", { amountMinor: "20001", method: "bkash" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.thePayoutAmountCannotExceedThe" });
     await expect(
       svc.recordPayout("org-1", "actor-1", "partner-1", { amountMinor: "0", method: "bkash" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.thePayoutAmountMustBeMore" });
     await expect(
       svc.recordPayout("org-1", "actor-1", "partner-1", { amountMinor: "100", method: "rocket" as any }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.thePayoutMethodMustBeBkash" });
   });
 
   it("FIFO flip: partial coverage flips only fully-covered entries; pending never flips", async () => {
@@ -396,13 +396,13 @@ describe("EC32 partners CRUD + entries staff ops", () => {
     const { svc } = setup();
     await expect(
       svc.createPartner("org-1", "actor-1", { name: "X", phone: "01577777777", commissionPercent: 51 } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.theCommissionRateMustBeAn" });
     await expect(
       svc.createPartner("org-1", "actor-1", { name: "X", phone: "01577777777", commissionPercent: -1 } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.theCommissionRateMustBeAn" });
     await expect(
       svc.updatePartner("org-1", "actor-1", "partner-1", { commissionPercent: 51 } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.theCommissionRateMustBeAn" });
     const ok = await svc.updatePartner("org-1", "actor-1", "partner-1", { commissionPercent: 50 } as any);
     expect(ok.commissionPercent).toBe(50);
     const zero = await svc.updatePartner("org-1", "actor-1", "partner-1", { commissionPercent: 0 } as any);
@@ -413,10 +413,10 @@ describe("EC32 partners CRUD + entries staff ops", () => {
     const { svc } = setup();
     await expect(
       svc.createPartner("org-1", "actor-1", { name: "X", phone: "01577777777", code: "affxyz12" } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.thisAffiliateCodeIsAlreadyUsed" });
     await expect(
       svc.updatePartner("org-1", "actor-1", "partner-2", { code: "AFFXYZ12" } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "affiliates.thisAffiliateCodeIsAlreadyUsed" });
     // Keeping your own code is fine.
     const same = await svc.updatePartner("org-1", "actor-1", "partner-1", { code: "affxyz12" } as any);
     expect(same.code).toBe("AFFXYZ12");
@@ -432,15 +432,15 @@ describe("EC32 partners CRUD + entries staff ops", () => {
 
   it("foreign partner / entry are 404s", async () => {
     const { svc, addEntry } = setup();
-    await expect(svc.getPartner("org-1", "partner-foreign")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getPartner("org-1", "partner-foreign")).rejects.toMatchObject({ code: "affiliates.affiliatePartnerNotFoundInThis" });
     await expect(
       svc.updatePartner("org-1", "actor-1", "partner-foreign", { name: "Hax" } as any),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "affiliates.affiliatePartnerNotFoundInThis" });
     await expect(
       svc.recordPayout("org-1", "actor-1", "partner-foreign", { amountMinor: "1", method: "cash" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "affiliates.affiliatePartnerNotFoundInThis" });
     const foreignEntry = addEntry({ organizationId: "org-2", orderId: "o-f" });
-    await expect(svc.approveEntry("org-1", "actor-1", foreignEntry.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.approveEntry("org-1", "actor-1", foreignEntry.id)).rejects.toMatchObject({ code: "affiliates.commissionEntryNotFoundInThis" });
   });
 
   it("approve: pending → approved only; a second approve is a 400", async () => {
@@ -452,7 +452,7 @@ describe("EC32 partners CRUD + entries staff ops", () => {
     expect(approved.status).toBe("approved");
     expect(approved.orderNumber).toBe(order.externalNumber);
     expect(approved.partnerName).toBe("Rafi Partner");
-    await expect(svc.approveEntry("org-1", "actor-1", entry.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.approveEntry("org-1", "actor-1", entry.id)).rejects.toMatchObject({ code: "affiliates.onlyPendingCommissionCanBeApproved" });
   });
 
   it("listEntries filters by partner + status and joins display fields", async () => {

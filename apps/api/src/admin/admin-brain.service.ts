@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { BrainAdminService } from "../ai/brain-admin.service";
+import { notFound } from "../i18n/api-exception";
 
 /**
  * SA-B23 (Smart AI Phase 6, T1 console family): the SUPER
@@ -72,7 +73,7 @@ export class AdminBrainService {
         createdAt: true,
       },
     });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     return org;
   }
 

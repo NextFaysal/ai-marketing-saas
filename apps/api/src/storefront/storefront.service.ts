@@ -38,7 +38,7 @@ import { refreshOrgSearchVectors } from "../products/search-vector";
 import { DeliveryPricingService, cartWeightOf } from "./delivery-pricing.service";
 import { resolveShopLocale } from "../translations/translations";
 import {
-  approvedStorefrontStrings, attachDisplayPrices, displayCurrencyRates, overlayProductTranslations,
+  approvedBlogPostTexts, approvedCategoryTexts, approvedStorefrontStrings, attachDisplayPrices, displayCurrencyRates, overlayProductTranslations,
 } from "../translations/public-translations";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
@@ -110,6 +110,7 @@ import type {
   PopupLeadDto,
 } from "./storefront.dto";
 import { sanitizeSectionOrder, isValidSectionOrder } from "./shop-sections";
+import { ApiException, badRequest, conflict, notFound } from "../i18n";
 
 /**
  * GB7: the promotions-side identity helpers, accessed through
@@ -162,7 +163,7 @@ function parseMinorField(value: string | null | undefined, field: string): bigin
   if (value === null || value === undefined) return null;
   const raw = String(value).trim();
   if (!/^\d+$/.test(raw)) {
-    throw new BadRequestException(`${field} অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (মাইনর একক) হতে হবে`);
+    throw badRequest("storefront.fieldNonNegativeMinor", { field: field });
   }
   return BigInt(raw);
 }
@@ -285,7 +286,7 @@ export class StorefrontService {
   private async resolveOnlineSelection(orgId: string, dto: CheckoutDto) {
     if (!dto.onlinePayment) return null;
     if (!this.tenantPayments?.assertPublicPaymentOption) {
-      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+      throw badRequest("connections.onlinePaymentOptionUnavailable");
     }
     return this.tenantPayments.assertPublicPaymentOption(orgId, dto.onlinePayment);
   }
@@ -312,10 +313,10 @@ export class StorefrontService {
   /** Resolve org + setting for public routes; 404 unless the shop is enabled. */
   private async requireEnabledShop(orgSlug: string): Promise<{ org: any; setting: any }> {
     const org = await this.findOrgBySlug(orgSlug);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     const setting = await this.getSetting(org.id);
     if (!setting || setting.shopEnabled !== true) {
-      throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+      throw notFound("orders.storeNotFound");
     }
     return { org, setting };
   }
@@ -952,6 +953,22 @@ export class StorefrontService {
       all = scanned;
     }
     const categories = this.buildCategories(categoryRows, all);
+    // MB5 (ML15): approved category NAME overlays for the shop
+    // locale, under the same public rules as the product overlay
+    // below (approved-only, org-scoped, failure-isolated, base
+    // name kept when no approved row exists). Only names are
+    // served in this payload — category descriptions have no
+    // public serving point today, so none is overlaid here.
+    {
+      const ids = categories.map((c) => c.id).filter((x): x is string => !!x);
+      if (ids.length) {
+        const texts = await approvedCategoryTexts(this.prisma as any, org.id, ids, shopLocale).catch(() => new Map());
+        for (const c of categories) {
+          const t = c.id ? texts.get(String(c.id)) : undefined;
+          if (t?.name) c.name = t.name;
+        }
+      }
+    }
     // GB2 (GC6/GC7): brand map + reservation totals for the
     // serialize extras (both failure-isolated loads).
     const brandMap = await this.loadBrandMap(org.id);
@@ -1162,7 +1179,7 @@ export class StorefrontService {
     const { org, setting } = await this.requireEnabledShop(orgSlug);
     const brandMap = await this.loadBrandMap(org.id);
     const brand = [...brandMap.values()].find((b) => String(b.slug) === String(brandSlug));
-    if (!brand) throw new NotFoundException("ব্র্যান্ডটি পাওয়া যায়নি");
+    if (!brand) throw notFound("storefront.brandNotFound");
     const reservedByKey = await this.reservedTotals(org.id);
     const flashMap = await this.activeFlashMap(org.id);
     const rows = (await this.activeProducts(org.id)).filter(
@@ -1195,7 +1212,7 @@ export class StorefrontService {
     const product = await this.t("product").findFirst({
       where: { organizationId: org.id, slug: productSlug, status: "ACTIVE" },
     });
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+    if (!product) throw notFound("commerce.productNotFoundShort");
     const variants = await this.variantsOf(product.id);
     const images = await this.imagesOf(product.id);
     // GB2: brand + reservation extras for the PDP.
@@ -1223,6 +1240,14 @@ export class StorefrontService {
         .findFirst({ where: { id: product.categoryId, organizationId: org.id } })
         .catch(() => null);
       if (row) category = { id: row.id, name: row.name, slug: row.slug ?? null };
+    }
+    // MB5 (ML15): the PDP serves the category NAME publicly, so
+    // an approved category-name translation for the shop locale
+    // wins here too (same approved-only rules; failure-isolated).
+    if (category.id) {
+      const texts = await approvedCategoryTexts(this.prisma as any, org.id, [category.id], shopLocale).catch(() => new Map());
+      const t = texts.get(String(category.id));
+      if (t?.name) category = { ...category, name: t.name };
     }
 
     const siblings = await this.activeProducts(org.id);
@@ -1645,17 +1670,17 @@ export class StorefrontService {
 
   /** Cart lookup is org-scoped: a token from another org is a 404 here. */
   private async requireCart(orgId: string, token: string | undefined): Promise<any> {
-    if (!token?.trim()) throw new NotFoundException("কার্ট পাওয়া যায়নি");
+    if (!token?.trim()) throw notFound("storefront.cartNotFound");
     const cart = await this.t("storeCart").findFirst({
       where: { organizationId: orgId, token: token.trim() },
     });
-    if (!cart) throw new NotFoundException("কার্ট পাওয়া যায়নি");
+    if (!cart) throw notFound("storefront.cartNotFound");
     return cart;
   }
 
   private requireOpenCart(cart: any) {
     if (cart.status !== "open") {
-      throw new BadRequestException("এই কার্টটি ইতিমধ্যে অর্ডারে রূপান্তরিত হয়েছে");
+      throw badRequest("storefront.cartAlreadyConvertedShop");
     }
   }
 
@@ -1808,9 +1833,9 @@ export class StorefrontService {
     const bundle = await this.t("bundle").findFirst({
       where: { id: dto.bundleId, organizationId: org.id },
     });
-    if (!bundle) throw new NotFoundException("বান্ডলটি পাওয়া যায়নি");
+    if (!bundle) throw notFound("storefront.bundleNotFound");
     if (dto.quantity > 0 && bundle.active === false) {
-      throw new BadRequestException("বান্ডলটি এখন পাওয়া যাচ্ছে না");
+      throw badRequest("storefront.bundleUnavailableNow");
     }
 
     // AB5 (AX8): pick validation on set. When the bundle has
@@ -1823,7 +1848,7 @@ export class StorefrontService {
     let normalizedPicks: any[] | null = null;
     if (dto.quantity > 0) {
       if ((dto as any).picks !== undefined && !this.bundles) {
-        throw new BadRequestException("বান্ডল সুবিধা এই deployment-এ নেই");
+        throw badRequest("storefront.bundleFeatureUnavailable");
       }
       if (this.bundles && typeof (this.bundles as any).loadSlots === "function") {
         slots = await (this.bundles as any)
@@ -1902,16 +1927,12 @@ export class StorefrontService {
         excludeSessionRef,
       });
       if (!verdict.ok) {
-        throw new BadRequestException(
-          `দুঃখিত, "${product.name}"-এর স্টকে মাত্র ${Math.max(0, verdict.available)}টি আছে — এর বেশি অর্ডার করা যাবে না`,
-        );
+        throw badRequest("products.stockInsufficientNamed", { name: product.name, available: Math.max(0, verdict.available) });
       }
       return;
     }
     if (quantity > Number(stock)) {
-      throw new BadRequestException(
-        `দুঃখিত, "${product.name}"-এর স্টকে মাত্র ${stock}টি আছে — এর বেশি অর্ডার করা যাবে না`,
-      );
+      throw badRequest("products.stockInsufficientNamed", { name: product.name, available: stock });
     }
   }
 
@@ -1944,14 +1965,14 @@ export class StorefrontService {
     const product = await this.t("product").findFirst({
       where: { id: dto.productId, organizationId: org.id, status: "ACTIVE" },
     });
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি বা সক্রিয় নয়");
+    if (!product) throw notFound("storefront.productNotFoundOrInactiveShop");
 
     let variant: any = null;
     if (dto.variantId) {
       variant = await this.t("productVariant").findFirst({
         where: { id: dto.variantId, productId: product.id },
       });
-      if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+      if (!variant) throw badRequest("commerce.variantNotOfProduct");
     }
 
     const items = await this.cartItems(cart.id);
@@ -1977,7 +1998,7 @@ export class StorefrontService {
       if (dto.giftCardAmountMinor !== undefined) {
         const raw = String(dto.giftCardAmountMinor).trim();
         if (!/^\d+$/.test(raw)) {
-          throw new BadRequestException("গিফট কার্ডের পরিমাণ সঠিক সংখ্যা হতে হবে");
+          throw badRequest("storefront.giftCardAmountMustBeNumber");
         }
         giftCardPatch.giftCardAmountMinor = BigInt(raw);
       }
@@ -2039,7 +2060,7 @@ export class StorefrontService {
     const email = dto.email?.trim() || undefined;
     const phone = dto.phone?.trim() || undefined;
     if (!email && !phone) {
-      throw new BadRequestException("ইমেইল অথবা ফোন নম্বর — অন্তত একটি দিতে হবে");
+      throw badRequest("storefront.emailOrPhoneRequired");
     }
     const updated = await this.t("storeCart").update({
       where: { id: cart.id },
@@ -2196,7 +2217,7 @@ export class StorefrontService {
     const items = await this.cartItems(cart.id);
     const cartBundleRows = await this.cartBundleRows(cart.id);
     if (items.length === 0 && cartBundleRows.length === 0) {
-      throw new BadRequestException("কার্ট খালি — আগে পণ্য যোগ করুন");
+      throw badRequest("storefront.cartEmptyAddFirst");
     }
 
     const lines: any[] = [];
@@ -2234,14 +2255,14 @@ export class StorefrontService {
         where: { id: item.productId, organizationId: orgId, status: "ACTIVE" },
       });
       if (!product) {
-        throw new BadRequestException("কার্টের একটি পণ্য আর পাওয়া যাচ্ছে না — কার্ট থেকে সরিয়ে আবার চেষ্টা করুন");
+        throw badRequest("storefront.cartProductGone");
       }
       let variant: any = null;
       if (item.variantId) {
         variant = await this.t("productVariant").findFirst({
           where: { id: item.variantId, productId: product.id },
         });
-        if (!variant) throw new BadRequestException(`"${product.name}"-এর ভ্যারিয়েন্টটি আর পাওয়া যাচ্ছে না`);
+        if (!variant) throw badRequest("storefront.cartVariantGone", { name: product.name });
       }
       await this.assertStock(product, variant, item.quantity, orgId, cart.id);
       // EC24a: preorder open-unit limit (no-op for normal products).
@@ -2271,7 +2292,7 @@ export class StorefrontService {
             ? isGiftCardAmountAllowed(cfg, storedAmount)
             : storedAmount === BigInt(product.priceMinor);
           if (!allowed) {
-            throw new BadRequestException("গিফট কার্ডের পরিমাণটি এই পণ্যের জন্য প্রযোজ্য নয়");
+            throw badRequest("storefront.giftCardAmountNotApplicable");
           }
           unit = storedAmount;
         } else {
@@ -2279,7 +2300,7 @@ export class StorefrontService {
             ? isGiftCardAmountAllowed(cfg, BigInt(product.priceMinor))
             : true; // no-config fallback: the product price is the face value
           if (!priceAllowed) {
-            throw new BadRequestException("গিফট কার্ডের পরিমাণ পণ্যের পেজ থেকে বেছে নিন");
+            throw badRequest("storefront.giftCardAmountFromPage");
           }
           unit = BigInt(product.priceMinor);
         }
@@ -2329,9 +2350,8 @@ export class StorefrontService {
     // merchandise subtotal. Wholesale tiers never apply here —
     // bundle lines are not cart-item lines.
     if (cartBundleRows.length > 0) {
-      const BUNDLE_GONE = "কার্টের একটি বান্ডল আর পাওয়া যাচ্ছে না — কার্ট থেকে সরিয়ে আবার চেষ্টা করুন";
       if (!this.bundles) {
-        throw new BadRequestException("বান্ডল সুবিধা এই deployment-এ নেই");
+        throw badRequest("storefront.bundleFeatureUnavailable");
       }
       for (const row of cartBundleRows) {
         const bundleQty = Number(row.quantity ?? 0);
@@ -2339,7 +2359,7 @@ export class StorefrontService {
         const bundle = await this.t("bundle")
           .findFirst({ where: { id: row.bundleId, organizationId: orgId } })
           .catch(() => null);
-        if (!bundle || bundle.active === false) throw new BadRequestException(BUNDLE_GONE);
+        if (!bundle || bundle.active === false) throw badRequest("storefront.bundleGoneFromCart");
         // AB5 (AX8): STRICT pick re-validation BEFORE expansion
         // — a pick that went inactive / out of pool refuses the
         // quote (and hence placement, which consumes this
@@ -2365,8 +2385,8 @@ export class StorefrontService {
           try {
             normalizedPicks = await this.bundles.validatePicks(orgId, bundle, rowPicks);
           } catch (e) {
-            if (e instanceof BadRequestException) {
-              throw new BadRequestException(`বান্ডল "${bundle.name}": ${e.message}`);
+            if (e instanceof BadRequestException || e instanceof ApiException) {
+              throw badRequest("storefront.bundleErrorDetail", { name: bundle.name, detail: e.message });
             }
             throw e;
           }
@@ -2376,7 +2396,7 @@ export class StorefrontService {
         } else {
           comps = await this.bundles.resolveComponents(orgId, bundle);
         }
-        if (comps.length === 0) throw new BadRequestException(BUNDLE_GONE);
+        if (comps.length === 0) throw badRequest("storefront.bundleGoneFromCart");
         const allocs = allocateBundle(
           BigInt(bundle.bundlePriceMinor ?? 0),
           comps.map((c: any) => ({ qty: c.qty, regularUnitMinor: c.regularUnitMinor })),
@@ -2384,8 +2404,8 @@ export class StorefrontService {
         for (let ci = 0; ci < comps.length; ci++) {
           const comp = comps[ci];
           const product = comp.product;
-          if (!product || product.status !== "ACTIVE") throw new BadRequestException(BUNDLE_GONE);
-          if (comp.variantSku && !comp.variant) throw new BadRequestException(BUNDLE_GONE);
+          if (!product || product.status !== "ACTIVE") throw badRequest("storefront.bundleGoneFromCart");
+          if (comp.variantSku && !comp.variant) throw badRequest("storefront.bundleGoneFromCart");
           const variant = comp.variant ?? null;
           await this.assertStock(product, variant, comp.qty * bundleQty, orgId, cart.id);
           await assertPreorderLimit(this.prisma, orgId, product, comp.qty * bundleQty);
@@ -2454,7 +2474,7 @@ export class StorefrontService {
     let giftCardInput: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null = null;
     if (ec16?.giftCardCode?.trim()) {
       if (!this.giftCards) {
-        throw new BadRequestException("গিফট কার্ড সুবিধা এই দোকানে নেই");
+        throw badRequest("storefront.giftCardFeatureUnavailableInShop");
       }
       const snap = await this.giftCards.resolveForCheckout(orgId, ec16.giftCardCode, {
         cartHasGiftCardProduct,
@@ -2510,7 +2530,7 @@ export class StorefrontService {
       // Legacy EC7-only path (spec harnesses without the EC16
       // service): identical math to the unified path when no
       // promotion applies.
-      if (!this.discounts) throw new BadRequestException("কুপন সুবিধা এই deployment-এ নেই");
+      if (!this.discounts) throw badRequest("products.couponFeatureUnavailable");
       const v = await this.discounts.validateForCheckout(orgId, couponCode, {
         subtotalMinor: subtotal,
         items: lines.map((l) => ({
@@ -2523,9 +2543,7 @@ export class StorefrontService {
         priorOrderCount: gb7PriorOrderCount,
       } as Parameters<DiscountsService["validateForCheckout"]>[2]);
       if (!v.valid) {
-        throw new BadRequestException(
-          `কুপন প্রয়োগ করা যায়নি: ${DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason}`,
-        );
+        throw badRequest("commerce.couponApplyFailed", { reason: DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason });
       }
       discountMinor = v.discountMinor;
       freeShipping = v.freeShipping;
@@ -2560,11 +2578,11 @@ export class StorefrontService {
     const deliveryMethod = opts?.deliveryMethod === "pickup" ? "pickup" : "home";
     if (deliveryMethod === "pickup") {
       if (!this.deliveryPricing) {
-        throw new BadRequestException("পিকআপ সুবিধা এই deployment-এ নেই");
+        throw badRequest("storefront.pickupFeatureUnavailable");
       }
       const point = await this.deliveryPricing.getActivePickupPoint(orgId, opts?.pickupPointId ?? "");
       if (!point) {
-        throw new BadRequestException("পিকআপ পয়েন্টটি পাওয়া যায়নি বা বন্ধ আছে — অন্য পয়েন্ট বেছে নিন");
+        throw badRequest("storefront.pickupPointUnavailable");
       }
       pickupPoint = {
         id: point.id,
@@ -2581,9 +2599,7 @@ export class StorefrontService {
     } else {
       zone = await this.matchZone(orgId, district);
       if (!zone) {
-        throw new BadRequestException(
-          "এই এলাকায় ডেলিভারি সেট করা নেই — অন্য জেলা বেছে নিন অথবা দোকানে যোগাযোগ করুন",
-        );
+        throw badRequest("storefront.deliveryNotSetForArea");
       }
       const res = await this.resolveDeliveryCharge(orgId, zone, {
         weightGrams: cartWeight.totalGrams,
@@ -2935,7 +2951,7 @@ export class StorefrontService {
     const terms = termsRefFor(setting, termsPage);
     const termsRef = terms.ref;
     if (setting.requireTermsConsent === true && dto.termsAccepted !== true) {
-      throw new BadRequestException("অর্ডার সম্পূর্ণ করতে শর্তাবলি পড়ে সম্মতি দেওয়া বাধ্যতামূলক");
+      throw badRequest("products.termsConsentRequired");
     }
     // GC10: an online selection is re-validated against the
     // REAL offered options before any order work (400 when the
@@ -2970,7 +2986,7 @@ export class StorefrontService {
       });
     }
     if (!this.integrations) {
-      throw new BadRequestException("অর্ডার নেওয়ার সুবিধা এই deployment-এ নেই");
+      throw badRequest("storefront.orderTakingUnavailable");
     }
     const district = dto.district.trim();
     // EC24d: the buyer is identified by the checkout phone (the
@@ -2997,7 +3013,7 @@ export class StorefrontService {
     // validated map (never the raw payload) is stamped below.
     const fieldDefs = await this.loadCheckoutFieldDefs(org.id);
     const fieldValidation = validateFieldAnswers(fieldDefs, "shop", dto.fieldAnswers);
-    if (!fieldValidation.ok) throw new BadRequestException(fieldValidation.error);
+    if (!fieldValidation.ok) throw badRequest(fieldValidation.code, fieldValidation.params);
     const checkoutFieldValues = fieldValidation.values;
 
     // EC18: a chosen slot is validated (scope / date / capacity)
@@ -3005,7 +3021,7 @@ export class StorefrontService {
     let chosenSlot: any = null;
     if (dto.deliverySlotId || dto.deliveryDate) {
       if (!dto.deliverySlotId || !dto.deliveryDate) {
-        throw new BadRequestException("স্লট বেছে নিলে তারিখও দিতে হবে");
+        throw badRequest("products.slotNeedsDate");
       }
       chosenSlot = await this.validateSlotChoice(org.id, dto.deliverySlotId, dto.deliveryDate, district);
     }
@@ -3036,7 +3052,7 @@ export class StorefrontService {
         parsedConfidence: parsed.confidence,
       });
       if (codEval.refused) {
-        throw new BadRequestException("দুঃখিত, এই অর্ডারের জন্য ক্যাশ অন ডেলিভারি প্রযোজ্য নয়");
+        throw badRequest("products.codNotApplicable");
       }
       codAdvanceRequired = codEval.advanceRequired;
     }
@@ -3114,7 +3130,7 @@ export class StorefrontService {
     const externalNumber = `ORD-${Date.now().toString().slice(-6)}-${randomBytes(2).toString("hex").toUpperCase()}`;
     const cleanPhone = dto.phone.trim();
     // ON4: blocklist refusal — generic message, never reveals the blocklist.
-    if (this.blockedPhones && (await this.blockedPhones.isBlocked(org.id, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(org.id, cleanPhone))) throw badRequest("products.orderCannotBeTaken");
     // GB3 (GC9): block_checkout fraud rules (hit + attempt rows
     // are written by the guard itself; the caller only refuses).
     if (this.checkoutGuard) {
@@ -3129,7 +3145,7 @@ export class StorefrontService {
         phone: cleanPhone,
         channel: "shop",
       });
-      if (blockedBy) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+      if (blockedBy) throw badRequest("products.orderCannotBeTaken");
     }
     // GC22: plan/order blocks on this PUBLIC storefront
     // checkout surface ONLY as the generic shopper message.
@@ -3178,7 +3194,7 @@ export class StorefrontService {
       STOREFRONT_SOURCE,
     );
     } catch (e) {
-      if (isOrderLimitBlocked(e)) throw new BadRequestException((e as OrderLimitBlockedError).shopperMessage ?? SHOPPER_ORDER_BLOCK_MESSAGE);
+      if (isOrderLimitBlocked(e)) throw badRequest("common.shopperOrderBlock");
       throw e;
     }
 
@@ -3462,7 +3478,7 @@ export class StorefrontService {
     const { org } = await this.requireEnabledShop(orgSlug);
     const customer = await this.resolveSessionCustomer(org.id, token);
     if (!customer) {
-      throw new BadRequestException("এক্সপ্রেস অর্ডারের জন্য আগে লগইন করুন");
+      throw badRequest("storefront.expressOrderNeedsLogin");
     }
     const addresses: any[] =
       (await this.t("customerAddress")
@@ -3475,13 +3491,13 @@ export class StorefrontService {
     if (dto.addressId) {
       chosen = addresses.find((a) => a.id === dto.addressId) ?? null;
       if (!chosen) {
-        throw new BadRequestException("ঠিকানাটি আপনার অ্যাকাউন্টে পাওয়া যায়নি");
+        throw badRequest("storefront.addressNotInAccount");
       }
     } else {
       chosen = addresses.find((a) => a.isDefault) ?? addresses[0] ?? null;
     }
     if (!chosen) {
-      throw new BadRequestException("কোনো সংরক্ষিত ঠিকানা নেই — আগে অ্যাকাউন্টে ঠিকানা যোগ করুন");
+      throw badRequest("storefront.noSavedAddress");
     }
     return this.checkout(orgSlug, {
       cartToken: dto.cartToken,
@@ -3519,9 +3535,8 @@ export class StorefrontService {
    * RetentionService for customer self-service RMA, so it is
    * public within the codebase (not an HTTP surface by itself). */
   async matchTrackedOrder(orgSlug: string, dto: TrackLookupDto) {
-    const NOT_FOUND = "অর্ডারটি পাওয়া যায়নি — অর্ডার নম্বর ও ফোন নম্বর যাচাই করে আবার চেষ্টা করুন";
     const { org, setting } = await this.requireEnabledShop(orgSlug);
-    if (setting.trackingPageEnabled === false) throw new NotFoundException(NOT_FOUND);
+    if (setting.trackingPageEnabled === false) throw notFound("storefront.publicOrderNotFoundDetailed");
 
     const normalizePhone = (v: unknown): string => {
       let digits = String(v ?? "").replace(/\D/g, "");
@@ -3532,9 +3547,9 @@ export class StorefrontService {
     const wantedPhone = normalizePhone(dto.phone);
 
     const q = String(dto.orderNumber ?? "").trim();
-    if (!q || !wantedPhone) throw new NotFoundException(NOT_FOUND);
+    if (!q || !wantedPhone) throw notFound("storefront.publicOrderNotFoundDetailed");
     const orderTable = this.t("order");
-    if (!orderTable?.findMany) throw new NotFoundException(NOT_FOUND);
+    if (!orderTable?.findMany) throw notFound("storefront.publicOrderNotFoundDetailed");
     const upper = q.toUpperCase();
     const raw: any[] =
       (await orderTable
@@ -3579,7 +3594,7 @@ export class StorefrontService {
         break;
       }
     }
-    if (!order) throw new NotFoundException(NOT_FOUND);
+    if (!order) throw notFound("storefront.publicOrderNotFoundDetailed");
     void matchedCustomer; // identity is verified, never returned
     return { org, setting, order };
   }
@@ -3661,15 +3676,15 @@ export class StorefrontService {
       ? await this.giftCards.buyerRevealForOrder(order.organizationId, order.id).catch(() => [])
       : [];
     if (!lines.length && !giftCards.length) {
-      throw new BadRequestException("এই অর্ডারে ডিজিটাল পণ্য নেই");
+      throw badRequest("storefront.orderNoDigitalProduct");
     }
     if (!(await this.digitalDelivered(order))) {
-      throw new BadRequestException("ডেলিভারি সম্পন্ন হলে ডাউনলোড লিংক পাওয়া যাবে");
+      throw badRequest("storefront.downloadAfterDelivery");
     }
     const limit = this.digitalAccessLimitOf(lines);
     const used = Number(order.digitalAccessCount ?? 0) || 0;
     if (limit !== null && used >= limit) {
-      throw new BadRequestException("ডাউনলোডের সীমা শেষ হয়ে গেছে");
+      throw badRequest("storefront.downloadLimitExhausted");
     }
     // AB2: the access-cap counting is a DIGITAL-download concept
     // — it runs only when the order actually has digital lines.
@@ -3883,7 +3898,7 @@ export class StorefrontService {
   async giftCardBalance(orgSlug: string, dto: GiftCardBalanceDto) {
     const { org } = await this.requireEnabledShop(orgSlug);
     if (!this.giftCards) {
-      throw new BadRequestException("গিফট কার্ড সুবিধা এই দোকানে নেই");
+      throw badRequest("storefront.giftCardFeatureUnavailableInShop");
     }
     return this.giftCards.publicBalance(org.id, dto.code);
   }
@@ -4250,7 +4265,7 @@ export class StorefrontService {
       String(order.status || "").toLowerCase(),
     );
     if (isTerminal) {
-      throw new BadRequestException("এই অর্ডারের জন্য ডেলিভারি নির্দেশনা পরিবর্তনযোগ্য নয়।");
+      throw badRequest("storefront.deliveryInstructionsLocked");
     }
 
     let noteEntry = "";
@@ -4341,7 +4356,7 @@ export class StorefrontService {
 
   async byDomain(domain: string) {
     const resolved = await this.resolveVerifiedDomain(domain);
-    if (!resolved) throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
+    if (!resolved) throw notFound("storefront.domainNotFound");
     // Only a VERIFIED domain resolves. Enabled-state is deliberately
     // not required here: routing to a disabled shop then honestly
     // 404s at the shop routes. The returned domain is the STORED
@@ -4563,18 +4578,17 @@ export class StorefrontService {
   /** Delivery date must be a real calendar date within
    * [today, today+7] on the Asia/Dhaka calendar. */
   private assertDeliveryDate(dateStr: string) {
-    const msg = "ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr ?? ""))) {
-      throw new BadRequestException(msg);
+      throw badRequest("storefront.deliveryDateWindow");
     }
     const [y, m, d] = dateStr.split("-").map(Number);
     const probe = new Date(Date.UTC(y, m - 1, d));
     if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
-      throw new BadRequestException(msg);
+      throw badRequest("storefront.deliveryDateWindow");
     }
     const today = this.dhakaTodayString();
     if (dateStr < today || dateStr > this.addDaysToDateString(today, 7)) {
-      throw new BadRequestException(msg);
+      throw badRequest("storefront.deliveryDateWindow");
     }
   }
 
@@ -4590,11 +4604,11 @@ export class StorefrontService {
       ? await table.findFirst({ where: { id: slotId, organizationId: orgId } }).catch(() => null)
       : null;
     if (!slot || slot.active === false) {
-      throw new BadRequestException("ডেলিভারি স্লটটি পাওয়া যায়নি বা বন্ধ আছে");
+      throw badRequest("products.deliverySlotUnavailable");
     }
     const scope = this.slotScope(slot);
     if (scope.length > 0 && (district === null || !scope.includes(district))) {
-      throw new BadRequestException("এই স্লটটি আপনার এলাকার জন্য প্রযোজ্য নয়");
+      throw badRequest("products.slotNotForArea");
     }
     this.assertDeliveryDate(dateStr);
     if (slot.capacityPerDay !== null && slot.capacityPerDay !== undefined) {
@@ -4608,7 +4622,7 @@ export class StorefrontService {
           }).catch(() => 0)
         : 0;
       if (Number(count) >= Number(slot.capacityPerDay)) {
-        throw new BadRequestException("এই স্লটটি পূর্ণ — অন্য স্লট বা তারিখ বেছে নিন");
+        throw badRequest("products.slotFull");
       }
     }
     return slot;
@@ -4620,7 +4634,7 @@ export class StorefrontService {
     if (list.length === 0) return null;
     const invalid = list.filter((d) => !(BD_DISTRICTS as readonly string[]).includes(d));
     if (invalid.length > 0) {
-      throw new BadRequestException(`অজানা জেলা: ${invalid.join(", ")}`);
+      throw badRequest("storefront.unknownDistrict", { districts: invalid.join(", ") });
     }
     return [...new Set(list)];
   }
@@ -4653,7 +4667,7 @@ export class StorefrontService {
     const slot = await this.t("deliverySlot").findFirst({
       where: { id: slotId, organizationId: orgId },
     });
-    if (!slot) throw new NotFoundException("Delivery slot not found in this organization");
+    if (!slot) throw notFound("storefront.deliverySlotNotFoundInOrg");
     return slot;
   }
 
@@ -4708,7 +4722,7 @@ export class StorefrontService {
 
   async staffState(orgId: string) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const setting = await this.getSetting(orgId);
     let zones: any[] = [];
     try {
@@ -4776,14 +4790,14 @@ export class StorefrontService {
   async updateSettings(orgId: string, actorId: string, dto: UpdateStorefrontSettingsDto) {
     if (dto.featuredProductIds !== undefined) {
       if (dto.featuredProductIds.length > 50) {
-        throw new BadRequestException("Featured পণ্য সর্বোচ্চ ৫০টি হতে পারবে");
+        throw badRequest("storefront.featuredProductsMax");
       }
       for (const pid of dto.featuredProductIds) {
         const p = await this.t("product").findFirst({
           where: { id: pid, organizationId: orgId },
         });
         if (!p) {
-          throw new BadRequestException(`Featured পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${pid}`);
+          throw badRequest("storefront.featuredProductNotOfOrg", { productId: pid });
         }
       }
     }
@@ -4833,7 +4847,7 @@ export class StorefrontService {
     // key (Bengali refusal otherwise); stored deduped/sanitized.
     if (dto.sectionOrder !== undefined) {
       if (!isValidSectionOrder(dto.sectionOrder)) {
-        throw new BadRequestException("সেকশনের ক্রমে অজানা সেকশন আছে — hero, categories, brands, bundles, flash, featured, recently-এর মধ্য থেকে দিন");
+        throw badRequest("storefront.unknownSectionInOrder");
       }
       data.sectionOrder = sanitizeSectionOrder(dto.sectionOrder);
     }
@@ -4845,7 +4859,7 @@ export class StorefrontService {
       const raw = (dto as any)[field];
       if (raw !== undefined) {
         const v = validateTrackingValue(field, raw);
-        if (!v.ok) throw new BadRequestException(v.message);
+        if (!v.ok) throw badRequest(v.code);
         data[field] = v.value;
       }
     }
@@ -4853,7 +4867,7 @@ export class StorefrontService {
     if (dto.termsUrl !== undefined) {
       const v = dto.termsUrl;
       if (v !== null && String(v).trim() !== "" && !isHttpUrl(String(v).trim())) {
-        throw new BadRequestException("শর্তাবলির URL সঠিক নয় — http/https দিয়ে শুরু হওয়া সম্পূর্ণ URL দিন");
+        throw badRequest("storefront.termsUrlInvalid");
       }
       data.termsUrl = v === null || String(v).trim() === "" ? null : String(v).trim();
     }
@@ -4862,11 +4876,7 @@ export class StorefrontService {
     for (const key of ["faviconUrl", "messengerUrl"] as const) {
       const v = dto[key];
       if (v !== undefined && v !== null && String(v).trim() !== "" && !isHttpUrl(String(v).trim())) {
-        throw new BadRequestException(
-          key === "faviconUrl"
-            ? "ফেভিকন URL সঠিক নয় — http/https দিয়ে শুরু হওয়া সম্পূর্ণ URL দিন"
-            : "Messenger URL সঠিক নয় — http/https দিয়ে শুরু হওয়া সম্পূর্ণ URL দিন",
-        );
+        throw badRequest(key === "faviconUrl" ? "storefront.faviconUrlInvalid" : "storefront.messengerUrlInvalid");
       }
       if (v !== undefined) data[key] = v === null || String(v).trim() === "" ? null : String(v).trim();
     }
@@ -4875,7 +4885,7 @@ export class StorefrontService {
       if (v === null || String(v).trim() === "") {
         data.whatsappNumber = null;
       } else if (!/^[+\d][\d\s-]{5,}$/.test(String(v).trim())) {
-        throw new BadRequestException("WhatsApp নম্বর সঠিক নয় — দেশের কোডসহ ফোন নম্বর দিন");
+        throw badRequest("storefront.whatsappNumberInvalid");
       } else {
         data.whatsappNumber = String(v).trim();
       }
@@ -4888,7 +4898,7 @@ export class StorefrontService {
       } else if (/^\d+$/.test(String(raw).trim())) {
         data.referralMinSubtotalMinor = BigInt(String(raw).trim());
       } else {
-        throw new BadRequestException("রেফারেলের ন্যূনতম অর্ডার পরিমাণ সঠিক সংখ্যা হতে হবে");
+        throw badRequest("storefront.referralMinOrderInvalid");
       }
     }
     // EC29: gift-wrap config — the enabled flag rides the generic
@@ -4901,7 +4911,7 @@ export class StorefrontService {
       } else if (/^\d+$/.test(String(raw).trim())) {
         data.giftWrapFeeMinor = BigInt(String(raw).trim());
       } else {
-        throw new BadRequestException("গিফট র‍্যাপের ফি সঠিক সংখ্যা হতে হবে");
+        throw badRequest("storefront.giftWrapFeeInvalid");
       }
     }
     // AB8 (AX23): custom CSS/JS ride OUTSIDE the generic loop —
@@ -4914,14 +4924,14 @@ export class StorefrontService {
         data.customCss = null;
       } else {
         if (typeof dto.customCss !== "string") {
-          throw new BadRequestException("কাস্টম CSS লেখা (string) হতে হবে");
+          throw badRequest("storefront.customCssMustBeString");
         }
         if (dto.customCss.length > 50000) {
-          throw new BadRequestException("কাস্টম CSS সর্বোচ্চ ৫০,০০০ অক্ষরের হতে পারবে");
+          throw badRequest("storefront.customCssTooLong");
         }
         const lowerCss = dto.customCss.toLowerCase();
         if (lowerCss.includes("</style") || lowerCss.includes("<!--")) {
-          throw new BadRequestException("কাস্টম CSS-এ </style> বা <!-- ব্যবহার করা যাবে না");
+          throw badRequest("storefront.customCssForbiddenContent");
         }
         data.customCss = dto.customCss;
       }
@@ -4931,20 +4941,20 @@ export class StorefrontService {
         data.customJs = null;
       } else {
         if (typeof dto.customJs !== "string") {
-          throw new BadRequestException("কাস্টম JS লেখা (string) হতে হবে");
+          throw badRequest("storefront.customJsMustBeString");
         }
         if (dto.customJs.length > 50000) {
-          throw new BadRequestException("কাস্টম JS সর্বোচ্চ ৫০,০০০ অক্ষরের হতে পারবে");
+          throw badRequest("storefront.customJsTooLong");
         }
         if (dto.customJs.toLowerCase().includes("</script")) {
-          throw new BadRequestException("কাস্টম JS-এ </script> ব্যবহার করা যাবে না");
+          throw badRequest("storefront.customJsForbiddenContent");
         }
         data.customJs = dto.customJs;
       }
     }
     if (dto.customJsEnabled !== undefined) {
       if (typeof dto.customJsEnabled !== "boolean") {
-        throw new BadRequestException("customJsEnabled boolean হতে হবে");
+        throw badRequest("storefront.customJsEnabledMustBeBoolean");
       }
       data.customJsEnabled = dto.customJsEnabled;
     }
@@ -5011,6 +5021,14 @@ export class StorefrontService {
     const existing: any[] =
       (await table.findMany({ where: { organizationId: orgId } }).catch(() => [])) ?? [];
     const slugs = new Set(existing.map((p: any) => String(p.slug)));
+    // ML10 (MB4, D-MB4-8): an en-locale shop is seeded with the
+    // English system-page content (titleEn/blocksEn companions).
+    const settingTable: any = this.t("storefrontSetting");
+    const setting: any =
+      typeof settingTable?.findUnique === "function"
+        ? await settingTable.findUnique({ where: { organizationId: orgId } }).catch(() => null)
+        : null;
+    const seedEn = setting?.locale === "en";
     for (let i = 0; i < SYSTEM_PAGES.length; i++) {
       const def = SYSTEM_PAGES[i];
       if (slugs.has(def.slug)) continue;
@@ -5019,8 +5037,8 @@ export class StorefrontService {
           data: {
             organizationId: orgId,
             slug: def.slug,
-            title: def.title,
-            blocks: def.blocks,
+            title: seedEn ? def.titleEn : def.title,
+            blocks: seedEn ? def.blocksEn : def.blocks,
             published: false,
             showInFooter: def.showInFooter,
             showInMenu: def.showInMenu,
@@ -5044,7 +5062,7 @@ export class StorefrontService {
   async createPage(orgId: string, actorId: string, dto: CreateShopPageDto) {
     await this.ensureSystemPages(orgId);
     const title = String(dto.title ?? "").trim();
-    if (!title) throw new BadRequestException("পেজের শিরোনাম দিতে হবে");
+    if (!title) throw badRequest("storefront.pageTitleRequired");
     let slug: string;
     if (dto.slug !== undefined && dto.slug !== null && String(dto.slug).trim() !== "") {
       slug = String(dto.slug).trim().toLowerCase();
@@ -5052,13 +5070,13 @@ export class StorefrontService {
       slug = slugifyShopPageTitle(title);
     }
     if (!slug || !SHOP_PAGE_SLUG_PATTERN.test(slug)) {
-      throw new BadRequestException("slug সঠিক নয় — শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও হাইফেন ব্যবহার করুন");
+      throw badRequest("storefront.slugInvalid");
     }
     const existing = await this.t("shopPage").findFirst({
       where: { organizationId: orgId, slug },
     });
     if (existing) {
-      throw new BadRequestException("এই slug-এ ইতিমধ্যে একটি পেজ আছে");
+      throw badRequest("storefront.pageSlugExists");
     }
     const blocks = validateShopPageBlocks(dto.blocks ?? []);
     const page = await this.t("shopPage").create({
@@ -5089,7 +5107,7 @@ export class StorefrontService {
     const page = await this.t("shopPage").findFirst({
       where: { id: pageId, organizationId: orgId },
     });
-    if (!page) throw new NotFoundException("পেজটি পাওয়া যায়নি");
+    if (!page) throw notFound("storefront.pageNotFound");
     return page;
   }
 
@@ -5101,16 +5119,16 @@ export class StorefrontService {
       const slug = String(dto.slug).trim().toLowerCase();
       if (slug !== page.slug) {
         if (page.isSystem) {
-          throw new BadRequestException("সিস্টেম পেজের slug বদলানো যায় না");
+          throw badRequest("storefront.systemPageSlugImmutable");
         }
         if (!SHOP_PAGE_SLUG_PATTERN.test(slug)) {
-          throw new BadRequestException("slug সঠিক নয় — শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও হাইফেন ব্যবহার করুন");
+          throw badRequest("storefront.slugInvalid");
         }
         const clash = await this.t("shopPage").findFirst({
           where: { organizationId: orgId, slug },
         });
         if (clash && String(clash.id) !== String(page.id)) {
-          throw new BadRequestException("এই slug-এ ইতিমধ্যে একটি পেজ আছে");
+          throw badRequest("storefront.pageSlugExists");
         }
         data.slug = slug;
       }
@@ -5135,7 +5153,7 @@ export class StorefrontService {
   async deletePage(orgId: string, actorId: string, pageId: string) {
     const page = await this.requirePage(orgId, pageId);
     if (page.isSystem) {
-      throw new BadRequestException("সিস্টেম পেজ মুছে ফেলা যায় না — প্রয়োজনে আনপাবলিশ করুন");
+      throw badRequest("storefront.systemPageNotDeletable");
     }
     await this.t("shopPage").delete({ where: { id: page.id } });
     await this.audit?.log({
@@ -5189,7 +5207,7 @@ export class StorefrontService {
     const page = await this.t("shopPage").findFirst({
       where: { organizationId: org.id, slug: pageSlug, published: true },
     });
-    if (!page) throw new NotFoundException("পেজটি পাওয়া যায়নি");
+    if (!page) throw notFound("storefront.pageNotFound");
     const bp = await this.businessProfile(org.id);
     const rawBlocks: any[] = Array.isArray(page.blocks) ? page.blocks : [];
     const blocks = rawBlocks.map((b: any) => {
@@ -5247,32 +5265,32 @@ export class StorefrontService {
   private normalizeBlogTags(raw: unknown): string[] {
     if (raw === undefined || raw === null) return [];
     if (!Array.isArray(raw)) {
-      throw new BadRequestException("ট্যাগের তালিকা সঠিক নয়");
+      throw badRequest("storefront.tagListInvalid");
     }
     const out: string[] = [];
     const seen = new Set<string>();
     for (const item of raw) {
       if (typeof item !== "string") {
-        throw new BadRequestException("প্রতিটি ট্যাগ লেখা (string) হতে হবে");
+        throw badRequest("storefront.tagMustBeString");
       }
       const tag = item.trim();
       if (!tag) continue;
       if (tag.length > 40) {
-        throw new BadRequestException("প্রতিটি ট্যাগ সর্বোচ্চ ৪০ অক্ষরের হতে পারবে");
+        throw badRequest("storefront.tagTooLong40");
       }
       if (seen.has(tag)) continue;
       seen.add(tag);
       out.push(tag);
     }
     if (out.length > 10) {
-      throw new BadRequestException("ট্যাগ সর্বোচ্চ ১০টি দেওয়া যাবে");
+      throw badRequest("storefront.tagsMax10");
     }
     return out;
   }
 
   async listBlogPosts(orgId: string, status?: string) {
     if (status !== undefined && status !== null && status !== "" && status !== "draft" && status !== "published") {
-      throw new BadRequestException("স্ট্যাটাস সঠিক নয় — draft অথবা published হতে হবে");
+      throw badRequest("storefront.statusDraftOrPublished");
     }
     const where: Record<string, any> = { organizationId: orgId };
     if (status) where.status = status;
@@ -5285,7 +5303,7 @@ export class StorefrontService {
 
   async createBlogPost(orgId: string, actorId: string, dto: CreateBlogPostDto) {
     const title = String(dto.title ?? "").trim();
-    if (!title) throw new BadRequestException("পোস্টের শিরোনাম দিতে হবে");
+    if (!title) throw badRequest("storefront.postTitleRequired");
     let slug: string;
     if (dto.slug !== undefined && dto.slug !== null && String(dto.slug).trim() !== "") {
       slug = String(dto.slug).trim().toLowerCase();
@@ -5293,13 +5311,13 @@ export class StorefrontService {
       slug = slugifyShopPageTitle(title);
     }
     if (!slug || !SHOP_PAGE_SLUG_PATTERN.test(slug)) {
-      throw new BadRequestException("slug সঠিক নয় — শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও হাইফেন ব্যবহার করুন");
+      throw badRequest("storefront.slugInvalid");
     }
     const existing = await this.t("blogPost").findFirst({
       where: { organizationId: orgId, slug },
     });
     if (existing) {
-      throw new BadRequestException("এই slug-এ ইতিমধ্যে একটি পোস্ট আছে");
+      throw badRequest("storefront.postSlugExists");
     }
     const blocks = validateShopPageBlocks(dto.blocks ?? []);
     const tags = this.normalizeBlogTags(dto.tags);
@@ -5335,7 +5353,7 @@ export class StorefrontService {
     const post = await this.t("blogPost").findFirst({
       where: { id: postId, organizationId: orgId },
     });
-    if (!post) throw new NotFoundException("ব্লগ পোস্টটি পাওয়া যায়নি");
+    if (!post) throw notFound("storefront.blogPostNotFound");
     return post;
   }
 
@@ -5347,13 +5365,13 @@ export class StorefrontService {
       const slug = String(dto.slug).trim().toLowerCase();
       if (slug !== post.slug) {
         if (!SHOP_PAGE_SLUG_PATTERN.test(slug)) {
-          throw new BadRequestException("slug সঠিক নয় — শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও হাইফেন ব্যবহার করুন");
+          throw badRequest("storefront.slugInvalid");
         }
         const clash = await this.t("blogPost").findFirst({
           where: { organizationId: orgId, slug },
         });
         if (clash && String(clash.id) !== String(post.id)) {
-          throw new BadRequestException("এই slug-এ ইতিমধ্যে একটি পোস্ট আছে");
+          throw badRequest("storefront.postSlugExists");
         }
         data.slug = slug;
       }
@@ -5424,10 +5442,18 @@ export class StorefrontService {
           orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         })
         .catch(() => [])) ?? [];
+    // MB5 (ML15): this public surface DOES serve post titles,
+    // so approved title translations for the shop locale are
+    // overlaid (approved-only, org-scoped, failure-isolated —
+    // the public-translations rules; drafts never leak).
+    const blogLocale = (setting as any)?.locale ?? "bn";
+    const titleTexts = rows.length
+      ? await approvedBlogPostTexts(this.prisma as any, org.id, rows.map((r) => String(r.id)), blogLocale).catch(() => new Map())
+      : new Map();
     return {
       posts: rows.map((r) => ({
         slug: r.slug,
-        title: r.title,
+        title: titleTexts.get(String(r.id))?.title ?? r.title,
         excerpt: r.excerpt ?? null,
         coverImageUrl: r.coverImageUrl ?? null,
         tags: this.blogTagsOf(r),
@@ -5444,11 +5470,14 @@ export class StorefrontService {
     const row = await this.t("blogPost").findFirst({
       where: { organizationId: org.id, slug: postSlug, status: "published" },
     });
-    if (!row) throw new NotFoundException("ব্লগ পোস্টটি পাওয়া যায়নি");
+    if (!row) throw notFound("storefront.blogPostNotFound");
+    // MB5 (ML15): approved title overlay, same rule as the list.
+    const blogLocale = (setting as any)?.locale ?? "bn";
+    const titleTexts = await approvedBlogPostTexts(this.prisma as any, org.id, [String(row.id)], blogLocale).catch(() => new Map());
     return {
       post: {
         slug: row.slug,
-        title: row.title,
+        title: titleTexts.get(String(row.id))?.title ?? row.title,
         excerpt: row.excerpt ?? null,
         coverImageUrl: row.coverImageUrl ?? null,
         blocks: Array.isArray(row.blocks) ? row.blocks : [],
@@ -5478,7 +5507,7 @@ export class StorefrontService {
   private normalizeSynonymExpansions(raw: unknown): string[] {
     if (raw === undefined || raw === null) return [];
     if (!Array.isArray(raw)) {
-      throw new BadRequestException("সমার্থক শব্দের তালিকা সঠিক নয়");
+      throw badRequest("storefront.synonymListInvalid");
     }
     const out: string[] = [];
     const seen = new Set<string>();
@@ -5486,23 +5515,23 @@ export class StorefrontService {
       const e = normalizeSearchTerm(item);
       if (!e) continue;
       if (e.length > 100) {
-        throw new BadRequestException("প্রতিটি সমার্থক শব্দ সর্বোচ্চ ১০০ অক্ষরের হতে পারবে");
+        throw badRequest("storefront.synonymTooLong");
       }
       if (seen.has(e)) continue;
       seen.add(e);
       out.push(e);
     }
     if (out.length > 10) {
-      throw new BadRequestException("সমার্থক শব্দ সর্বোচ্চ ১০টি দেওয়া যাবে");
+      throw badRequest("storefront.synonymsMax");
     }
     return out;
   }
 
   private normalizeSynonymTerm(raw: unknown): string {
     const term = normalizeSearchTerm(raw);
-    if (!term) throw new BadRequestException("মূল শব্দটি দিতে হবে");
+    if (!term) throw badRequest("storefront.baseWordRequired");
     if (term.length > 100) {
-      throw new BadRequestException("মূল শব্দ সর্বোচ্চ ১০০ অক্ষরের হতে পারবে");
+      throw badRequest("storefront.baseWordTooLong");
     }
     return term;
   }
@@ -5526,7 +5555,7 @@ export class StorefrontService {
     const expansions = this.normalizeSynonymExpansions(dto.expansions);
     const existing = await this.synonymRows(orgId);
     if (existing.some((r: any) => String(r.term) === term)) {
-      throw new BadRequestException("এই শব্দের জন্য ইতিমধ্যে সমার্থক শব্দ আছে");
+      throw badRequest("storefront.synonymExists");
     }
     const row = await this.t("searchSynonym").create({
       data: { organizationId: orgId, term, expansions },
@@ -5546,7 +5575,7 @@ export class StorefrontService {
     const row = await this.t("searchSynonym").findFirst({
       where: { id: synonymId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("সমার্থক শব্দটি পাওয়া যায়নি");
+    if (!row) throw notFound("storefront.synonymNotFound");
     return row;
   }
 
@@ -5558,7 +5587,7 @@ export class StorefrontService {
       if (term !== String(existing.term)) {
         const rows = await this.synonymRows(orgId);
         if (rows.some((r: any) => String(r.id) !== String(existing.id) && String(r.term) === term)) {
-          throw new BadRequestException("এই শব্দের জন্য ইতিমধ্যে সমার্থক শব্দ আছে");
+          throw badRequest("storefront.synonymExists");
         }
       }
       data.term = term;
@@ -5734,11 +5763,7 @@ export class StorefrontService {
         if (v === null || String(v).trim() === "") {
           data[key] = null;
         } else if (!isHttpUrl(String(v).trim())) {
-          throw new BadRequestException(
-            key === "imageUrl"
-              ? "পপআপের ছবির URL সঠিক নয় — http/https দিয়ে শুরু হওয়া সম্পূর্ণ URL দিন"
-              : "পপআপের বাটনের URL সঠিক নয় — http/https দিয়ে শুরু হওয়া সম্পূর্ণ URL দিন",
-          );
+          throw badRequest(key === "imageUrl" ? "storefront.popupImageUrlInvalid" : "storefront.popupButtonUrlInvalid");
         } else {
           data[key] = String(v).trim();
         }
@@ -5758,7 +5783,7 @@ export class StorefrontService {
     const parseWhen = (v: string | null | undefined, label: string): Date | null => {
       if (v === null || v === undefined || String(v).trim() === "") return null;
       const d = new Date(String(v));
-      if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} সঠিক তারিখ নয়`);
+      if (Number.isNaN(d.getTime())) throw badRequest("storefront.labelNotValidDate", { label: label });
       return d;
     };
     if (dto.startsAt !== undefined) data.startsAt = parseWhen(dto.startsAt, "শুরুর সময়");
@@ -5768,7 +5793,7 @@ export class StorefrontService {
     const effEnds: Date | null =
       data.endsAt !== undefined ? data.endsAt : existing?.endsAt ? new Date(existing.endsAt) : null;
     if (effStarts && effEnds && effEnds.getTime() <= effStarts.getTime()) {
-      throw new BadRequestException("পপআপের শেষের সময় শুরুর সময়ের পরে হতে হবে");
+      throw badRequest("storefront.popupEndAfterStart");
     }
     // OU8: a lead-mode popup that captures nothing is a fake form.
     const effMode = data.mode !== undefined ? data.mode : existing?.mode ?? "promo";
@@ -5777,7 +5802,7 @@ export class StorefrontService {
       const effPhone = data.capturePhone !== undefined ? data.capturePhone : existing?.capturePhone !== false;
       const effEmail = data.captureEmail !== undefined ? data.captureEmail : existing?.captureEmail === true;
       if (!effName && !effPhone && !effEmail) {
-        throw new BadRequestException("লিড পপআপে অন্তত একটি তথ্য (নাম, ফোন বা ইমেইল) নেওয়ার অপশন চালু রাখতে হবে");
+        throw badRequest("storefront.leadPopupNeedsCaptureOption");
       }
     }
     const saved = existing
@@ -5855,18 +5880,18 @@ export class StorefrontService {
     const { org } = await this.requireEnabledShop(orgSlug);
     const row = await this.popupRow(org.id);
     if (!row || !row.enabled || (row.mode ?? "promo") !== "lead") {
-      throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
+      throw badRequest("storefront.leadPopupDisabled");
     }
     const now = Date.now();
-    if (row.startsAt && new Date(row.startsAt).getTime() > now) throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
-    if (row.endsAt && new Date(row.endsAt).getTime() < now) throw new BadRequestException("এই দোকানে লিড পপআপ চালু নেই");
+    if (row.startsAt && new Date(row.startsAt).getTime() > now) throw badRequest("storefront.leadPopupDisabled");
+    if (row.endsAt && new Date(row.endsAt).getTime() < now) throw badRequest("storefront.leadPopupDisabled");
     const name = String(dto.name ?? "").trim();
     const phone = String(dto.phone ?? "").trim();
     const email = String(dto.email ?? "").trim();
-    if (row.captureName !== false && !name) throw new BadRequestException("আপনার নামটি দিন");
-    if (row.capturePhone !== false && phone.length < 6) throw new BadRequestException("সঠিক ফোন নম্বর দিন");
-    if (row.captureEmail === true && !email) throw new BadRequestException("আপনার ইমেইলটি দিন");
-    if (!name && !phone && !email) throw new BadRequestException("অন্তত একটি তথ্য দিন");
+    if (row.captureName !== false && !name) throw badRequest("storefront.yourNameRequired");
+    if (row.capturePhone !== false && phone.length < 6) throw badRequest("storefront.phoneNumberInvalid");
+    if (row.captureEmail === true && !email) throw badRequest("storefront.yourEmailRequired");
+    if (!name && !phone && !email) throw badRequest("storefront.atLeastOneInfoRequired");
     const lead = await this.t("lead").create({
       data: {
         organizationId: org.id,
@@ -5955,11 +5980,11 @@ export class StorefrontService {
     if (kind !== "district_list") return null;
     const list = (districts ?? []).map((d) => String(d).trim()).filter(Boolean);
     if (list.length === 0) {
-      throw new BadRequestException("district_list জোনের জন্য অন্তত একটি জেলা বেছে নিন");
+      throw badRequest("storefront.districtListZoneNeedsDistrict");
     }
     const invalid = list.filter((d) => !(BD_DISTRICTS as readonly string[]).includes(d));
     if (invalid.length > 0) {
-      throw new BadRequestException(`অজানা জেলা: ${invalid.join(", ")}`);
+      throw badRequest("storefront.unknownDistrict", { districts: invalid.join(", ") });
     }
     return [...new Set(list)];
   }
@@ -5997,7 +6022,7 @@ export class StorefrontService {
     const zone = await this.t("shippingZone").findFirst({
       where: { id: zoneId, organizationId: orgId },
     });
-    if (!zone) throw new NotFoundException("শিপিং জোন পাওয়া যায়নি");
+    if (!zone) throw notFound("storefront.shippingZoneNotFound");
     return zone;
   }
 
@@ -6054,9 +6079,7 @@ export class StorefrontService {
   async createDefaultZones(orgId: string, actorId: string) {
     const bp = await this.businessProfile(orgId);
     if (!bp?.deliveryChargeInsideMinor || !bp?.deliveryChargeOutsideMinor) {
-      throw new BadRequestException(
-        "আগে Business Profile-এ ঢাকার ভিতরে ও বাইরের ডেলিভারি চার্জ সেট করুন, তারপর ডিফল্ট জোন তৈরি করুন",
-      );
+      throw badRequest("storefront.setDeliveryChargesFirst");
     }
     const existing =
       (await this.t("shippingZone").findMany({ where: { organizationId: orgId } })) ?? [];
@@ -6140,7 +6163,7 @@ export class StorefrontService {
    */
   async setCustomDomain(orgId: string, actorId: string, raw: string | null) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const previousDomain = org.customDomain
       ? normalizeCustomDomainInput(org.customDomain) || null
       : null;
@@ -6149,12 +6172,10 @@ export class StorefrontService {
     const normalized = normalizeCustomDomainInput(raw ?? "");
     if (normalized !== "") {
       if (!/^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/.test(normalized)) {
-        throw new BadRequestException(
-          "ডোমেইনটি সঠিক ফরম্যাটে লিখুন (যেমন reports.youragency.com) — প্রোটোকল বা পাথ ছাড়া",
-        );
+        throw badRequest("organizations.domainFormatInvalid");
       }
       if (isPlatformHostedDomain(normalized)) {
-        throw new BadRequestException(PLATFORM_CUSTOM_DOMAIN_MESSAGE);
+        throw badRequest("common.platformDomainNotAllowed");
       }
       const taken = await this.t("organization").findFirst({
         where: {
@@ -6163,7 +6184,7 @@ export class StorefrontService {
         },
       });
       if (taken) {
-        throw new ConflictException("এই ডোমেইনটি অন্য একটি Organization ইতিমধ্যে সংরক্ষণ করেছে");
+        throw conflict("organizations.domainAlreadyReserved");
       }
       domain = normalized;
     }
@@ -6200,12 +6221,10 @@ export class StorefrontService {
 
   async issueDomainVerifyToken(orgId: string, actorId: string) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const domain = org.customDomain ? this.normalizeDomain(org.customDomain) : "";
     if (!domain) {
-      throw new BadRequestException(
-        "আগে সংস্থার ব্র্যান্ডিং/সেটিংসে Custom Domain সেট করুন, তারপর যাচাই টোকেন নিন",
-      );
+      throw badRequest("storefront.setCustomDomainFirst");
     }
     this.clearVerifiedDomainCache(domain);
     const token = randomBytes(32).toString("hex");
@@ -6302,14 +6321,14 @@ export class StorefrontService {
    * checkDomainRouting. */
   async refreshDomainHttps(orgId: string, actorId: string) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const domain = org.customDomain ? this.normalizeDomain(org.customDomain) : "";
     if (!domain) {
-      throw new BadRequestException("এই সংস্থার কোনো Custom Domain সেট করা নেই");
+      throw badRequest("storefront.noCustomDomainSet");
     }
     const setting = await this.getSetting(orgId);
     if (!setting?.domainVerifiedAt) {
-      throw new BadRequestException("আগে ডোমেইনটি যাচাই করুন, তারপর HTTPS অবস্থা refresh করুন");
+      throw badRequest("storefront.verifyDomainBeforeHttps");
     }
     const out = await this.provisionDomainHttps(setting, domain);
     await this.audit?.log({
@@ -6325,17 +6344,17 @@ export class StorefrontService {
 
   async verifyDomain(orgId: string, actorId: string) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const domain = org.customDomain ? this.normalizeDomain(org.customDomain) : "";
     if (!domain) {
-      throw new BadRequestException("এই সংস্থার কোনো Custom Domain সেট করা নেই");
+      throw badRequest("storefront.noCustomDomainSet");
     }
     const setting = await this.getSetting(orgId);
     if (!setting?.domainVerifyToken) {
-      throw new BadRequestException("আগে যাচাই টোকেন তৈরি করুন এবং DNS-এ TXT রেকর্ড যোগ করুন");
+      throw badRequest("storefront.createTokenAndTxtFirst");
     }
     if (!this.dnsResolver) {
-      throw new BadRequestException("DNS যাচাই এই deployment-এ নেই");
+      throw badRequest("storefront.dnsVerificationUnavailable");
     }
     const host = `_qosprey-verify.${domain}`;
     let found: string[] = [];
@@ -6346,15 +6365,12 @@ export class StorefrontService {
       if (code === "ENODATA" || code === "ENOTFOUND") {
         found = [];
       } else {
-        throw new BadRequestException(`DNS lookup ব্যর্থ হয়েছে: ${errMsg(e)}`);
+        throw badRequest("storefront.dnsLookupFailed", { detail: errMsg(e) });
       }
     }
     if (!found.includes(setting.domainVerifyToken)) {
-      throw new BadRequestException(
-        found.length > 0
-          ? `TXT রেকর্ডে যাচাই টোকেন মেলেনি। পাওয়া গেছে: ${found.join(" | ")}`
-          : "কোনো TXT রেকর্ড পাওয়া যায়নি — রেকর্ড যোগ করে DNS propagate হওয়া পর্যন্ত অপেক্ষা করুন",
-      );
+      if (found.length > 0) throw badRequest("storefront.txtRecordTokenMismatch", { found: found.join(" | ") });
+      throw badRequest("storefront.txtRecordMissing");
     }
     const saved = await this.t("storefrontSetting").update({
       where: { id: setting.id },
@@ -6399,11 +6415,11 @@ export class StorefrontService {
    */
   async checkDomainRouting(orgId: string) {
     const org = await this.t("organization").findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const domain = org.customDomain ? this.normalizeDomain(org.customDomain) : "";
     const setting = await this.getSetting(orgId);
     if (!domain || !setting?.domainVerifiedAt) {
-      throw new BadRequestException("আগে ডোমেইনটি যাচাই করুন, তারপর routing পরীক্ষা করুন");
+      throw badRequest("storefront.verifyDomainBeforeRouting");
     }
     if (!this.routingFetcher) {
       return { routingActive: false, checkedUrl: null, reason: "HTTP পরীক্ষার সুবিধা এই deployment-এ নেই" };

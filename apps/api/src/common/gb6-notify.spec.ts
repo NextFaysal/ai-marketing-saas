@@ -110,6 +110,8 @@ describe("GB6 notification preference endpoints (service)", () => {
 
   it("unknown category keys are a 400", async () => {
     const { svc } = db();
-    await expect(svc.updateMyNotificationPreferences("org", "u-1", { mutedCategories: ["mars"] })).rejects.toThrow(/Unknown notification categories: mars/);
+    const err = await svc.updateMyNotificationPreferences("org", "u-1", { mutedCategories: ["mars"] }).catch((e: any) => e);
+    expect(err).toMatchObject({ code: "organizations.unknownNotificationCategories", status: 400 });
+    expect(err.params?.list).toContain("mars");
   });
 });

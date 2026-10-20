@@ -5,6 +5,7 @@ import { AuthService } from "./auth.service";
 import {
   ensurePlatformConfig, effectiveGoogleOAuthConfig, type GoogleOAuthConfig,
 } from "../common/platform-config";
+import { serviceUnavailable, unauthorized } from "../i18n";
 
 /**
  * AB8 (AX26) — Google SSO for staff ("Sign in with Google").
@@ -114,7 +115,7 @@ export class GoogleSsoService {
   async start(_ip?: string): Promise<{ url: string }> {
     const cfg = await this.loadConfig();
     if (!cfg || cfg.enabled !== true) {
-      throw new ServiceUnavailableException("Google সাইন-ইন এখন চালু করা হয়নি — প্ল্যাটফর্ম অ্যাডমিন Google OAuth configure ও enable করলে এটি পাওয়া যাবে।");
+      throw serviceUnavailable("auth.googleSsoNotEnabled");
     }
     const raw = randomBytes(32).toString("base64url");
     await this.t().create({
@@ -221,7 +222,7 @@ export class GoogleSsoService {
    * login result (session token, or a TOTP challenge when the
    * account has TOTP — SSO never bypasses it). Single-use. */
   async exchange(handoffToken: string, ip?: string, userAgent?: string) {
-    const invalid = () => new UnauthorizedException("Google সাইন-ইন লিংকটি অবৈধ বা মেয়াদ শেষ হয়ে গেছে — আবার চেষ্টা করুন");
+    const invalid = () => unauthorized("auth.googleSsoLinkInvalid");
     const token = String(handoffToken ?? "").trim();
     if (!token) throw invalid();
     const row = await this.t()?.findFirst?.({ where: { tokenHash: sha256Hex(token), kind: "handoff" } }).catch(() => null);
@@ -233,7 +234,7 @@ export class GoogleSsoService {
     } catch {
       throw invalid();
     }
-    if (!this.auth) throw new ServiceUnavailableException("Google সাইন-ইন এখন উপলব্ধ নয়");
+    if (!this.auth) throw serviceUnavailable("auth.googleSsoUnavailableNow");
     return this.auth.completeGoogleLogin(row.userId, ip, userAgent);
   }
 }

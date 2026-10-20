@@ -1,7 +1,8 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
-import { BD_DISTRICTS, shopSubdomainHost } from "@repo/contracts";
+import { BD_DISTRICTS, fmtDateTime, fmtNumber, shopSubdomainHost } from "@repo/contracts";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { formatMinorTaka, minorToTakaString, takaToMinorString } from "@/lib/storefront-money";
@@ -170,40 +171,40 @@ interface HttpsRefreshOut { domain: string; httpsStatus: string; httpsStatusDeta
 // TD9: POST /storefront/domain/set contract (API worker, parallel build).
 interface SetDomainOut { domain: string | null; previousDomain: string | null; verificationReset: boolean }
 
-const SECTION_LABELS: Record<ShopSectionKey, string> = {
-  hero: "হিরো (দোকানের নাম + সার্চ)",
-  categories: "ক্যাটাগরি",
-  brands: "ব্র্যান্ড ফিল্টার",
-  bundles: "বান্ডল",
-  flash: "ফ্ল্যাশ সেল",
-  featured: "ফিচার্ড সেকশন",
-  recently: "সম্প্রতি দেখা",
+const SECTION_LABELS: Record<ShopSectionKey, string> = { /* values are commerce dict keys (ML6) */
+  hero: "heroShopNameSearch",
+  categories: "category",
+  brands: "brandFilter",
+  bundles: "bundle",
+  flash: "flashSale",
+  featured: "featuredSection",
+  recently: "recentlyViewed",
 };
 
 const THEME_OPTIONS = [
-  { id: "fashion", label: "👗 ফ্যাশন ও ক্লদিং (Aarong / Yellow)", desc: "৩:৪ পোর্ট্রেট কার্ড, সাইজ সিলেক্টর ও সাইজ চার্ট গাইড" },
-  { id: "electronics", label: "⚡ ইলেকট্রনিক্স ও গ্যাজেটস (Star Tech / Ryans)", desc: "টেক স্পেকস টেবিল, ব্র্যান্ড ওয়ারেন্টি, EMI ক্যালকুলেটর ও গ্যাজেট কম্পেয়ার" },
-  { id: "grocery", label: "🛒 গ্রোসারি ও অর্গানিক ফুডস (Chaldal / Khaas Food)", desc: "১ ঘণ্টার এক্সপ্রেস ডেলিভারি, ওজন/কেজি সিলেক্টর ও ইনস্ট্যান্ট কোয়ান্টিটি কাউন্টার" },
-  { id: "beauty", label: "💄 হেলথ, বিউটি ও কসমেটিক্স (Shajgoj / Banglashoppers)", desc: "১০০% অরিজিনাল সনদ, স্কিন টাইপ ম্যাচিং, রুটিন কম্বো ও শেড পিকার" },
-  { id: "furniture", label: "🛋️ হোম ডেকর ও ফার্নিচার (HATIL / ISHO / Otobi)", desc: "১০ বছরের ওয়ারেন্টি, সেগুন/ওক ফিনিশ সিলেক্টর ও রুম সেট বান্ডেল" },
-  { id: "books", label: "📚 বই, প্রকাশনী ও স্টেশনারি (Rokomari / Batighar)", desc: "একটু পড়ে দেখুন প্রিভিউয়ার, লেখক/প্রকাশনী ফিল্টার, বাইন্ডিং সিলেক্টর ও বইমেলা কালেকশন" },
-  { id: "kids", label: "🧸 বেবি কেয়ার, টয়স ও কিডস ফ্যাশন (Hopscotch / Babyshop BD)", desc: "বয়স ভিত্তিক সাইজ সিলেক্টর, ১০০% নন-টক্সিক ও BPA-Free গ্যারান্টি, নিউবর্ন গিফট হ্যাম্পার" },
-  { id: "automotive", label: "🏍️ অটোমোটিভ, বাইক ও মোটর পার্টস (BikeBD / Motorparts BD)", desc: "বাইক মডেল ফিটমেন্ট চেকার, ইঞ্জিন অয়েল ভিসকোসিটি সিলেক্টর ও সার্ভিসিং কম্বো" },
-  { id: "sports", label: "🏋️‍♂️ স্পোর্টস, ফিটনেস ও জিম ইকুইপমেন্ট (Decathlon / Sports World)", desc: "ডাম্বেল/ওজন সিলেক্টর, হোম জিম অ্যাসেম্বলি ও টেকনিশিয়ান রিকোয়েস্ট, অরিজিনাল অ্যাথলেটিক গিয়ার" },
-  { id: "jewelry", label: "💎 জুয়েলারি, ডায়মন্ড ও লাক্সারি ওয়াচেস (Apan Jewellers / Diamond World)", desc: "২২ ক্যারেট হলমার্ক গোল্ড সনদ, ডায়মন্ড ৪সি সার্টিফিকেট, রিং সাইজ গাইড ও ব্রাইডাল সেট" },
-  { id: "classic", label: "১. ক্লাসিক", desc: "চেনা, ভারসাম্যপূর্ণ ও স্ট্যান্ডার্ড শপ লুক" },
-  { id: "bold", label: "২. বোল্ড", desc: "বড় হিরো, গাঢ় রঙ ও নজরকাড়া অফার" },
-  { id: "minimal", label: "৩. মিনিমাল", desc: "হালকা, পরিষ্কার, পণ্যে সরাসরি ফোকাস" },
-  { id: "luxury", label: "৪. লাক্সারি গোল্ড", desc: "অভিজাত ডার্ক ও গোল্ডেন ভাইব — গয়না ও ঘড়ি" },
-  { id: "organic", label: "৫. অর্গানিক নেচার", desc: "প্রাকৃতিক সবুজ ও মাটির টান — অর্গানিক ফুড" },
-  { id: "vibrant", label: "৬. ভাইব্রেন্ট পপ", desc: "উজ্জ্বল রঙের ছোঁয়া — ট্রেন্ডি গিফট ও ফ্যাশন" },
-  { id: "modern", label: "৭. মডার্ন টেক", desc: "হাই-টেক ফিনিশ — গ্যাজেট ও ইলেকট্রনিক্স" },
-  { id: "pastel", label: "৮. প্যাস্টেল সফট", desc: "নরম মিষ্টি রং — স্কিনকেয়ার ও কসমেটিকস" },
-  { id: "nordic", label: "৯. নর্ডিক ওয়ার্ম", desc: "স্ক্যান্ডিনেভিয়ান কাঠ — হোম ডেকর ও লাইফস্টাইল" },
-  { id: "midnight", label: "১০. মিডনাইট নিয়ন", desc: "ট্রু ডার্ক মোড ও নিয়ন — স্ট্রিটওয়্যার ও ইউথ" },
-  { id: "v2", label: "১১. আধুনিক ডিজাইন v2", desc: "আধুনিক ডিজাইন — মোবাইল অ্যাপের মতো নেভিগেশন, ব্র্যান্ড রঙে সব বোতাম" },
-  { id: "warm", label: "১২. ওয়ার্ম (OU8)", desc: "নরম আম্বর আভা, গোলগাল কোণ — ফ্যাশন ও লাইফস্টাইল দোকানের জন্য" },
-  { id: "ocean", label: "১৩. ওশান (OU8)", desc: "গাঢ় টিল হিরো, টাইট গ্রিড — গ্যাজেট ও ইলেকট্রনিক্স দোকানের জন্য" },
+  { id: "fashion", labelKey: "fashionClothingAarongYellow", descKey: "text3hckht" },
+  { id: "electronics", labelKey: "electronicsGadgetsStarTechRyans", descKey: "techSpecsTableBrandWarranty" },
+  { id: "grocery", labelKey: "groceryOrganicFoodsChaldalKhaas", descKey: "textf4l8f8" },
+  { id: "beauty", labelKey: "healthBeautyCosmeticsShajgojBanglashoppers", descKey: "text1qjd9le" },
+  { id: "furniture", labelKey: "homeDecorFurnitureHATILISHO", descKey: "texthny0gy" },
+  { id: "books", labelKey: "booksPublicationsStationeryRokomariBatighar", descKey: "readALittlePreviewerAuthor" },
+  { id: "kids", labelKey: "babyCareToysKidsFashion", descKey: "ageBasedSizeSelector100" },
+  { id: "automotive", labelKey: "automotiveBikesMotorPartsBikeBD", descKey: "bikeModelFitmentCheckerEngine" },
+  { id: "sports", labelKey: "sportsFitnessGymEquipmentDecathlon", descKey: "dumbbellWeightSelectorHomeGym" },
+  { id: "jewelry", labelKey: "jewelleryDiamondsLuxuryWatchesApan", descKey: "textvda5ds" },
+  { id: "classic", labelKey: "text1kpsfdd", descKey: "familiarBalancedAndStandardShop" },
+  { id: "bold", labelKey: "textn660r1", descKey: "bigHeroBoldColorsAnd" },
+  { id: "minimal", labelKey: "text1j813lr", descKey: "lightCleanDirectFocusOn" },
+  { id: "luxury", labelKey: "texte705qf", descKey: "elegantDarkGoldenVibeJewellery" },
+  { id: "organic", labelKey: "textv7ihr3", descKey: "naturalGreenEarthyTonesOrganic" },
+  { id: "vibrant", labelKey: "textdbcjrq", descKey: "aTouchOfBrightColors" },
+  { id: "modern", labelKey: "texttlaub0", descKey: "highTechFinishGadgetsElectronics" },
+  { id: "pastel", labelKey: "text14ixjlb", descKey: "softSweetColorsSkincareCosmetics" },
+  { id: "nordic", labelKey: "text1lqinc6", descKey: "scandinavianWoodHomeDecorLifestyle" },
+  { id: "midnight", labelKey: "text4jfvrl", descKey: "trueDarkModeNeonStreetwear" },
+  { id: "v2", labelKey: "textepts6j", descKey: "modernDesignAppLikeNavigation" },
+  { id: "warm", labelKey: "text1gq4lr3", descKey: "softAmberGlowRoundedCorners" },
+  { id: "ocean", labelKey: "texthc2e8", descKey: "darkTealHeroTightGrid" },
 ] as const;
 
 /** GC1: pure-div mini shop mock used as a theme preview (no images). */
@@ -376,34 +377,35 @@ function datetimeLocalToIso(value: string): string | null {
 }
 
 const KIND_LABEL: Record<string, string> = {
-  inside_dhaka: "ঢাকার ভিতরে",
-  outside_dhaka: "ঢাকার বাইরে",
-  district_list: "নির্দিষ্ট জেলা তালিকা",
-  all: "সব এলাকা",
+  inside_dhaka: "insideDhaka",
+  outside_dhaka: "outsideDhaka",
+  district_list: "specificDistrictList",
+  all: "allAreas",
 };
 const KINDS = Object.keys(KIND_LABEL);
 
 // ED12: in-page section anchors — ids match the section elements below
 // (in page order); labels match the section titles.
 const SECTION_NAV = [
-  { id: "shop-link", label: "আপনার দোকানের লিংক" },
-  { id: "shop-settings", label: "দোকানের সেটিংস" },
-  { id: "referral-rewards", label: "রেফারেল পুরস্কার" },
-  { id: "popup", label: "প্রমোশনাল পপআপ" },
-  { id: "push", label: "ওয়েব পুশ" },
-  { id: "social-proof", label: "সোশ্যাল প্রুফ" },
-  { id: "content-pages", label: "কনটেন্ট পেজ" },
-  { id: "blog", label: "ব্লগ" },
-  { id: "shop-search", label: "দোকানের সার্চ" },
-  { id: "delivery-slots", label: "ডেলিভারি স্লট" },
-  { id: "shipping-zones", label: "শিপিং জোন ও ডেলিভারি চার্জ" },
-  { id: "rate-rules", label: "ওজনভিত্তিক ডেলিভারি রেট রুল" },
-  { id: "pickup-points", label: "পিকআপ পয়েন্ট" },
-  { id: "checkout-fields", label: "চেকআউট ফিল্ড" },
-  { id: "custom-domain", label: "কাস্টম ডোমেইন" },
+  { id: "shop-link", labelKey: "yourShopLink" },
+  { id: "shop-settings", labelKey: "shopSettings" },
+  { id: "referral-rewards", labelKey: "referralReward" },
+  { id: "popup", labelKey: "promotionalPopup" },
+  { id: "push", labelKey: "webPush" },
+  { id: "social-proof", labelKey: "socialProof" },
+  { id: "content-pages", labelKey: "contentPage" },
+  { id: "blog", labelKey: "blog" },
+  { id: "shop-search", labelKey: "shopSearch" },
+  { id: "delivery-slots", labelKey: "deliverySlot" },
+  { id: "shipping-zones", labelKey: "shippingZonesDeliveryCharges" },
+  { id: "rate-rules", labelKey: "weightBasedDeliveryRateRules" },
+  { id: "pickup-points", labelKey: "pickupPoint" },
+  { id: "checkout-fields", labelKey: "checkoutField" },
+  { id: "custom-domain", labelKey: "customDomain" },
 ] as const;
 
 export default function StorefrontStaffPage() {
+  const { dict, t, locale } = useLocale();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [state, setState] = useState<StaffState | null>(null);
@@ -560,7 +562,7 @@ export default function StorefrontStaffPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setLoading(false); setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setLoading(false); setError(dict.commerce.noOrganizationSelected); return; }
     setLoading(true);
     try {
       const [s, p] = await Promise.all([
@@ -614,7 +616,7 @@ export default function StorefrontStaffPage() {
       setCustomJsEnabled(st.customJsEnabled ?? false);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "লোড ব্যর্থ");
+      setError(e instanceof Error ? e.message : dict.commerce.loadingFailed);
     } finally {
       setLoading(false);
     }
@@ -664,7 +666,7 @@ export default function StorefrontStaffPage() {
         setPopupSuccessMessage(p.successMessage ?? "");
       }
       setPopupLoadError("");
-    } catch { setPopupLoadError("লোড ব্যর্থ হয়েছে"); }
+    } catch { setPopupLoadError(dict.commerce.loadingFailed2); }
   }, []);
   useEffect(() => { void loadPopup(); }, [loadPopup]);
 
@@ -680,7 +682,7 @@ export default function StorefrontStaffPage() {
           ?? (out as { fields?: CheckoutFieldRow[] }).fields ?? []);
       setFieldDefs(items);
       setFieldLoadError("");
-    } catch { setFieldLoadError("লোড ব্যর্থ হয়েছে"); }
+    } catch { setFieldLoadError(dict.commerce.loadingFailed2); }
   }, []);
   useEffect(() => { void loadFieldDefs(); }, [loadFieldDefs]);
 
@@ -697,8 +699,8 @@ export default function StorefrontStaffPage() {
   }
   async function saveField() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!fLabel.trim()) { setFieldError("ফিল্ডের লেবেল দিন।"); return; }
-    if (!editingFieldId && !fKey.trim()) { setFieldError("ফিল্ডের key দিন (ইংরেজি, যেমন: gift_note)।"); return; }
+    if (!fLabel.trim()) { setFieldError(dict.commerce.giveTheFieldALabel); return; }
+    if (!editingFieldId && !fKey.trim()) { setFieldError(dict.commerce.giveTheFieldAKey); return; }
     setBusy("field"); setFieldError(""); setError("");
     const options = fType === "select"
       ? fOptions.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
@@ -716,26 +718,26 @@ export default function StorefrontStaffPage() {
     try {
       if (editingFieldId) {
         await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${editingFieldId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "চেকআউট ফিল্ড আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.checkoutFieldUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/checkout-fields`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "নতুন চেকআউট ফিল্ড তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newCheckoutFieldCreated, tone: "success" });
       }
       resetFieldForm();
       await loadFieldDefs();
-    } catch (e) { setFieldError(e instanceof Error ? e.message : "ফিল্ড সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setFieldError(e instanceof Error ? e.message : dict.commerce.fieldSaveFailed); }
     finally { setBusy(""); }
   }
   async function deleteField(f: CheckoutFieldRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${f.label}" ফিল্ডটি মুছে ফেলবেন?`, body: "আগের অর্ডারে দেওয়া উত্তরগুলো থেকে যাবে।", confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheField", { label: f.label }), body: dict.commerce.answersGivenInPreviousOrders, confirmLabel: dict.commerce.delete2, danger: true }))) return;
     setBusy(`field-del-${f.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/checkout-fields/${f.id}`, { method: "DELETE" });
-      toast({ title: "চেকআউট ফিল্ড মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.checkoutFieldDeleted, tone: "success" });
       if (editingFieldId === f.id) resetFieldForm();
       await loadFieldDefs();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -746,7 +748,7 @@ export default function StorefrontStaffPage() {
       const out = await apiFetch<{ pages: ShopPageSummary[] }>(`/organizations/${orgId}/storefront/pages`);
       setShopPages(out.pages ?? []);
       setPagesLoadError("");
-    } catch { setPagesLoadError("লোড ব্যর্থ হয়েছে"); }
+    } catch { setPagesLoadError(dict.commerce.loadingFailed2); }
   }, []);
   useEffect(() => { void loadShopPages(); }, [loadShopPages]);
 
@@ -778,9 +780,9 @@ export default function StorefrontStaffPage() {
         }),
       });
       if (out.popup) setPopup(out.popup);
-      toast({ title: "পপআপ সংরক্ষণ হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.popupSaved, tone: "success" });
       await loadPopup();
-    } catch (e) { setPopupError(e instanceof Error ? e.message : "পপআপ সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setPopupError(e instanceof Error ? e.message : dict.commerce.popupSaveFailed); }
     finally { setBusy(""); }
   }
 
@@ -791,16 +793,16 @@ export default function StorefrontStaffPage() {
   async function copyText(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
-      toast({ title: `${label} কপি হয়েছে।`, tone: "success" });
+      toast({ title: t("commerce.copied3", { label: label }), tone: "success" });
     } catch {
-      setError("কপি করা যায়নি — লেখাটি হাতে কপি করুন।");
+      setError(dict.commerce.couldNotCopyCopyThe4);
     }
   }
 
   async function saveSettings() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (featuredIds.length > 50) { setError("Featured পণ্য সর্বোচ্চ ৫০টি হতে পারবে।"); return; }
-    if (giftWrapEnabled && giftWrapFee.trim() && takaToMinorString(giftWrapFee) === null) { setError("গিফট র‍্যাপের ফি টাকায় সঠিক সংখ্যা দিন (যেমন: 50)।"); return; }
+    if (featuredIds.length > 50) { setError(dict.commerce.featuredProductsCanBeAt); return; }
+    if (giftWrapEnabled && giftWrapFee.trim() && takaToMinorString(giftWrapFee) === null) { setError(dict.commerce.giveTheGiftWrapFee); return; }
     setBusy("settings"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/settings`, {
@@ -852,16 +854,16 @@ export default function StorefrontStaffPage() {
           customJsEnabled,
         }),
       });
-      toast({ title: "দোকানের সেটিংস সংরক্ষণ হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.shopSettingsSaved, tone: "success" });
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.saveFailed); }
     finally { setBusy(""); }
   }
 
   function toggleFeatured(id: string) {
     setFeaturedIds((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= 50) { setError("Featured পণ্য সর্বোচ্চ ৫০টি হতে পারবে।"); return prev; }
+      if (prev.length >= 50) { setError(dict.commerce.featuredProductsCanBeAt); return prev; }
       return [...prev, id];
     });
   }
@@ -882,14 +884,14 @@ export default function StorefrontStaffPage() {
   async function saveZone() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const chargeMinor = takaToMinorString(zCharge);
-    if (chargeMinor === null) { setZoneError("ডেলিভারি চার্জ টাকায় সঠিক সংখ্যা দিন (যেমন: 60 অথবা 60.50)।"); return; }
+    if (chargeMinor === null) { setZoneError(dict.commerce.giveTheDeliveryChargeIn); return; }
     let freeAboveMinor: string | null = null;
     if (zFreeAbove.trim()) {
       freeAboveMinor = takaToMinorString(zFreeAbove);
-      if (freeAboveMinor === null) { setZoneError("ফ্রি ডেলিভারির সীমা টাকায় সঠিক সংখ্যা দিন (যেমন: 1000)।"); return; }
+      if (freeAboveMinor === null) { setZoneError(dict.commerce.giveTheFreeDeliveryThreshold); return; }
     }
     if (zKind === "district_list" && zDistricts.length === 0) {
-      setZoneError("জেলা-তালিকা জোনের জন্য অন্তত একটি জেলা বেছে নিন।");
+      setZoneError(dict.commerce.selectAtLeastOneDistrict);
       return;
     }
     setBusy("zone"); setZoneError(""); setError("");
@@ -906,27 +908,27 @@ export default function StorefrontStaffPage() {
     try {
       if (editingZoneId) {
         await apiFetch(`/organizations/${orgId}/storefront/zones/${editingZoneId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "শিপিং জোন আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.shippingZoneUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/zones`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "নতুন শিপিং জোন তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newShippingZoneCreated, tone: "success" });
       }
       resetZoneForm();
       await load();
-    } catch (e) { setZoneError(e instanceof Error ? e.message : "জোন সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setZoneError(e instanceof Error ? e.message : dict.commerce.zoneSaveFailed); }
     finally { setBusy(""); }
   }
 
   async function deleteZone(z: Zone) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${z.name}" জোনটি মুছে ফেলবেন?`, body: "এটি আর ডেলিভারি হিসেবে ব্যবহৃত হবে না।", confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheZone", { name: z.name }), body: dict.commerce.itWillNoLongerBe, confirmLabel: dict.commerce.delete2, danger: true }))) return;
     setBusy(`zone-del-${z.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/zones/${z.id}`, { method: "DELETE" });
-      toast({ title: "জোন মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.zoneDeleted, tone: "success" });
       if (editingZoneId === z.id) resetZoneForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -944,12 +946,12 @@ export default function StorefrontStaffPage() {
 
   async function saveSlot() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!sLabel.trim()) { setSlotError("স্লটের লেবেল দিন (যেমন: সকাল)।"); return; }
-    if (!/^\d{2}:\d{2}$/.test(sStart) || !/^\d{2}:\d{2}$/.test(sEnd)) { setSlotError("সময় HH:mm ফরম্যাটে দিন।"); return; }
+    if (!sLabel.trim()) { setSlotError(dict.commerce.giveTheSlotALabel); return; }
+    if (!/^\d{2}:\d{2}$/.test(sStart) || !/^\d{2}:\d{2}$/.test(sEnd)) { setSlotError(dict.commerce.giveTheTimeInHH); return; }
     let capacityPerDay: number | null = null;
     if (sCapacity.trim()) {
       const n = parseInt(sCapacity, 10);
-      if (!Number.isFinite(n) || n < 0 || String(n) !== sCapacity.trim()) { setSlotError("দৈনিক সক্ষমতা পূর্ণ সংখ্যায় দিন, অথবা খালি রাখুন (আনলিমিটেড)।"); return; }
+      if (!Number.isFinite(n) || n < 0 || String(n) !== sCapacity.trim()) { setSlotError(dict.commerce.giveTheDailyCapacityAs); return; }
       capacityPerDay = n;
     }
     setBusy("slot"); setSlotError(""); setError("");
@@ -964,39 +966,39 @@ export default function StorefrontStaffPage() {
     try {
       if (editingSlotId) {
         await apiFetch(`/organizations/${orgId}/storefront/slots/${editingSlotId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "ডেলিভারি স্লট আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.deliverySlotUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/slots`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "নতুন ডেলিভারি স্লট তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newDeliverySlotCreated, tone: "success" });
       }
       resetSlotForm();
       await load();
-    } catch (e) { setSlotError(e instanceof Error ? e.message : "স্লট সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setSlotError(e instanceof Error ? e.message : dict.commerce.slotSaveFailed); }
     finally { setBusy(""); }
   }
 
   async function deleteSlot(s: Slot) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${s.label}" স্লটটি মুছে ফেলবেন?`, body: `${s.startTime} – ${s.endTime} সময়ের এই ডেলিভারি স্লটটি আর চেকআউটে দেখাবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    if (!(await confirm({ title: t("commerce.deleteTheSlot", { label: s.label }), body: t("commerce.thisDeliverySlotFromWill", { startTime: s.startTime, endTime: s.endTime }), confirmLabel: dict.commerce.delete2, danger: true }))) return;
     setBusy(`slot-del-${s.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/slots/${s.id}`, { method: "DELETE" });
-      toast({ title: "স্লট মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.slotDeleted, tone: "success" });
       if (editingSlotId === s.id) resetSlotForm();
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
   // ---- EC30: rate rules ----
   function weightWindowLabel(r: RateRule): string {
-    if (r.minWeightGrams != null && r.maxWeightGrams != null) return `${r.minWeightGrams}–${r.maxWeightGrams} গ্রাম`;
-    if (r.minWeightGrams != null) return `সর্বনিম্ন ${r.minWeightGrams}`;
-    if (r.maxWeightGrams != null) return `সর্বোচ্চ ${r.maxWeightGrams}`;
-    return "যেকোনো ওজন";
+    if (r.minWeightGrams != null && r.maxWeightGrams != null) return t("commerce.grams", { minWeightGrams: r.minWeightGrams, maxWeightGrams: r.maxWeightGrams });
+    if (r.minWeightGrams != null) return t("commerce.minimum", { minWeightGrams: r.minWeightGrams });
+    if (r.maxWeightGrams != null) return t("commerce.maximum", { maxWeightGrams: r.maxWeightGrams });
+    return dict.commerce.anyWeight;
   }
   function zoneNameFor(id: string | null): string {
-    if (!id) return "সব জোন";
+    if (!id) return dict.commerce.allZones;
     return state?.zones.find((z) => z.id === id)?.name ?? id;
   }
   function resetRuleForm() {
@@ -1013,14 +1015,14 @@ export default function StorefrontStaffPage() {
   async function saveRule() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const chargeMinor = takaToMinorString(rCharge);
-    if (chargeMinor === null) { setRuleError("চার্জ টাকায় সঠিক সংখ্যা দিন (যেমন: 60 অথবা 60.50)।"); return; }
+    if (chargeMinor === null) { setRuleError(dict.commerce.giveTheChargeInTaka); return; }
     const parseWeight = (v: string): number | null => {
       if (!v.trim()) return null;
       const n = parseInt(v, 10);
       return Number.isFinite(n) && n >= 0 ? n : null;
     };
-    if (rMinWeight.trim() && parseWeight(rMinWeight) === null) { setRuleError("সর্বনিম্ন ওজন গ্রামে পূর্ণ সংখ্যা দিন, অথবা খালি রাখুন।"); return; }
-    if (rMaxWeight.trim() && parseWeight(rMaxWeight) === null) { setRuleError("সর্বোচ্চ ওজন গ্রামে পূর্ণ সংখ্যা দিন, অথবা খালি রাখুন।"); return; }
+    if (rMinWeight.trim() && parseWeight(rMinWeight) === null) { setRuleError(dict.commerce.giveTheMinimumWeightAs); return; }
+    if (rMaxWeight.trim() && parseWeight(rMaxWeight) === null) { setRuleError(dict.commerce.giveTheMaximumWeightAs); return; }
     setBusy("rule"); setRuleError(""); setError("");
     const body = {
       shippingZoneId: rZoneId ? rZoneId : null,
@@ -1033,26 +1035,26 @@ export default function StorefrontStaffPage() {
     try {
       if (editingRuleId) {
         await apiFetch(`/organizations/${orgId}/storefront/rate-rules/${editingRuleId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "রেট রুল আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.rateRuleUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/rate-rules`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "নতুন রেট রুল তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newRateRuleCreated, tone: "success" });
       }
       resetRuleForm();
       await loadPricing();
-    } catch (e) { setRuleError(e instanceof Error ? e.message : "রুল সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setRuleError(e instanceof Error ? e.message : dict.commerce.ruleSaveFailed); }
     finally { setBusy(""); }
   }
   async function deleteRule(r: RateRule) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: "এই রেট রুলটি মুছে ফেলবেন?", body: `${zoneNameFor(r.shippingZoneId)} — ওজন: ${weightWindowLabel(r)}, চার্জ: ${formatMinorTaka(r.chargeMinor)}। এই রুলটি আর ডেলিভারি চার্জে প্রযোজ্য হবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    if (!(await confirm({ title: dict.commerce.deleteThisRateRule, body: t("commerce.weightChargeThisRuleWill", { zoneNameFor: zoneNameFor(r.shippingZoneId), weightWindowLabel: weightWindowLabel(r), formatMinorTaka: formatMinorTaka(r.chargeMinor) }), confirmLabel: dict.commerce.delete2, danger: true }))) return;
     setBusy(`rule-del-${r.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/rate-rules/${r.id}`, { method: "DELETE" });
-      toast({ title: "রেট রুল মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.rateRuleDeleted, tone: "success" });
       if (editingRuleId === r.id) resetRuleForm();
       await loadPricing();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -1070,7 +1072,7 @@ export default function StorefrontStaffPage() {
     let feeMinor = "0";
     if (pFee.trim()) {
       const converted = takaToMinorString(pFee);
-      if (converted === null) { setPointError("ফি টাকায় সঠিক সংখ্যা দিন (যেমন: 30 অথবা 30.50), অথবা খালি রাখুন (ফ্রি)।"); return; }
+      if (converted === null) { setPointError(dict.commerce.giveTheFeeInTaka); return; }
       feeMinor = converted;
     }
     setBusy("point"); setPointError(""); setError("");
@@ -1085,26 +1087,26 @@ export default function StorefrontStaffPage() {
     try {
       if (editingPointId) {
         await apiFetch(`/organizations/${orgId}/storefront/pickup-points/${editingPointId}`, { method: "PATCH", body: JSON.stringify(body) });
-        toast({ title: "পিকআপ পয়েন্ট আপডেট হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.pickupPointUpdated, tone: "success" });
       } else {
         await apiFetch(`/organizations/${orgId}/storefront/pickup-points`, { method: "POST", body: JSON.stringify(body) });
-        toast({ title: "নতুন পিকআপ পয়েন্ট তৈরি হয়েছে।", tone: "success" });
+        toast({ title: dict.commerce.newPickupPointCreated, tone: "success" });
       }
       resetPointForm();
       await loadPricing();
-    } catch (e) { setPointError(e instanceof Error ? e.message : "পয়েন্ট সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setPointError(e instanceof Error ? e.message : dict.commerce.pointSaveFailed); }
     finally { setBusy(""); }
   }
   async function deletePoint(p: PickupPointRow) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!(await confirm({ title: `"${p.name}" পিকআপ পয়েন্টটি মুছে ফেলবেন?`, body: `${p.address}, ${p.district} — এই পয়েন্টটি আর চেকআউটে পিকআপ হিসেবে বেছে নেওয়া যাবে না।`, confirmLabel: "মুছে ফেলুন", danger: true }))) return;
+    if (!(await confirm({ title: t("commerce.deleteThePickupPoint", { name: p.name }), body: t("commerce.thisPointCanNoLonger", { address: p.address, district: p.district }), confirmLabel: dict.commerce.delete2, danger: true }))) return;
     setBusy(`point-del-${p.id}`); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/storefront/pickup-points/${p.id}`, { method: "DELETE" });
-      toast({ title: "পিকআপ পয়েন্ট মুছে ফেলা হয়েছে।", tone: "success" });
+      toast({ title: dict.commerce.pickupPointDeleted, tone: "success" });
       if (editingPointId === p.id) resetPointForm();
       await loadPricing();
-    } catch (e) { setError(e instanceof Error ? e.message : "মুছে ফেলা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.deleteFailed); }
     finally { setBusy(""); }
   }
 
@@ -1115,14 +1117,14 @@ export default function StorefrontStaffPage() {
       const out = await apiFetch<{ created: Zone[]; zones: Zone[] }>(`/organizations/${orgId}/storefront/zones/defaults`, { method: "POST" });
       toast({
         title: out.created.length
-          ? `ডিফল্ট জোন তৈরি হয়েছে: ${out.created.map((z) => z.name).join(", ")}।`
-          : "ঢাকার ভিতরে/বাইরে জোন আগেই ছিল — নতুন কিছু তৈরি হয়নি।",
+          ? t("commerce.defaultZonesCreated", { out: out.created.map((z) => z.name).join(", ") })
+          : dict.commerce.insideOutsideDhakaZonesAlready,
         tone: "success",
       });
       await load();
     } catch (e) {
       // Server refusal (e.g. BusinessProfile charges unset) verbatim.
-      setError(e instanceof Error ? e.message : "ডিফল্ট জোন তৈরি ব্যর্থ");
+      setError(e instanceof Error ? e.message : dict.commerce.defaultZoneCreationFailed);
     } finally { setBusy(""); }
   }
 
@@ -1132,8 +1134,8 @@ export default function StorefrontStaffPage() {
     try {
       const out = await apiFetch<VerifyTokenOut>(`/organizations/${orgId}/storefront/domain/verify-token`, { method: "POST" });
       setTokenOut(out);
-      toast({ title: "নতুন যাচাই টোকেন তৈরি হয়েছে।", description: "নিচের TXT রেকর্ডটি DNS-এ যোগ করুন — আগের যাচাই থাকলে তা নতুন করে প্রমাণ করতে হবে।", tone: "success" });
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "টোকেন তৈরি ব্যর্থ"); }
+      toast({ title: dict.commerce.newVerificationTokenCreated, description: dict.commerce.addTheTXTRecordBelow, tone: "success" });
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.tokenCreationFailed); }
     finally { setBusy(""); }
   }
 
@@ -1142,9 +1144,9 @@ export default function StorefrontStaffPage() {
     setBusy("verify"); setDomainError("");
     try {
       const out = await apiFetch<{ verified: boolean; domain: string; verifiedAt: string }>(`/organizations/${orgId}/storefront/domain/verify`, { method: "POST" });
-      toast({ title: `ডোমেইন যাচাই হয়েছে: ${out.domain} (${new Date(out.verifiedAt).toLocaleString("bn-BD")})`, tone: "success" });
+      toast({ title: t("commerce.domainVerified", { domain: out.domain, p1: fmtDateTime(locale, new Date(out.verifiedAt)) }), tone: "success" });
       await load();
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "যাচাই ব্যর্থ"); }
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.verificationFailed); }
     finally { setBusy(""); }
   }
 
@@ -1156,9 +1158,9 @@ export default function StorefrontStaffPage() {
     setBusy("https-refresh"); setDomainError("");
     try {
       const out = await apiFetch<HttpsRefreshOut>(`/organizations/${orgId}/storefront/domain/https-refresh`, { method: "POST" });
-      toast({ title: `HTTPS অবস্থা: ${out.httpsStatus}`, description: out.httpsStatusDetail, tone: out.httpsStatus === "active" ? "success" : "info" });
+      toast({ title: t("commerce.hTTPSStatus", { httpsStatus: out.httpsStatus }), description: out.httpsStatusDetail, tone: out.httpsStatus === "active" ? "success" : "info" });
       await load();
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "HTTPS অবস্থা refresh ব্যর্থ"); }
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.hTTPSStatusRefreshFailed); }
     finally { setBusy(""); }
   }
 
@@ -1168,7 +1170,7 @@ export default function StorefrontStaffPage() {
     try {
       const out = await apiFetch<RoutingOut>(`/organizations/${orgId}/storefront/domain/check-routing`, { method: "POST" });
       setRouting(out);
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "Routing পরীক্ষা ব্যর্থ"); }
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.routingTestFailed); }
     finally { setBusy(""); }
   }
 
@@ -1178,7 +1180,7 @@ export default function StorefrontStaffPage() {
   async function saveDomain() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const domain = domainInput.trim();
-    if (!domain) { setDomainError("আগে ডোমেইনটি লিখুন (যেমন: dhaka-fashion.com)।"); return; }
+    if (!domain) { setDomainError(dict.commerce.writeTheDomainFirstE); return; }
     setBusy("domain-set"); setDomainError(""); setDomainNotice("");
     try {
       const out = await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
@@ -1188,18 +1190,18 @@ export default function StorefrontStaffPage() {
       if (out.verificationReset) {
         setTokenOut(null);
         setRouting(null);
-        setDomainNotice("ডোমেইন বদলানো হয়েছে — আগের যাচাই বাতিল হয়েছে, নতুন ডোমেইনের জন্য আবার TXT যাচাই করুন");
+        setDomainNotice(dict.commerce.domainChangedThePreviousVerification);
       } else {
-        setDomainNotice(`ডোমেইন সেভ হয়েছে: ${out.domain ?? domain}`);
+        setDomainNotice(t("commerce.domainSaved", { out: out.domain ?? domain }));
       }
       await load();
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সেভ ব্যর্থ"); }
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.domainSaveFailed); }
     finally { setBusy(""); }
   }
 
   async function removeDomain() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("কাস্টম ডোমেইনটি সরিয়ে ফেলবেন? এরপর দোকান শুধু আপনার সাবডোমেইন ঠিকানায় খুলবে।")) return;
+    if (!window.confirm(dict.commerce.removeTheCustomDomainAfter)) return;
     setBusy("domain-remove"); setDomainError(""); setDomainNotice("");
     try {
       await apiFetch<SetDomainOut>(`/organizations/${orgId}/storefront/domain/set`, {
@@ -1208,14 +1210,14 @@ export default function StorefrontStaffPage() {
       });
       setTokenOut(null);
       setRouting(null);
-      setDomainNotice("ডোমেইন সরিয়ে ফেলা হয়েছে — এখন সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।");
+      setDomainNotice(dict.commerce.domainRemovedTheSubdomainAddress);
       await load();
-    } catch (e) { setDomainError(e instanceof Error ? e.message : "ডোমেইন সরানো ব্যর্থ"); }
+    } catch (e) { setDomainError(e instanceof Error ? e.message : dict.commerce.domainRemovalFailed); }
     finally { setBusy(""); }
   }
 
-  if (loading) return <p className="text-sm text-slate-500">লোড হচ্ছে…</p>;
-  if (!state) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error || "Storefront state পাওয়া যায়নি।"}</p>;
+  if (loading) return <p className="text-sm text-slate-500">{dict.common.loading}</p>;
+  if (!state) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error || dict.commerce.storefrontStateNotFound}</p>;
 
   const domain = state.domain;
   const customDomain = domain.customDomain;
@@ -1225,24 +1227,23 @@ export default function StorefrontStaffPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="page-title">Storefront / দোকান — নেটিভ অনলাইন শপ</h1>
+          <h1 className="page-title">{dict.commerce.storefrontShopNativeOnlineShop}</h1>
           <p className="text-sm text-slate-500">
-            WooCommerce/Shopify ছাড়াই নিজের দোকান: পণ্য, কার্ট, ক্যাশ-অন-ডেলিভারি চেকআউট, শিপিং জোন ও কাস্টম ডোমেইন — সব এখান থেকে।
-          </p>
+            {dict.commerce.yourOwnShopWithoutWooCommerce}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/dashboard/commerce/sync" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">← Sync Center</Link>
-          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🏷️ Discounts / কুপন</Link>
+          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.discountsCoupons}</Link>
           <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">🛒 Abandoned Carts</Link>
         </div>
       </div>
 
       {/* ED12: sticky in-page sub-nav — anchor links to each section
           below (single-column layout, so a top chip row). */}
-      <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label="সেকশন">
+      <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label={dict.commerce.section}>
         {SECTION_NAV.map((n) => (
           <a key={n.id} href={`#${n.id}`} className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 shadow-card ring-1 ring-slate-200/70">
-            {n.label}
+            {dict.commerce[n.labelKey as keyof typeof dict.commerce]}
           </a>
         ))}
       </nav>
@@ -1252,24 +1253,24 @@ export default function StorefrontStaffPage() {
       {/* Live shop link */}
       <div id="shop-link" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold">আপনার দোকানের লিংক</div>
+          <div className="text-sm font-semibold">{dict.commerce.yourShopLink}</div>
           {shopEnabled ? (
             <p className="truncate font-mono text-sm text-indigo-700">{typeof window !== "undefined" ? `${window.location.origin}${shopPath}` : shopPath}</p>
           ) : (
-            <p className="text-sm text-slate-500">দোকান এখন বন্ধ আছে — নিচে &ldquo;দোকান চালু করুন&rdquo; অন করে সেভ করলে লিংকটি live হবে। বন্ধ থাকলে লিংকে গেলে 404 দেখাবে।</p>
+            <p className="text-sm text-slate-500">{dict.commerce.theShopIsCurrentlyClosed}</p>
           )}
         </div>
         {shopPath ? (
           <>
-            <button type="button" onClick={() => copyText(typeof window !== "undefined" ? `${window.location.origin}${shopPath}` : shopPath, "দোকানের লিংক")} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">কপি করুন</button>
-            <Link href={shopPath} target="_blank" className="btn-primary">দোকান দেখুন ↗</Link>
+            <button type="button" onClick={() => copyText(typeof window !== "undefined" ? `${window.location.origin}${shopPath}` : shopPath, dict.commerce.shopLink)} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.commerce.copy2}</button>
+            <Link href={shopPath} target="_blank" className="btn-primary">{dict.commerce.viewShop}</Link>
           </>
         ) : null}
       </div>
 
       {/* TD8: shop addresses — subdomain + custom domain + canonical */}
       <section className="card space-y-3 p-5">
-        <div className="font-semibold">আপনার দোকানের ঠিকানা</div>
+        <div className="font-semibold">{dict.commerce.yourShopAddress}</div>
         {(() => {
           const subdomainHost = shopSubdomainHost(state.organization.slug);
           const subdomainUrl = `https://${subdomainHost}`;
@@ -1277,34 +1278,30 @@ export default function StorefrontStaffPage() {
           return (
             <>
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="font-semibold">সাবডোমেইন:</span>
+                <span className="font-semibold">{dict.commerce.subdomain}</span>
                 <span className="font-mono font-bold text-indigo-700">{subdomainUrl}</span>
-                <button type="button" onClick={() => copyText(subdomainUrl, "সাবডোমেইন ঠিকানা")} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">কপি করুন</button>
-                <a href={subdomainUrl} target="_blank" rel="noreferrer" className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">খুলুন ↗</a>
-                {canonicalHost === subdomainHost ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+                <button type="button" onClick={() => copyText(subdomainUrl, dict.commerce.subdomainAddress)} className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.copy2}</button>
+                <a href={subdomainUrl} target="_blank" rel="noreferrer" className="rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.open2}</a>
+                {canonicalHost === subdomainHost ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">{dict.commerce.mainCanonicalAddress}</span> : null}
               </div>
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="font-semibold">কাস্টম ডোমেইন:</span>
+                <span className="font-semibold">{dict.commerce.customDomain2}</span>
                 {customDomain ? (
                   <>
                     <span className="font-mono font-bold">{`https://${customDomain}`}</span>
                     {verified ? (
-                      <span className="text-emerald-700">যাচাই হয়েছে{domain.verifiedAt ? ` (${new Date(domain.verifiedAt).toLocaleString("bn-BD")})` : ""}</span>
+                      <span className="text-emerald-700">{dict.commerce.verified}{domain.verifiedAt ? ` (${fmtDateTime(locale, new Date(domain.verifiedAt))})` : ""}</span>
                     ) : (
-                      <span className="text-amber-700">এখনো যাচাই হয়নি — নিচের “কাস্টম ডোমেইন” ধাপে যাচাই করুন</span>
+                      <span className="text-amber-700">{dict.commerce.notVerifiedYetVerifyIn}</span>
                     )}
-                    {verified && canonicalHost === customDomain ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">প্রধান (canonical) ঠিকানা</span> : null}
+                    {verified && canonicalHost === customDomain ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">{dict.commerce.mainCanonicalAddress}</span> : null}
                   </>
                 ) : (
-                  <span className="text-slate-500">কোনো কাস্টম ডোমেইন সেট করা নেই — আপাতত সাবডোমেইন ঠিকানাই আপনার দোকানের ঠিকানা।</span>
+                  <span className="text-slate-500">{dict.commerce.noCustomDomainIsSet}</span>
                 )}
               </div>
               <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-                দুই ঠিকানাতেই একই দোকান খোলে; প্রধান (canonical) ঠিকানাটাই সার্চ ইঞ্জিন ও শেয়ারে ব্যবহৃত হয় —
-                কাস্টম ডোমেইন যাচাই করা থাকলে সেটাই প্রধান, নইলে সাবডোমেইন। মনে রাখবেন: দোকান পরিচালনার প্যানেলে
-                লগইন শুধু <b>app.qosprey.com</b> থেকে হয় — দোকানের ঠিকানায় কোনো লগইন পেজ নেই, প্যানেলের পথে গেলে
-                স্বয়ংক্রিয়ভাবে app.qosprey.com-এ পাঠিয়ে দেওয়া হয়।
-              </p>
+                {dict.commerce.theSameShopOpensAt}<b>app.qosprey.com</b> {dict.commerce.thereIsNoLoginPage}</p>
             </>
           );
         })()}
@@ -1312,34 +1309,32 @@ export default function StorefrontStaffPage() {
 
       {/* Settings */}
       <section id="shop-settings" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">দোকানের সেটিংস</div>
+        <div className="font-semibold">{dict.commerce.shopSettings}</div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={shopEnabled} onChange={(e) => setShopEnabled(e.target.checked)} />
-          দোকান চালু করুন (shopEnabled) {!state.setting.exists ? <span className="text-xs font-normal text-slate-500">— এখনো কোনো সেটিংস সেভ হয়নি</span> : null}
+          {dict.commerce.enableTheShopShopEnabled}{!state.setting.exists ? <span className="text-xs font-normal text-slate-500">{dict.commerce.noSettingsSavedYet}</span> : null}
         </label>
         <div className="grid gap-3 md:grid-cols-2">
-          <label className="block text-sm">দোকানের নাম (খালি = ব্র্যান্ড/সংস্থার নাম)
-            <input className="input mt-1" value={shopName} onChange={(e) => setShopName(e.target.value)} placeholder="যেমন: আমার ফ্যাশন শপ" />
+          <label className="block text-sm">{dict.commerce.shopNameEmptyBrandOrganization}<input className="input mt-1" value={shopName} onChange={(e) => setShopName(e.target.value)} placeholder={dict.commerce.eGMyFashionShop} />
           </label>
-          <label className="block text-sm">ঘোষণা / অ্যানাউন্সমেন্ট (দোকানের উপরে ব্যানার)
-            <input className="input mt-1" value={announcementText} onChange={(e) => setAnnouncementText(e.target.value)} placeholder="যেমন: ঈদ অফার — সব পণ্যে ডেলিভারি ফ্রি!" />
+          <label className="block text-sm">{dict.commerce.announcementBannerAtTheTop}<input className="input mt-1" value={announcementText} onChange={(e) => setAnnouncementText(e.target.value)} placeholder={dict.commerce.eGEidOfferFree} />
           </label>
           <label className="block text-sm md:col-span-2">Meta description (SEO)
-            <input className="input mt-1" value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} placeholder="সার্চে দেখানোর জন্য দোকানের সংক্ষিপ্ত বর্ণনা" />
+            <input className="input mt-1" value={metaDescription} onChange={(e) => setMetaDescription(e.target.value)} placeholder={dict.commerce.aShortDescriptionOfThe} />
           </label>
         </div>
         <div className="flex flex-wrap gap-4 text-sm">
-          <label className="flex items-center gap-2"><input type="checkbox" checked={showFeatured} onChange={(e) => setShowFeatured(e.target.checked)} /> ফিচার্ড সেকশন</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} /> ক্যাটাগরি</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} /> সার্চ</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={showFeatured} onChange={(e) => setShowFeatured(e.target.checked)} /> {dict.commerce.featuredSection}</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={showCategories} onChange={(e) => setShowCategories(e.target.checked)} /> {dict.commerce.category}</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={showSearch} onChange={(e) => setShowSearch(e.target.checked)} /> {dict.commerce.search}</label>
         </div>
         {/* OU8: section customizer — hide/show + reorder the shop
             home sections. The product grid is not listed: it is
             the shop itself and always renders last. Up/down
             buttons (no drag-drop builder, by design). */}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">হোমপেজের সেকশন সাজান (OU8)</div>
-          <p className="text-xs text-slate-500">যে সেকশন বন্ধ করবেন সেটি দোকানের হোমপেজে দেখাবে না; ↑ ↓ দিয়ে ক্রম বদলান। পণ্যের গ্রিড সবসময় শেষে থাকবে — এটি লুকানো যায় না।</p>
+          <div className="font-semibold">{dict.commerce.arrangeHomepageSectionsOU8}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.sectionsYouTurnOffWill}</p>
           <div className="space-y-1.5">
             {sectionOrder.map((key, idx) => {
               const vis: Record<ShopSectionKey, boolean> = {
@@ -1362,67 +1357,58 @@ export default function StorefrontStaffPage() {
                   <span className="w-6 text-xs font-bold text-slate-400">{idx + 1}.</span>
                   <label className="flex flex-1 items-center gap-2">
                     <input type="checkbox" checked={vis[key]} onChange={(e) => setters[key](e.target.checked)} />
-                    {SECTION_LABELS[key]}
+                    {dict.commerce[SECTION_LABELS[key] as keyof typeof dict.commerce]}
                   </label>
-                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === 0} onClick={() => move(-1)}>↑ উপরে</button>
-                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === sectionOrder.length - 1} onClick={() => move(1)}>↓ নিচে</button>
+                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === 0} onClick={() => move(-1)}>{dict.commerce.up}</button>
+                  <button type="button" className="rounded border px-2 py-0.5 text-xs" disabled={idx === sectionOrder.length - 1} onClick={() => move(1)}>{dict.commerce.down}</button>
                 </div>
               );
             })}
           </div>
         </div>
         <div className="grid gap-3 border-t pt-4 md:grid-cols-2">
-          <label className="block text-sm">ফিচার্ড পণ্যের ধরন (featuredMode)
-            <select className="input mt-1" value={featuredMode} onChange={(e) => setFeaturedMode(e.target.value)}>
-              <option value="merchant_picks">মার্চেন্টের বাছাই</option>
-              <option value="top_sellers">সেরা বিক্রিত (শেষ ৩০ দিনের বিক্রি অনুযায়ী)</option>
+          <label className="block text-sm">{dict.commerce.featuredProductTypeFeaturedMode}<select className="input mt-1" value={featuredMode} onChange={(e) => setFeaturedMode(e.target.value)}>
+              <option value="merchant_picks">{dict.commerce.merchantSPicks}</option>
+              <option value="top_sellers">{dict.commerce.bestSellingByTheLast}</option>
             </select>
           </label>
-          <label className="block text-sm">দোকানের ভাষা (locale)
-            <select className="input mt-1" value={shopLocale} onChange={(e) => setShopLocale(e.target.value)}>
-              <option value="bn">বাংলা</option>
+          <label className="block text-sm">{dict.commerce.shopLanguageLocale}<select className="input mt-1" value={shopLocale} onChange={(e) => setShopLocale(e.target.value)}>
+              <option value="bn">{dict.commerce.bengali}</option>
               <option value="en">English</option>
             </select>
           </label>
-          <label className="block text-sm">ডেলিভারির প্রতিশ্রুতি (চেকআউটে দেখাবে, খালি = লুকানো)
-            <input className="input mt-1" value={deliveryPromiseText} onChange={(e) => setDeliveryPromiseText(e.target.value)} placeholder="যেমন: ঢাকায় ২৪ ঘণ্টায় ডেলিভারি" />
+          <label className="block text-sm">{dict.commerce.deliveryPromiseShownAtCheckout}<input className="input mt-1" value={deliveryPromiseText} onChange={(e) => setDeliveryPromiseText(e.target.value)} placeholder={dict.commerce.eGDeliveryInDhaka} />
           </label>
-          <label className="block text-sm">সাপোর্ট ফোন (চেকআউট/ট্র্যাকিংয়ে দেখাবে, খালি = লুকানো)
-            <input className="input mt-1" value={supportPhone} onChange={(e) => setSupportPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+          <label className="block text-sm">{dict.commerce.supportPhoneShownAtCheckout}<input className="input mt-1" value={supportPhone} onChange={(e) => setSupportPhone(e.target.value)} placeholder="01XXXXXXXXX" />
           </label>
-          <label className="block text-sm md:col-span-2">রিটার্ন নীতি (দোকানের ফুটার/চেকআউট/ট্র্যাকিংয়ে দেখাবে, খালি = লুকানো)
-            <textarea className="input mt-1" rows={3} value={returnPolicyText} onChange={(e) => setReturnPolicyText(e.target.value)} placeholder="যেমন: পণ্যে ত্রুটি থাকলে ৭ দিনের মধ্যে বদলি…" />
+          <label className="block text-sm md:col-span-2">{dict.commerce.returnPolicyShownInThe}<textarea className="input mt-1" rows={3} value={returnPolicyText} onChange={(e) => setReturnPolicyText(e.target.value)} placeholder={dict.commerce.eGReplacementWithin7} />
           </label>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">রেফারেল ছাড়</div>
-          <p className="text-xs text-slate-500">গ্রাহক তার নিজের রেফারেল কোড বন্ধুকে দিলে, বন্ধুর প্রথম অর্ডারে এই ছাড় পাবেন। কোডটি অর্ডার সফল পেজে গ্রাহক দেখতে পাবেন।</p>
+          <div className="font-semibold">{dict.commerce.referralDiscount}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.whenACustomerGivesTheir}</p>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">রেফারেল ছাড়ের হার (%) — খালি = বন্ধ
-              <input className="input mt-1" type="number" min="0" max="100" value={referralDiscountPercent} onChange={(e) => setReferralDiscountPercent(e.target.value)} placeholder="যেমন: ৫" />
+            <label className="block text-sm">{dict.commerce.referralDiscountRateEmptyOff}<input className="input mt-1" type="number" min="0" max="100" value={referralDiscountPercent} onChange={(e) => setReferralDiscountPercent(e.target.value)} placeholder={dict.commerce.eG5} />
             </label>
-            <label className="block text-sm">ন্যূনতম সাবটোটাল (টাকা, খালি = নেই)
-              <input className="input mt-1" inputMode="decimal" value={referralMinSubtotal} onChange={(e) => setReferralMinSubtotal(e.target.value)} placeholder="যেমন: ৫০০" />
+            <label className="block text-sm">{dict.commerce.minimumSubtotalTakaEmptyNone}<input className="input mt-1" inputMode="decimal" value={referralMinSubtotal} onChange={(e) => setReferralMinSubtotal(e.target.value)} placeholder={dict.commerce.eG500} />
             </label>
           </div>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">গিফট র‍্যাপ</div>
-          <p className="text-xs text-slate-500">চালু থাকলে ক্রেতা চেকআউটে ফি দিয়ে গিফট র‍্যাপ ও একটি গিফট বার্তা যোগ করতে পারবে। ফি খালি রাখলে চেকআউটে অপশনটি দেখাবে না।</p>
+          <div className="font-semibold">{dict.commerce.giftWrap}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.ifOnBuyersCanAdd}</p>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex items-center gap-2 text-sm font-semibold">
               <input type="checkbox" checked={giftWrapEnabled} onChange={(e) => setGiftWrapEnabled(e.target.checked)} />
-              গিফট র‍্যাপ চালু করুন
-            </label>
-            <label className="block text-sm">র‍্যাপের ফি (টাকা)
-              <input className="input mt-1" inputMode="decimal" value={giftWrapFee} onChange={(e) => setGiftWrapFee(e.target.value)} placeholder="যেমন: ৫০" disabled={!giftWrapEnabled} />
+              {dict.commerce.enableGiftWrap}</label>
+            <label className="block text-sm">{dict.commerce.wrapFeeTaka}<input className="input mt-1" inputMode="decimal" value={giftWrapFee} onChange={(e) => setGiftWrapFee(e.target.value)} placeholder={dict.commerce.eG50} disabled={!giftWrapEnabled} />
             </label>
           </div>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">থিম ও ফেভিকন</div>
-          <p className="text-xs text-slate-500">দোকানের চেহারা বেছে নিন — প্রিভিউগুলো শুধু ধারণা দেওয়ার জন্য (CSS মক)। নিচের &ldquo;সেটিংস সংরক্ষণ করুন&rdquo; বাটনেই থিম ও ফেভিকন সেভ হবে।</p>
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5" role="radiogroup" aria-label="দোকানের থিম">
+          <div className="font-semibold">{dict.commerce.themeFavicon}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.chooseTheShopSLook}</p>
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5" role="radiogroup" aria-label={dict.commerce.shopTheme}>
             {THEME_OPTIONS.map((t) => {
               const selected = themeId === t.id;
               return (
@@ -1433,9 +1419,9 @@ export default function StorefrontStaffPage() {
                     <span className={`flex h-4 w-4 items-center justify-center rounded-full border ${selected ? "border-indigo-600" : "border-slate-300"}`}>
                       {selected ? <span className="h-2 w-2 rounded-full bg-indigo-600" /> : null}
                     </span>
-                    {t.label}
+                    {dict.commerce[t.labelKey as keyof typeof dict.commerce]}
                   </div>
-                  <div className="mt-0.5 text-xs font-normal text-slate-500">{t.desc}</div>
+                  <div className="mt-0.5 text-xs font-normal text-slate-500">{dict.commerce[t.descKey as keyof typeof dict.commerce]}</div>
                 </button>
               );
             })}
@@ -1448,114 +1434,103 @@ export default function StorefrontStaffPage() {
                 rel="noreferrer"
                 className="font-semibold text-indigo-700 underline"
               >
-                নতুন ডিজাইন v2 লাইভ প্রিভিউ (সেভ না করেই দেখুন)
-              </a>
+                {dict.commerce.newDesignV2LivePreview}</a>
             </p>
           ) : null}
-          <label className="block text-sm">ফেভিকন URL (ব্রাউজার ট্যাবের ছোট আইকন)
-            <div className="mt-1 flex items-center gap-3">
+          <label className="block text-sm">{dict.commerce.faviconURLTheSmallIcon}<div className="mt-1 flex items-center gap-3">
               <input className="input flex-1" value={faviconUrl} onChange={(e) => setFaviconUrl(e.target.value)} placeholder="https://…/favicon.png" />
               {faviconUrl.trim() ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={faviconUrl.trim()} alt="ফেভিকন প্রিভিউ" className="h-8 w-8 rounded border bg-white object-contain" />
+                <img src={faviconUrl.trim()} alt={dict.commerce.faviconPreview} className="h-8 w-8 rounded border bg-white object-contain" />
               ) : null}
             </div>
-            <span className="mt-1 block text-xs font-normal text-slate-500">খালি রাখলে লোগো ব্যবহৃত হবে।</span>
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.leaveEmptyToUseThe2}</span>
           </label>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">যোগাযোগ বোতাম</div>
-          <p className="text-xs text-slate-500">ভর্তি থাকলে দোকানে ভাসমান WhatsApp / Messenger বোতাম দেখাবে — ক্রেতা এক ক্লিকে চ্যাট শুরু করতে পারবে। খালি রাখলে সেই বোতামটি দেখাবে না।</p>
+          <div className="font-semibold">{dict.commerce.contactButtons}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.ifFilledAFloatingWhatsApp}</p>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">WhatsApp নম্বর
-              <input className="input mt-1" value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="8801XXXXXXXXX" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">দেশের কোডসহ, যেমন 8801XXXXXXXXX</span>
+            <label className="block text-sm">{dict.commerce.whatsAppNumber}<input className="input mt-1" value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="8801XXXXXXXXX" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.withCountryCodeEG}</span>
             </label>
-            <label className="block text-sm">Messenger লিংক
-              <input className="input mt-1" value={messengerUrl} onChange={(e) => setMessengerUrl(e.target.value)} placeholder="https://m.me/yourpage" />
-              <span className="mt-1 block text-xs font-normal text-slate-500">পেজের m.me লিংক</span>
+            <label className="block text-sm">{dict.commerce.messengerLink}<input className="input mt-1" value={messengerUrl} onChange={(e) => setMessengerUrl(e.target.value)} placeholder="https://m.me/yourpage" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.thePageSMMe}</span>
             </label>
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={trackingPageEnabled} onChange={(e) => setTrackingPageEnabled(e.target.checked)} />
-          পাবলিক অর্ডার ট্র্যাকিং পেজ চালু (trackingPageEnabled)
-        </label>
+          {dict.commerce.enableThePublicOrderTracking}</label>
         {orgSlug && trackingPageEnabled ? (
-          <p className="text-xs text-slate-500">ট্র্যাকিং পেজ: <span className="font-mono text-indigo-700">{typeof window !== "undefined" ? `${window.location.origin}/track/${orgSlug}` : `/track/${orgSlug}`}</span> — ক্রেতা অর্ডার নম্বর + ফোন দিয়ে অবস্থা দেখতে পারবে।</p>
+          <p className="text-xs text-slate-500">{dict.commerce.trackingPage}<span className="font-mono text-indigo-700">{typeof window !== "undefined" ? `${window.location.origin}/track/${orgSlug}` : `/track/${orgSlug}`}</span> {dict.commerce.buyersCanCheckStatusWith}</p>
         ) : null}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">শর্তাবলি</div>
+          <div className="font-semibold">{dict.commerce.terms}</div>
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input type="checkbox" checked={requireTermsConsent} onChange={(e) => setRequireTermsConsent(e.target.checked)} />
-            শর্তাবলি সম্মতি আবশ্যক
-          </label>
-          <label className="block text-sm">শর্তাবলির পেজ URL (ঐচ্ছিক)
-            <input className="input mt-1" value={termsUrl} onChange={(e) => setTermsUrl(e.target.value)} placeholder="https://…/terms" />
-            <span className="mt-1 block text-xs font-normal text-slate-500">URL না দিলে দোকানের Terms পেজটি ব্যবহৃত হবে।</span>
+            {dict.commerce.termsConsentRequired}</label>
+          <label className="block text-sm">{dict.commerce.termsPageURLOptional}<input className="input mt-1" value={termsUrl} onChange={(e) => setTermsUrl(e.target.value)} placeholder="https://…/terms" />
+            <span className="mt-1 block text-xs font-normal text-slate-500">{dict.commerce.withoutAURLTheShop}</span>
           </label>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">ট্র্যাকিং ও অ্যানালিটিক্স</div>
-          <p className="text-xs text-slate-500">আপনার নিজের Google অ্যাকাউন্টের আইডি বসান — ভর্তি থাকলেই দোকানে সেই ট্যাগ চলবে, খালি রাখলে কোনো ট্যাগ যাবে না।</p>
+          <div className="font-semibold">{dict.commerce.trackingAnalytics}</div>
+          <p className="text-xs text-slate-500">{dict.commerce.putYourOwnGoogleAccount}</p>
           {gtmContainerId.trim() && ga4MeasurementId.trim() ? (
             <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-              ⚠️ GTM দিয়ে GA4 চালালে এখানে আবার বসাবেন না — দ্বিগুণ গণনা হতে পারে।
-            </p>
+              {dict.commerce.ifYouRunGA4Via}</p>
           ) : null}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="block text-sm">
               <span className="font-semibold text-slate-800 flex items-center gap-1.5">
                 <span>📘 Facebook / Meta Pixel ID</span>
-                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">মাল্টি-পিক্সেল সাপোর্টেড</span>
+                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">{dict.commerce.multiPixelSupported}</span>
               </span>
               <input
                 className="input mt-1 w-full"
                 value={metaPixelId}
                 onChange={(e) => setMetaPixelId(e.target.value)}
-                placeholder="যেমন: 123456789012, 987654321098"
+                placeholder={dict.commerce.eG123456789012987654321098}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                আপনার Meta Pixel ID বসান। একাধিক অ্যাকাউন্ট বা পিক্সেল থাকলে কমা (,) দিয়ে লিখুন — সবগুলোতেই স্বয়ংক্রিয়ভাবে PageView, ViewContent, AddToCart, InitiateCheckout ও Purchase যাবে।
-              </span>
+                {dict.commerce.putYourMetaPixelID}</span>
             </label>
 
             <label className="block text-sm">
               <span className="font-semibold text-slate-800 flex items-center gap-1.5">
                 <span>🎵 TikTok Pixel ID</span>
-                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">মাল্টি-পিক্সেল সাপোর্টেড</span>
+                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">{dict.commerce.multiPixelSupported}</span>
               </span>
               <input
                 className="input mt-1 w-full"
                 value={tikTokPixelId}
                 onChange={(e) => setTikTokPixelId(e.target.value)}
-                placeholder="যেমন: C123456789, C987654321"
+                placeholder={dict.commerce.eGC123456789C987654321}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                TikTok Ads Manager থেকে প্রাপ্ত Pixel ID। একাধিক থাকলে কমা (,) দিয়ে লিখুন।
-              </span>
+                {dict.commerce.pixelIDObtainedFromTikTok}</span>
             </label>
 
             <label className="block text-sm">
               <span className="font-semibold text-slate-800 flex items-center gap-1.5">
                 <span>📊 GA4 Measurement ID</span>
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">মাল্টি-প্রপার্টি</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">{dict.commerce.multiProperty}</span>
               </span>
               <input
                 className="input mt-1 w-full"
                 value={ga4MeasurementId}
                 onChange={(e) => setGa4MeasurementId(e.target.value)}
-                placeholder="G-XXXXXXXXXX (একাধিক থাকলে কমা দিয়ে)"
+                placeholder={dict.commerce.gXXXXXXXXXXCommaSeparateIf}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                কোথায় পাবেন: Google Analytics &gt; Admin &gt; Data Streams — Measurement ID।
-              </span>
+                {dict.commerce.whereToFindGoogleAnalytics}</span>
             </label>
 
             <label className="block text-sm">
               <span className="font-semibold text-slate-800 flex items-center gap-1.5">
-                <span>🏷️ GTM কন্টেইনার ID</span>
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">মাল্টি-কন্টেইনার</span>
+                <span>{dict.commerce.gTMContainerID}</span>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">{dict.commerce.multiContainer}</span>
               </span>
               <input
                 className="input mt-1 w-full"
@@ -1564,8 +1539,7 @@ export default function StorefrontStaffPage() {
                 placeholder="GTM-XXXXXXX"
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                কোথায় পাবেন: Google Tag Manager — কন্টেইনার ID। একাধিক থাকলে কমা দিয়ে লিখুন।
-              </span>
+                {dict.commerce.whereToFindGoogleTag}</span>
             </label>
 
             <label className="block text-sm">
@@ -1576,11 +1550,10 @@ export default function StorefrontStaffPage() {
                 className="input mt-1 w-full"
                 value={clarityId}
                 onChange={(e) => setClarityId(e.target.value)}
-                placeholder="যেমন: abcdefgh12"
+                placeholder={dict.commerce.eGAbcdefgh12}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                হিটম্যাপ, ক্লিকম্যাপ ও সেশন রেকর্ডিংয়ের জন্য Microsoft Clarity প্রজেক্ট আইডি।
-              </span>
+                {dict.commerce.microsoftClarityProjectIDFor}</span>
             </label>
 
             <label className="block text-sm">
@@ -1592,61 +1565,52 @@ export default function StorefrontStaffPage() {
                 placeholder="AW-XXXXXXXXX"
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                কোথায় পাবেন: Google Ads &gt; Conversions — কনভার্সন অ্যাকশনের ট্যাগ আইডি।
-              </span>
+                {dict.commerce.whereToFindGoogleAds}</span>
             </label>
 
             <label className="block text-sm">
-              <span className="font-semibold text-slate-800">🎯 Google Ads কনভার্সন লেবেল</span>
+              <span className="font-semibold text-slate-800">{dict.commerce.googleAdsConversionLabel}</span>
               <input
                 className="input mt-1 w-full"
                 value={googleAdsConversionLabel}
                 onChange={(e) => setGoogleAdsConversionLabel(e.target.value)}
-                placeholder="যেমন: AbC-D_efGhIjK"
+                placeholder={dict.commerce.eGAbCDEfGhIjK}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                Google Ads কনভার্সন অ্যাকশনের লেবেল। ক্রয়ের কনভার্সন ট্র্যাক করতে আইডি ও লেবেল দুটোই লাগবে।
-              </span>
+                {dict.commerce.googleAdsConversionActionLabel}</span>
             </label>
 
             <label className="block text-sm">
-              <span className="font-semibold text-slate-800">🔍 Search Console যাচাইকরণ টোকেন</span>
+              <span className="font-semibold text-slate-800">{dict.commerce.searchConsoleVerificationToken}</span>
               <input
                 className="input mt-1 w-full"
                 value={searchConsoleVerification}
                 onChange={(e) => setSearchConsoleVerification(e.target.value)}
-                placeholder="HTML tag এর content মানটি (শুধু টোকেন)"
+                placeholder={dict.commerce.theContentValueOfThe}
               />
               <span className="mt-1 block text-xs font-normal text-slate-500">
-                Google Search Console এর HTML tag ভেরিফিকেশন মেটা ট্যাগের শুধু content টোকেনটি।
-              </span>
+                {dict.commerce.onlyTheContentTokenOf}</span>
             </label>
           </div>
         </div>
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">কাস্টম CSS/JS</div>
+          <div className="font-semibold">{dict.commerce.customCSSJS}</div>
           <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-            ⚠️ নিজের দায়িত্বে ব্যবহার করুন — ভুল কোড দোকানের পেজ ভেঙে দিতে পারে। কাস্টম JS শুধু দোকানের নিজের হোস্টে চলে (মূল অ্যাপের হোস্টে নয়)।
-          </p>
+            {dict.commerce.useAtYourOwnResponsibility}</p>
           <p className="text-xs text-slate-500">
-            বন্ধ করার ট্যাগ (&lt;/style&gt;, &lt;/script&gt;) সার্ভার গ্রহণ করে না — এমন কোড দিলে সংরক্ষণ ব্যর্থ হবে এবং সার্ভারের বার্তাটি ওপরে দেখানো হবে।
-            CSS শুধু দোকানের পেজে প্রযোজ্য; JS চালু করতে নিচের টগলটি অন করতে হবে, নাহলে JS সংরক্ষিত থাকলেও চলবে না।
-          </p>
-          <label className="block text-sm">কাস্টম CSS
-            <textarea className="input mt-1 font-mono text-xs" rows={6} value={customCss} onChange={(e) => setCustomCss(e.target.value)} placeholder={".my-class { color: #b91c1c; }"} spellCheck={false} />
+            {dict.commerce.theServerDoesNotAccept}</p>
+          <label className="block text-sm">{dict.commerce.customCSS}<textarea className="input mt-1 font-mono text-xs" rows={6} value={customCss} onChange={(e) => setCustomCss(e.target.value)} placeholder={".my-class { color: #b91c1c; }"} spellCheck={false} />
           </label>
-          <label className="block text-sm">কাস্টম JS
-            <textarea className="input mt-1 font-mono text-xs" rows={6} value={customJs} onChange={(e) => setCustomJs(e.target.value)} placeholder={"console.log('hello');"} spellCheck={false} />
+          <label className="block text-sm">{dict.commerce.customJS}<textarea className="input mt-1 font-mono text-xs" rows={6} value={customJs} onChange={(e) => setCustomJs(e.target.value)} placeholder={"console.log('hello');"} spellCheck={false} />
           </label>
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input type="checkbox" checked={customJsEnabled} onChange={(e) => setCustomJsEnabled(e.target.checked)} />
-            কাস্টম JS চালু করুন
-          </label>
+            {dict.commerce.enableCustomJS}</label>
         </div>
         <div>
-          <div className="text-sm font-medium">ফিচার্ড পণ্য ({featuredIds.length}/৫০) — ক্রম অনুযায়ী দেখাবে</div>
+          <div className="text-sm font-medium">{dict.commerce.featuredProducts}{featuredIds.length}{dict.commerce.textudn9up}</div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {products.length === 0 ? <span className="text-xs text-slate-500">কোনো পণ্য পাওয়া যায়নি</span> : products.map((p) => {
+            {products.length === 0 ? <span className="text-xs text-slate-500">{dict.commerce.noProductsFound}</span> : products.map((p) => {
               const on = featuredIds.includes(p.id);
               const order = on ? featuredIds.indexOf(p.id) + 1 : null;
               return (
@@ -1659,7 +1623,7 @@ export default function StorefrontStaffPage() {
           </div>
         </div>
         <button type="button" onClick={saveSettings} disabled={busy === "settings"} className="btn-primary disabled:opacity-50">
-          {busy === "settings" ? "সংরক্ষণ হচ্ছে…" : "সেটিংস সংরক্ষণ করুন"}
+          {busy === "settings" ? dict.commerce.saving : dict.commerce.saveSettings}
         </button>
       </section>
 
@@ -1674,15 +1638,15 @@ export default function StorefrontStaffPage() {
 
       {/* GC2: promotional popup */}
       <section id="popup" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">প্রমোশনাল পপআপ</div>
+        <div className="font-semibold">{dict.commerce.promotionalPopup}</div>
         <p className="text-sm text-slate-600">
-          অবস্থা: <b>{popupEnabled ? "চালু" : "বন্ধ"}</b>
-          {popup ? <> · ইমপ্রেশন: <b>{popup.impressions ?? 0}</b> · ক্লিক: <b>{popup.clicks ?? 0}</b>{popup.mode === "lead" ? <> · লিড সংগ্রহ: <b>{popup.captures ?? 0}</b></> : null}</> : null}
+          {dict.commerce.status3}<b>{popupEnabled ? dict.commerce.on : dict.commerce.closed}</b>
+          {popup ? <> {dict.commerce.impressions}<b>{popup.impressions ?? 0}</b> {dict.commerce.clicks}<b>{popup.clicks ?? 0}</b>{popup.mode === "lead" ? <> {dict.commerce.leadsCollected}<b>{popup.captures ?? 0}</b></> : null}</> : null}
         </p>
         {popupLoadError ? (
           <p className="flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
             {popupLoadError}
-            <button type="button" onClick={() => void loadPopup()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+            <button type="button" onClick={() => void loadPopup()} className="font-semibold underline">{dict.commerce.retry}</button>
           </p>
         ) : null}
         {popupError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{popupError}</p> : null}
@@ -1690,83 +1654,68 @@ export default function StorefrontStaffPage() {
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm font-semibold">
               <input type="checkbox" checked={popupEnabled} onChange={(e) => setPopupEnabled(e.target.checked)} />
-              পপআপ চালু করুন
-            </label>
+              {dict.commerce.enablePopup}</label>
             {/* OU8: popup kind — promo (link button) or lead capture
                 (a real form; submissions become CRM Leads). */}
-            <label className="block text-sm">পপআপের ধরন
-              <select className="input mt-1" value={popupMode} onChange={(e) => setPopupMode(e.target.value)}>
-                <option value="promo">প্রমোশন (বাটন/লিংক)</option>
-                <option value="lead">লিড সংগ্রহ (ফর্ম — জমা দিলে CRM-এ লিড তৈরি হবে)</option>
+            <label className="block text-sm">{dict.commerce.popupType}<select className="input mt-1" value={popupMode} onChange={(e) => setPopupMode(e.target.value)}>
+                <option value="promo">{dict.commerce.promotionButtonLink}</option>
+                <option value="lead">{dict.commerce.leadCollectionFormSubmittingCreates}</option>
               </select>
             </label>
             {popupMode === "lead" ? (
               <div className="space-y-2 rounded-lg border border-slate-200 p-3">
-                <div className="text-sm font-semibold">কোন তথ্য নেবেন</div>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureName} onChange={(e) => setPopupCaptureName(e.target.checked)} /> নাম</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCapturePhone} onChange={(e) => setPopupCapturePhone(e.target.checked)} /> ফোন নম্বর</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureEmail} onChange={(e) => setPopupCaptureEmail(e.target.checked)} /> ইমেইল</label>
-                <label className="block text-sm">সফল বার্তা (ঐচ্ছিক)
-                  <input className="input mt-1" value={popupSuccessMessage} onChange={(e) => setPopupSuccessMessage(e.target.value)} placeholder="যেমন: ধন্যবাদ! আমরা কল করব।" />
+                <div className="text-sm font-semibold">{dict.commerce.whatInformationToCollect}</div>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureName} onChange={(e) => setPopupCaptureName(e.target.checked)} /> {dict.commerce.name}</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCapturePhone} onChange={(e) => setPopupCapturePhone(e.target.checked)} /> {dict.commerce.phoneNumber}</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={popupCaptureEmail} onChange={(e) => setPopupCaptureEmail(e.target.checked)} /> {dict.commerce.email}</label>
+                <label className="block text-sm">{dict.commerce.successMessageOptional}<input className="input mt-1" value={popupSuccessMessage} onChange={(e) => setPopupSuccessMessage(e.target.value)} placeholder={dict.commerce.eGThankYouWe} />
                 </label>
-                <p className="text-xs text-slate-500">লিড মোডে বাটনের লিংক (CTA URL) ব্যবহৃত হয় না — বাটনের লেখাটি ফর্মের জমা বাটনে দেখাবে। অন্তত একটি তথ্য চালু রাখতে হবে।</p>
+                <p className="text-xs text-slate-500">{dict.commerce.inLeadModeTheButton}</p>
               </div>
             ) : null}
-            <label className="block text-sm">শিরোনাম
-              <input className="input mt-1" value={popupTitle} onChange={(e) => setPopupTitle(e.target.value)} placeholder="যেমন: ঈদ অফার — ২০% ছাড়!" />
+            <label className="block text-sm">{dict.commerce.title}<input className="input mt-1" value={popupTitle} onChange={(e) => setPopupTitle(e.target.value)} placeholder={dict.commerce.eGEidOffer20} />
             </label>
-            <label className="block text-sm">বডি
-              <textarea className="input mt-1" rows={3} value={popupBody} onChange={(e) => setPopupBody(e.target.value)} placeholder="অফারের সংক্ষিপ্ত বর্ণনা…" />
+            <label className="block text-sm">{dict.commerce.body}<textarea className="input mt-1" rows={3} value={popupBody} onChange={(e) => setPopupBody(e.target.value)} placeholder={dict.commerce.aShortDescriptionOfThe2} />
             </label>
-            <label className="block text-sm">ছবির URL (ঐচ্ছিক)
-              <input className="input mt-1" value={popupImageUrl} onChange={(e) => setPopupImageUrl(e.target.value)} placeholder="https://…" />
+            <label className="block text-sm">{dict.commerce.imageURLOptional}<input className="input mt-1" value={popupImageUrl} onChange={(e) => setPopupImageUrl(e.target.value)} placeholder="https://…" />
             </label>
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="block text-sm">বাটনের লেখা (CTA)
-                <input className="input mt-1" value={popupCtaText} onChange={(e) => setPopupCtaText(e.target.value)} placeholder="এখনই কিনুন" />
+              <label className="block text-sm">{dict.commerce.buttonTextCTA}<input className="input mt-1" value={popupCtaText} onChange={(e) => setPopupCtaText(e.target.value)} placeholder={dict.commerce.buyNow} />
               </label>
-              <label className="block text-sm">বাটনের লিংক (CTA URL)
-                <input className="input mt-1" value={popupCtaUrl} onChange={(e) => setPopupCtaUrl(e.target.value)} placeholder="https://…" />
+              <label className="block text-sm">{dict.commerce.buttonLinkCTAURL}<input className="input mt-1" value={popupCtaUrl} onChange={(e) => setPopupCtaUrl(e.target.value)} placeholder="https://…" />
               </label>
-              <label className="block text-sm">কখন দেখাবে (ট্রিগার)
-                <select className="input mt-1" value={popupTrigger} onChange={(e) => setPopupTrigger(e.target.value)}>
-                  <option value="delay_seconds">কিছুক্ষণ পর</option>
-                  <option value="scroll_percent">স্ক্রল করলে</option>
-                  <option value="exit_intent">চলে যেতে চাইলে</option>
+              <label className="block text-sm">{dict.commerce.whenToShowTrigger}<select className="input mt-1" value={popupTrigger} onChange={(e) => setPopupTrigger(e.target.value)}>
+                  <option value="delay_seconds">{dict.commerce.afterAWhile}</option>
+                  <option value="scroll_percent">{dict.commerce.onScroll}</option>
+                  <option value="exit_intent">{dict.commerce.onExitIntent}</option>
                 </select>
               </label>
-              <label className="block text-sm">কোন পেজে দেখাবে
-                <select className="input mt-1" value={popupShowOn} onChange={(e) => setPopupShowOn(e.target.value)}>
-                  <option value="home">শুধু হোমপেজে</option>
-                  <option value="all">সব পেজে</option>
+              <label className="block text-sm">{dict.commerce.whichPageToShowOn}<select className="input mt-1" value={popupShowOn} onChange={(e) => setPopupShowOn(e.target.value)}>
+                  <option value="home">{dict.commerce.homepageOnly}</option>
+                  <option value="all">{dict.commerce.allPages}</option>
                 </select>
               </label>
               {popupTrigger === "delay_seconds" ? (
-                <label className="block text-sm">দেরি (সেকেন্ড)
-                  <input className="input mt-1" type="number" min="0" value={popupDelaySeconds} onChange={(e) => setPopupDelaySeconds(e.target.value)} placeholder="যেমন: 5" />
+                <label className="block text-sm">{dict.commerce.delaySeconds}<input className="input mt-1" type="number" min="0" value={popupDelaySeconds} onChange={(e) => setPopupDelaySeconds(e.target.value)} placeholder={dict.commerce.eG52} />
                 </label>
               ) : null}
               {popupTrigger === "scroll_percent" ? (
-                <label className="block text-sm">স্ক্রল (%)
-                  <input className="input mt-1" type="number" min="0" max="100" value={popupScrollPercent} onChange={(e) => setPopupScrollPercent(e.target.value)} placeholder="যেমন: 50" />
+                <label className="block text-sm">{dict.commerce.scroll}<input className="input mt-1" type="number" min="0" max="100" value={popupScrollPercent} onChange={(e) => setPopupScrollPercent(e.target.value)} placeholder={dict.commerce.eG502} />
                 </label>
               ) : null}
-              <label className="block text-sm">একই ক্রেতাকে আবার দেখানোর ব্যবধান (দিন)
-                <input className="input mt-1" type="number" min="0" value={popupFrequencyDays} onChange={(e) => setPopupFrequencyDays(e.target.value)} placeholder="যেমন: 7" />
+              <label className="block text-sm">{dict.commerce.gapBeforeShowingToThe}<input className="input mt-1" type="number" min="0" value={popupFrequencyDays} onChange={(e) => setPopupFrequencyDays(e.target.value)} placeholder={dict.commerce.eG7} />
               </label>
-              <label className="block text-sm">শুরু (ঐচ্ছিক)
-                <input className="input mt-1" type="datetime-local" value={popupStartsAt} onChange={(e) => setPopupStartsAt(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.startOptional}<input className="input mt-1" type="datetime-local" value={popupStartsAt} onChange={(e) => setPopupStartsAt(e.target.value)} />
               </label>
-              <label className="block text-sm">শেষ (ঐচ্ছিক)
-                <input className="input mt-1" type="datetime-local" value={popupEndsAt} onChange={(e) => setPopupEndsAt(e.target.value)} />
+              <label className="block text-sm">{dict.commerce.endOptional}<input className="input mt-1" type="datetime-local" value={popupEndsAt} onChange={(e) => setPopupEndsAt(e.target.value)} />
               </label>
             </div>
             <button type="button" onClick={savePopup} disabled={busy === "popup"} className="btn-primary disabled:opacity-50">
-              {busy === "popup" ? "সংরক্ষণ হচ্ছে…" : "পপআপ সংরক্ষণ করুন"}
+              {busy === "popup" ? dict.commerce.saving : dict.commerce.savePopup}
             </button>
           </div>
           <div>
-            <div className="text-sm font-medium">প্রিভিউ — ক্রেতা যেভাবে দেখবে</div>
+            <div className="text-sm font-medium">{dict.commerce.previewAsBuyersWillSee}</div>
             <div className="mt-2 flex items-center justify-center rounded-xl bg-slate-100 p-6">
               <div className="relative w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
                 <span className="absolute right-3 top-2 text-lg leading-none text-slate-400" aria-hidden="true">×</span>
@@ -1774,9 +1723,9 @@ export default function StorefrontStaffPage() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={popupImageUrl.trim()} alt="" className="mx-auto mb-3 max-h-36 w-full rounded-lg object-cover" />
                 ) : null}
-                <div className="text-base font-bold">{popupTitle.trim() || "পপআপের শিরোনাম"}</div>
-                <p className="mt-1 text-sm text-slate-600">{popupBody.trim() || "অফারের বর্ণনা এখানে দেখাবে।"}</p>
-                <span className="btn-primary mt-3 inline-block">{popupCtaText.trim() || "বাটন"}</span>
+                <div className="text-base font-bold">{popupTitle.trim() || dict.commerce.popupTitle}</div>
+                <p className="mt-1 text-sm text-slate-600">{popupBody.trim() || dict.commerce.theOfferDescriptionWillShow}</p>
+                <span className="btn-primary mt-3 inline-block">{popupCtaText.trim() || dict.commerce.button}</span>
               </div>
             </div>
           </div>
@@ -1797,17 +1746,16 @@ export default function StorefrontStaffPage() {
       {/* GC3: content pages summary */}
       <section id="content-pages" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
-          <div className="font-semibold">কনটেন্ট পেজ</div>
+          <div className="font-semibold">{dict.commerce.contentPage}</div>
           <p className="text-sm text-slate-500">
-            মোট পেজ: <b>{shopPages.length}</b> · প্রকাশিত: <b>{shopPages.filter((p) => p.published).length}</b>
-            {" "}— রিটার্ন নীতি, শর্তাবলি, আমাদের সম্পর্কে ইত্যাদি পেজ এখান থেকে বানান ও সম্পাদনা করুন।
-          </p>
+            {dict.commerce.totalPages}<b>{shopPages.length}</b> {dict.commerce.published3}<b>{shopPages.filter((p) => p.published).length}</b>
+            {" "}{dict.commerce.createEditPagesLikeReturn}</p>
         </div>
-        <Link href="/dashboard/commerce/storefront/pages" className="btn-primary">পেজ পরিচালনা করুন →</Link>
+        <Link href="/dashboard/commerce/storefront/pages" className="btn-primary">{dict.commerce.managePages}</Link>
         {pagesLoadError ? (
           <p className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
             {pagesLoadError}
-            <button type="button" onClick={() => void loadShopPages()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+            <button type="button" onClick={() => void loadShopPages()} className="font-semibold underline">{dict.commerce.retry}</button>
           </p>
         ) : null}
       </section>
@@ -1815,32 +1763,30 @@ export default function StorefrontStaffPage() {
       {/* AB6 (AX12): blog manager */}
       <section id="blog" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
-          <div className="font-semibold">ব্লগ</div>
+          <div className="font-semibold">{dict.commerce.blog}</div>
           <p className="text-sm text-slate-500">
-            দোকানের ব্লগ পোস্ট বানান ও সম্পাদনা করুন — প্রকাশিত পোস্ট <span className="font-mono">/blog</span> পেজে দেখা যাবে।
-          </p>
+            {dict.commerce.createEditTheShopS}<span className="font-mono">/blog</span> {dict.commerce.willBeVisibleOnThe}</p>
         </div>
-        <Link href="/dashboard/commerce/storefront/blog" className="btn-primary">ব্লগ পরিচালনা করুন →</Link>
+        <Link href="/dashboard/commerce/storefront/blog" className="btn-primary">{dict.commerce.manageBlog}</Link>
       </section>
 
       {/* AB6 (AX11): search analytics + synonyms */}
       <section id="shop-search" className="card flex flex-wrap items-center gap-3 p-5 scroll-mt-24">
         <div className="min-w-0 flex-1">
-          <div className="font-semibold">দোকানের সার্চ</div>
+          <div className="font-semibold">{dict.commerce.shopSearch}</div>
           <p className="text-sm text-slate-500">
-            সার্চ বিশ্লেষণ, সমার্থক শব্দ ও পুনঃসূচী — সার্চ কীওয়ার্ড / পূর্ণ-টেক্সট অনুসন্ধান (FTS) ভিত্তিক।
-          </p>
+            {dict.commerce.searchAnalyticsSynonymsReindexingBased}</p>
         </div>
-        <Link href="/dashboard/commerce/storefront/search" className="btn-primary">সার্চ পরিচালনা করুন →</Link>
+        <Link href="/dashboard/commerce/storefront/search" className="btn-primary">{dict.commerce.manageSearch}</Link>
       </section>
 
       {/* EC18: Delivery slots */}
       <section id="delivery-slots" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">ডেলিভারি স্লট</div>
-        <p className="text-xs text-slate-500">ক্রেতা চেকআউটে স্লট ও তারিখ (আজ থেকে ৭ দিনের মধ্যে) বেছে নিতে পারবে। জেলা বেছে না দিলে স্লটটি সব জেলার জন্য প্রযোজ্য। সক্ষমতা খালি = আনলিমিটেড।</p>
+        <div className="font-semibold">{dict.commerce.deliverySlot}</div>
+        <p className="text-xs text-slate-500">{dict.commerce.buyersCanChooseASlot}</p>
 
         {(state.slots ?? []).length === 0 ? (
-          <EmptyState title="এখনো কোনো ডেলিভারি স্লট নেই" description="নিচে তৈরি করুন।" />
+          <EmptyState title={dict.commerce.noDeliverySlotsYet} description={dict.commerce.createBelow} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {(state.slots ?? []).map((s) => (
@@ -1849,19 +1795,19 @@ export default function StorefrontStaffPage() {
                   <div>
                     <div className="font-semibold">{s.label} <span className="text-sm font-normal text-slate-500">{s.startTime} – {s.endTime}</span></div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                      <span className={`rounded-full px-2 py-0.5 font-bold ${s.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{s.active ? "সক্রিয়" : "বন্ধ"}</span>
-                      <span>সক্ষমতা: {s.capacityPerDay != null ? `প্রতিদিন ${s.capacityPerDay}টি` : "আনলিমিটেড"}</span>
+                      <span className={`rounded-full px-2 py-0.5 font-bold ${s.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{s.active ? dict.commerce.active : dict.commerce.closed}</span>
+                      <span>{dict.commerce.capacity}{s.capacityPerDay != null ? t("commerce.perDay", { capacityPerDay: s.capacityPerDay }) : dict.commerce.unlimited2}</span>
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditSlot(s)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditSlot(s)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                    <button type="button" onClick={() => void deleteSlot(s)} disabled={busy === `slot-del-${s.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {s.districtScope && s.districtScope.length > 0 ? s.districtScope.map((d) => (
                     <span key={d} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{d}</span>
-                  )) : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">সব জেলা</span>}
+                  )) : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{dict.commerce.allDistricts}</span>}
                 </div>
               </div>
             ))}
@@ -1869,24 +1815,20 @@ export default function StorefrontStaffPage() {
         )}
 
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">{editingSlotId ? "স্লট সম্পাদনা" : "নতুন স্লট"}</div>
+          <div className="font-semibold">{editingSlotId ? dict.commerce.editSlot : dict.commerce.newSlot}</div>
           {slotError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{slotError}</p> : null}
           <div className="grid gap-3 md:grid-cols-4">
-            <label className="block text-sm">লেবেল
-              <input className="input mt-1" value={sLabel} onChange={(e) => setSLabel(e.target.value)} placeholder="যেমন: সকাল" />
+            <label className="block text-sm">{dict.commerce.label}<input className="input mt-1" value={sLabel} onChange={(e) => setSLabel(e.target.value)} placeholder={dict.commerce.eGMorning} />
             </label>
-            <label className="block text-sm">শুরু (HH:mm)
-              <input className="input mt-1" type="time" value={sStart} onChange={(e) => setSStart(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.startHHMm}<input className="input mt-1" type="time" value={sStart} onChange={(e) => setSStart(e.target.value)} />
             </label>
-            <label className="block text-sm">শেষ (HH:mm)
-              <input className="input mt-1" type="time" value={sEnd} onChange={(e) => setSEnd(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.endHHMm}<input className="input mt-1" type="time" value={sEnd} onChange={(e) => setSEnd(e.target.value)} />
             </label>
-            <label className="block text-sm">দৈনিক সক্ষমতা (খালি = আনলিমিটেড)
-              <input className="input mt-1" type="number" min="0" value={sCapacity} onChange={(e) => setSCapacity(e.target.value)} placeholder="আনলিমিটেড" />
+            <label className="block text-sm">{dict.commerce.dailyCapacityEmptyUnlimited}<input className="input mt-1" type="number" min="0" value={sCapacity} onChange={(e) => setSCapacity(e.target.value)} placeholder={dict.commerce.unlimited2} />
             </label>
           </div>
           <div>
-            <div className="text-sm font-medium">জেলা (কিছু না বাছলে = সব জেলা) — {sDistricts.length}টি বাছাই</div>
+            <div className="text-sm font-medium">{dict.commerce.districtsSelectNoneAllDistricts}{sDistricts.length}{dict.commerce.selected2}</div>
             <div className="mt-2 flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
               {districts.map((d) => {
                 const on = sDistricts.includes(d);
@@ -1899,12 +1841,12 @@ export default function StorefrontStaffPage() {
               })}
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sActive} onChange={(e) => setSActive(e.target.checked)} /> স্লট সক্রিয়</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sActive} onChange={(e) => setSActive(e.target.checked)} /> {dict.commerce.slotActive}</label>
           <div className="flex gap-2">
             <button type="button" onClick={saveSlot} disabled={busy === "slot" || !sLabel.trim()} className="btn-primary disabled:opacity-50">
-              {busy === "slot" ? "সংরক্ষণ হচ্ছে…" : editingSlotId ? "স্লট আপডেট করুন" : "স্লট তৈরি করুন"}
+              {busy === "slot" ? dict.commerce.saving : editingSlotId ? dict.commerce.updateSlot : dict.commerce.createSlot}
             </button>
-            {editingSlotId ? <button type="button" onClick={resetSlotForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+            {editingSlotId ? <button type="button" onClick={resetSlotForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button> : null}
           </div>
         </div>
       </section>
@@ -1912,15 +1854,15 @@ export default function StorefrontStaffPage() {
       {/* Shipping zones */}
       <section id="shipping-zones" className="card scroll-mt-24 space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">শিপিং জোন ও ডেলিভারি চার্জ</div>
+          <div className="font-semibold">{dict.commerce.shippingZonesDeliveryCharges}</div>
           <button type="button" onClick={createDefaults} disabled={busy === "defaults"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-            {busy === "defaults" ? "তৈরি হচ্ছে…" : "ঢাকার ভিতরে/বাইরে ডিফল্ট zone তৈরি করুন"}
+            {busy === "defaults" ? dict.commerce.creating : dict.commerce.createInsideOutsideDhakaDefault}
           </button>
         </div>
-        <p className="text-xs text-slate-500">ডিফল্ট জোন Business Profile-এর ডেলিভারি চার্জ থেকে তৈরি হয়। সব টাকার ঘর টাকায় লিখুন — সিস্টেম নিজে পয়সায় (minor) রূপান্তর করে পাঠাবে।</p>
+        <p className="text-xs text-slate-500">{dict.commerce.defaultZonesAreCreatedFrom}</p>
 
         {state.zones.length === 0 ? (
-          <EmptyState title="এখনো কোনো শিপিং জোন নেই" description="জোন ছাড়া চেকআউটে অর্ডার নেওয়া যাবে না। ডিফল্ট জোন তৈরি করুন অথবা নিচে নিজে বানান।" />
+          <EmptyState title={dict.commerce.noShippingZonesYet} description={dict.commerce.ordersCannotBeTakenAt} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {state.zones.map((z) => (
@@ -1928,17 +1870,17 @@ export default function StorefrontStaffPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-semibold">{z.name}</div>
-                    <div className="text-xs text-slate-500">{KIND_LABEL[z.kind] ?? z.kind} · অবস্থান {z.position} · {z.active ? "সক্রিয়" : "বন্ধ"}</div>
+                    <div className="text-xs text-slate-500">{KIND_LABEL[z.kind] ? dict.commerce[KIND_LABEL[z.kind] as keyof typeof dict.commerce] : z.kind} {dict.commerce.position}{z.position} · {z.active ? dict.commerce.active : dict.commerce.closed}</div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditZone(z)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditZone(z)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                    <button type="button" onClick={() => void deleteZone(z)} disabled={busy === `zone-del-${z.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
-                  <div>ডেলিভারি চার্জ: <b>{formatMinorTaka(z.chargeMinor)}</b></div>
-                  <div>ফ্রি ডেলিভারি: {z.freeAboveMinor ? <>{formatMinorTaka(z.freeAboveMinor)} বা তার বেশি অর্ডারে</> : "—"}</div>
-                  <div>সময়: {z.deliveryDays != null ? `${z.deliveryDays} দিন` : "—"}</div>
+                  <div>{dict.commerce.deliveryCharge2}<b>{formatMinorTaka(z.chargeMinor)}</b></div>
+                  <div>{dict.commerce.freeDelivery3}{z.freeAboveMinor ? <>{formatMinorTaka(z.freeAboveMinor)} {dict.commerce.onOrdersOfThatOr}</> : "—"}</div>
+                  <div>{dict.commerce.time2}{z.deliveryDays != null ? t("commerce.days4", { deliveryDays: z.deliveryDays }) : "—"}</div>
                   {z.kind === "district_list" ? (
                     <div className="flex flex-wrap gap-1 pt-1">
                       {z.districts.map((d) => <span key={d} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{d}</span>)}
@@ -1951,33 +1893,27 @@ export default function StorefrontStaffPage() {
         )}
 
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">{editingZoneId ? "জোন সম্পাদনা" : "নতুন জোন"}</div>
+          <div className="font-semibold">{editingZoneId ? dict.commerce.editZone : dict.commerce.newZone}</div>
           {zoneError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{zoneError}</p> : null}
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">জোনের নাম
-              <input className="input mt-1" value={zName} onChange={(e) => setZName(e.target.value)} placeholder="যেমন: ঢাকার ভিতরে" />
+            <label className="block text-sm">{dict.commerce.zoneName}<input className="input mt-1" value={zName} onChange={(e) => setZName(e.target.value)} placeholder={dict.commerce.eGInsideDhaka} />
             </label>
-            <label className="block text-sm">ধরন
-              <select className="input mt-1" value={zKind} onChange={(e) => setZKind(e.target.value)}>
-                {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+            <label className="block text-sm">{dict.commerce.type}<select className="input mt-1" value={zKind} onChange={(e) => setZKind(e.target.value)}>
+                {KINDS.map((k) => <option key={k} value={k}>{dict.commerce[KIND_LABEL[k] as keyof typeof dict.commerce]}</option>)}
               </select>
             </label>
-            <label className="block text-sm">অবস্থান (ছোট = আগে মিলবে)
-              <input className="input mt-1" type="number" value={zPosition} onChange={(e) => setZPosition(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.positionSmallerMatchesEarlier}<input className="input mt-1" type="number" value={zPosition} onChange={(e) => setZPosition(e.target.value)} />
             </label>
-            <label className="block text-sm">ডেলিভারি চার্জ (টাকা)
-              <input className="input mt-1" inputMode="decimal" value={zCharge} onChange={(e) => setZCharge(e.target.value)} placeholder="60" />
+            <label className="block text-sm">{dict.commerce.deliveryChargeTaka}<input className="input mt-1" inputMode="decimal" value={zCharge} onChange={(e) => setZCharge(e.target.value)} placeholder="60" />
             </label>
-            <label className="block text-sm">এর উপরে ফ্রি ডেলিভারি (টাকা, খালি = নেই)
-              <input className="input mt-1" inputMode="decimal" value={zFreeAbove} onChange={(e) => setZFreeAbove(e.target.value)} placeholder="1000" />
+            <label className="block text-sm">{dict.commerce.freeDeliveryAboveTakaEmpty}<input className="input mt-1" inputMode="decimal" value={zFreeAbove} onChange={(e) => setZFreeAbove(e.target.value)} placeholder="1000" />
             </label>
-            <label className="block text-sm">ডেলিভারি সময় (দিন, খালি = নেই)
-              <input className="input mt-1" type="number" value={zDays} onChange={(e) => setZDays(e.target.value)} placeholder="2" />
+            <label className="block text-sm">{dict.commerce.deliveryTimeDaysEmptyNone}<input className="input mt-1" type="number" value={zDays} onChange={(e) => setZDays(e.target.value)} placeholder="2" />
             </label>
           </div>
           {zKind === "district_list" ? (
             <div>
-              <div className="text-sm font-medium">জেলা বেছে নিন ({zDistricts.length}টি)</div>
+              <div className="text-sm font-medium">{dict.commerce.selectDistricts}{zDistricts.length}{dict.commerce.text1ge21}</div>
               <div className="mt-2 flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
                 {districts.map((d) => {
                   const on = zDistricts.includes(d);
@@ -1991,22 +1927,22 @@ export default function StorefrontStaffPage() {
               </div>
             </div>
           ) : null}
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={zActive} onChange={(e) => setZActive(e.target.checked)} /> জোন সক্রিয়</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={zActive} onChange={(e) => setZActive(e.target.checked)} /> {dict.commerce.zoneActive}</label>
           <div className="flex gap-2">
             <button type="button" onClick={saveZone} disabled={busy === "zone" || !zName.trim()} className="btn-primary disabled:opacity-50">
-              {busy === "zone" ? "সংরক্ষণ হচ্ছে…" : editingZoneId ? "জোন আপডেট করুন" : "জোন তৈরি করুন"}
+              {busy === "zone" ? dict.commerce.saving : editingZoneId ? dict.commerce.updateZone : dict.commerce.createZone}
             </button>
-            {editingZoneId ? <button type="button" onClick={resetZoneForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+            {editingZoneId ? <button type="button" onClick={resetZoneForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button> : null}
           </div>
         </div>
       </section>
 
       {/* EC30: weight-based rate rules */}
       <section id="rate-rules" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">ওজনভিত্তিক ডেলিভারি রেট রুল</div>
-        <p className="text-xs text-slate-500">হোম ডেলিভারিতে কার্টের মোট ওজন অনুযায়ী জোনের ফ্ল্যাট চার্জের বদলে এই রুলের চার্জ বসবে (priority বেশি = আগে মিলবে)। ওজনের কোনো ঘর খালি = সেই দিকে সীমা নেই। কোনো পণ্যের ওজন সেট না থাকলে ওজন-সীমাওয়ালা রুল মিলবে না।</p>
+        <div className="font-semibold">{dict.commerce.weightBasedDeliveryRateRules}</div>
+        <p className="text-xs text-slate-500">{dict.commerce.forHomeDeliveryInsteadOf}</p>
         {rateRules.length === 0 ? (
-          <EmptyState title="এখনো কোনো রেট রুল নেই" description="নিচে তৈরি করুন।" />
+          <EmptyState title={dict.commerce.noRateRulesYet} description={dict.commerce.createBelow} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {rateRules.map((r) => (
@@ -2015,62 +1951,57 @@ export default function StorefrontStaffPage() {
                   <div>
                     <div className="font-semibold">{zoneNameFor(r.shippingZoneId)}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                      <span className={`rounded-full px-2 py-0.5 font-bold ${r.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{r.active ? "সক্রিয়" : "বন্ধ"}</span>
+                      <span className={`rounded-full px-2 py-0.5 font-bold ${r.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{r.active ? dict.commerce.active : dict.commerce.closed}</span>
                       <span>Priority: {r.priority}</span>
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditRule(r)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditRule(r)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                    <button type="button" onClick={() => void deleteRule(r)} disabled={busy === `rule-del-${r.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
-                  <div>ওজন: <b>{weightWindowLabel(r)}</b></div>
-                  <div>চার্জ: <b>{formatMinorTaka(r.chargeMinor)}</b></div>
+                  <div>{dict.commerce.weight2}<b>{weightWindowLabel(r)}</b></div>
+                  <div>{dict.commerce.charge2}<b>{formatMinorTaka(r.chargeMinor)}</b></div>
                 </div>
               </div>
             ))}
           </div>
         )}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">{editingRuleId ? "রেট রুল সম্পাদনা" : "নতুন রেট রুল"}</div>
+          <div className="font-semibold">{editingRuleId ? dict.commerce.editRateRule : dict.commerce.newRateRule}</div>
           {ruleError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{ruleError}</p> : null}
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">জোন
-              <select className="input mt-1" value={rZoneId} onChange={(e) => setRZoneId(e.target.value)}>
-                <option value="">সব জোন</option>
+            <label className="block text-sm">{dict.commerce.zone}<select className="input mt-1" value={rZoneId} onChange={(e) => setRZoneId(e.target.value)}>
+                <option value="">{dict.commerce.allZones}</option>
                 {(state.zones ?? []).map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
               </select>
             </label>
-            <label className="block text-sm">সর্বনিম্ন ওজন (গ্রাম, খালি = সীমা নেই)
-              <input className="input mt-1" type="number" min="0" value={rMinWeight} onChange={(e) => setRMinWeight(e.target.value)} placeholder="যেমন: 0" />
+            <label className="block text-sm">{dict.commerce.minimumWeightGramsEmptyNo}<input className="input mt-1" type="number" min="0" value={rMinWeight} onChange={(e) => setRMinWeight(e.target.value)} placeholder={dict.commerce.eG0} />
             </label>
-            <label className="block text-sm">সর্বোচ্চ ওজন (গ্রাম, খালি = সীমা নেই)
-              <input className="input mt-1" type="number" min="0" value={rMaxWeight} onChange={(e) => setRMaxWeight(e.target.value)} placeholder="যেমন: 1000" />
+            <label className="block text-sm">{dict.commerce.maximumWeightGramsEmptyNo}<input className="input mt-1" type="number" min="0" value={rMaxWeight} onChange={(e) => setRMaxWeight(e.target.value)} placeholder={dict.commerce.eG1000} />
             </label>
-            <label className="block text-sm">চার্জ (টাকা)
-              <input className="input mt-1" inputMode="decimal" value={rCharge} onChange={(e) => setRCharge(e.target.value)} placeholder="60" />
+            <label className="block text-sm">{dict.commerce.chargeTaka}<input className="input mt-1" inputMode="decimal" value={rCharge} onChange={(e) => setRCharge(e.target.value)} placeholder="60" />
             </label>
-            <label className="block text-sm">Priority (বেশি = আগে)
-              <input className="input mt-1" type="number" value={rPriority} onChange={(e) => setRPriority(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.priorityMoreEarlier}<input className="input mt-1" type="number" value={rPriority} onChange={(e) => setRPriority(e.target.value)} />
             </label>
           </div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rActive} onChange={(e) => setRActive(e.target.checked)} /> রুল সক্রিয়</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rActive} onChange={(e) => setRActive(e.target.checked)} /> {dict.commerce.ruleActive}</label>
           <div className="flex gap-2">
             <button type="button" onClick={saveRule} disabled={busy === "rule"} className="btn-primary disabled:opacity-50">
-              {busy === "rule" ? "সংরক্ষণ হচ্ছে…" : editingRuleId ? "রুল আপডেট করুন" : "রুল তৈরি করুন"}
+              {busy === "rule" ? dict.commerce.saving : editingRuleId ? dict.commerce.updateRule : dict.commerce.createRule}
             </button>
-            {editingRuleId ? <button type="button" onClick={resetRuleForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+            {editingRuleId ? <button type="button" onClick={resetRuleForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button> : null}
           </div>
         </div>
       </section>
 
       {/* EC30: pickup points */}
       <section id="pickup-points" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">পিকআপ পয়েন্ট</div>
-        <p className="text-xs text-slate-500">ক্রেতা চেকআউটে হোম ডেলিভারির বদলে পিকআপ বেছে নিতে পারবে — তখন ডেলিভারি চার্জের বদলে পয়েন্টের নিজের ফি বসবে (ফি ০ = ফ্রি)।</p>
+        <div className="font-semibold">{dict.commerce.pickupPoint}</div>
+        <p className="text-xs text-slate-500">{dict.commerce.buyersCanChoosePickupInstead}</p>
         {pickupPoints.length === 0 ? (
-          <EmptyState title="এখনো কোনো পিকআপ পয়েন্ট নেই" description="নিচে তৈরি করুন।" />
+          <EmptyState title={dict.commerce.noPickupPointsYet} description={dict.commerce.createBelow} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {pickupPoints.map((p) => (
@@ -2079,73 +2010,65 @@ export default function StorefrontStaffPage() {
                   <div>
                     <div className="font-semibold">{p.name}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                      <span className={`rounded-full px-2 py-0.5 font-bold ${p.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{p.active ? "সক্রিয়" : "বন্ধ"}</span>
+                      <span className={`rounded-full px-2 py-0.5 font-bold ${p.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{p.active ? dict.commerce.active : dict.commerce.closed}</span>
                       <span>{p.district}</span>
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    <button type="button" onClick={() => startEditPoint(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                    <button type="button" onClick={() => void deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                    <button type="button" onClick={() => startEditPoint(p)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                    <button type="button" onClick={() => void deletePoint(p)} disabled={busy === `point-del-${p.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                   </div>
                 </div>
                 <div className="mt-2 space-y-1 text-sm">
                   <div>{p.address}</div>
-                  {p.phone ? <div className="text-slate-500">ফোন: <span className="font-mono">{p.phone}</span></div> : null}
-                  <div>ফি: <b>{p.feeMinor === "0" ? "ফ্রি" : formatMinorTaka(p.feeMinor)}</b></div>
+                  {p.phone ? <div className="text-slate-500">{dict.commerce.phone2}<span className="font-mono">{p.phone}</span></div> : null}
+                  <div>{dict.commerce.fee2}<b>{p.feeMinor === "0" ? dict.commerce.free : formatMinorTaka(p.feeMinor)}</b></div>
                 </div>
               </div>
             ))}
           </div>
         )}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">{editingPointId ? "পিকআপ পয়েন্ট সম্পাদনা" : "নতুন পিকআপ পয়েন্ট"}</div>
+          <div className="font-semibold">{editingPointId ? dict.commerce.editPickupPoint : dict.commerce.newPickupPoint}</div>
           {pointError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{pointError}</p> : null}
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">নাম
-              <input className="input mt-1" value={pName} onChange={(e) => setPName(e.target.value)} placeholder="যেমন: খুলনা সদর আউটলেট" />
+            <label className="block text-sm">{dict.commerce.name}<input className="input mt-1" value={pName} onChange={(e) => setPName(e.target.value)} placeholder={dict.commerce.eGKhulnaSadarOutlet} />
             </label>
-            <label className="block text-sm">জেলা
-              <select className="input mt-1" value={pDistrict} onChange={(e) => setPDistrict(e.target.value)}>
-                <option value="">— বেছে নিন —</option>
+            <label className="block text-sm">{dict.commerce.district}<select className="input mt-1" value={pDistrict} onChange={(e) => setPDistrict(e.target.value)}>
+                <option value="">{dict.commerce.select}</option>
                 {districts.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </label>
-            <label className="block text-sm">ফোন (ঐচ্ছিক)
-              <input className="input mt-1" value={pPhone} onChange={(e) => setPPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+            <label className="block text-sm">{dict.commerce.phoneOptional}<input className="input mt-1" value={pPhone} onChange={(e) => setPPhone(e.target.value)} placeholder="01XXXXXXXXX" />
             </label>
-            <label className="block text-sm md:col-span-2">ঠিকানা
-              <input className="input mt-1" value={pAddress} onChange={(e) => setPAddress(e.target.value)} placeholder="দোকান/আউটলেটের পূর্ণ ঠিকানা" />
+            <label className="block text-sm md:col-span-2">{dict.commerce.address}<input className="input mt-1" value={pAddress} onChange={(e) => setPAddress(e.target.value)} placeholder={dict.commerce.fullAddressOfTheShop} />
             </label>
-            <label className="block text-sm">ফি (টাকা, খালি = ফ্রি)
-              <input className="input mt-1" inputMode="decimal" value={pFee} onChange={(e) => setPFee(e.target.value)} placeholder="0" />
+            <label className="block text-sm">{dict.commerce.feeTakaEmptyFree}<input className="input mt-1" inputMode="decimal" value={pFee} onChange={(e) => setPFee(e.target.value)} placeholder="0" />
             </label>
           </div>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pActive} onChange={(e) => setPActive(e.target.checked)} /> পয়েন্ট সক্রিয়</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pActive} onChange={(e) => setPActive(e.target.checked)} /> {dict.commerce.pointActive}</label>
           <div className="flex gap-2">
             <button type="button" onClick={savePoint} disabled={busy === "point" || !pName.trim() || !pAddress.trim() || !pDistrict.trim()} className="btn-primary disabled:opacity-50">
-              {busy === "point" ? "সংরক্ষণ হচ্ছে…" : editingPointId ? "পয়েন্ট আপডেট করুন" : "পয়েন্ট তৈরি করুন"}
+              {busy === "point" ? dict.commerce.saving : editingPointId ? dict.commerce.updatePoint : dict.commerce.createPoint}
             </button>
-            {editingPointId ? <button type="button" onClick={resetPointForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+            {editingPointId ? <button type="button" onClick={resetPointForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button> : null}
           </div>
         </div>
       </section>
 
       {/* AB4 (AX5): checkout field definitions */}
       <section id="checkout-fields" className="card scroll-mt-24 space-y-4 p-5">
-        <div className="font-semibold">চেকআউট ফিল্ড</div>
+        <div className="font-semibold">{dict.commerce.checkoutField}</div>
         <p className="text-xs leading-relaxed text-slate-500">
-          চেকআউটে ক্রেতার কাছ থেকে অতিরিক্ত তথ্য নিন — যেমন উপহারের বার্তা, সাইজ বা বিশেষ নির্দেশনা।
-          ক্রেতার দেওয়া উত্তরগুলো সরাসরি অর্ডারের বিবরণে (Dashboard → Orders) দেখা যাবে।
-          ফিল্ডের <b>key</b> তৈরি করার পর বদলানো যায় না — উত্তরের হিসাব এই key দিয়েই রাখা হয়।
-        </p>
+          {dict.commerce.takeExtraInformationFromBuyers}<b>key</b> {dict.commerce.cannotBeChangedAfterCreation}</p>
         {fieldLoadError ? (
           <p className="flex flex-wrap items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
             {fieldLoadError}
-            <button type="button" onClick={() => void loadFieldDefs()} className="font-semibold underline">পুনরায় চেষ্টা</button>
+            <button type="button" onClick={() => void loadFieldDefs()} className="font-semibold underline">{dict.commerce.retry}</button>
           </p>
         ) : null}
         {fieldDefs.length === 0 ? (
-          <EmptyState title="এখনো কোনো চেকআউট ফিল্ড নেই" description="নিচে তৈরি করুন।" />
+          <EmptyState title={dict.commerce.noCheckoutFieldsYet} description={dict.commerce.createBelow} />
         ) : (
           <div className="space-y-2">
             {fieldDefs.map((f) => (
@@ -2153,65 +2076,59 @@ export default function StorefrontStaffPage() {
                 <span className="font-semibold">{f.label}</span>
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{f.key}</span>
                 <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
-                  {f.type === "textarea" ? "বড় লেখা" : f.type === "select" ? "তালিকা থেকে বাছাই" : f.type === "checkbox" ? "টিক বাক্স" : "এক লাইনের লেখা"}
+                  {f.type === "textarea" ? dict.commerce.largeText : f.type === "select" ? dict.commerce.pickFromAList : f.type === "checkbox" ? dict.commerce.checkbox : dict.commerce.singleLineText}
                 </span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
-                  {f.appliesTo === "shop" ? "শপ চেকআউট" : f.appliesTo === "single" ? "সিঙ্গল প্রোডাক্ট" : f.appliesTo === "landing" ? "ল্যান্ডিং" : "সব সারফেস"}
+                  {f.appliesTo === "shop" ? dict.commerce.shopCheckout : f.appliesTo === "single" ? dict.commerce.singleProduct : f.appliesTo === "landing" ? dict.commerce.landing : dict.commerce.allSurfaces}
                 </span>
-                {f.required ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">আবশ্যক</span> : null}
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${f.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{f.active ? "সক্রিয়" : "বন্ধ"}</span>
+                {f.required ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">{dict.commerce.required2}</span> : null}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${f.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>{f.active ? dict.commerce.active : dict.commerce.closed}</span>
                 <span className="ml-auto flex gap-1.5">
-                  <button type="button" onClick={() => startEditField(f)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">সম্পাদনা</button>
-                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">মুছুন</button>
+                  <button type="button" onClick={() => startEditField(f)} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold">{dict.commerce.edit}</button>
+                  <button type="button" onClick={() => void deleteField(f)} disabled={busy === `field-del-${f.id}`} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 disabled:opacity-50">{dict.commerce.delete}</button>
                 </span>
               </div>
             ))}
           </div>
         )}
         <div className="space-y-3 border-t pt-4">
-          <div className="font-semibold">{editingFieldId ? "চেকআউট ফিল্ড সম্পাদনা" : "নতুন চেকআউট ফিল্ড"}</div>
+          <div className="font-semibold">{editingFieldId ? dict.commerce.editCheckoutField : dict.commerce.newCheckoutField}</div>
           {fieldError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{fieldError}</p> : null}
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="block text-sm">Key (ইংরেজি, বদলানো যায় না)
-              <input className="input mt-1 font-mono" value={fKey} disabled={!!editingFieldId} onChange={(e) => setFKey(e.target.value)} placeholder="যেমন: gift_note" />
+            <label className="block text-sm">{dict.commerce.keyEnglishCannotBeChanged}<input className="input mt-1 font-mono" value={fKey} disabled={!!editingFieldId} onChange={(e) => setFKey(e.target.value)} placeholder={dict.commerce.eGGiftNote} />
             </label>
-            <label className="block text-sm">লেবেল (ক্রেতা যা দেখবে)
-              <input className="input mt-1" value={fLabel} onChange={(e) => setFLabel(e.target.value)} placeholder="যেমন: উপহারের বার্তা" />
+            <label className="block text-sm">{dict.commerce.labelWhatTheBuyerWill}<input className="input mt-1" value={fLabel} onChange={(e) => setFLabel(e.target.value)} placeholder={dict.commerce.eGGiftMessage} />
             </label>
-            <label className="block text-sm">ধরন
-              <select className="input mt-1" value={fType} onChange={(e) => setFType(e.target.value)}>
-                <option value="text">এক লাইনের লেখা</option>
-                <option value="textarea">বড় লেখা</option>
-                <option value="select">তালিকা থেকে বাছাই</option>
-                <option value="checkbox">টিক বাক্স (হ্যাঁ/না)</option>
+            <label className="block text-sm">{dict.commerce.type}<select className="input mt-1" value={fType} onChange={(e) => setFType(e.target.value)}>
+                <option value="text">{dict.commerce.singleLineText}</option>
+                <option value="textarea">{dict.commerce.largeText}</option>
+                <option value="select">{dict.commerce.pickFromAList}</option>
+                <option value="checkbox">{dict.commerce.checkboxYesNo}</option>
               </select>
             </label>
-            <label className="block text-sm">কোন সারফেসে দেখাবে
-              <select className="input mt-1" value={fAppliesTo} onChange={(e) => setFAppliesTo(e.target.value)}>
-                <option value="all">সব সারফেস</option>
-                <option value="shop">শপ চেকআউট</option>
-                <option value="single">সিঙ্গল প্রোডাক্ট</option>
-                <option value="landing">ল্যান্ডিং</option>
+            <label className="block text-sm">{dict.commerce.whichSurfaceToShowOn}<select className="input mt-1" value={fAppliesTo} onChange={(e) => setFAppliesTo(e.target.value)}>
+                <option value="all">{dict.commerce.allSurfaces}</option>
+                <option value="shop">{dict.commerce.shopCheckout}</option>
+                <option value="single">{dict.commerce.singleProduct}</option>
+                <option value="landing">{dict.commerce.landing}</option>
               </select>
             </label>
-            <label className="block text-sm">ক্রম (sortOrder)
-              <input className="input mt-1" type="number" value={fSortOrder} onChange={(e) => setFSortOrder(e.target.value)} />
+            <label className="block text-sm">{dict.commerce.orderSortOrder}<input className="input mt-1" type="number" value={fSortOrder} onChange={(e) => setFSortOrder(e.target.value)} />
             </label>
             {fType === "select" ? (
-              <label className="block text-sm">অপশন (প্রতি লাইনে একটি)
-                <textarea className="input mt-1" rows={3} value={fOptions} onChange={(e) => setFOptions(e.target.value)} placeholder={"M\nL\nXL"} />
+              <label className="block text-sm">{dict.commerce.optionsOnePerLine}<textarea className="input mt-1" rows={3} value={fOptions} onChange={(e) => setFOptions(e.target.value)} placeholder={"M\nL\nXL"} />
               </label>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={fRequired} onChange={(e) => setFRequired(e.target.checked)} /> আবশ্যক — উত্তর ছাড়া অর্ডার হবে না</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={fActive} onChange={(e) => setFActive(e.target.checked)} /> সক্রিয়</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={fRequired} onChange={(e) => setFRequired(e.target.checked)} /> {dict.commerce.requiredNoOrderWithoutAn}</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={fActive} onChange={(e) => setFActive(e.target.checked)} /> {dict.commerce.active}</label>
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={() => void saveField()} disabled={busy === "field" || !fLabel.trim() || (!editingFieldId && !fKey.trim())} className="btn-primary disabled:opacity-50">
-              {busy === "field" ? "সংরক্ষণ হচ্ছে…" : editingFieldId ? "ফিল্ড আপডেট করুন" : "ফিল্ড তৈরি করুন"}
+              {busy === "field" ? dict.commerce.saving : editingFieldId ? dict.commerce.updateField : dict.commerce.createField}
             </button>
-            {editingFieldId ? <button type="button" onClick={resetFieldForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">বাতিল</button> : null}
+            {editingFieldId ? <button type="button" onClick={resetFieldForm} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold">{dict.common.cancel}</button> : null}
           </div>
         </div>
       </section>
@@ -2219,10 +2136,9 @@ export default function StorefrontStaffPage() {
       {/* TD9: নিজের ডোমেইন — one unified 5-step custom-domain flow */}
       <section className="card space-y-5 p-5">
         <div>
-          <div className="font-semibold">নিজের ডোমেইন</div>
+          <div className="font-semibold">{dict.commerce.ownDomain}</div>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            নিজের কেনা ডোমেইনেই দোকান চালান — ডোমেইন লেখা, TXT যাচাই, routing নির্দেশনা আর অবস্থা, সব ধাপ এই এক বিভাগেই।
-          </p>
+            {dict.commerce.runTheShopOnYour}</p>
         </div>
 
         {domainError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{domainError}</p> : null}
@@ -2240,9 +2156,9 @@ export default function StorefrontStaffPage() {
               {/* ধাপ ১ — ডোমেইন লেখা ও সেভ */}
               <div className="space-y-2 border-t pt-4">
                 <div className="flex items-center gap-2 text-sm">
-                  <span className={stepBadge}>১</span>
-                  <span className="font-semibold">ধাপ ১ — ডোমেইন লেখা ও সেভ</span>
-                  {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">— এখনো কোনো ডোমেইন সেট করা নেই</span>}
+                  <span className={stepBadge}>{dict.commerce.text1yf}</span>
+                  <span className="font-semibold">{dict.commerce.step1WriteSaveThe}</span>
+                  {customDomain ? <span className="font-mono font-bold">{customDomain}</span> : <span className="text-slate-500">{dict.commerce.noDomainSetYet}</span>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <input
@@ -2253,51 +2169,50 @@ export default function StorefrontStaffPage() {
                     maxLength={253}
                   />
                   <button type="button" onClick={saveDomain} disabled={busy === "domain-set" || !domainInput.trim()} className="btn-primary disabled:opacity-50">
-                    {busy === "domain-set" ? "সেভ হচ্ছে…" : "ডোমেইন সেভ করুন"}
+                    {busy === "domain-set" ? dict.commerce.saving2 : dict.commerce.saveDomain}
                   </button>
                 </div>
-                <p className="text-xs text-slate-500">শুধু ডোমেইনটি লিখুন — https:// বা কোনো পথ ছাড়া (যেমন: dhaka-fashion.com অথবা shop.dhaka-fashion.com)।</p>
+                <p className="text-xs text-slate-500">{dict.commerce.writeOnlyTheDomainWithout}</p>
               </div>
 
               {/* ধাপ ২ — TXT যাচাই */}
               <div className="space-y-3 border-t pt-4">
                 <div className="flex items-center gap-2 text-sm">
-                  <span className={stepBadge}>২</span>
-                  <span className="font-semibold">ধাপ ২ — TXT যাচাই</span>
-                  {verified ? <span className="text-emerald-700">যাচাই হয়েছে ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">এখনো যাচাই হয়নি</span>}
+                  <span className={stepBadge}>{dict.commerce.text1yg}</span>
+                  <span className="font-semibold">{dict.commerce.step2TXTVerification}</span>
+                  {verified ? <span className="text-emerald-700">{dict.commerce.verified2}{domain.verifiedAt ? fmtDateTime(locale, new Date(domain.verifiedAt)) : ""})</span> : <span className="text-slate-500">{dict.commerce.notVerifiedYet}</span>}
                 </div>
                 {!customDomain ? (
                   <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                    এই ধাপটি এখন নিষ্ক্রিয় — আগে ধাপ ১-এ ডোমেইন লিখে সেভ করুন, তারপর এখানে TXT টোকেন তৈরি করে ডোমেইনটির মালিকানা যাচাই করতে পারবেন।
-                  </p>
+                    {dict.commerce.thisStepIsCurrentlyInactive}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" onClick={issueToken} disabled={busy === "token"} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                        {busy === "token" ? "তৈরি হচ্ছে…" : "যাচাই টোকেন তৈরি করুন (TXT)"}
+                        {busy === "token" ? dict.commerce.creating : dict.commerce.createVerificationTokenTXT}
                       </button>
                       <button type="button" onClick={verifyDomain} disabled={busy === "verify"} className="btn-primary disabled:opacity-50">
-                        {busy === "verify" ? "যাচাই হচ্ছে…" : "এখন যাচাই করুন"}
+                        {busy === "verify" ? dict.commerce.verifying : dict.commerce.verifyNow}
                       </button>
                     </div>
 
                     {tokenOut ? (
                       <div className="space-y-2 rounded-xl bg-slate-900 p-4 text-xs text-green-300">
-                        <p className="font-sans font-bold text-white">DNS-এ এই TXT রেকর্ডটি যোগ করুন:</p>
+                        <p className="font-sans font-bold text-white">{dict.commerce.addThisTXTRecordIn}</p>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-sans text-slate-300">Host:</span>
                           <code className="rounded bg-slate-800 px-2 py-1">{tokenOut.recordHost}</code>
-                          <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                          <button type="button" onClick={() => copyText(tokenOut.recordHost, "TXT Host")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">{dict.commerce.copy}</button>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-sans text-slate-300">Type: {tokenOut.recordType} · Value:</span>
                           <code className="break-all rounded bg-slate-800 px-2 py-1">{tokenOut.recordValue}</code>
-                          <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">কপি</button>
+                          <button type="button" onClick={() => copyText(tokenOut.recordValue, "TXT Value")} className="rounded bg-white px-2 py-1 font-sans font-bold text-slate-900">{dict.commerce.copy}</button>
                         </div>
-                        <p className="font-sans text-slate-400">রেকর্ড যোগ করার পর DNS propagate হতে কিছু সময় লাগতে পারে — তারপর &ldquo;এখন যাচাই করুন&rdquo; চাপুন।</p>
+                        <p className="font-sans text-slate-400">{dict.commerce.afterAddingTheRecordDNS}</p>
                       </div>
                     ) : domain.verifyHost ? (
-                      <p className="text-xs text-slate-500">TXT রেকর্ডের Host হবে: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> — টোকেন তৈরি করলে এর Value এখানে দেখাবে।</p>
+                      <p className="text-xs text-slate-500">{dict.commerce.theTXTRecordSHost}<code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{domain.verifyHost}</code> {dict.commerce.theValueWillShowHere}</p>
                     ) : null}
                   </>
                 )}
@@ -2306,13 +2221,12 @@ export default function StorefrontStaffPage() {
               {/* ধাপ ৩ — Routing নির্দেশনা */}
               <div className="space-y-3 border-t pt-4">
                 <div className="flex items-center gap-2 text-sm">
-                  <span className={stepBadge}>৩</span>
-                  <span className="font-semibold">ধাপ ৩ — Routing নির্দেশনা (DNS রেকর্ড)</span>
+                  <span className={stepBadge}>{dict.commerce.text1yh}</span>
+                  <span className="font-semibold">{dict.commerce.step3RoutingInstructionsDNS}</span>
                 </div>
                 {!customDomain ? (
                   <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                    আগে ধাপ ১-এ ডোমেইন সেভ করুন — তারপর সেই ডোমেইনের জন্য ঠিক কোন DNS রেকর্ড লাগবে, তা এখানে হিসাব করে দেখানো হবে।
-                  </p>
+                    {dict.commerce.saveTheDomainInStep}</p>
                 ) : (
                   <>
                     {isSubdomainStyle ? (
@@ -2322,20 +2236,18 @@ export default function StorefrontStaffPage() {
                           <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
                           <span className="font-semibold">Host:</span>
                           <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
-                          <button type="button" onClick={() => copyText(customDomain, "CNAME Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          <button type="button" onClick={() => copyText(customDomain, "CNAME Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.copy}</button>
                           <span className="font-semibold">Target:</span>
                           <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
-                          <button type="button" onClick={() => copyText("app.qosprey.com", "CNAME Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                          <button type="button" onClick={() => copyText("app.qosprey.com", "CNAME Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.copy}</button>
                         </div>
                         <p className="text-xs leading-relaxed text-slate-500">
-                          টীকা: registrar অনুযায়ী Host ঘরে পুরো ডোমেইনটি লিখতে হতে পারে, আবার কোনোটায় শুধু subdomain অংশটি
-                          (যেমন: {labels[0]}) লাগে — আপনার registrar-এর নিয়ম অনুযায়ী দিন।
-                        </p>
+                          {dict.commerce.noteDependingOnTheRegistrar}{labels[0]}{dict.commerce.isNeededGiveItPer}</p>
                       </div>
                     ) : (
                       <div className="space-y-3 rounded-xl bg-slate-50 p-4 text-sm">
                         <div className="space-y-1.5">
-                          <p><b>(ক)</b> আপনার registrar-এ <b>CNAME flattening / ALIAS / ANAME</b> সুবিধা থাকলে apex ডোমেইনের জন্য সেটাই ব্যবহার করুন:</p>
+                          <p><b>{dict.commerce.a}</b> {dict.commerce.atYourRegistrar}<b>CNAME flattening / ALIAS / ANAME</b> {dict.commerce.ifThatFeatureIsAvailable}</p>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold">Type:</span>
                             <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">ALIAS / ANAME</code>
@@ -2343,18 +2255,18 @@ export default function StorefrontStaffPage() {
                             <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
                             <span className="font-semibold">Target:</span>
                             <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">app.qosprey.com</code>
-                            <button type="button" onClick={() => copyText("app.qosprey.com", "ALIAS Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                            <button type="button" onClick={() => copyText("app.qosprey.com", "ALIAS Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.copy}</button>
                           </div>
                         </div>
                         <div className="space-y-1.5 border-t border-slate-200 pt-3">
-                          <p><b>(খ)</b> সেই সুবিধা না থাকলে <b>A রেকর্ড</b> দিন:</p>
+                          <p><b>{dict.commerce.b}</b> {dict.commerce.ifThatFeatureIsNot}<b>{dict.commerce.aRecord}</b> {dict.commerce.give}</p>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold">Type:</span>
                             <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">A</code>
                             <span className="font-semibold">Host:</span>
                             <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">@</code>
                             <span className="font-semibold">Value:</span>
-                            <span>সার্ভারের IP (Dokploy প্যানেলে app ডোমেইনের A রেকর্ডের মান)</span>
+                            <span>{dict.commerce.serverIPTheValueOf}</span>
                           </div>
                         </div>
                       </div>
@@ -2362,23 +2274,20 @@ export default function StorefrontStaffPage() {
 
                     <div className="space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold">www রূপ — Type:</span>
+                        <span className="font-semibold">{dict.commerce.theWwwVersionType}</span>
                         <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">CNAME</code>
                         <span className="font-semibold">Host:</span>
                         <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">www</code>
-                        <button type="button" onClick={() => copyText("www", "www Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        <button type="button" onClick={() => copyText("www", "www Host")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.copy}</button>
                         <span className="font-semibold">Target:</span>
                         <code className="rounded bg-white px-2 py-1 font-mono ring-1 ring-slate-200">{customDomain}</code>
-                        <button type="button" onClick={() => copyText(customDomain, "www Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">কপি</button>
+                        <button type="button" onClick={() => copyText(customDomain, "www Target")} className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold">{dict.commerce.copy}</button>
                       </div>
-                      <p className="text-xs leading-relaxed text-slate-500">টীকা: যাচাই করা ডোমেইন ও তার www রূপ — দুটোতেই দোকান খুলবে।</p>
+                      <p className="text-xs leading-relaxed text-slate-500">{dict.commerce.noteTheVerifiedDomainIts}</p>
                     </div>
 
                     <p className="rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-                      মনে রাখবেন: ডোমেইনটি এই প্ল্যাটফর্মের দিকে পয়েন্ট করা (DNS A/CNAME) এবং SSL সার্টিফিকেট সেটআপ (Dokploy/Traefik) একটি
-                      প্ল্যাটফর্ম-স্তরের কাজ — এই অ্যাপ থেকে করা যায় না। DNS যাচাই সফল হলেও routing সক্রিয় হতে ওই সেটআপ লাগবে; নিচের ধাপ ৪-এ
-                      &ldquo;Routing Check now&rdquo; দিয়ে আসল অবস্থা যাচাই করুন — প্রমাণ ছাড়া routing সক্রিয় বলা হবে না।
-                    </p>
+                      {dict.commerce.rememberPointingTheDomainTo}</p>
                   </>
                 )}
               </div>
@@ -2386,31 +2295,31 @@ export default function StorefrontStaffPage() {
               {/* ধাপ ৪ — অবস্থা তালিকা */}
               <div className="space-y-2 border-t pt-4 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className={stepBadge}>৪</span>
-                  <span className="font-semibold">ধাপ ৪ — অবস্থা</span>
+                  <span className={stepBadge}>{dict.commerce.text1yi}</span>
+                  <span className="font-semibold">{dict.commerce.step4Status}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={statusMark(hasToken)}>{hasToken ? "✓" : "…"}</span>
-                  <span className="font-semibold">টোকেন দেওয়া হয়েছে</span>
-                  {hasToken ? <span className="text-emerald-700">হ্যাঁ — TXT যাচাই টোকেন সেট করা আছে</span> : <span className="text-slate-500">বাকি — ধাপ ২-এ টোকেন তৈরি করুন</span>}
+                  <span className="font-semibold">{dict.commerce.tokenGiven}</span>
+                  {hasToken ? <span className="text-emerald-700">{dict.commerce.yesTheTXTVerificationToken}</span> : <span className="text-slate-500">{dict.commerce.pendingCreateTheTokenIn}</span>}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={statusMark(verified)}>{verified ? "✓" : "…"}</span>
-                  <span className="font-semibold">যাচাই হয়েছে</span>
-                  {verified ? <span className="text-emerald-700">হ্যাঁ ({domain.verifiedAt ? new Date(domain.verifiedAt).toLocaleString("bn-BD") : ""})</span> : <span className="text-slate-500">বাকি — এখনো যাচাই হয়নি</span>}
+                  <span className="font-semibold">{dict.commerce.verified}</span>
+                  {verified ? <span className="text-emerald-700">{dict.commerce.yes}{domain.verifiedAt ? fmtDateTime(locale, new Date(domain.verifiedAt)) : ""})</span> : <span className="text-slate-500">{dict.commerce.pendingNotVerifiedYet}</span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={statusMark(!!routing?.routingActive)}>{routing?.routingActive ? "✓" : "…"}</span>
-                  <span className="font-semibold">Routing ঠিক আছে</span>
+                  <span className="font-semibold">{dict.commerce.routingIsFine}</span>
                   {routing?.routingActive ? (
-                    <span className="text-emerald-700">সক্রিয় — {routing.evidence ?? routing.checkedUrl}</span>
+                    <span className="text-emerald-700">{dict.commerce.active2}{routing.evidence ?? routing.checkedUrl}</span>
                   ) : routing ? (
-                    <span className="text-amber-700">সক্রিয় পাওয়া যায়নি: {routing.reason ?? routing.checkedUrl}</span>
+                    <span className="text-amber-700">{dict.commerce.activeNotFound}{routing.reason ?? routing.checkedUrl}</span>
                   ) : (
-                    <span className="text-slate-500">এখনো পরীক্ষা করা হয়নি — অনুমান নয়, আসল diagnostic দেখতে Check now চাপুন</span>
+                    <span className="text-slate-500">{dict.commerce.notTestedYetPressCheck}</span>
                   )}
                   <button type="button" onClick={checkRouting} disabled={busy === "routing" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                    {busy === "routing" ? "পরীক্ষা হচ্ছে…" : "Routing Check now"}
+                    {busy === "routing" ? dict.commerce.testing : dict.commerce.routingCheckNow}
                   </button>
                 </div>
                 {/* OU2: HTTPS সার্টিফিকেট (Cloudflare for SaaS) — the
@@ -2421,26 +2330,26 @@ export default function StorefrontStaffPage() {
                     Cloudflare itself said both legs are active. */}
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={statusMark(domain.httpsStatus === "active")}>{domain.httpsStatus === "active" ? "✓" : "…"}</span>
-                  <span className="font-semibold">HTTPS সার্টিফিকেট (SSL)</span>
+                  <span className="font-semibold">{dict.commerce.hTTPSCertificateSSL}</span>
                   {domain.httpsStatus === "active" ? (
-                    <span className="text-emerald-700">সক্রিয় — Cloudflare সার্টিফিকেট চালু আছে</span>
+                    <span className="text-emerald-700">{dict.commerce.activeCloudflareCertificateIsOn}</span>
                   ) : domain.httpsStatus === "pending" ? (
-                    <span className="text-amber-700">চলমান — সার্টিফিকেট ইস্যু/যাচাই হচ্ছে</span>
+                    <span className="text-amber-700">{dict.commerce.inProgressCertificateIssuingVerifying}</span>
                   ) : domain.httpsStatus === "failed" ? (
-                    <span className="text-red-700">ব্যর্থ হয়েছে</span>
+                    <span className="text-red-700">{dict.commerce.failed2}</span>
                   ) : domain.httpsStatus === "not_configured" ? (
-                    <span className="text-slate-500">প্ল্যাটফর্মে Cloudflare for SaaS এখনো configure করা হয়নি — প্ল্যাটফর্ম অপারেটরের সেটআপ বাকি</span>
+                    <span className="text-slate-500">{dict.commerce.cloudflareForSaaSIsNot}</span>
                   ) : (
-                    <span className="text-slate-500">এখনো চেষ্টা করা হয়নি — ডোমেইন যাচাই সফল হলে provisioning শুরু হয়</span>
+                    <span className="text-slate-500">{dict.commerce.notTriedYetProvisioningStarts}</span>
                   )}
                   <button type="button" onClick={refreshHttps} disabled={busy === "https-refresh" || !verified} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
-                    {busy === "https-refresh" ? "Refresh হচ্ছে…" : "HTTPS অবস্থা Refresh"}
+                    {busy === "https-refresh" ? dict.commerce.refreshing : dict.commerce.refreshHTTPSStatus}
                   </button>
                 </div>
                 {domain.httpsStatusDetail ? (
                   <p className="pl-8 text-xs leading-relaxed text-slate-500">
                     {domain.httpsStatusDetail}
-                    {domain.httpsUpdatedAt ? <> · সর্বশেষ আপডেট: {new Date(domain.httpsUpdatedAt).toLocaleString("bn-BD")}</> : null}
+                    {domain.httpsUpdatedAt ? <> {dict.commerce.lastUpdated}{fmtDateTime(locale, new Date(domain.httpsUpdatedAt))}</> : null}
                   </p>
                 ) : null}
               </div>
@@ -2448,18 +2357,15 @@ export default function StorefrontStaffPage() {
               {/* ধাপ ৫ — বদলানো/সরানো */}
               <div className="space-y-2 border-t pt-4">
                 <div className="flex items-center gap-2 text-sm">
-                  <span className={stepBadge}>৫</span>
-                  <span className="font-semibold">ধাপ ৫ — ডোমেইন বদলানো বা সরানো</span>
+                  <span className={stepBadge}>{dict.commerce.text1yj}</span>
+                  <span className="font-semibold">{dict.commerce.step5ChangeOrRemove}</span>
                 </div>
                 <p className="text-xs leading-relaxed text-slate-500">
-                  ডোমেইন বদলাতে চাইলে উপরের ধাপ ১-এর ঘরে নতুন ডোমেইন লিখে সেভ করুন — বদলালে আগের যাচাই রিসেট হয়ে যাবে,
-                  নতুন ডোমেইনের জন্য আবার TXT যাচাই করতে হবে। ডোমেইন সরিয়ে ফেললেও চিন্তা নেই — আপনার সাবডোমেইন ঠিকানা
-                  ({shopSubdomainHost(state.organization.slug)}) সবসময়ই থাকে, দোকান সেখানেই খুলবে।
-                </p>
+                  {dict.commerce.toChangeTheDomainWrite}{shopSubdomainHost(state.organization.slug)}{dict.commerce.alwaysStaysTheShopWill}</p>
                 <button type="button" onClick={removeDomain} disabled={busy === "domain-remove" || !customDomain} className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold text-rose-600 disabled:opacity-50">
-                  {busy === "domain-remove" ? "সরানো হচ্ছে…" : "ডোমেইন সরিয়ে ফেলুন"}
+                  {busy === "domain-remove" ? dict.commerce.removing : dict.commerce.removeTheDomain}
                 </button>
-                {!customDomain ? <span className="ml-2 text-xs text-slate-400">কোনো ডোমেইন সেট করা নেই — সরানোর কিছু নেই।</span> : null}
+                {!customDomain ? <span className="ml-2 text-xs text-slate-400">{dict.commerce.noDomainSetNothingTo}</span> : null}
               </div>
             </>
           );

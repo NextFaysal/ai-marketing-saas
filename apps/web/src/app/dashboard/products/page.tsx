@@ -1,9 +1,10 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtDateTime, fmtNumber, formatMinor } from "@repo/contracts";
 import { EmptyState, FilterBar, PageHeader, ResponsiveTable } from "@repo/ui";
 import { useConfirm, useToast } from "@repo/ui/client";
 import { MediaImage } from "@/components/MediaImage";
@@ -144,15 +145,17 @@ interface MovementItem {
   variantName?: string | null; note?: string | null; createdAt: string;
 }
 
-const MOVEMENT_REASON_LABELS: Record<string, string> = {
-  order_placed: "অর্ডারে বিক্রি",
-  order_cancelled: "বাতিলে ফেরত",
-  order_returned: "রিটার্নে ফেরত",
-  manual_adjustment: "হাতে সমন্বয়",
-  sync_correction: "স্টোর sync সংশোধন",
-};
+// ML5 i18n: values are dict.products keys, resolved at render.
+const MOVEMENT_REASON_LABELS = {
+  order_placed: "soldInOrder",
+  order_cancelled: "returnedOnCancel",
+  order_returned: "returnedOnReturn",
+  manual_adjustment: "manualAdjustment",
+  sync_correction: "storeSyncCorrection",
+} as const satisfies Record<string, string>;
 
 export default function ProductsPage() {
+  const { dict, t, locale } = useLocale();
   const confirmDialog = useConfirm();
   const { toast } = useToast();
   const router = useRouter();
@@ -316,7 +319,7 @@ export default function ProductsPage() {
   const load = useCallback(async (q = "", brandId: string = selectedBrandId) => {
     const orgId = getOrganizationId();
     if (!orgId) {
-      setError("কোনো Organization নির্বাচিত নেই। আবার লগইন করে Onboarding শেষ করুন।");
+      setError(dict.products.noOrganizationSelectedLogIn);
       setLoading(false);
       return;
     }
@@ -333,7 +336,7 @@ export default function ProductsPage() {
       setTotal(data.total);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পণ্য লোড করতে ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.products.failedToLoadProducts);
     } finally {
       setLoading(false);
     }
@@ -371,17 +374,17 @@ export default function ProductsPage() {
         await apiFetch(`/organizations/${orgId}/products/brands/${editingBrandId}`, {
           method: "PATCH", body: JSON.stringify(body),
         });
-        setBrandMsg("ব্র্যান্ড আপডেট হয়েছে।");
+        setBrandMsg(dict.products.brandUpdated);
       } else {
         await apiFetch(`/organizations/${orgId}/products/brands`, {
           method: "POST", body: JSON.stringify(body),
         });
-        setBrandMsg("ব্র্যান্ড তৈরি হয়েছে।");
+        setBrandMsg(dict.products.brandCreated);
       }
       setBrandForm({ name: "", logoUrl: "", description: "" });
       setEditingBrandId(null);
       await loadBrands();
-    } catch (e) { setBrandMsg(e instanceof Error ? e.message : "ব্র্যান্ড সংরক্ষণ ব্যর্থ হয়েছে"); }
+    } catch (e) { setBrandMsg(e instanceof Error ? e.message : dict.products.brandSaveFailed); }
     finally { setBrandBusy(false); }
   }
 
@@ -389,20 +392,20 @@ export default function ProductsPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     if (!(await confirmDialog({
-      title: `ব্র্যান্ড "${b.name}" মুছে ফেলবেন?`,
-      body: `এই ব্র্যান্ডের ${b.productCount}টি পণ্য ব্র্যান্ডবিহীন হয়ে যাবে — পণ্যগুলো মোছা হবে না, শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হবে।`,
-      confirmLabel: "মুছে ফেলুন",
+      title: t("products.deleteTheBrand", { name: b.name }),
+      body: t("products.thisBrandSProductsWill", { productCount: b.productCount }),
+      confirmLabel: dict.products.delete2,
       danger: true,
     }))) return;
     setBrandBusy(true); setBrandMsg("");
     try {
       const res = await apiFetch<{ ok: true; unlinkedProducts: number }>(
         `/organizations/${orgId}/products/brands/${b.id}`, { method: "DELETE" });
-      setBrandMsg(`ব্র্যান্ড মোছা হয়েছে — ${res.unlinkedProducts}টি পণ্য থেকে ব্র্যান্ড সরিয়ে দেওয়া হয়েছে (পণ্যগুলো মোছা হয়নি)।`);
+      setBrandMsg(t("products.brandDeletedTheBrandWas", { unlinkedProducts: res.unlinkedProducts }));
       if (editingBrandId === b.id) { setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }
       await loadBrands();
       await load(search);
-    } catch (e) { setBrandMsg(e instanceof Error ? e.message : "ব্র্যান্ড মুছতে ব্যর্থ হয়েছে"); }
+    } catch (e) { setBrandMsg(e instanceof Error ? e.message : dict.products.failedToDeleteBrand); }
     finally { setBrandBusy(false); }
   }
 
@@ -410,15 +413,15 @@ export default function ProductsPage() {
     const orgId = getOrganizationId();
     if (!orgId || selectedIds.size === 0) return;
     if (!(await confirmDialog({
-      title: `${selectedIds.size}টি পণ্য মুছতে/আর্কাইভ করতে চান?`,
+      title: t("products.deleteArchiveProducts", { size: selectedIds.size }),
       body: (
         <>
-          <p>• যেসব পণ্যে অর্ডার আছে — সেগুলো আর্কাইভ হবে (স্থায়ীভাবে মোছা হবে না)।</p>
-          <p>• যেসব পণ্যে কখনো অর্ডার হয়নি — সেগুলো স্থায়ীভাবে মুছে যাবে।</p>
-          <p>এই কাজটি ফেরত নেওয়া যাবে না।</p>
+          <p>{dict.products.productsThatHaveOrdersThey}</p>
+          <p>{dict.products.productsThatNeverHadOrders}</p>
+          <p>{dict.products.thisActionCannotBeUndone}</p>
         </>
       ),
-      confirmLabel: "মুছুন/আর্কাইভ করুন",
+      confirmLabel: dict.products.deleteArchive,
       danger: true,
     }))) return;
     setBulkDeleteBusy(true); setBulkDeleteResult(null); setError(""); setNotice("");
@@ -430,7 +433,7 @@ export default function ProductsPage() {
       setSelectedIds(new Set());
       await load(search);
       await loadBrands();
-    } catch (e) { setError(e instanceof Error ? e.message : "বাল্ক মুছতে ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.products.bulkDeleteFailed); }
     finally { setBulkDeleteBusy(false); }
   }
 
@@ -445,7 +448,7 @@ export default function ProductsPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { message?: string }).message ?? `এক্সপোর্ট ব্যর্থ (HTTP ${res.status})`);
+        throw new Error((body as { message?: string }).message ?? t("products.exportFailedHTTP", { status: res.status }));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -454,8 +457,8 @@ export default function ProductsPage() {
       a.download = "products-export.csv";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      toast({ title: "✅ পণ্যের CSV এক্সপোর্ট ডাউনলোড হয়েছে।", tone: "success" });
-    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট ব্যর্থ হয়েছে"); }
+      toast({ title: dict.products.productCSVExportDownloaded, tone: "success" });
+    } catch (e) { setError(e instanceof Error ? e.message : dict.products.exportFailed); }
     finally { setExportBusy(false); }
   }
 
@@ -469,7 +472,7 @@ export default function ProductsPage() {
         `/organizations/${orgId}/products/${p.id}/history`);
       setHistoryItems(data.items ?? []);
       setHistoryTruncated(!!data.truncated);
-    } catch (e) { setHistoryMsg(e instanceof Error ? e.message : "ইতিহাস লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setHistoryMsg(e instanceof Error ? e.message : dict.products.failedToLoadHistory); }
     finally { setHistoryBusy(false); }
   }
 
@@ -502,16 +505,16 @@ export default function ProductsPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     if (!(await confirmDialog({
-      title: `"${p.name}" এর একটি কপি তৈরি করবেন?`,
-      confirmLabel: "কপি তৈরি করুন",
+      title: t("products.createACopyOf", { name: p.name }),
+      confirmLabel: dict.products.createCopy,
     }))) return;
     setError(""); setNotice("");
     try {
       const copy = await apiFetch<ProductItem>(`/organizations/${orgId}/products/${p.id}/duplicate`, { method: "POST" });
-      toast({ title: `📄 "${p.name}" এর কপি তৈরি হয়েছে: "${copy.name}"`, tone: "success" });
+      toast({ title: t("products.aCopyOfHasBeen", { name: p.name, name1: copy.name }), tone: "success" });
       await load(search);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কপি তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.products.failedToCreateCopy);
     }
   }
 
@@ -527,7 +530,7 @@ export default function ProductsPage() {
       await loadEcMeta();
       setForm((f) => ({ ...f, tagIds: f.tagIds.includes(tag.id) ? f.tagIds : [...f.tagIds, tag.id] }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ট্যাগ তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.products.failedToCreateTag);
     } finally { setTagBusy(false); }
   }
 
@@ -551,7 +554,7 @@ export default function ProductsPage() {
         method: "POST", body: JSON.stringify(bulkBody()),
       });
       setBulkPreview(preview);
-    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "প্রিভিউ ব্যর্থ হয়েছে"); }
+    } catch (e) { setBulkMsg(e instanceof Error ? e.message : dict.products.previewFailed); }
     finally { setBulkBusy(false); }
   }
 
@@ -567,7 +570,7 @@ export default function ProductsPage() {
       setBulkPreview(null);
       setSelectedIds(new Set());
       await load(search);
-    } catch (e) { setBulkMsg(e instanceof Error ? e.message : "প্রয়োগ ব্যর্থ হয়েছে"); }
+    } catch (e) { setBulkMsg(e instanceof Error ? e.message : dict.products.applyFailed); }
     finally { setBulkBusy(false); }
   }
 
@@ -581,7 +584,7 @@ export default function ProductsPage() {
         { method: "POST", body: JSON.stringify({ productIds: Array.from(selectedIds) }) },
       );
       setPushBatchResult(result);
-    } catch (e) { setPushMsg(e instanceof Error ? e.message : "স্টোরে পাঠানো ব্যর্থ হয়েছে"); }
+    } catch (e) { setPushMsg(e instanceof Error ? e.message : dict.products.failedToPushToStore); }
     finally { setPushBusy(false); }
   }
 
@@ -591,7 +594,7 @@ export default function ProductsPage() {
   async function onMirrorExternalImages() {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    setMirrorBusy(true); setError(""); setNotice("বাইরের ছবি নিজের স্টোরেজে কপি করা হচ্ছে…");
+    setMirrorBusy(true); setError(""); setNotice(dict.products.copyingExternalImagesToYour);
     try {
       const r = await apiFetch<{ scanned: number; mirrored: number; deduped: number; failed: { productId: string; host: string; reason: string }[]; reviews?: { scanned: number; mirrored: number; failed: number } }>(
         `/organizations/${orgId}/products/images/mirror-external`,
@@ -599,12 +602,12 @@ export default function ProductsPage() {
       );
       const hosts = Array.from(new Set(r.failed.map((f) => f.host).filter(Boolean)));
       setNotice(
-        `ছবি মিরর শেষ: ${r.scanned}টি যাচাই, ${r.mirrored}টি নতুন কপি, ${r.deduped}টি আগের কপিই পুনঃব্যবহৃত` +
-        (r.failed.length ? `, ${r.failed.length}টি ব্যর্থ${hosts.length ? ` (host: ${hosts.join(", ")})` : ""} — কারণ: ${r.failed[0].reason}` : "") +
-        (r.reviews && r.reviews.scanned ? ` রিভিউ ছবি: ${r.reviews.scanned}টি যাচাই, ${r.reviews.mirrored}টি কপি, ${r.reviews.failed}টি ব্যর্থ।` : "।"),
+        t("products.imageMirrorDoneCheckedNew", { scanned: r.scanned, mirrored: r.mirrored, deduped: r.deduped }) +
+        (r.failed.length ? t("products.failedReason", { length: r.failed.length, hosts: hosts.length ? ` (host: ${hosts.join(", ")})` : "", reason: r.failed[0].reason }) : "") +
+        (r.reviews && r.reviews.scanned ? t("products.reviewImagesCheckedCopiedFailed", { scanned: r.reviews.scanned, mirrored: r.reviews.mirrored, failed: r.reviews.failed }) : "।"),
       );
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "ছবি মিরর ব্যর্থ হয়েছে"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.products.imageMirrorFailed); }
     finally { setMirrorBusy(false); }
   }
 
@@ -622,11 +625,11 @@ export default function ProductsPage() {
       setAutoMirror(s.productImageAutoMirror);
       toast({
         title: s.productImageAutoMirror
-          ? "অটো-মিরর চালু করা হয়েছে — শিডিউল করা Job চললে বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি হবে।"
-          : "অটো-মিরর বন্ধ করা হয়েছে — শিডিউল করা Job আর ছবি কপি করবে না (হাতে চালানো মিরর বোতাম আগের মতোই কাজ করবে)।",
+          ? dict.products.autoMirrorTurnedOnWhen
+          : dict.products.autoMirrorTurnedOffThe,
         tone: "success",
       });
-    } catch (e) { setError(e instanceof Error ? e.message : "অটো-মিরর সেটিং বদলানো যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.products.couldNotChangeTheAuto); }
     finally { setAutoMirrorBusy(false); }
   }
 
@@ -637,7 +640,7 @@ export default function ProductsPage() {
     try {
       const data = await apiFetch<SalesReport>(`/organizations/${orgId}/products/sales-report?days=${reportDays}`);
       setReport(data); setReportError("");
-    } catch (e) { setReportError(e instanceof Error ? e.message : "রিপোর্ট লোড ব্যর্থ হয়েছে"); }
+    } catch (e) { setReportError(e instanceof Error ? e.message : dict.products.failedToLoadReport); }
     finally { setReportLoading(false); }
   }, [reportDays]);
 
@@ -655,7 +658,7 @@ export default function ProductsPage() {
     setVForm({ name: "", sku: "", price: "", stock: "" });
     setEditingVariantId(null); setEvForm({ name: "", sku: "", price: "", stock: "" });
     setVMsg("");
-    try { await refreshMgrVariants(p.id); } catch { setVMsg("ভ্যারিয়েন্ট লোড ব্যর্থ হয়েছে।"); }
+    try { await refreshMgrVariants(p.id); } catch { setVMsg(dict.products.failedToLoadVariants); }
   }
 
   async function onCreateVariant(e: React.FormEvent) {
@@ -671,10 +674,10 @@ export default function ProductsPage() {
         }),
       });
       setVForm({ name: "", sku: "", price: "", stock: "" });
-      setVMsg("ভ্যারিয়েন্ট যোগ হয়েছে।");
+      setVMsg(dict.products.variantAdded);
       await refreshMgrVariants(variantFor.id);
       await load(search);
-    } catch (e) { setVMsg(e instanceof Error ? e.message : "ভ্যারিয়েন্ট যোগ ব্যর্থ হয়েছে"); }
+    } catch (e) { setVMsg(e instanceof Error ? e.message : dict.products.failedToAddVariant); }
     finally { setVBusy(false); }
   }
 
@@ -700,28 +703,28 @@ export default function ProductsPage() {
         }),
       });
       setEditingVariantId(null);
-      setVMsg("ভ্যারিয়েন্ট সংরক্ষণ হয়েছে।");
+      setVMsg(dict.products.variantSaved);
       await refreshMgrVariants(variantFor.id);
       await load(search);
-    } catch (e) { setVMsg(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে"); }
+    } catch (e) { setVMsg(e instanceof Error ? e.message : dict.products.saveFailed); }
     finally { setVBusy(false); }
   }
 
   async function onDeleteVariant(v: VariantItem) {
     const orgId = getOrganizationId(); if (!orgId || !variantFor) return;
     if (!(await confirmDialog({
-      title: `ভ্যারিয়েন্ট "${v.name}" মুছে ফেলবেন?`,
-      confirmLabel: "মুছে ফেলুন",
+      title: t("products.deleteTheVariant", { name: v.name }),
+      confirmLabel: dict.products.delete2,
       danger: true,
     }))) return;
     setVBusy(true); setVMsg("");
     try {
       await apiFetch(`/organizations/${orgId}/products/${variantFor.id}/variants/${v.id}`, { method: "DELETE" });
       if (editingVariantId === v.id) setEditingVariantId(null);
-      setVMsg("ভ্যারিয়েন্ট মোছা হয়েছে।");
+      setVMsg(dict.products.variantDeleted);
       await refreshMgrVariants(variantFor.id);
       await load(search);
-    } catch (e) { setVMsg(e instanceof Error ? e.message : "মুছতে ব্যর্থ হয়েছে"); }
+    } catch (e) { setVMsg(e instanceof Error ? e.message : dict.products.failedToDelete); }
     finally { setVBusy(false); }
   }
 
@@ -773,14 +776,14 @@ export default function ProductsPage() {
               note: adjNote.trim() || undefined,
             }),
           });
-        setAdjMsg(`সমন্বয় হয়েছে — নতুন স্টক: ${out.stockQuantity}`);
+        setAdjMsg(t("products.adjustedNewStock", { stockQuantity: out.stockQuantity }));
         setAdjDelta(""); setAdjSetTo(""); setAdjNote("");
         await loadMovements(stockFor.id);
       } else {
-        setAdjMsg("সংরক্ষণ হয়েছে।");
+        setAdjMsg(dict.products.saved);
       }
       await load(search);
-    } catch (e) { setAdjMsg(e instanceof Error ? e.message : "সমন্বয় ব্যর্থ হয়েছে"); }
+    } catch (e) { setAdjMsg(e instanceof Error ? e.message : dict.products.adjustmentFailed); }
     finally { setAdjBusy(false); }
   }
 
@@ -931,7 +934,7 @@ export default function ProductsPage() {
 
   async function importLicenseKeys() {
     const orgId = getOrganizationId(); if (!orgId || !editingProduct) return;
-    if (!lkText.trim()) { setLkError("ইমপোর্ট করতে কী লিখুন — এক লাইনে একটি কী।"); return; }
+    if (!lkText.trim()) { setLkError(dict.products.writeTheImportKeysOne); return; }
     setLkBusy(true); setLkError(""); setLkReport("");
     try {
       const out = await apiFetch<{ imported: number; duplicateCount: number; invalidCount: number; batch: string }>(
@@ -939,26 +942,26 @@ export default function ProductsPage() {
           method: "POST",
           body: JSON.stringify({ productId: editingProduct.id, text: lkText, batch: lkBatch.trim() || undefined }),
         });
-      setLkReport(`ইমপোর্ট সম্পন্ন (ব্যাচ: ${out.batch}) — নতুন যোগ হয়েছে ${out.imported}টি · ডুপ্লিকেট ${out.duplicateCount}টি · অবৈধ লাইন ${out.invalidCount}টি।`);
+      setLkReport(t("products.importCompleteBatchNewlyAdded", { batch: out.batch, imported: out.imported, duplicateCount: out.duplicateCount, invalidCount: out.invalidCount }));
       setLkText(""); setLkBatch("");
       await loadLicensePool(editingProduct.id);
-    } catch (e) { setLkError(e instanceof Error ? e.message : "ইমপোর্ট ব্যর্থ হয়েছে"); }
+    } catch (e) { setLkError(e instanceof Error ? e.message : dict.products.importFailed); }
     finally { setLkBusy(false); }
   }
 
   async function revokeLicenseKey(key: LicenseKeyRow) {
     const orgId = getOrganizationId(); if (!orgId || !editingProduct) return;
     if (!(await confirmDialog({
-      title: "এই লাইসেন্স কীটি বাতিল (revoke) করবেন?",
-      body: `শেষ ৪ অক্ষর “…${key.keyLast4}” — বাতিল কী আর কোনো ক্রেতাকে দেওয়া হবে না।`,
-      confirmLabel: "বাতিল করুন",
+      title: dict.products.revokeThisLicenseKey,
+      body: t("products.last4CharactersARevoked", { keyLast4: key.keyLast4 }),
+      confirmLabel: dict.products.cancel2,
       danger: true,
     }))) return;
     setLkBusy(true); setLkError("");
     try {
       await apiFetch(`/organizations/${orgId}/commerce/license-keys/${key.id}/revoke`, { method: "POST" });
       await loadLicensePool(editingProduct.id);
-    } catch (e) { setLkError(e instanceof Error ? e.message : "বাতিল ব্যর্থ হয়েছে"); }
+    } catch (e) { setLkError(e instanceof Error ? e.message : dict.products.cancelFailed); }
     finally { setLkBusy(false); }
   }
 
@@ -979,7 +982,7 @@ export default function ProductsPage() {
     if (form.taxRatePercent.trim()) {
       const pct = Number(form.taxRatePercent);
       if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-        setError("VAT হার 0–100% এর মধ্যে হতে হবে");
+        setError(dict.products.vATRateMustBeBetween);
         setSaving(false);
         return;
       }
@@ -1028,7 +1031,7 @@ export default function ProductsPage() {
       .filter(Boolean)
       .map((s) => Math.round(Number(s) * 100));
     if (giftCard.enabled && presetMinors.some((n) => !Number.isFinite(n) || n <= 0)) {
-      setError("গিফট কার্ডের preset পরিমাণগুলো সঠিক টাকার সংখ্যায় লিখুন (কমা দিয়ে আলাদা করে)।");
+      setError(dict.products.writeTheGiftCardPreset);
       setSaving(false);
       return;
     }
@@ -1092,7 +1095,7 @@ export default function ProductsPage() {
             body: JSON.stringify({ cost: form.cost }),
           });
         }
-        toast({ title: `✅ "${form.name}" সফলভাবে আপডেট হয়েছে!`, tone: "success" });
+        toast({ title: t("products.updatedSuccessfully", { name: form.name }), tone: "success" });
       } else {
         // Create product
         const created = await apiFetch<ProductItem>(`/organizations/${orgId}/products`, {
@@ -1123,13 +1126,13 @@ export default function ProductsPage() {
             body: JSON.stringify({ cost: form.cost }),
           });
         }
-        toast({ title: `🎉 নতুন পণ্য "${form.name}" সফলভাবে তৈরি হয়েছে!`, tone: "success" });
+        toast({ title: t("products.newProductCreatedSuccessfully", { name: form.name }), tone: "success" });
       }
 
       setIsModalOpen(false);
       await load(search);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.products.saveFailed2);
     } finally {
       setSaving(false);
     }
@@ -1139,16 +1142,16 @@ export default function ProductsPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     if (!(await confirmDialog({
-      title: `আপনি কি নিশ্চিত যে "${name}" আর্কাইভ করতে চান?`,
-      confirmLabel: "আর্কাইভ করুন",
+      title: t("products.areYouSureYouWant", { name: name }),
+      confirmLabel: dict.products.archive,
       danger: true,
     }))) return;
     try {
       await apiFetch(`/organizations/${orgId}/products/${id}`, { method: "DELETE" });
-      toast({ title: `"${name}" আর্কাইভ করা হয়েছে।`, tone: "success" });
+      toast({ title: t("products.hasBeenArchived", { name: name }), tone: "success" });
       await load(search);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "আর্কাইভ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : dict.products.archiveFailed);
     }
   }
 
@@ -1170,72 +1173,62 @@ export default function ProductsPage() {
             onClick={() => {
               const fullUrl = `${window.location.origin}/checkout/${p.slug}`;
               navigator.clipboard.writeText(fullUrl);
-              toast({ title: `📋 "${p.name}" এর চেকআউট লিংক কপি করা হয়েছে: ${fullUrl}`, tone: "success" });
+              toast({ title: t("products.checkoutLinkForCopied", { name: p.name, fullUrl: fullUrl }), tone: "success" });
             }}
             className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1"
-            title="ফেসবুক/ইনবক্সে পাঠানোর জন্য লিংক কপি করুন"
+            title={dict.products.copyTheLinkToSend}
           >
-            📋 লিংক কপি
-          </button>
+            {dict.products.copyLink}</button>
           <a
             href={`/checkout/${p.slug}`}
             target="_blank"
             rel="noreferrer"
             className="rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
-            title="১-ক্লিক পাবলিক চেকআউট পেজ দেখুন"
+            title={dict.products.viewThe1ClickPublic}
           >
-            🔗 চেকআউট পেজ
-          </a>
+            {dict.products.checkoutPage}</a>
         </>
       ) : null}
       <button
         onClick={() => openStockDialog(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
       >
-        📦 স্টক
-      </button>
+        {dict.products.stock2}</button>
       <button
         onClick={() => openVariantDialog(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
       >
-        🧩 ভ্যারিয়েন্ট
-      </button>
+        {dict.products.variants}</button>
       <button
         onClick={() => setChannelsFor(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-violet-700 hover:bg-violet-50"
       >
-        🔀 চ্যানেল
-      </button>
+        {dict.products.channels}</button>
       <button
         onClick={() => setGalleryFor(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
       >
-        🖼️ গ্যালারি
-      </button>
+        {dict.products.gallery}</button>
       <button
         onClick={() => setBundleFor(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-50"
       >
-        🎁 বান্ডল
-      </button>
+        {dict.products.bundle}</button>
       <button
         onClick={() => onDuplicate(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
       >
-        📄 কপি
-      </button>
+        {dict.products.copy}</button>
       <button
         onClick={() => openHistory(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
       >
-        📜 ইতিহাস
-      </button>
+        {dict.products.history}</button>
       <button
         onClick={() => openEditModal(p)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
       >
-        ✏️ এডিট
-      </button>
+        {dict.products.edit2}</button>
       <button
         onClick={() => onArchive(p.id, p.name)}
         className="rounded border px-2 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-50"
@@ -1251,8 +1244,8 @@ export default function ProductsPage() {
           the same action buttons as the old hand-rolled header; the
           Live Catalog badge rides along as the first action item). */}
       <PageHeader
-        title="🛍️ Products & E-Commerce Inventory"
-        subtitle="আপনার পণ্যের তালিকা, স্টক, ভ্যারিয়্যান্ট এবং ১-ক্লিক ইনস্ট্যান্ট চেকআউট ও সোশ্যাল ইনবক্স লিংক।"
+        title={dict.products.productsECommerceInventory}
+        subtitle={dict.products.yourProductListStockVariants}
         actions={
           <>
             <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
@@ -1263,36 +1256,36 @@ export default function ProductsPage() {
               const orgId = getOrganizationId();
               if (!orgId) return;
               try {
-                setNotice("ডেমো প্রোডাক্ট তৈরি হচ্ছে...");
+                setNotice(dict.products.creatingDemoProducts);
                 const demoItems = [
                   {
-                    name: "অরিজিনাল লেদার ওয়ালেট ও বেল্ট প্রিমিয়াম কম্বো",
+                    name: dict.products.originalLeatherWalletBeltPremium,
                     sku: "WLT-BLT-01",
                     price: "1450",
                     compareAtPrice: "1850",
                     category: "Fashion Accessories",
                     stockQuantity: 45,
-                    description: "১০০% অরিজিনাল জেনুইন লেদার ওয়ালেট ও প্রিমিয়াম অটো-লক বেল্ট কম্বো। ৫ বছরের লেদার গ্যারান্টি।",
+                    description: dict.products.textjb1z5v,
                     imageUrl: "https://images.unsplash.com/photo-1627123424574-724758594e93?w=500&q=80",
                   },
                   {
-                    name: "স্মার্ট ওয়্যারলেস নয়েজ ক্যান্সেলিং ইয়ারবাডস",
+                    name: dict.products.smartWirelessNoiseCancellingEarbuds,
                     sku: "EBD-PRO-02",
                     price: "1250",
                     compareAtPrice: "1600",
                     category: "Electronics",
                     stockQuantity: 30,
-                    description: "ক্রিস্টাল ক্লিয়ার সাউন্ড, অ্যাক্টিভ নয়েজ ক্যান্সেলেশন ও ৪০ ঘণ্টার ব্যাটারি ব্যাকআপ।",
+                    description: dict.products.crystalClearSoundActiveNoise,
                     imageUrl: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80",
                   },
                   {
-                    name: "ড্রাই স্কিন ময়েশ্চারাইজিং ডে ক্রিম",
+                    name: dict.products.drySkinMoisturizingDayCream,
                     sku: "CRM-GLW-03",
                     price: "850",
                     compareAtPrice: "1100",
                     category: "Beauty & Skin Care",
                     stockQuantity: 60,
-                    description: "ন্যাচারাল উপাদান সমৃদ্ধ ডিপ হাইড্রেটিং ময়েশ্চারাইজার। সব ধরণের স্কিনের উপযোগী।",
+                    description: dict.products.deepHydratingMoisturizerRichIn,
                     imageUrl: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=500&q=80",
                   },
                 ];
@@ -1303,16 +1296,15 @@ export default function ProductsPage() {
                     body: JSON.stringify(item),
                   });
                 }
-                toast({ title: "✨ ৩টি জনপ্রিয় ডেমো পণ্য সফলভাবে তৈরি হয়েছে! এখন সরাসরি ১-ক্লিক চেকআউট টেস্ট করতে পারবেন।", tone: "success" });
+                toast({ title: dict.products.text6s5nqn, tone: "success" });
                 await load();
               } catch (e) {
-                setError(e instanceof Error ? e.message : "ডেমো পণ্য তৈরি ব্যর্থ হয়েছে");
+                setError(e instanceof Error ? e.message : dict.products.demoProductCreationFailed);
               }
             }}
             className="rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
           >
-            🧪 ৩টি ডেমো পণ্য যোগ করুন
-          </button>
+            {dict.products.add3DemoProducts}</button>
           <a
             href="/dashboard/products/import"
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
@@ -1323,20 +1315,19 @@ export default function ProductsPage() {
             onClick={() => setCategoryMgrOpen(true)}
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            🗂️ ক্যাটাগরি
-          </button>
+            {dict.products.category2}</button>
           <button
             onClick={onMirrorExternalImages}
             disabled={mirrorBusy}
-            title="বাইরের হোস্টে থাকা পণ্যের ছবি নিজের স্টোরেজে (R2) কপি করুন"
+            title={dict.products.copyProductImagesHostedExternally}
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-50"
           >
-            {mirrorBusy ? "🪞 মিরর চলছে…" : "🪞 ছবি নিজের স্টোরেজে নিন"}
+            {mirrorBusy ? dict.products.mirroring : dict.products.copyImagesToYourOwn}
           </button>
           {autoMirror !== null ? (
             <label
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
-              title="চালু থাকলে শিডিউল করা Job বাইরের পণ্য ও রিভিউ ছবি নিজে থেকেই নিজের স্টোরেজে কপি করে"
+              title={dict.products.whenOnTheScheduledJob}
             >
               <input
                 type="checkbox"
@@ -1345,27 +1336,25 @@ export default function ProductsPage() {
                 onChange={(e) => onToggleAutoMirror(e.target.checked)}
                 className="h-3.5 w-3.5 accent-indigo-600"
               />
-              অটো-মিরর
-            </label>
+              {dict.products.autoMirror}</label>
           ) : null}
           <button
             onClick={() => { setBrandMgrOpen(true); setBrandMsg(""); setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }}
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            🏷️ ব্র্যান্ড
-          </button>
+            {dict.products.brand2}</button>
           <button
             onClick={onExportCsv}
             disabled={exportBusy}
             className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-50"
           >
-            {exportBusy ? "তৈরি হচ্ছে…" : "⬇️ CSV Export"}
+            {exportBusy ? dict.products.creating : "⬇️ CSV Export"}
           </button>
           <button
             onClick={openCreateModal}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm transition-all"
           >
-            <span>➕ নতুন প্রোডাক্ট যোগ করুন</span>
+            <span>{dict.products.addNewProduct}</span>
           </button>
           </>
         }
@@ -1390,7 +1379,7 @@ export default function ProductsPage() {
         <div className="flex flex-wrap items-center gap-2">
           <input
             className="w-72 rounded-lg border px-3 py-1.5 text-xs"
-            placeholder="পণ্যের নাম বা SKU দিয়ে খুঁজুন..."
+            placeholder={dict.products.searchByProductNameOr}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -1409,8 +1398,7 @@ export default function ProductsPage() {
               load(search);
             }}
           >
-            🔍 খুঁজুন
-          </button>
+            {dict.products.search}</button>
 
           <select
             value={selectedCategory}
@@ -1420,7 +1408,7 @@ export default function ProductsPage() {
             }}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
           >
-            <option value="all">সব ক্যাটাগরি ({items.length})</option>
+            <option value="all">{dict.products.allCategories}{items.length})</option>
             {categories.map((c) => (
               <option key={c} value={c!}>
                 {c}
@@ -1432,9 +1420,9 @@ export default function ProductsPage() {
             value={selectedBrandId}
             onChange={(e) => { setSelectedBrandId(e.target.value); load(search, e.target.value); }}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
-            aria-label="ব্র্যান্ড দিয়ে ফিল্টার"
+            aria-label={dict.products.filterByBrand}
           >
-            <option value="all">সব ব্র্যান্ড</option>
+            <option value="all">{dict.products.allBrands}</option>
             {brands.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name} ({b.productCount})
@@ -1444,58 +1432,55 @@ export default function ProductsPage() {
         </div>
 
         <div className="text-xs text-slate-500 font-medium">
-          মোট প্রদর্শিত পণ্য: <b>{filteredItems.length}</b> টি
-        </div>
+          {dict.products.totalProductsShown}<b>{filteredItems.length}</b> {dict.products.items}</div>
       </FilterBar>
 
       {/* EC3: bulk edit bar — প্রিভিউ ছাড়া প্রয়োগ করা যায় না */}
       {selectedIds.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 shadow-sm">
-          <span className="text-xs font-bold text-indigo-900">{selectedIds.size}টি পণ্য নির্বাচিত</span>
+          <span className="text-xs font-bold text-indigo-900">{selectedIds.size}{dict.products.productsSelected}</span>
           <select className="rounded-lg border px-2 py-1.5 text-xs" value={bulkAction} onChange={(e) => { setBulkAction(e.target.value as BulkAction); setBulkPreview(null); }}>
-            <option value="price_percent">দাম — শতাংশ বদল</option>
-            <option value="price_fixed">দাম — নির্দিষ্ট দাম</option>
-            <option value="stock_set">স্টক বসান</option>
-            <option value="category_set">ক্যাটাগরি বসান</option>
+            <option value="price_percent">{dict.products.pricePercentageChange}</option>
+            <option value="price_fixed">{dict.products.priceFixedPrice}</option>
+            <option value="stock_set">{dict.products.setStock}</option>
+            <option value="category_set">{dict.products.setCategory}</option>
           </select>
           {bulkAction === "price_percent" ? (
-            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" step="0.01" placeholder="শতাংশ (±)" value={bulkPercent} onChange={(e) => { setBulkPercent(e.target.value); setBulkPreview(null); }} />
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" step="0.01" placeholder={dict.products.percentage} value={bulkPercent} onChange={(e) => { setBulkPercent(e.target.value); setBulkPreview(null); }} />
           ) : null}
           {bulkAction === "price_fixed" ? (
-            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" placeholder="দাম (BDT)" value={bulkPrice} onChange={(e) => { setBulkPrice(e.target.value); setBulkPreview(null); }} />
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" placeholder={dict.products.priceBDT} value={bulkPrice} onChange={(e) => { setBulkPrice(e.target.value); setBulkPreview(null); }} />
           ) : null}
           {bulkAction === "stock_set" ? (
-            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" min="0" placeholder="নতুন স্টক" value={bulkQuantity} onChange={(e) => { setBulkQuantity(e.target.value); setBulkPreview(null); }} />
+            <input className="w-28 rounded-lg border px-2 py-1.5 text-xs" type="number" min="0" placeholder={dict.products.newStock} value={bulkQuantity} onChange={(e) => { setBulkQuantity(e.target.value); setBulkPreview(null); }} />
           ) : null}
           {bulkAction === "category_set" ? (
             <select className="rounded-lg border px-2 py-1.5 text-xs" value={bulkCategoryId} onChange={(e) => { setBulkCategoryId(e.target.value); setBulkPreview(null); }}>
-              <option value="">ক্যাটাগরি নেই</option>
+              <option value="">{dict.products.noCategory}</option>
               {ecCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           ) : null}
           <button className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={bulkBusy} onClick={onBulkPreview}>
-            {bulkBusy ? "হচ্ছে…" : "প্রিভিউ দেখুন"}
+            {bulkBusy ? dict.products.ing : dict.products.viewPreview}
           </button>
           <button className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={pushBusy} onClick={onPushBatch}>
-            {pushBusy ? "পাঠানো হচ্ছে…" : "স্টোরে পাঠান"}
+            {pushBusy ? dict.products.sending : dict.products.pushToStore}
           </button>
           <button className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={bulkDeleteBusy} onClick={onBulkDelete}>
-            {bulkDeleteBusy ? "মোছা হচ্ছে…" : "🗑️ নির্বাচিত মুছুন/আর্কাইভ"}
+            {bulkDeleteBusy ? dict.products.deleting : dict.products.deleteArchiveSelected}
           </button>
           {pushMsg ? <span className="text-xs text-rose-700">{pushMsg}</span> : null}
           <button className="rounded-lg border px-3 py-1.5 text-xs text-slate-600" onClick={() => { setSelectedIds(new Set()); setBulkPreview(null); setBulkResult(null); }}>
-            নির্বাচন সরান
-          </button>
+            {dict.products.clearSelection}</button>
           {bulkMsg ? <span className="text-xs text-rose-700">{bulkMsg}</span> : null}
         </div>
       ) : null}
       {pushBatchResult ? (
         <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
-          <span className="font-bold">স্টোরে পাঠানোর ফলাফল:</span> মোট Enqueue হয়েছে {pushBatchResult.enqueued}টি
-          <ul className="mt-1 list-disc pl-5">
+          <span className="font-bold">{dict.products.pushToStoreResults}</span> {dict.products.totalEnqueued}{pushBatchResult.enqueued}{dict.products.items}<ul className="mt-1 list-disc pl-5">
             {pushBatchResult.results.map((r) => (
               <li key={r.productId} className={r.ok ? "text-emerald-700" : "text-rose-700"}>
-                {items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.ok ? `পাঠানো হয়েছে (enqueued ${r.enqueued ?? 0}${r.skipped ? `, skipped ${r.skipped}` : ""})` : (r.error === "not_found" ? "পণ্যটি পাওয়া যায়নি" : r.error === "no_listings" ? "কোনো স্টোর Listing নেই" : (r.error ?? "অজানা এরর"))}
+                {items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.ok ? t("products.sentEnqueued", { r: r.enqueued ?? 0, r1: r.skipped ? `, skipped ${r.skipped}` : "" }) : (r.error === "not_found" ? dict.products.productNotFound : r.error === "no_listings" ? dict.products.noStoreListing : (r.error ?? dict.products.unknownError))}
               </li>
             ))}
           </ul>
@@ -1503,18 +1488,16 @@ export default function ProductsPage() {
       ) : null}
       {bulkDeleteResult ? (
         <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
-          <span className="font-bold">বাল্ক মুছার ফলাফল:</span>{" "}
-          স্থায়ীভাবে মোছা হয়েছে {bulkDeleteResult.deleted}টি · আর্কাইভ হয়েছে {bulkDeleteResult.archived}টি (অর্ডার থাকায়) · পাওয়া যায়নি {bulkDeleteResult.notFound}টি
-          <button className="ml-3 text-slate-500 underline" onClick={() => setBulkDeleteResult(null)}>বন্ধ করুন</button>
+          <span className="font-bold">{dict.products.bulkDeleteResults}</span>{" "}
+          {dict.products.permanentlyDeleted}{bulkDeleteResult.deleted}{dict.products.archived}{bulkDeleteResult.archived}{dict.products.ordersExistNotFound}{bulkDeleteResult.notFound}{dict.products.items}<button className="ml-3 text-slate-500 underline" onClick={() => setBulkDeleteResult(null)}>{dict.products.close}</button>
         </div>
       ) : null}
       {bulkResult ? (
         <div className="rounded-xl border bg-white p-3 text-xs shadow-sm">
-          <span className="font-bold">বাল্ক এডিট ফলাফল:</span> আপডেট হয়েছে {bulkResult.updated}টি · ব্যর্থ {bulkResult.failed}টি
-          {bulkResult.results.filter((r) => !r.ok).length > 0 ? (
+          <span className="font-bold">{dict.products.bulkEditResults}</span> {dict.products.updated}{bulkResult.updated}{dict.products.failed2}{bulkResult.failed}{dict.products.items}{bulkResult.results.filter((r) => !r.ok).length > 0 ? (
             <ul className="mt-1 list-disc pl-5 text-rose-700">
               {bulkResult.results.filter((r) => !r.ok).map((r) => (
-                <li key={r.productId}>{items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.error ?? "অজানা এরর"}</li>
+                <li key={r.productId}>{items.find((i) => i.id === r.productId)?.name ?? r.productId}: {r.error ?? dict.products.unknownError}</li>
               ))}
             </ul>
           ) : null}
@@ -1524,12 +1507,11 @@ export default function ProductsPage() {
       {/* Product List */}
       {loading ? (
         <div className="rounded-xl border bg-white p-12 text-center text-sm text-slate-500">
-          পণ্য লোড হচ্ছে...
-        </div>
+          {dict.products.loadingProducts}</div>
       ) : filteredItems.length === 0 ? (
         <EmptyState
-          title="কোনো পণ্য পাওয়া যায়নি"
-          description="নতুন পণ্য যোগ করুন অথবা CSV Import দিয়ে একসাথে অনেক পণ্য আনুন।"
+          title={dict.products.noProductsFound}
+          description={dict.products.addANewProductOr}
         />
       ) : (
         <ResponsiveTable
@@ -1541,7 +1523,7 @@ export default function ProductsPage() {
                 <th className="px-4 py-3">
                   <input
                     type="checkbox"
-                    aria-label="এই পেজের সব পণ্য নির্বাচন করুন"
+                    aria-label={dict.products.selectAllProductsOnThis}
                     checked={filteredItems.length > 0 && filteredItems.every((p) => selectedIds.has(p.id))}
                     onChange={(e) => {
                       setBulkPreview(null);
@@ -1554,14 +1536,14 @@ export default function ProductsPage() {
                     }}
                   />
                 </th>
-                <th className="px-4 py-3">প্রোডাক্ট</th>
+                <th className="px-4 py-3">{dict.products.product2}</th>
                 <th className="px-4 py-3">SKU</th>
-                <th className="px-4 py-3">বিক্রয়মূল্য</th>
-                <th className="px-4 py-3">ইউনিট কস্ট</th>
-                <th className="px-4 py-3">প্রফিট মার্জিন</th>
-                <th className="px-4 py-3">স্টক স্ট্যাটাস</th>
-                <th className="px-4 py-3">স্ট্যাটাস</th>
-                <th className="px-4 py-3 text-right">অ্যাকশন</th>
+                <th className="px-4 py-3">{dict.products.sellingPrice}</th>
+                <th className="px-4 py-3">{dict.products.unitCost}</th>
+                <th className="px-4 py-3">{dict.products.profitMargin}</th>
+                <th className="px-4 py-3">{dict.products.stockStatus}</th>
+                <th className="px-4 py-3">{dict.products.status}</th>
+                <th className="px-4 py-3 text-right">{dict.products.actions}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1574,7 +1556,7 @@ export default function ProductsPage() {
                     <td className="px-4 py-3">
                       <input
                         type="checkbox"
-                        aria-label={`${p.name} নির্বাচন করুন`}
+                        aria-label={t("products.select", { name: p.name })}
                         checked={selectedIds.has(p.id)}
                         onChange={(e) => {
                           setBulkPreview(null);
@@ -1605,15 +1587,15 @@ export default function ProductsPage() {
                         <div>
                           <div className="font-bold text-slate-900 line-clamp-1">{p.name}</div>
                           <div className="text-[11px] text-slate-400">
-                            {p.category || "সাধারণ ক্যাটাগরি"}
+                            {p.category || dict.products.generalCategory}
                           </div>
                           {p.brandId ? (
                             <div className="text-[11px] text-indigo-500">
-                              🏷️ {brands.find((b) => b.id === p.brandId)?.name ?? "ব্র্যান্ড"}
-                              {p.freeShipping ? <span className="ml-1 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ফ্রি ডেলিভারি</span> : null}
+                              🏷️ {brands.find((b) => b.id === p.brandId)?.name ?? dict.products.brand}
+                              {p.freeShipping ? <span className="ml-1 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{dict.products.freeDelivery}</span> : null}
                             </div>
                           ) : p.freeShipping ? (
-                            <div className="text-[11px]"><span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ফ্রি ডেলিভারি</span></div>
+                            <div className="text-[11px]"><span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{dict.products.freeDelivery}</span></div>
                           ) : null}
                         </div>
                       </div>
@@ -1631,7 +1613,7 @@ export default function ProductsPage() {
                       {p.currentCostMinor ? (
                         formatMinor(BigInt(p.currentCostMinor))
                       ) : (
-                        <span className="text-amber-600 font-medium">কস্ট দেওয়া নেই</span>
+                        <span className="text-amber-600 font-medium">{dict.products.noCostGiven}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -1646,16 +1628,14 @@ export default function ProductsPage() {
                     <td className="px-4 py-3">
                       {isOutOfStock ? (
                         <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-                          🔴 স্টক শেষ (0)
-                        </span>
+                          {dict.products.outOfStock0}</span>
                       ) : isLowStock ? (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                          ⚠️ লো-স্টক ({p.stockQuantity})
+                          {dict.products.lowStock}{p.stockQuantity})
                         </span>
                       ) : (
                         <span className="text-slate-700 font-medium">
-                          {p.stockQuantity ?? "আনলিমিটেড"} টি
-                        </span>
+                          {p.stockQuantity ?? dict.products.unlimited} {dict.products.items}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -1689,7 +1669,7 @@ export default function ProductsPage() {
                 <div className="flex items-start gap-3">
                   <input
                     type="checkbox"
-                    aria-label={`${p.name} নির্বাচন করুন`}
+                    aria-label={t("products.select", { name: p.name })}
                     checked={selectedIds.has(p.id)}
                     onChange={(e) => {
                       setBulkPreview(null);
@@ -1718,7 +1698,7 @@ export default function ProductsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-slate-900">{p.name}</div>
                     <div className="text-[11px] text-slate-400">
-                      {p.category || "সাধারণ ক্যাটাগরি"}
+                      {p.category || dict.products.generalCategory}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                       <span className="font-mono text-slate-600">{p.sku || "—"}</span>
@@ -1740,16 +1720,14 @@ export default function ProductsPage() {
                     <div className="mt-1 text-xs">
                       {isOutOfStock ? (
                         <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-                          🔴 স্টক শেষ (0)
-                        </span>
+                          {dict.products.outOfStock0}</span>
                       ) : isLowStock ? (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                          ⚠️ লো-স্টক ({p.stockQuantity})
+                          {dict.products.lowStock}{p.stockQuantity})
                         </span>
                       ) : (
                         <span className="text-slate-700 font-medium">
-                          {p.stockQuantity ?? "আনলিমিটেড"} টি
-                        </span>
+                          {p.stockQuantity ?? dict.products.unlimited} {dict.products.items}</span>
                       )}
                     </div>
                   </div>
@@ -1765,30 +1743,30 @@ export default function ProductsPage() {
 
       <section className="card p-4 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">📊 পণ্য বিক্রি</h2>
+          <h2 className="font-semibold">{dict.products.productSales}</h2>
           <select className="rounded-lg border px-3 py-2 text-sm" value={reportDays} onChange={(e) => setReportDays(Number(e.target.value))}>
-            <option value={7}>শেষ ৭ দিন</option>
-            <option value={30}>শেষ ৩০ দিন</option>
-            <option value={90}>শেষ ৯০ দিন</option>
+            <option value={7}>{dict.products.last7Days}</option>
+            <option value={30}>{dict.products.last30Days}</option>
+            <option value={90}>{dict.products.last90Days}</option>
           </select>
         </div>
-        {reportLoading ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : reportError ? (
+        {reportLoading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : reportError ? (
           <p className="text-sm text-slate-500">{reportError}</p>
         ) : !report || report.totals.units === 0 ? (
-          <p className="text-sm text-slate-500">এই সময়ে কোনো বিক্রি নেই।</p>
+          <p className="text-sm text-slate-500">{dict.products.noSalesInThisPeriod}</p>
         ) : (
           <>
             <div className="overflow-hidden rounded-lg border">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500"><tr>
-                  <th className="px-4 py-3">পণ্য</th><th className="px-4 py-3">ক্যাটাগরি</th><th className="px-4 py-3">ইউনিট</th>
-                  <th className="px-4 py-3">অর্ডার</th><th className="px-4 py-3">রিটার্ন (ইউনিট)</th><th className="px-4 py-3">আয়</th>
+                  <th className="px-4 py-3">{dict.products.product}</th><th className="px-4 py-3">{dict.products.category}</th><th className="px-4 py-3">{dict.products.unit}</th>
+                  <th className="px-4 py-3">{dict.products.order}</th><th className="px-4 py-3">{dict.products.returnsUnits}</th><th className="px-4 py-3">{dict.products.revenue}</th>
                 </tr></thead>
                 <tbody>
                   {report.products.map((r) => (
                     <tr key={r.productId} className="border-t">
                       <td className="px-4 py-3 font-medium">{r.name}</td>
-                      <td className="px-4 py-3">{r.category ?? "ক্যাটাগরি নেই"}</td>
+                      <td className="px-4 py-3">{r.category ?? dict.products.noCategory}</td>
                       <td className="px-4 py-3">{r.units}</td>
                       <td className="px-4 py-3">{r.orders}</td>
                       <td className="px-4 py-3">{r.returnedUnits}</td>
@@ -1799,18 +1777,17 @@ export default function ProductsPage() {
               </table>
             </div>
             <p className="text-sm font-medium">
-              মোট: {report.totals.units} ইউনিট · {report.totals.orders} অর্ডার · আয় {formatMinor(BigInt(report.totals.revenueMinor))} · রিটার্ন {report.totals.returnedUnits} ইউনিট
-            </p>
+              {dict.products.total}{report.totals.units} {dict.products.units}{report.totals.orders} {dict.products.ordersRevenue}{formatMinor(BigInt(report.totals.revenueMinor))} {dict.products.returns}{report.totals.returnedUnits} {dict.products.unit}</p>
             {report.categories.length > 0 ? (
               <div className="overflow-hidden rounded-lg border">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500"><tr>
-                    <th className="px-4 py-3">ক্যাটাগরি</th><th className="px-4 py-3">ইউনিট</th><th className="px-4 py-3">আয়</th>
+                    <th className="px-4 py-3">{dict.products.category}</th><th className="px-4 py-3">{dict.products.unit}</th><th className="px-4 py-3">{dict.products.revenue}</th>
                   </tr></thead>
                   <tbody>
                     {report.categories.map((c, i) => (
                       <tr key={`${c.category ?? "none"}-${i}`} className="border-t">
-                        <td className="px-4 py-3">{c.category ?? "ক্যাটাগরি নেই"}</td>
+                        <td className="px-4 py-3">{c.category ?? dict.products.noCategory}</td>
                         <td className="px-4 py-3">{c.units}</td>
                         <td className="px-4 py-3">{formatMinor(BigInt(c.revenueMinor))}</td>
                       </tr>
@@ -1820,11 +1797,11 @@ export default function ProductsPage() {
               </div>
             ) : null}
             {report.unlinked.units > 0 ? (
-              <p className="text-sm text-slate-600">লিংকহীন আইটেম: {report.unlinked.units} ইউনিট · আয় {formatMinor(BigInt(report.unlinked.revenueMinor))} (এসব আইটেমের পণ্য মেলানো যায়নি)</p>
+              <p className="text-sm text-slate-600">{dict.products.unlinkedItems}{report.unlinked.units} {dict.products.unitsRevenue}{formatMinor(BigInt(report.unlinked.revenueMinor))} {dict.products.theseItemsProductsCouldNot}</p>
             ) : null}
           </>
         )}
-        <p className="text-xs text-slate-400">হিসাবের নিয়ম: বাতিল, refunded ও failed অর্ডার বাদ (Analytics-এর revenue নিয়ম)। অর্ডারের তারিখ = placedAt, না থাকলে তৈরির সময়। রিটার্ন ইউনিট: যেসব অর্ডারের courier shipment returned হয়েছে অথবা অর্ডারের status returned।</p>
+        <p className="text-xs text-slate-400">{dict.products.calculationRuleCancelledRefundedAnd}</p>
       </section>
 
       {/* CREATE & EDIT PRODUCT MODAL */}
@@ -1837,11 +1814,10 @@ export default function ProductsPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  {editingProduct ? `✏️ "${editingProduct.name}" এডিট করুন` : "➕ নতুন পণ্য যোগ করুন"}
+                  {editingProduct ? t("products.edit3", { name: editingProduct.name }) : dict.products.addNewProduct2}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  প্রোডাক্টের বিবরণ, মূল্য এবং স্টক কনফিগার করুন
-                </p>
+                  {dict.products.configureTheProductSDetails}</p>
               </div>
               <button
                 type="button"
@@ -1855,12 +1831,11 @@ export default function ProductsPage() {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name">
-                  পণ্যের নাম (Product Name) *
-                </label>
+                  {dict.products.productName}</label>
                 <input id="product-form-name"
                   type="text"
                   required
-                  placeholder="যেমন: প্রিমিয়াম লেদার ওয়ালেট"
+                  placeholder={dict.products.eGPremiumLeatherWallet}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -1869,7 +1844,7 @@ export default function ProductsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-sku">SKU কোড</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-sku">{dict.products.sKUCode}</label>
                   <input id="product-form-sku"
                     type="text"
                     placeholder="WLT-001"
@@ -1879,14 +1854,14 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-category">ক্যাটাগরি</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-category">{dict.products.category}</label>
                   {ecCategories.length > 0 ? (
                     <select id="product-form-category"
                       value={form.categoryId}
                       onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
                       className="w-full rounded-lg border px-3 py-1.5 text-xs"
                     >
-                      <option value="">ক্যাটাগরি নেই</option>
+                      <option value="">{dict.products.noCategory}</option>
                       {ecCategories.map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
@@ -1906,13 +1881,13 @@ export default function ProductsPage() {
               {/* GC6: brand picker + free shipping */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-brand">ব্র্যান্ড</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-brand">{dict.products.brand}</label>
                   <select id="product-form-brand"
                     value={form.brandId}
                     onChange={(e) => setForm({ ...form, brandId: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
                   >
-                    <option value="">কোনো ব্র্যান্ড নয়</option>
+                    <option value="">{dict.products.noBrand}</option>
                     {brands.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
@@ -1925,14 +1900,13 @@ export default function ProductsPage() {
                       checked={form.freeShipping}
                       onChange={(e) => setForm({ ...form, freeShipping: e.target.checked })}
                     />
-                    ফ্রি ডেলিভারি (এই পণ্যে ডেলিভারি চার্জ প্রযোজ্য নয়)
-                  </label>
+                    {dict.products.freeDeliveryNoDeliveryCharge}</label>
                 </div>
               </div>
 
               {/* EC3: tags */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">ট্যাগ</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{dict.products.tags}</label>
                 {ecTags.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                     {ecTags.map((t) => (
@@ -1950,12 +1924,12 @@ export default function ProductsPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-slate-400">এখনো কোনো ট্যাগ নেই — নিচে নতুন ট্যাগ তৈরি করুন।</p>
+                  <p className="text-[11px] text-slate-400">{dict.products.noTagsYetCreateA}</p>
                 )}
                 <div className="mt-2 flex gap-2">
                   <input
                     type="text"
-                    placeholder="নতুন ট্যাগ" aria-label="নতুন ট্যাগ"
+                    placeholder={dict.products.newTag} aria-label={dict.products.newTag}
                     value={newTagName}
                     onChange={(e) => setNewTagName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onQuickAddTag(); } }}
@@ -1963,54 +1937,53 @@ export default function ProductsPage() {
                   />
                   <button type="button" disabled={tagBusy || !newTagName.trim()} onClick={onQuickAddTag}
                     className="whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
-                    + ট্যাগ যোগ
-                  </button>
+                    {dict.products.addTag}</button>
                 </div>
               </div>
 
               {/* EC3: shipping dimensions / barcode / SEO */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-weight">ওজন (গ্রাম)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-weight">{dict.products.weightGrams}</label>
                   <input id="product-form-weight" type="number" min="0" placeholder="500" value={form.weightGrams}
                     onChange={(e) => setForm({ ...form, weightGrams: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-length">দৈর্ঘ্য (সেমি)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-length">{dict.products.lengthCm}</label>
                   <input id="product-form-length" type="number" min="0" step="0.1" placeholder="20" value={form.lengthCm}
                     onChange={(e) => setForm({ ...form, lengthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-width">প্রস্থ (সেমি)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-width">{dict.products.widthCm}</label>
                   <input id="product-form-width" type="number" min="0" step="0.1" placeholder="15" value={form.widthCm}
                     onChange={(e) => setForm({ ...form, widthCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-height">উচ্চতা (সেমি)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-height">{dict.products.heightCm}</label>
                   <input id="product-form-height" type="number" min="0" step="0.1" placeholder="10" value={form.heightCm}
                     onChange={(e) => setForm({ ...form, heightCm: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-barcode">বারকোড</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-barcode">{dict.products.barcode}</label>
                 <input id="product-form-barcode" type="text" placeholder="Barcode / EAN" value={form.barcode}
                   onChange={(e) => setForm({ ...form, barcode: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs font-mono" />
               </div>
               <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-title">SEO টাইটেল</label>
-                  <input id="product-form-seo-title" type="text" placeholder="সার্চ ইঞ্জিনের জন্য শিরোনাম" value={form.seoTitle}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-title">{dict.products.sEOTitle}</label>
+                  <input id="product-form-seo-title" type="text" placeholder={dict.products.titleForSearchEngines} value={form.seoTitle}
                     onChange={(e) => setForm({ ...form, seoTitle: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-description">SEO বিবরণ</label>
-                  <textarea id="product-form-seo-description" rows={2} placeholder="সার্চ ইঞ্জিনের জন্য সংক্ষিপ্ত বিবরণ" value={form.seoDescription}
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-seo-description">{dict.products.sEODescription}</label>
+                  <textarea id="product-form-seo-description" rows={2} placeholder={dict.products.shortDescriptionForSearchEngines} value={form.seoDescription}
                     onChange={(e) => setForm({ ...form, seoDescription: e.target.value })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs" />
                 </div>
@@ -2019,8 +1992,7 @@ export default function ProductsPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-price">
-                    বিক্রয়মূল্য (BDT) *
-                  </label>
+                    {dict.products.sellingPriceBDT}</label>
                   <input id="product-form-price"
                     type="number"
                     step="0.01"
@@ -2033,8 +2005,7 @@ export default function ProductsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-compare-at">
-                    আসল দাম (Compare Price)
-                  </label>
+                    {dict.products.originalPriceComparePrice}</label>
                   <input id="product-form-compare-at"
                     type="number"
                     step="0.01"
@@ -2046,8 +2017,7 @@ export default function ProductsPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-cost">
-                    ইউনিট কস্ট (Cost BDT)
-                  </label>
+                    {dict.products.unitCostCostBDT}</label>
                   <input id="product-form-cost"
                     type="number"
                     step="0.01"
@@ -2062,8 +2032,7 @@ export default function ProductsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-stock">
-                    স্টক পরিমাণ (Stock Quantity)
-                  </label>
+                    {dict.products.stockQuantity}</label>
                   <input id="product-form-stock"
                     type="number"
                     min="0"
@@ -2074,23 +2043,22 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-status">স্ট্যাটাস</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-status">{dict.products.status}</label>
                   <select id="product-form-status"
                     value={form.status}
                     onChange={(e) => setForm({ ...form, status: e.target.value as any })}
                     className="w-full rounded-lg border px-3 py-1.5 text-xs"
                   >
-                    <option value="ACTIVE">ACTIVE (সক্রিয়)</option>
-                    <option value="DRAFT">DRAFT (খসড়া)</option>
-                    <option value="ARCHIVED">ARCHIVED (আর্কাইভ)</option>
+                    <option value="ACTIVE">{dict.products.aCTIVE}</option>
+                    <option value="DRAFT">{dict.products.dRAFT}</option>
+                    <option value="ARCHIVED">{dict.products.aRCHIVED}</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-low-stock">
-                  কম স্টকের সতর্কতা (Low-stock alert, খালি = ৫)
-                </label>
+                  {dict.products.lowStockAlertEmpty5}</label>
                 <input id="product-form-low-stock"
                   type="number"
                   min="0"
@@ -2103,14 +2071,13 @@ export default function ProductsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-tax-rate">
-                  VAT হার % (ঐচ্ছিক — ফাঁকা = দোকানের ডিফল্ট)
-                </label>
+                  {dict.products.vATRateOptionalEmptyShop}</label>
                 <input id="product-form-tax-rate"
                   type="number"
                   step="0.01"
                   min="0"
                   max="100"
-                  placeholder="যেমন: 15 বা 7.5"
+                  placeholder={dict.products.eG15Or7}
                   value={form.taxRatePercent}
                   onChange={(e) => setForm({ ...form, taxRatePercent: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -2119,8 +2086,7 @@ export default function ProductsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-image-url">
-                  প্রোডাক্ট ইমেজ ইউআরএল (Image URL)
-                </label>
+                  {dict.products.productImageURL}</label>
                 <input id="product-form-image-url"
                   type="url"
                   placeholder="https://images.unsplash.com/photo-..."
@@ -2132,11 +2098,10 @@ export default function ProductsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description">
-                  বিস্তারিত বর্ণনা (Product Description)
-                </label>
+                  {dict.products.detailedDescriptionProductDescription}</label>
                 <textarea id="product-form-description"
                   rows={3}
-                  placeholder="পণ্যের ফিচার, ওয়ারেন্টি এবং গুণমান সম্পর্কে লিখুন..."
+                  placeholder={dict.products.writeAboutTheProductS}
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
@@ -2145,10 +2110,10 @@ export default function ProductsPage() {
 
               {/* AB6 (AX13): English content */}
               <div className="rounded-xl border border-sky-300 bg-sky-50/40 p-3.5 space-y-3">
-                <div className="text-xs font-bold text-sky-950">ইংরেজি কনটেন্ট (English)</div>
-                <p className="text-[11px] text-slate-500">দোকানের ভাষা English হলে এই লেখা দেখাবে; খালি রাখলে মূল নাম/বিবরণই দেখাবে।</p>
+                <div className="text-xs font-bold text-sky-950">{dict.products.englishContent}</div>
+                <p className="text-[11px] text-slate-500">{dict.products.ifTheShopLanguageIs}</p>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name-en">ইংরেজি নাম (Name in English)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-name-en">{dict.products.nameInEnglish}</label>
                   <input id="product-form-name-en"
                     type="text"
                     placeholder="e.g. Premium Leather Wallet"
@@ -2158,7 +2123,7 @@ export default function ProductsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description-en">ইংরেজি বিবরণ (Description in English)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="product-form-description-en">{dict.products.descriptionInEnglish}</label>
                   <textarea id="product-form-description-en"
                     rows={3}
                     placeholder="Product features, warranty and quality in English..."
@@ -2178,45 +2143,37 @@ export default function ProductsPage() {
 
               {/* EC24: প্রি-অর্ডার / ডিজিটাল / সাবস্ক্রিপশন / পাইকারি স্তর */}
               <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3.5 space-y-3">
-                <div className="text-xs font-bold text-violet-950">🧩 পণ্যের ধরন সম্প্রসারণ (প্রি-অর্ডার · ডিজিটাল · সাবস্ক্রিপশন · পাইকারি)</div>
+                <div className="text-xs font-bold text-violet-950">{dict.products.productTypeExtensionsPreOrder}</div>
 
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   <input type="checkbox" checked={ec24.preorderEnabled} onChange={(e) => setEc24({ ...ec24, preorderEnabled: e.target.checked })} />
-                  প্রি-অর্ডার চালু (স্টক না থাকলেও অর্ডার নেওয়া যাবে)
-                </label>
+                  {dict.products.preOrderOnOrdersAccepted}</label>
                 {ec24.preorderEnabled ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] font-semibold text-slate-600">রিলিজের তারিখ
-                      <input type="date" value={ec24.preorderReleaseDate} onChange={(e) => setEc24({ ...ec24, preorderReleaseDate: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.releaseDate}<input type="date" value={ec24.preorderReleaseDate} onChange={(e) => setEc24({ ...ec24, preorderReleaseDate: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
-                    <label className="block text-[11px] font-semibold text-slate-600">প্রি-অর্ডার সীমা (ঐচ্ছিক)
-                      <input type="number" min="1" value={ec24.preorderLimit} onChange={(e) => setEc24({ ...ec24, preorderLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.preOrderLimitOptional}<input type="number" min="1" value={ec24.preorderLimit} onChange={(e) => setEc24({ ...ec24, preorderLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
                   </div>
                 ) : null}
 
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   <input type="checkbox" checked={ec24.digital} onChange={(e) => setEc24({ ...ec24, digital: e.target.checked })} />
-                  ডিজিটাল পণ্য (ডেলিভারির পর ডাউনলোড লিংক)
-                </label>
+                  {dict.products.digitalProductDownloadLinkAfter}</label>
                 {ec24.digital ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] font-semibold text-slate-600">ফাইল URL (ফাইল ডেলিভারিতে আবশ্যক)
-                      <input type="url" value={ec24.digitalFileUrl} onChange={(e) => setEc24({ ...ec24, digitalFileUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.fileURLRequiredForFile}<input type="url" value={ec24.digitalFileUrl} onChange={(e) => setEc24({ ...ec24, digitalFileUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
                     </label>
-                    <label className="block text-[11px] font-semibold text-slate-600">অ্যাক্সেস সীমা (ঐচ্ছিক)
-                      <input type="number" min="1" value={ec24.digitalAccessLimit} onChange={(e) => setEc24({ ...ec24, digitalAccessLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.accessLimitOptional}<input type="number" min="1" value={ec24.digitalAccessLimit} onChange={(e) => setEc24({ ...ec24, digitalAccessLimit: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
                     {/* AB5 (AX9): delivery type + signed-link expiry. */}
-                    <label className="block text-[11px] font-semibold text-slate-600">ডেলিভারির ধরন
-                      <select value={ec24.digitalDeliveryType} onChange={(e) => setEc24({ ...ec24, digitalDeliveryType: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs">
-                        <option value="file">শুধু ফাইল</option>
-                        <option value="license">শুধু লাইসেন্স কী</option>
-                        <option value="both">ফাইল + লাইসেন্স কী</option>
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.deliveryType}<select value={ec24.digitalDeliveryType} onChange={(e) => setEc24({ ...ec24, digitalDeliveryType: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs">
+                        <option value="file">{dict.products.fileOnly}</option>
+                        <option value="license">{dict.products.licenseKeyOnly}</option>
+                        <option value="both">{dict.products.fileLicenseKey}</option>
                       </select>
                     </label>
-                    <label className="block text-[11px] font-semibold text-slate-600">লিংকের মেয়াদ (ঘণ্টা)
-                      <input type="number" min="1" max="720" value={ec24.digitalLinkExpiryHours} onChange={(e) => setEc24({ ...ec24, digitalLinkExpiryHours: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="খালি = ডিফল্ট ৭২ ঘণ্টা" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.linkValidityHours}<input type="number" min="1" max="720" value={ec24.digitalLinkExpiryHours} onChange={(e) => setEc24({ ...ec24, digitalLinkExpiryHours: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder={dict.products.emptyDefault72Hours} />
                     </label>
                   </div>
                 ) : null}
@@ -2226,58 +2183,52 @@ export default function ProductsPage() {
                     see masked keys (last 4) only. */}
                 {editingProduct && ec24.digital && (ec24.digitalDeliveryType === "license" || ec24.digitalDeliveryType === "both") ? (
                   <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">
-                    <p className="text-[11px] font-bold text-sky-950">🔑 লাইসেন্স কী পুল — {editingProduct.name}</p>
+                    <p className="text-[11px] font-bold text-sky-950">{dict.products.licenseKeyPool}{editingProduct.name}</p>
                     {lkSummary ? (
                       <p className="text-[11px] text-slate-600">
-                        উপলব্ধ: <b>{lkSummary.available}</b>টি · বরাদ্দ হয়েছে: <b>{lkSummary.assigned}</b>টি · বাতিল: <b>{lkSummary.revoked}</b>টি
-                      </p>
-                    ) : <p className="text-[11px] text-slate-400">পুলের হিসাব লোড হচ্ছে…</p>}
-                    <label className="block text-[11px] font-semibold text-slate-600">কী ইমপোর্ট (এক লাইনে একটি কী, সর্বোচ্চ ৫০০টি)
-                      <textarea value={lkText} onChange={(e) => setLkText(e.target.value)} rows={4} className="mt-1 w-full rounded-lg border px-2 py-1.5 font-mono text-xs" placeholder={"XXXX-XXXX-XXXX-1111\nYYYY-YYYY-YYYY-2222"} />
+                        {dict.products.available}<b>{lkSummary.available}</b>{dict.products.assigned2}<b>{lkSummary.assigned}</b>{dict.products.revoked}<b>{lkSummary.revoked}</b>{dict.products.items}</p>
+                    ) : <p className="text-[11px] text-slate-400">{dict.products.loadingPoolAccounts}</p>}
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.importKeysOneKeyPer}<textarea value={lkText} onChange={(e) => setLkText(e.target.value)} rows={4} className="mt-1 w-full rounded-lg border px-2 py-1.5 font-mono text-xs" placeholder={"XXXX-XXXX-XXXX-1111\nYYYY-YYYY-YYYY-2222"} />
                     </label>
                     <div className="flex flex-wrap items-end gap-2">
-                      <label className="block text-[11px] font-semibold text-slate-600">ব্যাচ লেবেল (ঐচ্ছিক)
-                        <input type="text" value={lkBatch} onChange={(e) => setLkBatch(e.target.value)} className="mt-1 w-44 rounded-lg border px-2 py-1.5 text-xs" placeholder="যেমন: অক্টোবর লট" />
+                      <label className="block text-[11px] font-semibold text-slate-600">{dict.products.batchLabelOptional}<input type="text" value={lkBatch} onChange={(e) => setLkBatch(e.target.value)} className="mt-1 w-44 rounded-lg border px-2 py-1.5 text-xs" placeholder={dict.products.eGOctoberLot} />
                       </label>
                       <button type="button" disabled={lkBusy || !lkText.trim()} onClick={() => void importLicenseKeys()} className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
-                        {lkBusy ? "হচ্ছে…" : "ইমপোর্ট করুন"}
+                        {lkBusy ? dict.products.ing : dict.products.import}
                       </button>
                     </div>
                     {lkReport ? <p className="rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-700">{lkReport}</p> : null}
                     {lkError ? <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-medium text-rose-700">{lkError}</p> : null}
                     {lkKeys.length === 0 ? (
-                      <p className="text-[11px] text-slate-400">পুলে এখনো কোনো কী নেই।</p>
+                      <p className="text-[11px] text-slate-400">{dict.products.noKeysInThePool}</p>
                     ) : (
                       <ul className="max-h-44 space-y-1 overflow-y-auto">
                         {lkKeys.map((k) => (
                           <li key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-2 py-1 text-[11px]">
                             <span className="font-mono font-bold text-slate-700">••••{k.keyLast4}</span>
                             <span className={`rounded px-1.5 py-0.5 font-bold ${k.status === "available" ? "bg-emerald-100 text-emerald-700" : k.status === "assigned" ? "bg-sky-100 text-sky-700" : "bg-rose-100 text-rose-700"}`}>
-                              {k.status === "available" ? "উপলব্ধ" : k.status === "assigned" ? "বরাদ্দ হয়েছে" : k.status === "revoked" ? "বাতিল" : k.status}
+                              {k.status === "available" ? dict.products.available2 : k.status === "assigned" ? dict.products.assigned : k.status === "revoked" ? dict.common.cancel : k.status}
                             </span>
                             {k.importBatch ? <span className="text-slate-400">{k.importBatch}</span> : null}
                             {k.status !== "revoked" ? (
-                              <button type="button" disabled={lkBusy} onClick={() => void revokeLicenseKey(k)} className="font-bold text-rose-600 disabled:opacity-50">বাতিল করুন</button>
+                              <button type="button" disabled={lkBusy} onClick={() => void revokeLicenseKey(k)} className="font-bold text-rose-600 disabled:opacity-50">{dict.products.cancel2}</button>
                             ) : null}
                           </li>
                         ))}
                       </ul>
                     )}
-                    <p className="text-[11px] text-slate-500">সম্পূর্ণ কী স্টাফ প্যানেলে কখনো দেখানো হয় না — শুধু শেষ ৪টি অক্ষর। ক্রেতা ডেলিভারির পর ট্র্যাকিং পেজে নিজের কী দেখতে পাবেন। পণ্যের ডেলিভারির ধরন বদলে সেভ করলে পুলটি ওই ধরন অনুযায়ী ব্যবহৃত হবে।</p>
+                    <p className="text-[11px] text-slate-500">{dict.products.theFullKeyIsNever}</p>
                   </div>
                 ) : null}
 
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                   <input type="checkbox" checked={ec24.subscriptionEnabled} onChange={(e) => setEc24({ ...ec24, subscriptionEnabled: e.target.checked })} />
-                  সাবস্ক্রিপশন চালু (স্টাফ সাবস্ক্রিপশন তৈরি করতে পারবেন)
-                </label>
+                  {dict.products.subscriptionOnStaffCanCreate}</label>
                 {ec24.subscriptionEnabled ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] font-semibold text-slate-600">ইন্টারভাল (দিন, আবশ্যক)
-                      <input type="number" min="1" value={ec24.subscriptionIntervalDays} onChange={(e) => setEc24({ ...ec24, subscriptionIntervalDays: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.intervalDaysRequired}<input type="number" min="1" value={ec24.subscriptionIntervalDays} onChange={(e) => setEc24({ ...ec24, subscriptionIntervalDays: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
-                    <label className="block text-[11px] font-semibold text-slate-600">নবায়ন ছাড় % (ঐচ্ছিক)
-                      <input type="number" min="0" max="100" value={ec24.subscriptionDiscountPercent} onChange={(e) => setEc24({ ...ec24, subscriptionDiscountPercent: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.renewalDiscountOptional}<input type="number" min="0" max="100" value={ec24.subscriptionDiscountPercent} onChange={(e) => setEc24({ ...ec24, subscriptionDiscountPercent: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                     </label>
                   </div>
                 ) : null}
@@ -2286,79 +2237,69 @@ export default function ProductsPage() {
                 <div className="space-y-2 border-t border-violet-200 pt-3">
                   <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
                     <input type="checkbox" checked={giftCard.enabled} onChange={(e) => setGiftCard({ ...giftCard, enabled: e.target.checked })} />
-                    🎁 গিফট কার্ড হিসেবে বিক্রি
-                  </label>
+                    {dict.products.sellAsAGiftCard}</label>
                   {giftCard.enabled ? (
                     <div className="space-y-2">
-                      <label className="block text-[11px] font-semibold text-slate-600">Preset পরিমাণ (টাকা, কমা দিয়ে আলাদা করুন)
-                        <input type="text" value={giftCard.presetsTaka} onChange={(e) => setGiftCard({ ...giftCard, presetsTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="৫০০, ১০০০, ২০০০" />
+                      <label className="block text-[11px] font-semibold text-slate-600">{dict.products.presetAmountsTakaCommaSeparated}<input type="text" value={giftCard.presetsTaka} onChange={(e) => setGiftCard({ ...giftCard, presetsTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder={dict.products.text143ihio} />
                       </label>
                       <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
                         <input type="checkbox" checked={giftCard.allowCustomAmount} onChange={(e) => setGiftCard({ ...giftCard, allowCustomAmount: e.target.checked })} />
-                        ক্রেতা নিজের পছন্দমতো পরিমাণ দিতে পারবেন
-                      </label>
+                        {dict.products.customersCanEnterTheirOwn}</label>
                       <div className="grid grid-cols-2 gap-2">
-                        <label className="block text-[11px] font-semibold text-slate-600">সর্বনিম্ন পরিমাণ (৳, ঐচ্ছিক)
-                          <input type="number" min="0" step="0.01" value={giftCard.minTaka} onChange={(e) => setGiftCard({ ...giftCard, minTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                        <label className="block text-[11px] font-semibold text-slate-600">{dict.products.minimumAmountOptional}<input type="number" min="0" step="0.01" value={giftCard.minTaka} onChange={(e) => setGiftCard({ ...giftCard, minTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                         </label>
-                        <label className="block text-[11px] font-semibold text-slate-600">সর্বোচ্চ পরিমাণ (৳, ঐচ্ছিক)
-                          <input type="number" min="0" step="0.01" value={giftCard.maxTaka} onChange={(e) => setGiftCard({ ...giftCard, maxTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
+                        <label className="block text-[11px] font-semibold text-slate-600">{dict.products.maximumAmountOptional}<input type="number" min="0" step="0.01" value={giftCard.maxTaka} onChange={(e) => setGiftCard({ ...giftCard, maxTaka: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" />
                         </label>
                       </div>
                       <p className="text-[11px] leading-relaxed text-slate-500">
-                        গিফট কার্ড পণ্যের স্টক থাকে না এবং এটি কখনো স্টক-আউট হয় না। গিফট কার্ড দিয়ে গিফট কার্ড কেনা যায় না। কার্ডের কোড ক্রেতা অর্ডারের ট্র্যাকিং পেজে পাবেন।
-                      </p>
+                        {dict.products.giftCardProductsHaveNo}</p>
                     </div>
                   ) : null}
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-[11px] font-semibold text-slate-600">পাইকারি স্তর (কমপক্ষে পরিমাণ → একক দাম ৳) — সর্বোচ্চ ১০টি, পরিমাণ বাড়তে হবে</p>
+                  <p className="text-[11px] font-semibold text-slate-600">{dict.products.wholesaleTiersMinimumQuantityUnit}</p>
                   {ec24.tiers.map((t, i) => (
                     <div key={i} className="flex items-center gap-2">
-                      <input type="number" min="2" placeholder="পরিমাণ (কমপক্ষে)" aria-label="পাইকারি স্তরের পরিমাণ (কমপক্ষে)" value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
-                      <input type="number" min="0" step="0.01" placeholder="দাম ৳" aria-label="পাইকারি স্তরের দাম (টাকা)" value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
-                      <button type="button" onClick={() => setEc24({ ...ec24, tiers: ec24.tiers.filter((_, xi) => xi !== i) })} className="rounded-lg bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700">মুছুন</button>
+                      <input type="number" min="2" placeholder={dict.products.quantityAtLeast} aria-label={dict.products.wholesaleTierQuantityAtLeast} value={t.minQty} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, minQty: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <input type="number" min="0" step="0.01" placeholder={dict.products.price} aria-label={dict.products.wholesaleTierPriceTaka} value={t.price} onChange={(e) => setEc24({ ...ec24, tiers: ec24.tiers.map((x, xi) => (xi === i ? { ...x, price: e.target.value } : x)) })} className="w-32 rounded-lg border px-2 py-1.5 text-xs" />
+                      <button type="button" onClick={() => setEc24({ ...ec24, tiers: ec24.tiers.filter((_, xi) => xi !== i) })} className="rounded-lg bg-rose-100 px-2 py-1 text-xs font-bold text-rose-700">{dict.products.delete}</button>
                     </div>
                   ))}
                   {ec24.tiers.length < 10 ? (
-                    <button type="button" onClick={() => setEc24({ ...ec24, tiers: [...ec24.tiers, { minQty: "", price: "" }] })} className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800">+ স্তর যোগ করুন</button>
+                    <button type="button" onClick={() => setEc24({ ...ec24, tiers: [...ec24.tiers, { minQty: "", price: "" }] })} className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800">{dict.products.addTier}</button>
                   ) : null}
                 </div>
 
                 {/* GC1: product video (link only) */}
                 <div className="space-y-2 border-t border-violet-200 pt-3">
-                  <p className="text-[11px] font-bold text-violet-950">🎬 পণ্যের ভিডিও</p>
+                  <p className="text-[11px] font-bold text-violet-950">{dict.products.productVideo}</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-[11px] font-semibold text-slate-600">ভিডিও URL
-                      <input type="url" value={ec24.videoUrl} onChange={(e) => setEc24({ ...ec24, videoUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.videoURL}<input type="url" value={ec24.videoUrl} onChange={(e) => setEc24({ ...ec24, videoUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
                     </label>
-                    <label className="block text-[11px] font-semibold text-slate-600">ভিডিও পোস্টার URL (ঐচ্ছিক)
-                      <input type="url" value={ec24.videoPosterUrl} onChange={(e) => setEc24({ ...ec24, videoPosterUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
+                    <label className="block text-[11px] font-semibold text-slate-600">{dict.products.videoPosterURLOptional}<input type="url" value={ec24.videoPosterUrl} onChange={(e) => setEc24({ ...ec24, videoPosterUrl: e.target.value })} className="mt-1 w-full rounded-lg border px-2 py-1.5 text-xs" placeholder="https://…" />
                     </label>
                   </div>
-                  <p className="text-[11px] text-slate-500">YouTube / Vimeo লিংক অথবা সরাসরি .mp4/.webm ফাইলের লিংক — ভিডিও আপলোডের সুবিধা নেই, লিংক দিতে হবে।</p>
+                  <p className="text-[11px] text-slate-500">{dict.products.aYouTubeVimeoLinkOr}</p>
                 </div>
               </div>
 
               {/* ⚡ SaaS Super-Feature: 1-Click Order Bump / Upsell Offer */}
               <div className="rounded-xl border border-amber-300 bg-amber-50/40 p-3.5 space-y-2.5">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
-                  <span>⚡ ১-ক্লিক অর্ডার বাম্প ও আপসেল (1-Click Order Bump Offer)</span>
+                  <span>{dict.products.textg7r388}</span>
                   <span className="rounded bg-amber-200 text-amber-800 text-[10px] px-1.5 py-0.2">SaaS Booster</span>
                 </div>
                 <p className="text-[11px] text-amber-800">
-                  চেকআউট পেজে গ্রাহককে এই পণ্যের সাথে আকর্ষণীয় অ্যাড-অন অফার দেখান (যেমন: ওয়ালেটের সাথে লেদার পলিশ বা কম্বো উপহার)।
-                </p>
+                  {dict.products.showCustomersAnAttractiveAdd}</p>
 
                 <div className="space-y-2 pt-1">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-title">
-                      অ্যাড-অন অফার শিরোনাম (Bump Offer Title):
-                    </label>
+                      {dict.products.addOnOfferTitleBump}</label>
                     <input id="product-form-bump-title"
                       type="text"
-                      placeholder="যেমন: মাত্র ১৯০ টাকায় লেদার কি-রিং ও স্পেশাল পলিশ যোগ করুন"
+                      placeholder={dict.products.eGAddALeather}
                       value={form.bumpTitle}
                       onChange={(e) => setForm({ ...form, bumpTitle: e.target.value })}
                       className="w-full rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs"
@@ -2368,8 +2309,7 @@ export default function ProductsPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-price">
-                        অ্যাড-অন প্রাইস (Bump Price BDT):
-                      </label>
+                        {dict.products.addOnPriceBumpPrice}</label>
                       <input id="product-form-bump-price"
                         type="number"
                         step="0.01"
@@ -2381,8 +2321,7 @@ export default function ProductsPage() {
                     </div>
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-700 mb-0.5" htmlFor="product-form-bump-image">
-                        অ্যাড-অন ইমেজ লিংক (ঐচ্ছিক):
-                      </label>
+                        {dict.products.addOnImageLinkOptional}</label>
                       <input id="product-form-bump-image"
                         type="url"
                         placeholder="https://..."
@@ -2407,14 +2346,13 @@ export default function ProductsPage() {
                 onClick={() => setIsModalOpen(false)}
                 className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="submit"
                 disabled={saving}
                 className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {saving ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
+                {saving ? dict.products.saving : dict.common.save}
               </button>
             </div>
           </form>
@@ -2425,52 +2363,48 @@ export default function ProductsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setStockFor(null)}>
           <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">স্টক সমন্বয় — {stockFor.name}</h2>
+              <h2 className="font-semibold">{dict.products.stockAdjustment}{stockFor.name}</h2>
               <button className="text-slate-500" onClick={() => setStockFor(null)}>✕</button>
             </div>
             <p className="text-sm text-slate-600">
-              বর্তমান স্টক: {currentStock == null ? <span className="text-slate-400">ট্র্যাক হয় না</span> : <strong>{currentStock}</strong>}
-              {selectedVariant ? ` (ভ্যারিয়েন্ট: ${selectedVariant.name})` : ""}
+              {dict.products.currentStock}{currentStock == null ? <span className="text-slate-400">{dict.products.notTracked}</span> : <strong>{currentStock}</strong>}
+              {selectedVariant ? t("products.variant", { name: selectedVariant.name }) : ""}
             </p>
             <form onSubmit={onAdjust} className="space-y-3">
               {variants.length > 0 ? (
                 <select className="w-full rounded-lg border px-3 py-2 text-sm" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
-                  <option value="">পুরো পণ্য (ভ্যারিয়েন্ট নয়)</option>
+                  <option value="">{dict.products.wholeProductNotAVariant}</option>
                   {variants.map((v) => (
-                    <option key={v.id} value={v.id}>{v.name}{v.sku ? ` (${v.sku})` : ""} — স্টক: {v.stockQuantity ?? "ট্র্যাক হয় না"}</option>
+                    <option key={v.id} value={v.id}>{v.name}{v.sku ? ` (${v.sku})` : ""} {dict.products.stock3}{v.stockQuantity ?? dict.products.notTracked}</option>
                   ))}
                 </select>
               ) : null}
               <div className="grid grid-cols-2 gap-3">
-                <label className="text-sm">পরিবর্তন (+/-)
-                  <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" placeholder="যেমন +10 বা -2" value={adjDelta} onChange={(e) => { setAdjDelta(e.target.value); if (e.target.value) setAdjSetTo(""); }} />
+                <label className="text-sm">{dict.products.change}<input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" placeholder={dict.products.eG10Or2} value={adjDelta} onChange={(e) => { setAdjDelta(e.target.value); if (e.target.value) setAdjSetTo(""); }} />
                 </label>
-                <label className="text-sm">অথবা সরাসরি স্টক বসান
-                  <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" placeholder="নতুন মোট স্টক" value={adjSetTo} onChange={(e) => { setAdjSetTo(e.target.value); if (e.target.value) setAdjDelta(""); }} />
+                <label className="text-sm">{dict.products.orSetTheStockDirectly}<input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" placeholder={dict.products.newTotalStock} value={adjSetTo} onChange={(e) => { setAdjSetTo(e.target.value); if (e.target.value) setAdjDelta(""); }} />
                 </label>
               </div>
-              <label className="block text-sm">নোট
-                <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" maxLength={300} placeholder="কেন সমন্বয় করছেন (ঐচ্ছিক)" value={adjNote} onChange={(e) => setAdjNote(e.target.value)} />
+              <label className="block text-sm">{dict.products.note}<input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" maxLength={300} placeholder={dict.products.whyAreYouAdjustingOptional} value={adjNote} onChange={(e) => setAdjNote(e.target.value)} />
               </label>
-              <label className="block text-sm">কম স্টকের সতর্কতা (খালি = ৫)
-                <input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" value={adjThreshold} onChange={(e) => setAdjThreshold(e.target.value)} />
+              <label className="block text-sm">{dict.products.lowStockAlertEmpty52}<input className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" type="number" min="0" value={adjThreshold} onChange={(e) => setAdjThreshold(e.target.value)} />
               </label>
               {adjMsg ? <p className="text-sm text-slate-600">{adjMsg}</p> : null}
-              <button className="btn-primary disabled:opacity-50" disabled={adjBusy}>{adjBusy ? "সেভ হচ্ছে..." : "সমন্বয় করুন"}</button>
+              <button className="btn-primary disabled:opacity-50" disabled={adjBusy}>{adjBusy ? dict.products.saving2 : dict.products.adjust}</button>
             </form>
 
             <div className="border-t pt-3">
-              <h3 className="mb-2 text-sm font-semibold">স্টক ইতিহাস</h3>
+              <h3 className="mb-2 text-sm font-semibold">{dict.products.stockHistory}</h3>
               {movements.length === 0 ? (
-                <p className="text-sm text-slate-400">এখনো কোনো স্টক পরিবর্তনের রেকর্ড নেই।</p>
+                <p className="text-sm text-slate-400">{dict.products.noStockChangeRecordsYet}</p>
               ) : (
                 <ul className="space-y-1.5 text-sm">
                   {movements.map((m) => (
                     <li key={m.id} className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-slate-400">{new Date(m.createdAt).toLocaleString("bn-BD")}</span>
-                      <span>{MOVEMENT_REASON_LABELS[m.reason] ?? m.reason}{m.variantName ? ` · ${m.variantName}` : ""}</span>
+                      <span className="text-slate-400">{fmtDateTime(locale, new Date(m.createdAt))}</span>
+                      <span>{dict.products[MOVEMENT_REASON_LABELS[m.reason as keyof typeof MOVEMENT_REASON_LABELS]] ?? m.reason}{m.variantName ? ` · ${m.variantName}` : ""}</span>
                       <span className={m.delta >= 0 ? "text-emerald-600" : "text-red-600"}>{m.delta >= 0 ? `+${m.delta}` : m.delta}</span>
-                      <span className="text-slate-500">→ বাকি {m.balanceAfter}</span>
+                      <span className="text-slate-500">{dict.products.remaining}{m.balanceAfter}</span>
                       {m.note ? <span className="text-slate-400">({m.note})</span> : null}
                     </li>
                   ))}
@@ -2485,22 +2419,22 @@ export default function ProductsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setVariantFor(null)}>
           <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">ভ্যারিয়েন্ট — {variantFor.name}</h2>
+              <h2 className="font-semibold">{dict.products.variants2}{variantFor.name}</h2>
               <button className="text-slate-500" onClick={() => setVariantFor(null)}>✕</button>
             </div>
 
             <form onSubmit={onCreateVariant} className="space-y-3 border-b pb-4">
               <div className="grid grid-cols-2 gap-3">
-                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="ভ্যারিয়েন্টের নাম *" value={vForm.name} onChange={(e) => setVForm({ ...vForm, name: e.target.value })} required />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.variantName} value={vForm.name} onChange={(e) => setVForm({ ...vForm, name: e.target.value })} required />
                 <input className="rounded-lg border px-3 py-2 text-sm" placeholder="SKU" value={vForm.sku} onChange={(e) => setVForm({ ...vForm, sku: e.target.value })} />
-                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="দাম (BDT, ঐচ্ছিক)" value={vForm.price} onChange={(e) => setVForm({ ...vForm, price: e.target.value })} />
-                <input className="rounded-lg border px-3 py-2 text-sm" placeholder="স্টক (ঐচ্ছিক)" type="number" min="0" value={vForm.stock} onChange={(e) => setVForm({ ...vForm, stock: e.target.value })} />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.priceBDTOptional} value={vForm.price} onChange={(e) => setVForm({ ...vForm, price: e.target.value })} />
+                <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.stockOptional} type="number" min="0" value={vForm.stock} onChange={(e) => setVForm({ ...vForm, stock: e.target.value })} />
               </div>
-              <button className="btn-primary disabled:opacity-50" disabled={vBusy}>{vBusy ? "সেভ হচ্ছে..." : "ভ্যারিয়েন্ট যোগ করুন"}</button>
+              <button className="btn-primary disabled:opacity-50" disabled={vBusy}>{vBusy ? dict.products.saving2 : dict.products.addVariant}</button>
             </form>
 
             {mgrVariants.length === 0 ? (
-              <p className="text-sm text-slate-400">এখনো কোনো ভ্যারিয়েন্ট নেই।</p>
+              <p className="text-sm text-slate-400">{dict.products.noVariantsYet}</p>
             ) : (
               <ul className="space-y-3">
                 {mgrVariants.map((v) => (
@@ -2508,14 +2442,14 @@ export default function ProductsPage() {
                     {editingVariantId === v.id ? (
                       <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
-                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="নাম *" value={evForm.name} onChange={(e) => setEvForm({ ...evForm, name: e.target.value })} required />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.name} value={evForm.name} onChange={(e) => setEvForm({ ...evForm, name: e.target.value })} required />
                           <input className="rounded-lg border px-3 py-2 text-sm" placeholder="SKU" value={evForm.sku} onChange={(e) => setEvForm({ ...evForm, sku: e.target.value })} />
-                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="দাম (BDT, খালি = পণ্যের দাম)" value={evForm.price} onChange={(e) => setEvForm({ ...evForm, price: e.target.value })} />
-                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder="স্টক" type="number" min="0" value={evForm.stock} onChange={(e) => setEvForm({ ...evForm, stock: e.target.value })} />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.priceBDTEmptyProductPrice} value={evForm.price} onChange={(e) => setEvForm({ ...evForm, price: e.target.value })} />
+                          <input className="rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.stock} type="number" min="0" value={evForm.stock} onChange={(e) => setEvForm({ ...evForm, stock: e.target.value })} />
                         </div>
                         <div className="flex gap-3">
-                          <button className="btn-primary disabled:opacity-50" disabled={vBusy} onClick={() => onSaveVariant(v)}>সংরক্ষণ</button>
-                          <button className="rounded-lg border bg-white px-4 py-2 text-sm" onClick={() => setEditingVariantId(null)}>বাতিল</button>
+                          <button className="btn-primary disabled:opacity-50" disabled={vBusy} onClick={() => onSaveVariant(v)}>{dict.products.save}</button>
+                          <button className="rounded-lg border bg-white px-4 py-2 text-sm" onClick={() => setEditingVariantId(null)}>{dict.common.cancel}</button>
                         </div>
                       </div>
                     ) : (
@@ -2524,12 +2458,12 @@ export default function ProductsPage() {
                           <span className="font-medium">{v.name}</span>
                           {v.sku ? <span className="text-slate-400"> · {v.sku}</span> : null}
                           <div className="text-xs text-slate-500">
-                            দাম: {v.priceMinor ? formatMinor(BigInt(v.priceMinor)) : "পণ্যের দামই প্রযোজ্য"} · স্টক: {v.stockQuantity == null ? "ট্র্যাক হয় না" : v.stockQuantity}
+                            {dict.products.price2}{v.priceMinor ? formatMinor(BigInt(v.priceMinor)) : dict.products.theProductPriceApplies} {dict.products.stock4}{v.stockQuantity == null ? dict.products.notTracked : v.stockQuantity}
                           </div>
                         </div>
                         <div className="whitespace-nowrap">
-                          <button className="mr-3 text-sky-700 text-sm" disabled={vBusy} onClick={() => startEditVariant(v)}>সম্পাদনা</button>
-                          <button className="text-red-600 text-sm" disabled={vBusy} onClick={() => onDeleteVariant(v)}>মুছুন</button>
+                          <button className="mr-3 text-sky-700 text-sm" disabled={vBusy} onClick={() => startEditVariant(v)}>{dict.products.edit}</button>
+                          <button className="text-red-600 text-sm" disabled={vBusy} onClick={() => onDeleteVariant(v)}>{dict.products.delete}</button>
                         </div>
                       </div>
                     )}
@@ -2539,7 +2473,7 @@ export default function ProductsPage() {
             )}
 
             {vMsg ? <p className="text-sm text-slate-600">{vMsg}</p> : null}
-            <p className="text-xs text-slate-400">ট্র্যাক করা ভ্যারিয়েন্টের স্টক বদলালে পরিবর্তনটি স্টক ইতিহাসে (ledger-এ) রেকর্ড হবে। ভ্যারিয়েন্ট মুছলে আগের স্টক ইতিহাস থেকে যায়।</p>
+            <p className="text-xs text-slate-400">{dict.products.changingTheStockOfA}</p>
           </div>
         </div>
       ) : null}
@@ -2549,20 +2483,19 @@ export default function ProductsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setBulkPreview(null)}>
           <div className="card w-full max-w-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">বাল্ক এডিট প্রিভিউ</h2>
+              <h2 className="font-semibold">{dict.products.bulkEditPreview}</h2>
               <button className="text-slate-500" onClick={() => setBulkPreview(null)}>✕</button>
             </div>
             <p className="text-sm text-slate-600">
-              প্রভাবিত হবে: <b>{bulkPreview.affected}</b>টি পণ্য
-              {bulkPreview.missing > 0 ? <> · পাওয়া যায়নি: <b>{bulkPreview.missing}</b>টি</> : null}
+              {dict.products.willBeAffected}<b>{bulkPreview.affected}</b>{dict.products.products}{bulkPreview.missing > 0 ? <> {dict.products.notFound}<b>{bulkPreview.missing}</b>{dict.products.items}</> : null}
             </p>
             {bulkPreview.items.length === 0 ? (
-              <p className="text-sm text-slate-500">কোনো পরিবর্তন নেই।</p>
+              <p className="text-sm text-slate-500">{dict.products.noChanges}</p>
             ) : (
               <div className="max-h-80 overflow-y-auto rounded-lg border">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500">
-                    <tr><th className="px-3 py-2">পণ্য</th><th className="px-3 py-2">ফিল্ড</th><th className="px-3 py-2">আগে</th><th className="px-3 py-2">পরে</th></tr>
+                    <tr><th className="px-3 py-2">{dict.products.product}</th><th className="px-3 py-2">{dict.products.field}</th><th className="px-3 py-2">{dict.products.before}</th><th className="px-3 py-2">{dict.products.after}</th></tr>
                   </thead>
                   <tbody>
                     {bulkPreview.items.slice(0, 50).map((it, i) => (
@@ -2577,12 +2510,12 @@ export default function ProductsPage() {
                 </table>
               </div>
             )}
-            {bulkPreview.items.length > 50 ? <p className="text-xs text-slate-400">প্রথম ৫০টি পরিবর্তন দেখানো হচ্ছে।</p> : null}
+            {bulkPreview.items.length > 50 ? <p className="text-xs text-slate-400">{dict.products.showingTheFirst50Changes}</p> : null}
             <div className="flex justify-end gap-2">
-              <button className="rounded-lg border px-4 py-2 text-xs font-semibold" onClick={() => setBulkPreview(null)}>বাতিল</button>
+              <button className="rounded-lg border px-4 py-2 text-xs font-semibold" onClick={() => setBulkPreview(null)}>{dict.common.cancel}</button>
               <button className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 disabled={bulkBusy || bulkPreview.affected === 0} onClick={onBulkApply}>
-                {bulkBusy ? "প্রয়োগ হচ্ছে…" : "প্রয়োগ করুন"}
+                {bulkBusy ? dict.products.applying : dict.products.apply}
               </button>
             </div>
           </div>
@@ -2594,27 +2527,26 @@ export default function ProductsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setBrandMgrOpen(false)}>
           <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">🏷️ ব্র্যান্ড ব্যবস্থাপনা</h2>
+              <h2 className="font-semibold">{dict.products.brandManagement}</h2>
               <button className="text-slate-500" onClick={() => setBrandMgrOpen(false)}>✕</button>
             </div>
-            <p className="text-xs text-slate-500">ব্র্যান্ড মুছলে তার পণ্যগুলো মোছা হয় না — শুধু ব্র্যান্ডের লিংক সরিয়ে দেওয়া হয়।</p>
+            <p className="text-xs text-slate-500">{dict.products.deletingABrandDoesNot}</p>
             <form onSubmit={onSaveBrand} className="space-y-3 border-b pb-4">
-              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="ব্র্যান্ডের নাম *" value={brandForm.name} onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })} required />
-              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="লোগো URL (ঐচ্ছিক)" value={brandForm.logoUrl} onChange={(e) => setBrandForm({ ...brandForm, logoUrl: e.target.value })} />
-              <textarea className="w-full rounded-lg border px-3 py-2 text-sm" rows={2} placeholder="বিবরণ (ঐচ্ছিক)" value={brandForm.description} onChange={(e) => setBrandForm({ ...brandForm, description: e.target.value })} />
+              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.brandName} value={brandForm.name} onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })} required />
+              <input className="w-full rounded-lg border px-3 py-2 text-sm" placeholder={dict.products.logoURLOptional} value={brandForm.logoUrl} onChange={(e) => setBrandForm({ ...brandForm, logoUrl: e.target.value })} />
+              <textarea className="w-full rounded-lg border px-3 py-2 text-sm" rows={2} placeholder={dict.products.descriptionOptional} value={brandForm.description} onChange={(e) => setBrandForm({ ...brandForm, description: e.target.value })} />
               <div className="flex gap-2">
                 <button className="btn-primary disabled:opacity-50" disabled={brandBusy || !brandForm.name.trim()}>
-                  {brandBusy ? "সেভ হচ্ছে..." : editingBrandId ? "ব্র্যান্ড আপডেট করুন" : "ব্র্যান্ড যোগ করুন"}
+                  {brandBusy ? dict.products.saving2 : editingBrandId ? dict.products.updateBrand : dict.products.addBrand}
                 </button>
                 {editingBrandId ? (
                   <button type="button" className="rounded-lg border bg-white px-4 py-2 text-sm" onClick={() => { setEditingBrandId(null); setBrandForm({ name: "", logoUrl: "", description: "" }); }}>
-                    বাতিল
-                  </button>
+                    {dict.common.cancel}</button>
                 ) : null}
               </div>
             </form>
             {brands.length === 0 ? (
-              <p className="text-sm text-slate-400">এখনো কোনো ব্র্যান্ড নেই।</p>
+              <p className="text-sm text-slate-400">{dict.products.noBrandsYet}</p>
             ) : (
               <ul className="space-y-3">
                 {brands.map((b) => (
@@ -2627,14 +2559,13 @@ export default function ProductsPage() {
                       )}
                       <div>
                         <span className="font-medium">{b.name}</span>
-                        <span className="block text-xs text-slate-400">{b.productCount}টি পণ্য · /{b.slug}</span>
+                        <span className="block text-xs text-slate-400">{b.productCount}{dict.products.products2}{b.slug}</span>
                       </div>
                     </div>
                     <div className="whitespace-nowrap">
                       <button className="mr-3 text-sm text-sky-700" disabled={brandBusy} onClick={() => { setEditingBrandId(b.id); setBrandForm({ name: b.name, logoUrl: b.logoUrl ?? "", description: b.description ?? "" }); setBrandMsg(""); }}>
-                        সম্পাদনা
-                      </button>
-                      <button className="text-sm text-red-600" disabled={brandBusy} onClick={() => onDeleteBrand(b)}>মুছুন</button>
+                        {dict.products.edit}</button>
+                      <button className="text-sm text-red-600" disabled={brandBusy} onClick={() => onDeleteBrand(b)}>{dict.products.delete}</button>
                     </div>
                   </li>
                 ))}
@@ -2650,23 +2581,23 @@ export default function ProductsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={() => setHistoryFor(null)}>
           <div className="card w-full max-w-lg p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">📜 ইতিহাস — {historyFor.name}</h2>
+              <h2 className="font-semibold">{dict.products.history2}{historyFor.name}</h2>
               <button className="text-slate-500" onClick={() => setHistoryFor(null)}>✕</button>
             </div>
             {historyTruncated ? (
-              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">সাম্প্রতিক ২০০টি ঘটনা দেখানো হচ্ছে</p>
+              <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">{dict.products.showingTheMostRecent200}</p>
             ) : null}
-            {historyBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+            {historyBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
             {historyMsg ? <p className="text-sm text-red-600">{historyMsg}</p> : null}
             {!historyBusy && !historyMsg && historyItems.length === 0 ? (
-              <p className="text-sm text-slate-400">এখনো কোনো ইতিহাস রেকর্ড নেই।</p>
+              <p className="text-sm text-slate-400">{dict.products.noHistoryRecordsYet}</p>
             ) : (
               <ul className="space-y-3">
                 {historyItems.map((h, i) => (
                   <li key={`${h.at}-${i}`} className="border-b pb-3 last:border-b-0">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-sm font-semibold text-slate-800">{h.title}</span>
-                      <span className="text-xs text-slate-400">{new Date(h.at).toLocaleString("bn-BD")}</span>
+                      <span className="text-xs text-slate-400">{fmtDateTime(locale, new Date(h.at))}</span>
                     </div>
                     {h.detail ? <p className="mt-0.5 text-sm text-slate-600">{h.detail}</p> : null}
                     <p className="mt-0.5 text-xs text-slate-400">

@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
+import { badRequest, notFound } from "../i18n";
 
 /** Exact refusal surfaced to staff when no real LLM is configured. */
 export const NO_LLM_MESSAGE = "LLM কনফিগার করা নেই — AI সারসংক্ষেপ উপলব্ধ নয়";
@@ -46,7 +48,7 @@ export class ReviewInsightsService {
     const product = await (this.p().product?.findFirst({
       where: { id: productId, organizationId },
     }).catch(() => null) ?? null);
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+    if (!product) throw notFound("commerce.productNotFoundShort");
     return product;
   }
 
@@ -121,19 +123,30 @@ export class ReviewInsightsService {
     }));
     const reviewCount = reviews.length;
     if (reviewCount === 0) {
-      throw new BadRequestException("এই পণ্যের কোনো লেখাসহ রিভিউ নেই — AI সারসংক্ষেপ তৈরি করার মতো কোনো রিভিউ পাওয়া যায়নি");
+      throw badRequest("orders.noTextReviewsForSummary");
     }
 
-    if (!this.llmFactory) throw new BadRequestException(NO_LLM_MESSAGE);
+    if (!this.llmFactory) throw badRequest("orders.noLlmConfigured");
     const provider: any = await providerForOrg(this.llmFactory, organizationId).catch(() => null);
-    if (!provider?.isRealLlm) throw new BadRequestException(NO_LLM_MESSAGE);
+    if (!provider?.isRealLlm) throw badRequest("orders.noLlmConfigured");
+
+    // MB5 (ML13, CD-4): the summary language is the shared OWNER
+    // chain (aiReplyLanguage → dashboardLocale → acting user's
+    // preferredLocale → bn) — no dto on this path; the old prompt
+    // hardcoded Bengali. The prompt states the resolved language
+    // and the summary + themes follow it.
+    const { language: summaryLanguage } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: actorId ?? null,
+    });
+    const summaryLanguageName = summaryLanguage === "en" ? "English" : "Bengali";
 
     let result: any;
     try {
       result = await provider.complete([
         {
           role: "system",
-          content: "You summarize real customer product reviews for a shop owner. Use ONLY the reviews given; invent nothing. Return ONLY JSON with keys: summary (string, in Bengali, at most ~3 sentences), positive (integer count of positive reviews), neutral (integer), negative (integer), themes (array of at most 5 short strings naming recurring themes). The counts classify the reviews given and must add up to at most the number of reviews given.",
+          content: `You summarize real customer product reviews for a shop owner. Use ONLY the reviews given; invent nothing. Return ONLY JSON with keys: summary (string, in ${summaryLanguageName}, at most ~3 sentences), positive (integer count of positive reviews), neutral (integer), negative (integer), themes (array of at most 5 short strings in ${summaryLanguageName} naming recurring themes). The counts classify the reviews given and must add up to at most the number of reviews given.`,
         },
         {
           role: "user",
@@ -145,7 +158,7 @@ export class ReviewInsightsService {
         },
       ], { jsonMode: true });
     } catch (e) {
-      throw new BadRequestException(e instanceof Error ? e.message : "LLM সারসংক্ষেপ তৈরি ব্যর্থ হয়েছে");
+      throw e instanceof Error ? new BadRequestException(e.message) : badRequest("orders.llmSummaryGenFailed");
     }
 
     let parsed: any;
@@ -153,13 +166,13 @@ export class ReviewInsightsService {
       const raw = String(result?.text ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
       parsed = JSON.parse(raw);
     } catch (e) {
-      throw new BadRequestException(`LLM থেকে পাওয়া উত্তর JSON হিসেবে পড়া যায়নি — কিছুই সংরক্ষণ করা হয়নি। (${e instanceof Error ? e.message : "parse error"})`);
+      throw badRequest("orders.llmResponseNotJson", { detail: e instanceof Error ? e.message : "parse error" });
     }
 
     // ---- sanitize ----
     const summaryText = typeof parsed?.summary === "string" ? parsed.summary.trim().slice(0, 1200) : "";
     if (!summaryText) {
-      throw new BadRequestException("LLM কোনো বৈধ সারসংক্ষেপ দেয়নি — কিছুই সংরক্ষণ করা হয়নি।");
+      throw badRequest("orders.llmNoValidSummary");
     }
     const clampCount = (v: any) => {
       const n = Math.floor(Number(v));
@@ -259,11 +272,11 @@ export class ReviewInsightsService {
   /** Public read by slugs: PDP box data, or { insight: null }. */
   async getPublicBySlug(orgSlug: string, productSlug: string) {
     const org = await (this.p().organization?.findFirst({ where: { slug: orgSlug } }).catch(() => null) ?? null);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     const product = await (this.p().product?.findFirst({
       where: { organizationId: org.id, slug: productSlug, status: "ACTIVE" },
     }).catch(() => null) ?? null);
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+    if (!product) throw notFound("commerce.productNotFoundShort");
     const insight = await (this.p().productReviewInsight?.findFirst({
       where: { organizationId: org.id, productId: product.id },
     }).catch(() => null) ?? null);

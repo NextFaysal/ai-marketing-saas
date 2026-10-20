@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "test-secret";
 
 import { createHash } from "node:crypto";
+import { ApiException } from "../i18n";
 import { ForbiddenException } from "@nestjs/common";
 import { ConnectionsService } from "./connections.service";
 import { TenantPaymentsService, redactSensitiveKeys } from "./tenant-payments.service";
@@ -225,7 +226,7 @@ describe("CC17 inbox deny enforcement", () => {
 
   it("a denied member's sendReply is refused BEFORE any message row exists", async () => {
     const { svc, tables } = buildInbox(["int-1"]);
-    await expect(svc.sendReply("org-1", "u-agent", "conv-1", "hello")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.sendReply("org-1", "u-agent", "conv-1", "hello")).rejects.toBeInstanceOf(ApiException);
     expect(tables.channelMessage.rows).toHaveLength(0);
   });
 

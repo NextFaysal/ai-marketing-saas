@@ -218,23 +218,23 @@ describe("MX14 create validation", () => {
   it("refuses: no title, over-long title/body, a template, WhatsApp fields, a non-customer audience, an external URL, onsiteUrl on email, an enabled cascade, personalization", async () => {
     const { svc } = build();
     const base = { name: "x", channel: "onsite", subject: "t", body: "b", audienceType: "customers" } as any;
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: undefined })).rejects.toThrow(/need a title/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: "x".repeat(121) })).rejects.toThrow(/120/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, body: "x".repeat(2001) })).rejects.toThrow(/2000/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, templateId: "tpl-1" })).rejects.toThrow(/do not use message templates/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, whatsappTemplateId: "wa-1" })).rejects.toThrow(/only for WhatsApp/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "leads_stage", audienceStage: "qualified" })).rejects.toThrow(/shop customers only/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "csv", audienceCsv: "a@b.com" })).rejects.toThrow(/shop customers only/);
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: undefined })).rejects.toMatchObject({ code: "messaging.onSiteBroadcastsNeedATitle" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: "x".repeat(121) })).rejects.toMatchObject({ code: "messaging.onSiteTitleMustBeAt" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, body: "x".repeat(2001) })).rejects.toMatchObject({ code: "messaging.onSiteBodyMustBeAt" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, templateId: "tpl-1" })).rejects.toMatchObject({ code: "messaging.onSiteBroadcastsDoNotUse" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, whatsappTemplateId: "wa-1" })).rejects.toMatchObject({ code: "messaging.whatsappTemplateIdTemplateComponentsAreOnlyForWhatsA" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "leads_stage", audienceStage: "qualified" })).rejects.toMatchObject({ code: "messaging.audienceTypeAudienceTypeIsNotAvailableFor2" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "csv", audienceCsv: "a@b.com" })).rejects.toMatchObject({ code: "messaging.audienceTypeAudienceTypeIsNotAvailableFor2" });
     await expect(svc.createBroadcast("org-1", "owner", { ...base, onsiteUrl: "https://evil.example.com" })).rejects.toThrow(/shop-relative/);
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "email", subject: "t", body: "b", audienceType: "customers", onsiteUrl: "/sale",
-    } as any)).rejects.toThrow(/only allowed for onsite broadcasts/);
+    } as any)).rejects.toMatchObject({ code: "messaging.onsiteUrlIsOnlyAllowedForOnsite" });
     await expect(svc.createBroadcast("org-1", "owner", {
       ...base, cascade: { enabled: true, channels: ["onsite", "sms"], smsBody: "fallback" },
     })).rejects.toThrow(/cascade/);
     await expect(svc.createBroadcast("org-1", "owner", {
       ...base, personalization: { uniqueCoupon: { kind: "percent", value: 10, expiryDays: 7, prefix: "EID" } },
-    })).rejects.toThrow(/personalization is not available for onsite/);
+    })).rejects.toMatchObject({ code: "messaging.personalizationIsNotAvailableForOnsite" });
   });
 
   it("edit: onsiteUrl re-validates (null clears), a template is refused, the merged title cap holds", async () => {
@@ -243,8 +243,8 @@ describe("MX14 create validation", () => {
     const edited: any = await svc.updateBroadcast("org-1", "owner", bc.id, { onsiteUrl: null } as any);
     expect(edited.onsiteUrl).toBeNull();
     await expect(svc.updateBroadcast("org-1", "owner", bc.id, { onsiteUrl: "https://evil.example.com" } as any)).rejects.toThrow(/shop-relative/);
-    await expect(svc.updateBroadcast("org-1", "owner", bc.id, { templateId: "tpl-1" } as any)).rejects.toThrow(/do not use message templates/);
-    await expect(svc.updateBroadcast("org-1", "owner", bc.id, { subject: "x".repeat(121) } as any)).rejects.toThrow(/120/);
+    await expect(svc.updateBroadcast("org-1", "owner", bc.id, { templateId: "tpl-1" } as any)).rejects.toMatchObject({ code: "messaging.onSiteBroadcastsDoNotUse2" });
+    await expect(svc.updateBroadcast("org-1", "owner", bc.id, { subject: "x".repeat(121) } as any)).rejects.toMatchObject({ code: "messaging.onSiteTitleMustBeAt" });
     // Clone keeps the click URL (it is content).
     const reEdited: any = await svc.updateBroadcast("org-1", "owner", bc.id, { onsiteUrl: "/offer" } as any);
     expect(reEdited.onsiteUrl).toBe("/offer");
@@ -300,7 +300,7 @@ describe("MX14 resolution — customers of the org only", () => {
     const pref = tables.messagePreference.rows.find((p: any) => p.channel === "onsite" && p.address === "customer-2");
     expect(pref?.status).toBe("opted_out");
     await expect(svc.addPreference("org-1", "owner", { channel: "onsite", address: "not an id", status: "opted_out" }))
-      .rejects.toThrow(/Invalid onsite customer id/);
+      .rejects.toMatchObject({ code: "messaging.invalidOnsiteCustomerIdRaw" });
   });
 });
 
@@ -397,6 +397,6 @@ describe("MX14 send — the notification create IS the delivery", () => {
   it("test-send to a typed address is refused honestly (a test must not pollute a real customer's center)", async () => {
     const { svc } = build();
     const bc: any = await draftOnsite(svc);
-    await expect(svc.testSendBroadcast("org-1", "owner", bc.id, "customer-1")).rejects.toThrow(/cannot be test-sent/);
+    await expect(svc.testSendBroadcast("org-1", "owner", bc.id, "customer-1")).rejects.toMatchObject({ code: "messaging.onSiteBroadcastsCannotBeTest" });
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 // AB6: shared block editor — extracted from the content-pages
 // manager so the blog editor uses exactly the same block UI.
@@ -10,12 +11,12 @@ export interface EditableBlock { type: string; data: Record<string, any> }
 
 export const BLOCK_TYPES = ["heading", "paragraph", "list", "faq", "image", "contact_info"] as const;
 export const BLOCK_LABEL: Record<string, string> = {
-  heading: "শিরোনাম",
-  paragraph: "অনুচ্ছেদ",
-  list: "তালিকা",
-  faq: "প্রশ্নোত্তর (FAQ)",
-  image: "ছবি",
-  contact_info: "যোগাযোগের তথ্য",
+  heading: "title",
+  paragraph: "paragraph",
+  list: "list",
+  faq: "fAQ",
+  image: "image",
+  contact_info: "contactInformation",
 };
 
 export function defaultBlockData(type: string): Record<string, any> {
@@ -58,6 +59,7 @@ export function BlocksEditor({
   blocks: EditableBlock[];
   onChange: (next: EditableBlock[]) => void;
 }) {
+  const { dict, t, locale } = useLocale();
   // Block drag-reorder state (same pattern as landing sections).
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -93,31 +95,27 @@ export function BlocksEditor({
       case "heading":
         return (
           <div className="grid gap-3 md:grid-cols-[1fr_140px]">
-            <label className="block text-sm">লেখা
-              <input className="input mt-1" value={d.text ?? ""} onChange={(e) => patchBlockData(idx, { text: e.target.value })} placeholder="শিরোনামের লেখা" />
+            <label className="block text-sm">{dict.commerce.text}<input className="input mt-1" value={d.text ?? ""} onChange={(e) => patchBlockData(idx, { text: e.target.value })} placeholder={dict.commerce.headingText} />
             </label>
-            <label className="block text-sm">স্তর (level)
-              <select className="input mt-1" value={String(d.level ?? 2)} onChange={(e) => patchBlockData(idx, { level: Number(e.target.value) })}>
-                <option value="1">H1 — সবচেয়ে বড়</option>
-                <option value="2">H2 — মাঝারি</option>
-                <option value="3">H3 — ছোট</option>
+            <label className="block text-sm">{dict.commerce.level}<select className="input mt-1" value={String(d.level ?? 2)} onChange={(e) => patchBlockData(idx, { level: Number(e.target.value) })}>
+                <option value="1">{dict.commerce.h1Biggest}</option>
+                <option value="2">{dict.commerce.h2Medium}</option>
+                <option value="3">{dict.commerce.h3Small}</option>
               </select>
             </label>
           </div>
         );
       case "paragraph":
         return (
-          <label className="block text-sm">লেখা
-            <textarea className="input mt-1" rows={4} value={d.text ?? ""} onChange={(e) => patchBlockData(idx, { text: e.target.value })} placeholder="অনুচ্ছেদের লেখা…" />
+          <label className="block text-sm">{dict.commerce.text}<textarea className="input mt-1" rows={4} value={d.text ?? ""} onChange={(e) => patchBlockData(idx, { text: e.target.value })} placeholder={dict.commerce.paragraphText} />
           </label>
         );
       case "list": {
         const items: string[] = Array.isArray(d.items) ? d.items : [];
         return (
-          <label className="block text-sm">আইটেমসমূহ (প্রতি লাইনে একটি)
-            <textarea className="input mt-1" rows={4} value={items.join("\n")}
+          <label className="block text-sm">{dict.commerce.itemsOnePerLine}<textarea className="input mt-1" rows={4} value={items.join("\n")}
               onChange={(e) => patchBlockData(idx, { items: e.target.value.split("\n") })}
-              placeholder={"প্রথম আইটেম\nদ্বিতীয় আইটেম"} />
+              placeholder={dict.commerce.firstItemSecondItem} />
           </label>
         );
       }
@@ -127,47 +125,44 @@ export function BlocksEditor({
           <div className="space-y-2">
             {items.map((it, i) => (
               <div key={i} className="flex flex-wrap items-start gap-2">
-                <input className="input flex-1" placeholder="প্রশ্ন" value={it.q ?? ""} onChange={(e) => {
+                <input className="input flex-1" placeholder={dict.commerce.question} value={it.q ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, q: e.target.value } : x));
                   patchBlockData(idx, { items: next });
                 }} />
-                <input className="input flex-[2]" placeholder="উত্তর" value={it.a ?? ""} onChange={(e) => {
+                <input className="input flex-[2]" placeholder={dict.commerce.answer} value={it.a ?? ""} onChange={(e) => {
                   const next = items.map((x, j) => (j === i ? { ...x, a: e.target.value } : x));
                   patchBlockData(idx, { items: next });
                 }} />
                 <button type="button" className="rounded-lg border px-2 py-2 text-xs font-semibold text-rose-600"
-                  onClick={() => patchBlockData(idx, { items: items.filter((_, j) => j !== i) })}>মুছুন</button>
+                  onClick={() => patchBlockData(idx, { items: items.filter((_, j) => j !== i) })}>{dict.commerce.delete}</button>
               </div>
             ))}
             <button type="button" className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
               onClick={() => patchBlockData(idx, { items: [...items, { q: "", a: "" }] })}>
-              + প্রশ্নোত্তর যোগ করুন
-            </button>
+              {dict.commerce.addQA}</button>
           </div>
         );
       }
       case "image":
         return (
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">ছবির URL
-              <input className="input mt-1" value={d.url ?? ""} onChange={(e) => patchBlockData(idx, { url: e.target.value })} placeholder="https://…" />
+            <label className="block text-sm">{dict.commerce.imageURL}<input className="input mt-1" value={d.url ?? ""} onChange={(e) => patchBlockData(idx, { url: e.target.value })} placeholder="https://…" />
             </label>
-            <label className="block text-sm">বিকল্প লেখা (alt)
-              <input className="input mt-1" value={d.alt ?? ""} onChange={(e) => patchBlockData(idx, { alt: e.target.value })} placeholder="ছবির বর্ণনা" />
+            <label className="block text-sm">{dict.commerce.altText}<input className="input mt-1" value={d.alt ?? ""} onChange={(e) => patchBlockData(idx, { alt: e.target.value })} placeholder={dict.commerce.imageDescription} />
             </label>
           </div>
         );
       case "contact_info":
-        return <p className="text-xs text-slate-500">দোকানের যোগাযোগের তথ্য থেকে নিজে থেকে দেখানো হবে — এখানে আলাদা করে লেখার কিছু নেই।</p>;
+        return <p className="text-xs text-slate-500">{dict.commerce.willBeShownAutomaticallyFrom}</p>;
       default:
-        return <p className="text-xs text-slate-400">অজানা ব্লক ধরন: {block.type}</p>;
+        return <p className="text-xs text-slate-400">{dict.commerce.unknownBlockType}{block.type}</p>;
     }
   }
 
   return (
     <div className="space-y-3">
       {blocks.length === 0 ? (
-        <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">এখনো কোনো ব্লক নেই — নিচ থেকে যোগ করুন।</p>
+        <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">{dict.commerce.noBlocksYetAddFrom}</p>
       ) : blocks.map((b, idx) => (
         <div key={idx}
           draggable
@@ -179,24 +174,24 @@ export function BlocksEditor({
           className={`rounded-xl border p-4 ${dragIdx === idx ? "opacity-50" : "bg-white"} ${dragOverIdx === idx && dragIdx !== null && dragIdx !== idx ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300" : ""}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <span className="cursor-grab select-none text-slate-400" title="টেনে সাজান" aria-label="টেনে সাজান">⠿</span>
-              {BLOCK_LABEL[b.type] ?? b.type}
+              <span className="cursor-grab select-none text-slate-400" title={dict.commerce.dragToReorder} aria-label={dict.commerce.dragToReorder}>⠿</span>
+              {BLOCK_LABEL[b.type] ? dict.commerce[BLOCK_LABEL[b.type] as keyof typeof dict.commerce] : b.type}
             </div>
             <div className="flex gap-1.5">
-              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === 0} onClick={() => moveBlock(idx, -1)}>↑ উপরে</button>
-              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === blocks.length - 1} onClick={() => moveBlock(idx, 1)}>↓ নিচে</button>
-              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600" onClick={() => deleteBlock(idx)}>মুছুন</button>
+              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === 0} onClick={() => moveBlock(idx, -1)}>{dict.commerce.up}</button>
+              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold disabled:opacity-40" disabled={idx === blocks.length - 1} onClick={() => moveBlock(idx, 1)}>{dict.commerce.down}</button>
+              <button type="button" className="rounded-lg border bg-white px-2 py-1 text-xs font-semibold text-rose-600" onClick={() => deleteBlock(idx)}>{dict.commerce.delete}</button>
             </div>
           </div>
           <div className="mt-3">{blockFields(b, idx)}</div>
         </div>
       ))}
       <div>
-        <div className="text-sm font-medium">ব্লক যোগ করুন</div>
+        <div className="text-sm font-medium">{dict.commerce.addBlock}</div>
         <div className="mt-2 flex flex-wrap gap-2">
           {BLOCK_TYPES.map((t) => (
             <button key={t} type="button" onClick={() => addBlock(t)} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold">
-              + {BLOCK_LABEL[t]}
+              + {dict.commerce[BLOCK_LABEL[t] as keyof typeof dict.commerce]}
             </button>
           ))}
         </div>

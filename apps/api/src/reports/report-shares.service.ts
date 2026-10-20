@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnalyticsService } from "../analytics/analytics.service";
 import { ExecutiveService } from "./executive.service";
 import { CampaignsService } from "../campaigns/campaigns.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 @Injectable()
 export class ReportSharesService {
@@ -18,17 +19,17 @@ export class ReportSharesService {
 
   async create(organizationId: string, actorId: string, dto: { title: string; days?: number; expiresInDays?: number; kind?: string; planId?: string }) {
     const days = dto.days ?? 30;
-    if (![7, 14, 30, 60, 90].includes(days)) throw new BadRequestException("days must be one of 7, 14, 30, 60, 90");
+    if (![7, 14, 30, 60, 90].includes(days)) throw badRequest("reports.daysMustBeOneOf7");
     const kind = dto.kind ?? "overview";
-    if (!["overview", "executive", "campaign"].includes(kind)) throw new BadRequestException("kind must be overview, executive or campaign");
+    if (!["overview", "executive", "campaign"].includes(kind)) throw badRequest("reports.kindMustBeOverviewExecutiveOr");
     // Frontier NB8 / CN18: a campaign share names ONE
     // plan of this org (validated here, at creation —
     // a token must never resolve to another org's plan).
     let planId: string | null = null;
     if (kind === "campaign") {
-      if (!dto.planId) throw new BadRequestException("A campaign report share needs a planId");
+      if (!dto.planId) throw badRequest("reports.aCampaignReportShareNeedsA");
       const plan = await (this.prisma as any).campaignPlan?.findFirst?.({ where: { id: dto.planId, organizationId } }).catch(() => null);
-      if (!plan) throw new BadRequestException("Campaign plan not found in this organization");
+      if (!plan) throw badRequest("reports.campaignPlanNotFoundInThis");
       planId = dto.planId;
     }
     const expiresInDays = Math.min(365, Math.max(1, dto.expiresInDays ?? 30));
@@ -51,7 +52,7 @@ export class ReportSharesService {
    * overview share's.
    */
   private async publicExecutive(share: any) {
-    if (!this.executiveSvc) throw new NotFoundException("This report link is invalid");
+    if (!this.executiveSvc) throw notFound("reports.thisReportLinkIsInvalid");
     const to = new Date(); to.setUTCHours(0, 0, 0, 0);
     const from = new Date(to.getTime() - (share.days - 1) * 86400000);
     const exec = await this.executiveSvc.executive(share.organizationId, from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
@@ -89,7 +90,7 @@ export class ReportSharesService {
    * row supplies only the title and the window.
    */
   private async publicCampaign(share: any) {
-    if (!this.campaignsSvc || !share.planId) throw new NotFoundException("This report link is invalid");
+    if (!this.campaignsSvc || !share.planId) throw notFound("reports.thisReportLinkIsInvalid");
     const payload = await this.campaignsSvc.publicCampaignReport(share.organizationId, share.planId, share.days);
     return { ...payload, title: share.title };
   }
@@ -100,7 +101,7 @@ export class ReportSharesService {
 
   async revoke(organizationId: string, id: string) {
     const share = await (this.prisma as any).reportShare.findFirst({ where: { id, organizationId } });
-    if (!share) throw new NotFoundException("Share link not found");
+    if (!share) throw notFound("reports.shareLinkNotFound");
     await (this.prisma as any).reportShare.delete({ where: { id } });
     return { deleted: true };
   }
@@ -109,8 +110,8 @@ export class ReportSharesService {
    * Deliberately excludes COGS, profit and every internal field. */
   async publicReport(token: string) {
     const share = await (this.prisma as any).reportShare.findUnique({ where: { token } });
-    if (!share) throw new NotFoundException("This report link is invalid");
-    if (new Date(share.expiresAt).getTime() < Date.now()) throw new NotFoundException("This report link has expired");
+    if (!share) throw notFound("reports.thisReportLinkIsInvalid");
+    if (new Date(share.expiresAt).getTime() < Date.now()) throw notFound("reports.thisReportLinkHasExpired");
     if (share.kind === "executive") return this.publicExecutive(share);
     if (share.kind === "campaign") return this.publicCampaign(share);
     const to = new Date(); to.setUTCHours(0, 0, 0, 0);

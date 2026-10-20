@@ -1,4 +1,5 @@
 import * as ExcelJS from "exceljs";
+import { badRequest } from "../i18n";
 import { minorToMajor, toCsv } from "../imports/csv";
 
 /**
@@ -42,11 +43,11 @@ export function parseFinanceRange(from?: string, to?: string, now: Date = new Da
   const toDate = new Date(`${t}T23:59:59.999+06:00`);
   // Reject impossible dates (2026-02-31 rolls over — the key
   // round-trip catches it).
-  if (Number.isNaN(fromDate.getTime()) || dhakaDateKey(fromDate) !== f) throw new Error("শুরুর তারিখটি সঠিক নয়");
-  if (Number.isNaN(toDate.getTime()) || dhakaDateKey(toDate) !== t) throw new Error("শেষের তারিখটি সঠিক নয়");
-  if (fromDate.getTime() > toDate.getTime()) throw new Error("শুরুর তারিখ শেষের তারিখের পরে হতে পারে না");
+  if (Number.isNaN(fromDate.getTime()) || dhakaDateKey(fromDate) !== f) throw badRequest("finance.range.startDateInvalid");
+  if (Number.isNaN(toDate.getTime()) || dhakaDateKey(toDate) !== t) throw badRequest("finance.range.endDateInvalid");
+  if (fromDate.getTime() > toDate.getTime()) throw badRequest("finance.range.startAfterEnd");
   const spanDays = Math.round((toDate.getTime() - fromDate.getTime()) / 86400_000);
-  if (spanDays > 366) throw new Error("একবারে সর্বোচ্চ ৩৬৬ দিনের রিপোর্ট দেখা যাবে");
+  if (spanDays > 366) throw badRequest("finance.range.tooLong");
   return { from: f, to: t, fromDate, toDate };
 }
 

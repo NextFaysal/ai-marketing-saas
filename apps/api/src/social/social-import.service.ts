@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { lookup } from "node:dns/promises";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -7,6 +7,7 @@ import { MediaStore } from "../inbox/media-store";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { storedAssetPublicUrl } from "../storage/media-url";
 import { SOCIAL_MEDIA_MAX_BYTES, socialVideoMaxBytes } from "./social.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** One fetch call (the real implementation is the global fetch). */
 export type ImportFetchFn = (url: string, init?: any) => Promise<any>;
@@ -187,11 +188,11 @@ export class SocialImportService {
     const product = await (this.prisma as any).product.findFirst({
       where: { id: productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("social.productNotFoundInThisOrganization");
 
     const imageUrl = typeof product.imageUrl === "string" ? product.imageUrl.trim() : "";
     if (!imageUrl) {
-      throw new BadRequestException("এই Product-এর কোনো ছবির URL নেই — আগে Product-এ ছবির URL (imageUrl) যোগ করুন, তারপর import করুন।");
+      throw badRequest("social.thisProductHasNoImageUrl");
     }
 
     // Dedupe FIRST: the same source URL in the same org is the
@@ -208,7 +209,7 @@ export class SocialImportService {
     const detected = detectMediaKind(bytes);
     if (!detected || detected.kind !== "image") {
       const what = detected ? `${detected.contentType}` : "অচেনা ফরম্যাটের ডেটা";
-      throw new BadRequestException(`এই URL থেকে ছবি পাওয়া যায়নি — পাওয়া গেছে ${what}। শুধু PNG/JPEG/GIF/WebP ছবি import করা যায়।`);
+      throw badRequest("social.noImageWasFoundAtThis", { what: what });
     }
 
     const assetId = randomUUID();
@@ -247,33 +248,33 @@ export class SocialImportService {
     try {
       url = new URL(rawUrl);
     } catch {
-      throw new BadRequestException(`ছবির URLটি সঠিক URL নয়: ${rawUrl}`);
+      throw badRequest("social.theImageUrlIsNotA", { rawUrl: rawUrl });
     }
     if (url.protocol !== "https:") {
-      throw new BadRequestException("ছবির URL অবশ্যই https:// দিয়ে শুরু হতে হবে — http বা অন্য protocol থেকে import করা যাবে না।");
+      throw badRequest("social.theImageUrlMustStartWith");
     }
     if (url.username || url.password) {
-      throw new BadRequestException("ছবির URL-এ username/password থাকা যাবে না।");
+      throw badRequest("social.theImageUrlCannotContainA");
     }
     if (url.port && url.port !== "443") {
-      throw new BadRequestException(`ছবির URL-এ শুধু port 443 চলবে (দেওয়া হয়েছে ${url.port})।`);
+      throw badRequest("social.onlyPort443WorksInThe", { urlPort: url.port });
     }
     const hostname = url.hostname.replace(/^\[/, "").replace(/\]$/, "");
     if (!hostname) {
-      throw new BadRequestException("ছবির URL-এ host পাওয়া যায়নি।");
+      throw badRequest("social.noHostWasFoundInThe");
     }
     let addresses: string[];
     try {
       addresses = await this.resolveHost(hostname);
     } catch (e) {
-      throw new BadRequestException(`ছবির URL-এর host (${hostname}) খুঁজে পাওয়া যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+      throw badRequest("social.theImageUrlSHostCould", { hostname: hostname, p2: e instanceof Error ? e.message : String(e) });
     }
     if (!Array.isArray(addresses) || addresses.length === 0) {
-      throw new BadRequestException(`ছবির URL-এর host (${hostname})-এর কোনো ঠিকানা পাওয়া যায়নি।`);
+      throw badRequest("social.noAddressWasFoundForThe", { hostname: hostname });
     }
     for (const address of addresses) {
       if (!isPublicAddress(address)) {
-        throw new BadRequestException("ছবির URL একটি private/internal ঠিকানায় নির্দেশ করে — নিরাপত্তার কারণে সেখান থেকে ছবি import করা যাবে না।");
+        throw badRequest("social.theImageUrlPointsToA");
       }
     }
     return url;
@@ -333,7 +334,7 @@ export class SocialImportService {
         try {
           res = await this.fetchFn(url.toString(), { redirect: "manual", signal: controller.signal });
         } catch (e) {
-          throw new BadRequestException(`URL থেকে ফাইল আনা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+          throw badRequest("social.theFileCouldNotBeFetched", { p1: e instanceof Error ? e.message : String(e) });
         }
         const status = Number(res?.status ?? 0);
         if (status >= 300 && status < 400) {
@@ -341,10 +342,10 @@ export class SocialImportService {
             ? res.headers.get("location")
             : (res?.headers?.location ?? res?.headers?.Location ?? null);
           if (!location) {
-            throw new BadRequestException(`URL redirect করেছে (HTTP ${status}) কিন্তু কোথায় যাবে তা জানায়নি — import করা গেল না।`);
+            throw badRequest("social.theUrlRedirectedHttpButDid", { status: status });
           }
           if (hop === MAX_REDIRECT_HOPS) {
-            throw new BadRequestException("URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
+            throw badRequest("social.theUrlRedirectedTooManyTimes");
           }
           // The next hop is validated from scratch at the top of
           // the loop — a redirect to a private target is refused
@@ -353,13 +354,13 @@ export class SocialImportService {
           continue;
         }
         if (status < 200 || status >= 300) {
-          throw new BadRequestException(`URL থেকে সাড়া পাওয়া যায়নি (HTTP ${status})।`);
+          throw badRequest("social.noResponseWasReceivedFromThe", { status: status });
         }
         return await this.readBodyCapped(res, maxBytes, overCapMessage);
       }
       // Unreachable (the loop returns or throws), but keeps the
       // compiler honest about the return path.
-      throw new BadRequestException("URL অনেক বেশিবার redirect করেছে — import করা গেল না।");
+      throw badRequest("social.theUrlRedirectedTooManyTimes");
     } finally {
       clearTimeout(timer);
     }
@@ -418,7 +419,7 @@ export class SocialImportService {
     input: { fileUrl: string; name: string; origin: string; sourceUrl: string; attribution?: string | null },
   ) {
     const fileUrl = typeof input.fileUrl === "string" ? input.fileUrl.trim() : "";
-    if (!fileUrl) throw new BadRequestException("Import করার ফাইলের URL পাওয়া যায়নি।");
+    if (!fileUrl) throw badRequest("social.importUrl");
     const sourceUrl = typeof input.sourceUrl === "string" ? input.sourceUrl.trim() : "";
     if (sourceUrl) {
       const existing = await (this.prisma as any).mediaAsset.findFirst({
@@ -434,10 +435,10 @@ export class SocialImportService {
     const detected = detectMediaKind(bytes);
     if (!detected || (detected.kind !== "image" && detected.kind !== "video")) {
       const what = detected ? `${detected.contentType}` : "অচেনা ফরম্যাটের ডেটা";
-      throw new BadRequestException(`এই URL থেকে ছবি/ভিডিও পাওয়া যায়নি — পাওয়া গেছে ${what}।`);
+      throw badRequest("social.noImageVideoWasFoundAt", { what: what });
     }
     if (detected.kind === "image" && bytes.length > SOCIAL_MEDIA_MAX_BYTES) {
-      throw new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ২.১ MB পর্যন্ত ছবি import করা যাবে।");
+      throw badRequest("social.theImageIsTooLargeImages");
     }
 
     const assetId = randomUUID();

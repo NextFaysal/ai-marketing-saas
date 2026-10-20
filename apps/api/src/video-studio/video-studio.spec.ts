@@ -203,10 +203,10 @@ describe("NF2 projects — create + org isolation", () => {
   it("org B cannot create for, read, render or list org A's project/product (404 everywhere)", async () => {
     const s = await setup();
     await expect(s.service.createProject("org-2", "staff-9", { productId: "p1" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "videoStudio.productNotFoundInThisOrganization" });
     const created: any = await s.service.createProject("org-1", "staff-1", { productId: "p1" });
-    await expect(s.service.getProject("org-2", created.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.renderProject("org-2", created.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s.service.getProject("org-2", created.id)).rejects.toMatchObject({ code: "videoStudio.theVideoProjectWasNotFound" });
+    await expect(s.service.renderProject("org-2", created.id)).rejects.toMatchObject({ code: "videoStudio.theVideoProjectWasNotFound" });
     const listB = await s.service.listProjects("org-2");
     expect(listB).toHaveLength(0);
     // The foreign render attempt never touched the row.
@@ -333,7 +333,7 @@ describe("NF2 publish — SocialService.createPost only, exactly once", () => {
     const created: any = await s.service.createProject("org-1", "staff-1", { productId: "p1" });
     await s.service.renderProject("org-1", created.id);
     await expect(s.service.publishProject("org-2", "staff-9", created.id, {}))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "videoStudio.theVideoProjectWasNotFound" });
     expect(s.social.createPost).not.toHaveBeenCalled();
   });
 });

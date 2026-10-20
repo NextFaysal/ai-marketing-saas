@@ -58,7 +58,7 @@ describe("Phase K - breakdowns v2 validation", () => {
     const svc = new AdsService(prisma as any, audit);
     await expect(svc.getBreakdowns("org-1", "acc-1", "device", 30)).resolves.toEqual([]);
     await expect(svc.getBreakdowns("org-1", "acc-1", "hourly", 30)).resolves.toEqual([]);
-    await expect(svc.getBreakdowns("org-1", "acc-1", "bogus", 30)).rejects.toThrow(/dimension must be/);
+    await expect(svc.getBreakdowns("org-1", "acc-1", "bogus", 30)).rejects.toMatchObject({ code: "ads.dimensionMustBeAgeGenderPlacement" });
   });
 });
 

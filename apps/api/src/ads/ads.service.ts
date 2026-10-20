@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { createAgentNotification } from "../common/agent-notify";
@@ -17,19 +17,20 @@ import { parseMoneyToMinor } from "@repo/contracts";
 import { metaStatusInfo, googleStatusInfo, tiktokStatusInfo, bucketLabelBn, PlatformStatusInfo } from "./platform-status";
 import { computeSpendWatch } from "./spend-watch";
 import { computeAdAccountHealth } from "./ad-health";
+import { ApiException, badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 export function utcDate(dateOnly: string): Date {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) throw new BadRequestException(`Invalid date: ${dateOnly} (expected YYYY-MM-DD)`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) throw badRequest("ads.invalidDateExpectedYyyyMmDd", { dateOnly: dateOnly });
   return new Date(`${dateOnly}T00:00:00.000Z`);
 }
 function money(value: string | undefined, field: string): bigint {
   if (!value) return 0n;
-  try { return parseMoneyToMinor(value); } catch { throw new BadRequestException(`Invalid ${field}: ${value}`); }
+  try { return parseMoneyToMinor(value); } catch { throw badRequest("ads.invalid", { field: field, value: value }); }
 }
 function intField(value: string | undefined): number {
   if (!value) return 0;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) throw new BadRequestException(`Invalid number: ${value}`);
+  if (!Number.isInteger(n) || n < 0) throw badRequest("ads.invalidNumber", { value: value });
   return n;
 }
 
@@ -203,7 +204,7 @@ export class AdsService {
 
   async getAccount(organizationId: string, accountId: string) {
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: accountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found in this organization");
+    if (!account) throw notFound("ads.adAccountNotFoundInThis");
     return account;
   }
 
@@ -221,7 +222,7 @@ export class AdsService {
    */
   private assertSyncEnabled(account: any): void {
     if (account?.syncDisabled) {
-      throw new BadRequestException("এই Ad Account-এর Sync বন্ধ রাখা হয়েছে (Sync Disabled) — Sync চালাতে আগে Account কার্ড থেকে Sync চালু করুন।");
+      throw badRequest("ads.thisAdAccountSSyncIs");
     }
   }
 
@@ -243,7 +244,7 @@ export class AdsService {
     if (dto.label !== undefined) {
       const trimmed = dto.label === null ? "" : String(dto.label).trim();
       if (trimmed.length > 60) {
-        throw new BadRequestException("লেবেল সর্বোচ্চ ৬০ অক্ষরের হতে পারবে।");
+        throw badRequest("ads.theLabelCanBeAtMost");
       }
       data.label = trimmed === "" ? null : trimmed;
     }
@@ -291,7 +292,7 @@ export class AdsService {
    */
   private async assertAdAccountAccess(organizationId: string, actorId: string, accountId: string) {
     if (await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, accountId)) {
-      throw new ForbiddenException("এই বিজ্ঞাপন অ্যাকাউন্টের ডেটা Sync করার অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+      throw forbidden("ads.youHaveNotBeenGivenPermission");
     }
   }
 
@@ -393,10 +394,10 @@ export class AdsService {
     try {
       await client.verifyToken();
     } catch (e) {
-      throw new BadRequestException(`Meta token verification failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.metaTokenVerificationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const discovered = await client.listAdAccounts().catch((e) => {
-      throw new BadRequestException(`Could not list Meta ad accounts: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.couldNotListMetaAdAccounts", { p1: e instanceof Error ? e.message : "unknown error" });
     });
     const existing = await (this.prisma as any).adAccount.findMany({
       where: { organizationId, platform: "meta" },
@@ -494,7 +495,7 @@ export class AdsService {
       const list = await client.listAdAccounts();
       const found = list.find((a) => a.externalId === account.externalId);
       if (!found) {
-        throw new BadRequestException(`Meta এই Token দিয়ে “${account.externalId}” Accountটি আর দেখাচ্ছে না — সম্ভবত Token-এর Access তালিকা থেকে Accountটি সরে গেছে। পুনরায় কানেক্ট করে দেখুন।`);
+        throw badRequest("ads.metaNoLongerShowsTheAccount", { accountExternalId: account.externalId });
       }
       return metaStatusInfo(found.status, found.timezone);
     }
@@ -510,7 +511,7 @@ export class AdsService {
       const advertiser = await client.verifyAdvertiser(account.externalId);
       return tiktokStatusInfo(advertiser.status, advertiser.timezone);
     }
-    throw new BadRequestException(`এই প্ল্যাটফর্মের (${account.platform}) স্ট্যাটাস যাচাই সমর্থিত নয়।`);
+    throw badRequest("ads.statusVerificationIsNotSupportedFor", { accountPlatform: account.platform });
   }
 
   /**
@@ -533,7 +534,7 @@ export class AdsService {
   async refreshAccountStatus(organizationId: string, actorId: string, accountId: string) {
     const account = await this.getAccount(organizationId, accountId);
     if (!account.integrationId || !account.externalId || account.sourceType !== "api") {
-      throw new BadRequestException("এই Ad Account-এর কোনো API সংযোগ নেই — প্ল্যাটফর্ম স্ট্যাটাস যাচাই করা যাবে না (CSV/Manual Account)।");
+      throw badRequest("ads.thisAdAccountHasNoApi");
     }
     // AD5: the status refresh is a platform-data sync too — a
     // sync-disabled account skips it with the same honest error
@@ -545,13 +546,13 @@ export class AdsService {
     try {
       info = await this.fetchPlatformStatus(organizationId, account);
     } catch (e) {
-      if (e instanceof BadRequestException) throw e;
+      if (e instanceof ApiException && e.getStatus() === 400) throw e;
       const message = e instanceof Error ? e.message : "unknown error";
       const integration = account.integrationId
         ? await (this.prisma as any).integration.findFirst({ where: { id: account.integrationId, organizationId } }).catch(() => null)
         : null;
       await this.markSyncFailure(integration ?? account.integrationId, message, { organizationId, account }).catch(() => undefined);
-      throw new BadRequestException(`${platformLabel} স্ট্যাটাস যাচাই ব্যর্থ: ${message}`);
+      throw badRequest("ads.statusVerificationFailed", { platformLabel: platformLabel, message: message });
     }
     const prevBucket: string | null = account.platformStatusBucket ?? null;
     const data: Record<string, unknown> = { platformStatusCheckedAt: new Date() };
@@ -612,7 +613,7 @@ export class AdsService {
         data.dailyCapMinor = null;
       } else {
         const cap = money(dto.dailyCap, "dailyCap");
-        if (cap <= 0n) throw new BadRequestException("দৈনিক ক্যাপ ০-এর বেশি হতে হবে");
+        if (cap <= 0n) throw badRequest("ads.theDailyCapMustBeMore");
         data.dailyCapMinor = cap;
       }
     }
@@ -622,7 +623,7 @@ export class AdsService {
       } else {
         const pct = Number(dto.anomalyPct);
         if (!Number.isInteger(pct) || pct < 1 || pct > 1000) {
-          throw new BadRequestException("Anomaly % ১ থেকে ১০০০-এর মধ্যে পূর্ণ সংখ্যা হতে হবে");
+          throw badRequest("ads.anomalyMustBeAnIntegerBetween");
         }
         data.anomalyPct = pct;
       }
@@ -748,7 +749,7 @@ export class AdsService {
   async disconnectAccount(organizationId: string, actorId: string, accountId: string) {
     const account = await this.getAccount(organizationId, accountId);
     if (!account.integrationId) {
-      throw new BadRequestException("এই Ad Account-এর কোনো API সংযোগ নেই — বিচ্ছিন্ন করার মতো সংযোগ নেই (CSV/Manual Account)।");
+      throw badRequest("ads.thisAdAccountHasNoApi2");
     }
     const integrationId: string = account.integrationId;
     const sharing = await (this.prisma as any).adAccount.findMany({
@@ -914,7 +915,7 @@ export class AdsService {
     if (appSource === "own") {
       const own = await resolveTenantAppConfig(this.prisma as any, organizationId, "meta");
       if (!own) {
-        throw new BadRequestException("নিজের Meta অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Meta অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ হিসেবে কানেক্ট করুন।");
+        throw badRequest("ads.yourOwnMetaAppIsNot");
       }
     }
     const client = new MetaClient(dto.accessToken);
@@ -922,10 +923,10 @@ export class AdsService {
     try {
       me = await client.verifyToken();
     } catch (e) {
-      throw new BadRequestException(`Meta token verification failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.metaTokenVerificationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     let discovered = await client.listAdAccounts().catch((e) => {
-      throw new BadRequestException(`Could not list Meta ad accounts: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.couldNotListMetaAdAccounts", { p1: e instanceof Error ? e.message : "unknown error" });
     });
     // AD5 picker semantics: adAccountExternalIds ABSENT keeps the
     // legacy connect-everything behaviour, but a PRESENT selection
@@ -937,14 +938,14 @@ export class AdsService {
     // references any more, so their integrations stay alive.
     if (dto.adAccountExternalIds !== undefined) {
       if (!Array.isArray(dto.adAccountExternalIds) || dto.adAccountExternalIds.length === 0) {
-        throw new BadRequestException("কোনো Ad Account নির্বাচন করা হয়নি — অন্তত একটি Account বেছে নিন।");
+        throw badRequest("ads.noAdAccountHasBeenSelected");
       }
       discovered = discovered.filter((a) => dto.adAccountExternalIds!.includes(a.externalId));
       if (discovered.length === 0) {
-        throw new BadRequestException("নির্বাচিত Ad Accountগুলো এই Token-এর অধীনে পাওয়া যায়নি — Tokenটি ওই Accountগুলোতে Access পায় কিনা যাচাই করুন।");
+        throw badRequest("ads.theSelectedAdAccountsWereNot");
       }
     }
-    if (discovered.length === 0) throw new BadRequestException("No Meta ad accounts found for this token");
+    if (discovered.length === 0) throw badRequest("ads.noMetaAdAccountsFoundFor");
 
     const integration = await (this.prisma as any).integration.create({
       data: { organizationId, provider: "meta", status: "CONNECTED", externalAccountId: me.id, appSource },
@@ -992,13 +993,13 @@ export class AdsService {
     if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
     if (account.platform !== "meta" || !account.integrationId || !account.externalId) {
-      throw new BadRequestException("This ad account is not connected to Meta via API");
+      throw badRequest("ads.thisAdAccountIsNotConnected");
     }
     this.assertSyncEnabled(account);
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException("Meta credentials are missing; reconnect the account");
+    if (!integration?.credential) throw badRequest("ads.metaCredentialsAreMissingReconnectThe");
     const { accessToken } = decryptJson<{ accessToken: string }>(integration.credential.encryptedData);
     const until = dto.until ?? new Date().toISOString().slice(0, 10);
     const since = dto.since ?? new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -1008,7 +1009,7 @@ export class AdsService {
       rawRows = await client.getCampaignInsights(account.externalId, since, until);
     } catch (e) {
       await this.markSyncFailure(integration, e instanceof Error ? e.message : "Meta sync failed", { organizationId, account });
-      throw new BadRequestException(`Meta insights sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.metaInsightsSyncFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     let created = 0, updated = 0;
     for (const raw of rawRows) {
@@ -1065,12 +1066,12 @@ export class AdsService {
 
   private async integrationSecrets<T>(organizationId: string, account: any, providerLabel: string): Promise<T> {
     if (!account.integrationId || !account.externalId) {
-      throw new BadRequestException(`This ad account is not connected to ${providerLabel} via API`);
+      throw badRequest("ads.thisAdAccountIsNotConnected2", { providerLabel: providerLabel });
     }
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException(`${providerLabel} credentials are missing; reconnect the account`);
+    if (!integration?.credential) throw badRequest("ads.credentialsAreMissingReconnectTheAccount", { providerLabel: providerLabel });
     return decryptJson<T>(integration.credential.encryptedData);
   }
 
@@ -1085,7 +1086,7 @@ export class AdsService {
   private async metaClientFor(organizationId: string, accountId: string) {
     const account = await this.getAccount(organizationId, accountId);
     if (account.platform !== "meta" || !account.integrationId || !account.externalId) {
-      throw new BadRequestException("This ad account is not connected to Meta via API");
+      throw badRequest("ads.thisAdAccountIsNotConnected");
     }
     // AD5: ad-insights + breakdown syncs share this loader, so the
     // sync-disabled gate here covers both.
@@ -1093,7 +1094,7 @@ export class AdsService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException("Meta credentials are missing; reconnect the account");
+    if (!integration?.credential) throw badRequest("ads.metaCredentialsAreMissingReconnectThe");
     const { accessToken } = decryptJson<{ accessToken: string }>(integration.credential.encryptedData);
     return { account, integration, client: new MetaClient(accessToken) };
   }
@@ -1109,7 +1110,7 @@ export class AdsService {
       rawRows = await client.getAdInsights(account.externalId, since, until);
     } catch (e) {
       await this.markSyncFailure(integration, e instanceof Error ? e.message : "Meta sync failed", { organizationId, account });
-      throw new BadRequestException(`Meta ad-insights sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.metaAdInsightsSyncFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     let created = 0, updated = 0;
     for (const raw of rawRows) {
@@ -1160,7 +1161,7 @@ export class AdsService {
         rawRows = await client.getBreakdownInsights(account.externalId, since, until, job.breakdowns);
       } catch (e) {
         await this.markSyncFailure(integration, e instanceof Error ? e.message : "Meta sync failed", { organizationId, account });
-        throw new BadRequestException(`Meta breakdown sync (${job.dimension}) failed: ${e instanceof Error ? e.message : "unknown error"}`);
+        throw badRequest("ads.metaBreakdownSyncFailed", { jobDimension: job.dimension, p2: e instanceof Error ? e.message : "unknown error" });
       }
       for (const raw of rawRows) {
         const n = normalizeMetaInsight(raw);
@@ -1307,7 +1308,7 @@ export class AdsService {
 
   async getBreakdowns(organizationId: string, accountId: string, dimension: string, days = 30) {
     const account = await this.getAccount(organizationId, accountId);
-    if (!["age_gender", "placement", "device", "region", "hourly"].includes(dimension)) throw new BadRequestException("dimension must be age_gender, placement, device, region or hourly");
+    if (!["age_gender", "placement", "device", "region", "hourly"].includes(dimension)) throw badRequest("ads.dimensionMustBeAgeGenderPlacement");
     const since = new Date(Date.now() - (days - 1) * 86400000);
     since.setUTCHours(0, 0, 0, 0);
     const rows = await (this.prisma as any).dailyAdBreakdown.findMany({
@@ -1338,7 +1339,7 @@ export class AdsService {
     try {
       customer = await client.verifyCustomer(dto.customerId);
     } catch (e) {
-      throw new BadRequestException(`Google Ads verification failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.googleAdsVerificationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const integration = await (this.prisma as any).integration.create({
       data: { organizationId, provider: "google_ads", status: "CONNECTED", externalAccountId: customer.id },
@@ -1376,7 +1377,7 @@ export class AdsService {
     // path passes fromJob and is not (see syncInsightsJob).
     if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
-    if (account.platform !== "google") throw new BadRequestException("This is not a Google Ads account");
+    if (account.platform !== "google") throw badRequest("ads.thisIsNotAGoogleAds");
     this.assertSyncEnabled(account);
     const integration = account.integrationId
       ? await (this.prisma as any).integration.findFirst({ where: { id: account.integrationId, organizationId } }).catch(() => null)
@@ -1389,7 +1390,7 @@ export class AdsService {
       rows = await client.getCampaignDaily(account.externalId, since, until);
     } catch (e) {
       await this.markSyncFailure(integration ?? account.integrationId, e instanceof Error ? e.message : "Google sync failed", { organizationId, account });
-      throw new BadRequestException(`Google Ads sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.googleAdsSyncFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const { created, updated } = await this.upsertDailyRows(organizationId, account, "google", rows);
     await this.markSyncSuccess(account.integrationId);
@@ -1403,7 +1404,7 @@ export class AdsService {
     try {
       advertiser = await client.verifyAdvertiser(dto.advertiserId);
     } catch (e) {
-      throw new BadRequestException(`TikTok verification failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.tiktokVerificationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const integration = await (this.prisma as any).integration.create({
       data: { organizationId, provider: "tiktok", status: "CONNECTED", externalAccountId: advertiser.id },
@@ -1441,7 +1442,7 @@ export class AdsService {
     // path passes fromJob and is not (see syncInsightsJob).
     if (!opts?.fromJob) await this.assertAdAccountAccess(organizationId, actorId, accountId);
     const account = await this.getAccount(organizationId, accountId);
-    if (account.platform !== "tiktok") throw new BadRequestException("This is not a TikTok Ads account");
+    if (account.platform !== "tiktok") throw badRequest("ads.thisIsNotATiktokAds");
     this.assertSyncEnabled(account);
     const integration = account.integrationId
       ? await (this.prisma as any).integration.findFirst({ where: { id: account.integrationId, organizationId } }).catch(() => null)
@@ -1454,7 +1455,7 @@ export class AdsService {
       rows = await client.getCampaignDaily(account.externalId, since, until);
     } catch (e) {
       await this.markSyncFailure(integration ?? account.integrationId, e instanceof Error ? e.message : "TikTok sync failed", { organizationId, account });
-      throw new BadRequestException(`TikTok sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("ads.tiktokSyncFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const { created, updated } = await this.upsertDailyRows(organizationId, account, "tiktok", rows);
     await this.markSyncSuccess(account.integrationId);

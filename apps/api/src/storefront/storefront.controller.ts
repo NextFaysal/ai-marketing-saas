@@ -70,6 +70,7 @@ import {
   UpdateZoneDto,
   VerifyOtpDto,
 } from "./storefront.dto";
+import { notFound } from "../i18n";
 
 function parseIntDef(v: unknown, def: number): number {
   const n = parseInt(String(v ?? ""), 10);
@@ -118,7 +119,7 @@ export class PublicShopController {
     const allowed = await this.storefront.domainAllowed(domain ?? "");
     if (allowed) return { allowed: true };
     this.logger.warn(`domain-allowed denied for domain="${domain ?? ""}"`);
-    throw new NotFoundException("ডোমেইনটি পাওয়া যায়নি");
+    throw notFound("storefront.domainNotFound");
   }
 
   @Public()

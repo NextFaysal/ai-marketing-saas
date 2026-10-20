@@ -2,6 +2,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useLocale } from "@/lib/i18n/provider";
+import { crmBn, crmEn } from "@/lib/i18n/crm";
 
 /**
  * CRM C4: shared custom-field UI. Definitions come from
@@ -81,12 +83,17 @@ export function CustomFieldsEditor({ defs, raw, onChange }: {
   );
 }
 
-const TYPE_LABEL: Record<string, string> = { text: "লেখা (text)", number: "সংখ্যা (number)", date: "তারিখ (date)", select: "তালিকা থেকে বাছাই (select)" };
+const TYPE_LABEL: Record<string, string> = { text: crmBn.typeText, number: crmBn.typeNumber, date: crmBn.typeDate, select: crmBn.typeSelect };
+export const typeLabelFor = (locale?: string): Record<string, string> => {
+  const dd = locale === "en" ? crmEn : crmBn;
+  return { text: dd.typeText, number: dd.typeNumber, date: dd.typeDate, select: dd.typeSelect };
+};
 
 /** Definition manager: list + create + archive/unarchive, for one
  * entity at a time (tab switcher). OWNER/ADMIN only on the server;
  * others see the API's 403 as an error message here. */
 export function CustomFieldsManager() {
+  const { t, locale } = useLocale();
   const [entity, setEntity] = useState<"lead" | "customer">("lead");
   const [defs, setDefs] = useState<CustomFieldDef[]>([]);
   const [form, setForm] = useState({ label: "", type: "text", options: "", required: false });
@@ -115,9 +122,9 @@ export function CustomFieldsManager() {
         }),
       });
       setForm({ label: "", type: "text", options: "", required: false });
-      setNotice("ফিল্ড তৈরি হয়েছে। key label থেকে নিজে তৈরি হয় (পরে বদলানো যায় না)।");
+      setNotice(t("crm.cfCreated"));
       await load();
-    } catch (err) { setError(err instanceof Error ? err.message : "তৈরি ব্যর্থ"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t("crm.cfCreateFailed")); }
     finally { setBusy(false); }
   }
 
@@ -131,7 +138,7 @@ export function CustomFieldsManager() {
         await apiFetch(`/organizations/${orgId}/crm/custom-fields/${d.id}/archive`, { method: "POST" });
       }
       await load();
-    } catch (err) { setError(err instanceof Error ? err.message : "ব্যর্থ"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t("crm.cfFailed")); }
   }
 
   async function toggleRequired(d: CustomFieldDef) {
@@ -140,13 +147,13 @@ export function CustomFieldsManager() {
     try {
       await apiFetch(`/organizations/${orgId}/crm/custom-fields/${d.id}`, { method: "PATCH", body: JSON.stringify({ required: !d.required }) });
       await load();
-    } catch (err) { setError(err instanceof Error ? err.message : "ব্যর্থ"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t("crm.cfFailed")); }
   }
 
   return (
     <div className="card space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-semibold">🧩 কাস্টম ফিল্ড</div>
+        <div className="font-semibold">{t("crm.cfTitle")}</div>
         <div className="flex gap-1 text-xs">
           {(["lead", "customer"] as const).map((e) => (
             <button key={e} onClick={() => setEntity(e)} className={`rounded-full px-3 py-1 font-semibold ${entity === e ? "bg-slate-900 text-white" : "bg-slate-100"}`}>
@@ -156,48 +163,47 @@ export function CustomFieldsManager() {
         </div>
       </div>
       <p className="text-xs text-slate-500">
-        নিজের ব্যবসার দরকারি তথ্যের জন্য অতিরিক্ত ফিল্ড বানান — {entity === "lead" ? "Lead" : "Customer"}-এর বিস্তারিত পেজে মান বসানো/বদলানো যাবে,
-        CSV এক্সপোর্টেও কলাম হিসেবে আসবে। Archive করলে ফিল্ডটি লুকিয়ে থাকবে কিন্তু আগের মান মুছবে না। শুধু OWNER/ADMIN ফিল্ড ম্যানেজ করতে পারেন।
+{entity === "lead" ? t("crm.cfIntroLead") : t("crm.cfIntroCustomer")}
       </p>
       {error ? <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-2 text-xs text-green-700">{notice}</p> : null}
       <div className="space-y-1.5">
-        {defs.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো কাস্টম ফিল্ড নেই।</p> : defs.map((d) => (
+        {defs.length === 0 ? <p className="text-sm text-slate-400">{t("crm.cfEmpty")}</p> : defs.map((d) => (
           <div key={d.id} className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm ${d.archivedAt ? "opacity-50" : ""}`}>
             <span className="font-medium">{d.label}</span>
             <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px]">{d.key}</span>
-            <span className="text-xs text-slate-500">{TYPE_LABEL[d.type] ?? d.type}</span>
+            <span className="text-xs text-slate-500">{typeLabelFor(locale)[d.type] ?? d.type}</span>
             {d.type === "select" && d.options ? <span className="text-xs text-slate-400">{d.options.join(" / ")}</span> : null}
-            {d.archivedAt ? <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px]">আর্কাইভ</span> : null}
+            {d.archivedAt ? <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px]">{t("crm.cfArchived")}</span> : null}
             <span className="ml-auto flex gap-1.5">
-              <button className="rounded border px-2 py-0.5 text-xs" onClick={() => toggleRequired(d)}>{d.required ? "আবশ্যক ✓" : "ঐচ্ছিক"}</button>
-              <button className="rounded border px-2 py-0.5 text-xs" onClick={() => toggleArchive(d)}>{d.archivedAt ? "ফিরিয়ে আনুন" : "আর্কাইভ"}</button>
+              <button className="rounded border px-2 py-0.5 text-xs" onClick={() => toggleRequired(d)}>{d.required ? t("crm.cfRequired") : t("crm.cfOptional")}</button>
+              <button className="rounded border px-2 py-0.5 text-xs" onClick={() => toggleArchive(d)}>{d.archivedAt ? t("crm.cfRestore") : t("crm.cfArchive")}</button>
             </span>
           </div>
         ))}
       </div>
       <form onSubmit={createDef} className="grid gap-3 border-t pt-3 md:grid-cols-2">
-        <label className="block text-sm">নতুন ফিল্ডের নাম (label)
-          <input className="input mt-1" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="যেমন: জেলা" required />
+        <label className="block text-sm">{t("crm.cfNewLabel")}
+          <input className="input mt-1" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder={t("crm.cfLabelPlaceholder")} required />
         </label>
-        <label className="block text-sm">ধরন
+        <label className="block text-sm">{t("crm.cfTypeLabel")}
           <select className="input mt-1" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-            <option value="text">লেখা (text)</option>
-            <option value="number">সংখ্যা (number)</option>
-            <option value="date">তারিখ (date)</option>
-            <option value="select">তালিকা থেকে বাছাই (select)</option>
+            <option value="text">{t("crm.typeText")}</option>
+            <option value="number">{t("crm.typeNumber")}</option>
+            <option value="date">{t("crm.typeDate")}</option>
+            <option value="select">{t("crm.typeSelect")}</option>
           </select>
         </label>
         {form.type === "select" ? (
-          <label className="block text-sm md:col-span-2">অপশন (প্রতি লাইনে একটি)
-            <textarea className="input mt-1" rows={3} value={form.options} onChange={(e) => setForm({ ...form, options: e.target.value })} placeholder={"ঢাকা\nখুলনা\nচট্টগ্রাম"} />
+          <label className="block text-sm md:col-span-2">{t("crm.cfOptionsLabel")}
+            <textarea className="input mt-1" rows={3} value={form.options} onChange={(e) => setForm({ ...form, options: e.target.value })} placeholder={t("crm.cfOptionsPlaceholder")} />
           </label>
         ) : null}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.required} onChange={(e) => setForm({ ...form, required: e.target.checked })} />
-          নতুন {entity === "lead" ? "Lead" : "Customer"} তৈরির সময় আবশ্যক {entity === "customer" ? "(Customer sync থেকে তৈরি হয় — আবশ্যক শুধু তথ্যের জন্য)" : ""}
+{entity === "lead" ? t("crm.cfRequiredLead") : t("crm.cfRequiredCustomer")}
         </label>
-        <div><button className="btn-primary" disabled={busy}>{busy ? "তৈরি হচ্ছে..." : "ফিল্ড যোগ করুন"}</button></div>
+        <div><button className="btn-primary" disabled={busy}>{busy ? t("crm.cfCreating") : t("crm.cfAdd")}</button></div>
       </form>
     </div>
   );

@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { badRequest } from "../i18n";
 
 /**
  * OU11 — the LEGAL GATE for payout automation.
@@ -90,7 +91,7 @@ export function payoutLegalGateState(row: any | null | undefined): PayoutLegalGa
  * recorded but the automation switch is off. */
 export async function assertPayoutAutomationAllowed(client: any): Promise<PayoutLegalGateState> {
   const state = payoutLegalGateState(await readPayoutLegalGate(client));
-  if (!state.recorded) throw new BadRequestException(PAYOUT_GATE_NO_CONFIRMATION_MSG);
-  if (!state.automationEnabled) throw new BadRequestException(PAYOUT_GATE_AUTOMATION_OFF_MSG);
+  if (!state.recorded) throw badRequest("connections.payoutGateNoConfirmation");
+  if (!state.automationEnabled) throw badRequest("connections.payoutGateAutomationOff");
   return state;
 }

@@ -308,10 +308,10 @@ describe("GB8 GC20 expenses — CRUD, validation, monthly summary", () => {
     const created = await finance.createExpense("org-1", "u-1", { category: "packaging", amountMinor: "25000", spentAt: "2026-10-21", paymentMethod: "cash" });
     expect(created).toMatchObject({ category: "packaging", amountMinor: "25000", spentAt: "2026-10-21" });
     expect(audit.calls.some((c: any) => c.action === "finance.expense_created")).toBe(true);
-    await expect(finance.createExpense("org-1", "u-1", { category: "bogus", amountMinor: "100", spentAt: "2026-10-21" })).rejects.toThrow("তালিকা থেকে");
-    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "0", spentAt: "2026-10-21" })).rejects.toThrow("শূন্যের বেশি");
-    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "100", spentAt: "2026-02-31" })).rejects.toThrow("সঠিক নয়");
-    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "100", spentAt: "2026-10-21", receiptUrl: "ftp://x" })).rejects.toThrow("http(s)");
+    await expect(finance.createExpense("org-1", "u-1", { category: "bogus", amountMinor: "100", spentAt: "2026-10-21" })).rejects.toMatchObject({ code: "finance.expense.categoryFromList" });
+    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "0", spentAt: "2026-10-21" })).rejects.toMatchObject({ code: "finance.expense.amountMustBePositive" });
+    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "100", spentAt: "2026-02-31" })).rejects.toMatchObject({ code: "finance.expense.dateInvalid" });
+    await expect(finance.createExpense("org-1", "u-1", { category: "rent", amountMinor: "100", spentAt: "2026-10-21", receiptUrl: "ftp://x" })).rejects.toMatchObject({ code: "finance.expense.receiptUrlMustBeHttp" });
   });
 
   it("monthly summary totals per category; foreign rows never leak; foreign update 404s", async () => {
@@ -323,7 +323,7 @@ describe("GB8 GC20 expenses — CRUD, validation, monthly summary", () => {
       { category: "rent", count: 1, totalMinor: "500000" },
       { category: "marketing", count: 1, totalMinor: "150000" },
     ]));
-    await expect(finance.updateExpense("org-1", "u-1", "e-3", { note: "x" })).rejects.toThrow("পাওয়া যায়নি");
+    await expect(finance.updateExpense("org-1", "u-1", "e-3", { note: "x" })).rejects.toMatchObject({ code: "finance.expense.notFound" });
     const list = await finance.listExpenses("org-1", { from: FROM, to: TO });
     expect(list.total).toBe(2);
   });
@@ -460,8 +460,8 @@ describe("GB8 GC19 scheduled reports — due logic, attachment, exactly-once sta
     const { scheduled } = makeSchedWorld();
     const created = await scheduled.createConfig("org-1", "u-1", { reportType: "profit", cadence: "weekly", format: "xlsx", recipients: [" A@B.com ", "a@b.com"] });
     expect(created.recipients).toEqual(["a@b.com"]);
-    await expect(scheduled.createConfig("org-1", "u-1", { reportType: "profit", cadence: "weekly", recipients: ["not-an-email"] })).rejects.toThrow("সঠিক নয়");
-    await expect(scheduled.createConfig("org-1", "u-1", { reportType: "nope", cadence: "weekly", recipients: ["a@b.com"] })).rejects.toThrow("তালিকা থেকে");
+    await expect(scheduled.createConfig("org-1", "u-1", { reportType: "profit", cadence: "weekly", recipients: ["not-an-email"] })).rejects.toMatchObject({ code: "finance.scheduled.emailInvalid" });
+    await expect(scheduled.createConfig("org-1", "u-1", { reportType: "nope", cadence: "weekly", recipients: ["a@b.com"] })).rejects.toMatchObject({ code: "finance.scheduled.reportTypeFromList" });
   });
 });
 

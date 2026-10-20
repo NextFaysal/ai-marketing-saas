@@ -13,11 +13,30 @@
  * /agency.service.ts) — pinned by the vitest suite.
  */
 
-export const AGENCY_COMMISSION_RECORDS_BN =
-  "কমিশন এখানে শুধু রেকর্ড হিসেবে রাখা হয় — কোনো টাকা স্বয়ংক্রিয়ভাবে কাটা বা পাঠানো হয় না। পেআউট OU11 আইনি গেটের অধীনে বন্ধ আছে।";
+import type { UiLocale } from "./i18n/dict";
+import { interpolate } from "./i18n/lookup";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: agency copy resolves through the `shared` namespace;
+ * locale defaults to "bn" so existing callers/tests stay
+ * byte-identical (the BN constants below remain the pinned bn
+ * source, now derived from the dictionary). */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
+export const AGENCY_COMMISSION_RECORDS_BN = sharedBn.agCommissionRecords;
 
 /** Honest per-card failure state (mirrors the API label). */
-export const AGENCY_SUMMARY_ERROR_BN = "তথ্য লোড হয়নি";
+export const AGENCY_SUMMARY_ERROR_BN = sharedBn.agSummaryError;
+
+/** Locale accessors for the two constants above. */
+export function agencyCommissionRecords(locale: UiLocale = "bn"): string {
+  return SD(locale).agCommissionRecords;
+}
+
+export function agencySummaryError(locale: UiLocale = "bn"): string {
+  return SD(locale).agSummaryError;
+}
 
 export interface AgencyOrgSummary {
   ordersToday: number;
@@ -72,22 +91,26 @@ export interface AgencyCommissionView {
 }
 
 /** Totals banner label — the sum covers ONLY the listed orgs,
- * and it says so, with the count. */
-export function totalsBannerLabel(orgCount: number): string {
-  return `শুধু তালিকাভুক্ত প্রতিষ্ঠানগুলোর মোট (${orgCount}টি)`;
+ * and it says so, with the count. (The count renders as the raw
+ * number in both locales, exactly as the bn source always did.) */
+export function totalsBannerLabel(orgCount: number, locale: UiLocale = "bn"): string {
+  return interpolate(SD(locale).agTotalsBanner, { count: orgCount });
 }
 
-/** The caller's own role in an org, in Bengali with the raw
- * role kept beside it (unknown roles pass through verbatim). */
-export function roleLabelBn(role: string | null | undefined): string {
+/** The caller's own role in an org, with the raw role kept
+ * beside it in the bn source (unknown roles pass through
+ * verbatim). Name kept for compatibility; `locale` selects the
+ * language, defaulting to bn. */
+export function roleLabelBn(role: string | null | undefined, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (role) {
-    case "OWNER": return "মালিক (OWNER)";
-    case "ADMIN": return "অ্যাডমিন (ADMIN)";
-    case "MARKETING_MANAGER": return "মার্কেটিং ম্যানেজার";
-    case "ADVERTISER": return "বিজ্ঞাপনদাতা";
-    case "SUPPORT_AGENT": return "সাপোর্ট এজেন্ট";
-    case "ANALYST": return "অ্যানালিস্ট";
-    case "VIEWER": return "দর্শক (VIEWER)";
+    case "OWNER": return d.agRoleOwner;
+    case "ADMIN": return d.agRoleAdmin;
+    case "MARKETING_MANAGER": return d.agRoleMarketingManager;
+    case "ADVERTISER": return d.agRoleAdvertiser;
+    case "SUPPORT_AGENT": return d.agRoleSupportAgent;
+    case "ANALYST": return d.agRoleAnalyst;
+    case "VIEWER": return d.agRoleViewer;
     default: return role ?? "—";
   }
 }

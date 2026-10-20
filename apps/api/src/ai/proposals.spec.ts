@@ -91,7 +91,7 @@ describe("ProposalsService (M47 write actions with approval)", () => {
     const rejected = await svc.reject("org-1", "owner-1", proposal.id);
     expect(rejected.status).toBe("rejected");
     expect(campaignCalls.length).toBe(0);
-    await expect(svc.approve("org-1", "owner-1", proposal.id)).rejects.toThrow(/already decided/);
+    await expect(svc.approve("org-1", "owner-1", proposal.id)).rejects.toMatchObject({ code: "ai.thisProposalWasAlreadyDecidedStatus" });
     expect(campaignCalls.length).toBe(0);
   });
 
@@ -127,7 +127,7 @@ describe("ProposalsService (M47 write actions with approval)", () => {
 
   it("unknown proposal id is a 404", async () => {
     const { svc } = setup();
-    await expect(svc.approve("org-1", "owner-1", "nope")).rejects.toThrow(/not found/i);
+    await expect(svc.approve("org-1", "owner-1", "nope")).rejects.toMatchObject({ code: "ai.proposalNotFound" });
   });
 });
 

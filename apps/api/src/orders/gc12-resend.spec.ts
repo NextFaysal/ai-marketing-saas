@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "<MASKED_SECRET_001>";
 
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { TenantPaymentsService } from "../connections/tenant-payments.service";
 import { WalletService } from "../connections/wallet.service";
 import { PaymentResendService } from "./payment-resend.service";
@@ -170,17 +171,17 @@ describe("GC12 payment-link resend", () => {
     expect(out.provider).toBe("sslcommerz");
     // a pair the shop does not offer is refused by the server truth
     await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", { provider: "bkash", source: "own" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("no attempts and no body → 400 with a clear message; missing order → 404; practice → 400", async () => {
     const { tables, payments, resend } = build();
     await seedGateway(payments);
-    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", {})).rejects.toBeInstanceOf(BadRequestException);
-    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-404", {})).rejects.toBeInstanceOf(NotFoundException);
+    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", {})).rejects.toBeInstanceOf(ApiException);
+    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-404", {})).rejects.toBeInstanceOf(ApiException);
     tables.order.rows[0].isPractice = true;
     await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", { provider: "sslcommerz", source: "own" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("SMS not configured → sentVia 'none', link still returned, reason in audit metadata", async () => {
@@ -214,7 +215,7 @@ describe("GC12 payment-link resend", () => {
     await seedGateway(payments);
     seedAttempt(tables);
     const before = tables.tenantPaymentTransaction.rows.length;
-    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(resend.resendPaymentLink("org-1", "staff-1", "order-1", {})).rejects.toBeInstanceOf(ApiException);
     expect(tables.tenantPaymentTransaction.rows.length).toBe(before + 1);
     const failed = tables.tenantPaymentTransaction.rows[tables.tenantPaymentTransaction.rows.length - 1];
     expect(failed.status).toBe("failed");

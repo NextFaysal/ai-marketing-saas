@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { ProductsService } from "../products/products.service";
 import { selectWholesaleTier, validateWholesaleTiers } from "../commerce/ec24";
@@ -80,12 +81,12 @@ describe("EC24d tier validation", () => {
     expect(validateWholesaleTiers(undefined)).toBeNull();
   });
   it("rejects descending, duplicate, minQty 1, zero price, >10 tiers, non-array", () => {
-    expect(() => validateWholesaleTiers([{ minQty: 10, priceMinor: "1" }, { minQty: 5, priceMinor: "1" }])).toThrow(BadRequestException);
-    expect(() => validateWholesaleTiers([{ minQty: 5, priceMinor: "1" }, { minQty: 5, priceMinor: "2" }])).toThrow(BadRequestException);
+    expect(() => validateWholesaleTiers([{ minQty: 10, priceMinor: "1" }, { minQty: 5, priceMinor: "1" }])).toThrow(ApiException);
+    expect(() => validateWholesaleTiers([{ minQty: 5, priceMinor: "1" }, { minQty: 5, priceMinor: "2" }])).toThrow(ApiException);
     expect(() => validateWholesaleTiers([{ minQty: 1, priceMinor: "100" }])).toThrow(/minQty কমপক্ষে ২/);
-    expect(() => validateWholesaleTiers([{ minQty: 2, priceMinor: "0" }])).toThrow(BadRequestException);
-    expect(() => validateWholesaleTiers(Array.from({ length: 11 }, (_, i) => ({ minQty: i + 2, priceMinor: "100" })))).toThrow(BadRequestException);
-    expect(() => validateWholesaleTiers("nope")).toThrow(BadRequestException);
+    expect(() => validateWholesaleTiers([{ minQty: 2, priceMinor: "0" }])).toThrow(ApiException);
+    expect(() => validateWholesaleTiers(Array.from({ length: 11 }, (_, i) => ({ minQty: i + 2, priceMinor: "100" })))).toThrow(ApiException);
+    expect(() => validateWholesaleTiers("nope")).toThrow(ApiException);
   });
   it("selectWholesaleTier: boundary + highest qualifying tier", () => {
     expect(selectWholesaleTier(TIERS, 9)).toBeNull();
@@ -114,7 +115,7 @@ describe("EC24d product create/update validation (ProductsService)", () => {
     await expect(svc.create("org-1", "staff", { name: "কফি X", price: "100.00", subscriptionEnabled: true } as any))
       .rejects.toThrow(/সাবস্ক্রিপশন চালু করতে ইন্টারভাল/);
     await expect(svc.create("org-1", "staff", { name: "চাল X", price: "100.00", wholesaleTiers: [{ minQty: 3, priceMinor: "1" }, { minQty: 2, priceMinor: "1" }] } as any))
-      .rejects.toThrow(BadRequestException);
+      .rejects.toThrow(ApiException);
     const okDigital: any = await svc.create("org-1", "staff", {
       name: "ইবুক Y", price: "100.00", digital: true, digitalFileUrl: "https://files.example.com/y.pdf",
       subscriptionEnabled: true, subscriptionIntervalDays: 30, subscriptionDiscountPercent: 10,

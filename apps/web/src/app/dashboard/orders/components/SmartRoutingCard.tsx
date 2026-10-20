@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -36,6 +37,7 @@ export function SmartRoutingCard({
   currentProvider: string;
   onSelectProvider: (provider: string) => Promise<void>;
 }) {
+  const { dict, t, locale } = useLocale();
   const [data, setData] = useState<SmartRoutingData | null>(null);
   const [loading, setLoading] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -68,7 +70,7 @@ export function SmartRoutingCard({
     return (
       <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-3 text-xs text-blue-800 flex items-center gap-2">
         <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-        <span>স্মার্ট এআই কুরিয়ার রাউটিং হিসাব করা হচ্ছে...</span>
+        <span>{dict.orders.smartAICourierRoutingIs}</span>
       </div>
     );
   }
@@ -88,15 +90,14 @@ export function SmartRoutingCard({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-slate-800">
-                স্মার্ট কুরিয়ার রাউটিং: {data.district}
+                {dict.orders.smartCourierRouting}{data.district}
               </span>
               <span className="rounded bg-sky-100 px-1.5 py-0.2 text-[10px] font-bold text-sky-800">
-                {data.isInsideDhaka ? "ঢাকা মেট্রো" : "ঢাকার বাইরে"}
+                {data.isInsideDhaka ? dict.orders.dhakaMetro : dict.orders.outsideDhaka}
               </span>
             </div>
             <p className="text-[11px] text-slate-500">
-              হিস্টোরিক্যাল ডেলিভারি রেট ও লজিস্টিকস সক্ষমতার ভিত্তিতে অপটিমাইজড
-            </p>
+              {dict.orders.optimizedBasedOnHistoricalDelivery}</p>
           </div>
         </div>
 
@@ -115,11 +116,11 @@ export function SmartRoutingCard({
             className="rounded-xl bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-50 transition flex items-center gap-1.5"
           >
             {applying ? (
-              <span>সিলেক্ট হচ্ছে...</span>
+              <span>{dict.orders.selecting}</span>
             ) : (
               <>
                 <span>⚡</span>
-                <span>সেরা কুরিয়ার সিলেক্ট করুন</span>
+                <span>{dict.orders.selectBestCourier}</span>
               </>
             )}
           </button>
@@ -137,8 +138,7 @@ export function SmartRoutingCard({
               : "RedX Logistics"}
           </span>
           <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 border border-emerald-200">
-            স্কোর: {winner?.overallScore}/১০০
-          </span>
+            {dict.orders.score}{winner?.overallScore}{dict.orders.text2byoo}</span>
         </div>
         <p className="mt-1 text-[11px] text-slate-600 leading-relaxed">
           {data.summaryReason}
@@ -152,7 +152,7 @@ export function SmartRoutingCard({
           onClick={() => setShowDetails(!showDetails)}
           className="text-[11px] font-medium text-sky-700 hover:underline"
         >
-          {showDetails ? "▲ বিস্তারিত স্কোরকার্ড লুকান" : "▼ সব কুরিয়ারের তুলনামূলক স্কোরকার্ড দেখুন"}
+          {showDetails ? dict.orders.hideDetailedScorecard : dict.orders.viewAllCouriersComparativeScorecard}
         </button>
 
         {showDetails && (
@@ -171,12 +171,12 @@ export function SmartRoutingCard({
                   <span>{s.overallScore} pt</span>
                 </div>
                 <div className="mt-1 space-y-0.5 text-slate-500 text-[10px]">
-                  <div>আনুমানিক সময়: <span className="font-semibold text-slate-700">{s.estimatedTurnaround}</span></div>
+                  <div>{dict.orders.estimatedTime}<span className="font-semibold text-slate-700">{s.estimatedTurnaround}</span></div>
                   {s.deliveryRate !== null && (
-                    <div>ডেলিভারি সাকসেস: <span className="font-bold text-emerald-700">{Math.round(s.deliveryRate * 100)}%</span></div>
+                    <div>{dict.orders.deliverySuccess}<span className="font-bold text-emerald-700">{Math.round(s.deliveryRate * 100)}%</span></div>
                   )}
                   {s.returnRate !== null && (
-                    <div>রিটার্ন রেট: <span className="font-bold text-red-600">{Math.round(s.returnRate * 100)}%</span></div>
+                    <div>{dict.orders.returnRate2}<span className="font-bold text-red-600">{Math.round(s.returnRate * 100)}%</span></div>
                   )}
                 </div>
               </div>

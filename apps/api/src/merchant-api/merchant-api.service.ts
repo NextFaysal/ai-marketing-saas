@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * AB8 (AX21) Merchant Developer API keys — org-scoped programmatic
@@ -42,17 +43,13 @@ export function hashMerchantApiKey(plaintext: string): string {
 export function validateScopes(input: unknown): string[] {
   const allowed = MERCHANT_API_SCOPES.join(", ");
   if (!Array.isArray(input) || input.length === 0) {
-    throw new BadRequestException(
-      `অন্তত একটি scope দিতে হবে — অনুমোদিত scope: ${allowed} (at least one scope is required; allowed scopes: ${allowed})`,
-    );
+    throw badRequest("merchantApi.atLeastOneScopeMustBe", { allowed: allowed, allowed2: allowed });
   }
   const invalid = input.filter(
     (s) => typeof s !== "string" || !(MERCHANT_API_SCOPES as readonly string[]).includes(s),
   );
   if (invalid.length > 0) {
-    throw new BadRequestException(
-      `অজানা scope: ${invalid.map(String).join(", ")} — অনুমোদিত scope: ${allowed} (unknown scope; allowed scopes: ${allowed})`,
-    );
+    throw badRequest("merchantApi.unknownScopeAllowedScopesUnknownScope", { p1: invalid.map(String).join(", "), allowed: allowed, allowed2: allowed });
   }
   return [...new Set(input as string[])];
 }
@@ -119,7 +116,7 @@ export class MerchantApiService {
     const row = await this.p().merchantApiKey.findFirst({
       where: { id: keyId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("Merchant API key not found");
+    if (!row) throw notFound("merchantApi.merchantApiKeyNotFound");
     if (row.status === "revoked") return this.publicRow(row);
     const updated = await this.p().merchantApiKey.update({
       where: { id: keyId },

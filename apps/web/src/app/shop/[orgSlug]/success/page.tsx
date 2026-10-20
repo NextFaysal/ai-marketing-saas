@@ -2,7 +2,7 @@
 import React, { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { formatMinor } from "@repo/contracts";
+import { formatMinor, fmtNumber } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { lastOrderKey, type CheckoutResult } from "@/lib/storefront-cart";
 import {
@@ -108,14 +108,14 @@ function SuccessInner() {
         body: JSON.stringify({ orderId: order.orderId, orderNumber: order.orderNumber, provider: option.provider, source: option.source }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.message ?? "এই মুহূর্তে অনলাইন পেমেন্ট শুরু করা যাচ্ছে না।");
+      if (!res.ok) throw new Error(json?.message ?? t.successExtra.payStartUnavailable);
       const url = json?.redirectUrl ?? json?.bkashURL;
-      if (!url) throw new Error("গেটওয়ে কোনো পেমেন্ট লিংক দেয়নি — পেমেন্ট শুরু হয়নি।");
+      if (!url) throw new Error(t.successExtra.gatewayNoLink);
       window.location.href = url;
     } catch (e) {
       // Honest refusal, verbatim from the server — never a fake
       // "payment successful" state.
-      setPayError(e instanceof Error ? e.message : "পেমেন্ট শুরু করা যায়নি");
+      setPayError(e instanceof Error ? e.message : t.successExtra.payStartFailed);
       setPayBusy("");
     }
   }
@@ -266,7 +266,7 @@ function SuccessInner() {
       });
       window.location.assign(redirectUrl);
     } catch {
-      setRetryError("পেমেন্ট আবার শুরু করা যায়নি — কিছুক্ষণ পর আবার চেষ্টা করুন।");
+      setRetryError(t.successExtra.payRetryFailed);
       setRetrying(false);
     }
   }
@@ -323,10 +323,10 @@ function SuccessInner() {
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.checkout.referralApplied}{order.referral ? ` (${order.referral.code})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.referralDiscountMinor)}</span></div>
             ) : null}
             {(order.loyaltyPointsUsed ?? 0) > 0 ? (
-              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">লয়্যালটি পয়েন্ট ছাড় ({order.loyaltyPointsUsed} পয়েন্ট):</span><span className="font-bold text-emerald-700">− {money(order.loyaltyDiscountMinor ?? "0")}</span></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.successExtra.loyaltyDiscountPrefix}{fmtNumber(locale, order.loyaltyPointsUsed ?? 0)}{t.successExtra.loyaltyDiscountSuffix}</span><span className="font-bold text-emerald-700">− {money(order.loyaltyDiscountMinor ?? "0")}</span></div>
             ) : null}
             {order.giftCardDiscountMinor && BigInt(order.giftCardDiscountMinor) > 0n ? (
-              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">গিফট কার্ড ছাড়{order.giftCardCodeLast4 ? ` (••••${order.giftCardCodeLast4})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.giftCardDiscountMinor)}</span></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-slate-500">{t.successExtra.giftCardDiscount}{order.giftCardCodeLast4 ? ` (••••${order.giftCardCodeLast4})` : ""}:</span><span className="font-bold text-emerald-700">− {money(order.giftCardDiscountMinor)}</span></div>
             ) : null}
             {order.gift ? (
               <div className="flex justify-between border-b pb-2"><span className="text-slate-500">🎁 {t.success.giftLine}: {order.gift.productName} × {order.gift.quantity} ({order.gift.promotionName})</span><span className="font-bold text-pink-700">{money("0")}</span></div>
@@ -357,7 +357,7 @@ function SuccessInner() {
               <div className="space-y-2 rounded-xl bg-amber-50 p-3 text-center">
                 {depositPaidState ? (
                   <p className="text-sm font-black text-emerald-900">
-                    ✅ ডিপোজিট পরিশোধ হয়েছে — বাকি {payDeposit ? money(payDeposit.outstandingMinor) : ""} ডেলিভারির সময় দিতে হবে
+                    {t.successExtra.depositPaidPrefix}{payDeposit ? money(payDeposit.outstandingMinor) : ""}{t.successExtra.depositPaidSuffix}
                   </p>
                 ) : null}
                 {payDeposit ? (
@@ -369,12 +369,12 @@ function SuccessInner() {
                 ) : null}
                 {depositDueUnpaid && paymentChoice() ? (
                   <button type="button" onClick={() => void retryPayment("deposit")} disabled={retrying} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
-                    {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "ডিপোজিট পরিশোধ করুন"}
+                    {retrying ? t.successExtra.payStarting : t.successExtra.payDeposit}
                   </button>
                 ) : null}
                 {depositSettledBalanceDue && !depositDueUnpaid && paymentChoice() ? (
                   <button type="button" onClick={() => void retryPayment("balance")} disabled={retrying} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
-                    {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "বাকি টাকা পরিশোধ করুন"}
+                    {retrying ? t.successExtra.payStarting : t.successExtra.payRemaining}
                   </button>
                 ) : null}
                 {retryError ? <p className="text-[11px] font-medium text-rose-700">{retryError}</p> : null}
@@ -384,24 +384,24 @@ function SuccessInner() {
             {depositPaidState ? null : onlineContext ? (
               effectivePayKind === "paid" ? (
                 <div className="rounded-xl bg-emerald-50 p-3 text-center">
-                  <p className="text-sm font-black text-emerald-900">✅ পেমেন্ট যাচাইকৃতভাবে সম্পন্ন হয়েছে</p>
-                  <p className="text-[11px] text-emerald-700">গেটওয়ের সার্ভার-যাচাইয়ে এই অর্ডারের পেমেন্ট নিশ্চিত হয়েছে।</p>
+                  <p className="text-sm font-black text-emerald-900">{t.successExtra.verifiedTitle}</p>
+                  <p className="text-[11px] text-emerald-700">{t.successExtra.verifiedBody}</p>
                 </div>
               ) : effectivePayKind === "failed" || effectivePayKind === "cancelled" ? (
                 <div className="space-y-2 rounded-xl bg-rose-50 p-3 text-center">
-                  <p className="text-sm font-black text-rose-900">পেমেন্ট সম্পন্ন হয়নি</p>
-                  <p className="text-[11px] text-rose-700">অর্ডারটি রাখা আছে, কিন্তু পেমেন্ট হয়নি — আবার চেষ্টা করতে পারেন।</p>
+                  <p className="text-sm font-black text-rose-900">{t.successExtra.notCompletedTitle}</p>
+                  <p className="text-[11px] text-rose-700">{t.successExtra.notCompletedBody}</p>
                   {readOnlinePaymentChoice(orgSlug) ? (
                     <button type="button" onClick={() => void retryPayment()} disabled={retrying} className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
-                      {retrying ? "পেমেন্ট শুরু হচ্ছে…" : "আবার পেমেন্ট করুন"}
+                      {retrying ? t.successExtra.payStarting : t.successExtra.payAgain}
                     </button>
                   ) : null}
                   {retryError ? <p className="text-[11px] font-medium text-rose-700">{retryError}</p> : null}
                 </div>
               ) : (
                 <div className="rounded-xl bg-amber-50 p-3 text-center">
-                  <p className="text-sm font-black text-amber-900">⏳ পেমেন্ট যাচাই চলছে — গেটওয়ে থেকে নিশ্চিতকরণ এলেই অর্ডার পেমেন্ট সম্পন্ন হবে</p>
-                  <p className="text-[11px] text-amber-700">এই পেজটি নিজে থেকেই হালনাগাদ হবে; যাচাই সম্পন্ন না হওয়া পর্যন্ত পেমেন্ট সম্পন্ন ধরা হবে না।</p>
+                  <p className="text-sm font-black text-amber-900">{t.successExtra.verifyingTitle}</p>
+                  <p className="text-[11px] text-amber-700">{t.successExtra.verifyingBody}</p>
                 </div>
               )
             ) : order.paymentClaimStatus === "cod_due" ? (
@@ -430,7 +430,7 @@ function SuccessInner() {
 
         {loaded && order?.hasDigitalItems ? (
           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900">
-            ডিজিটাল পণ্য: ডেলিভারির পর ট্র্যাকিং পেজে ডাউনলোড লিংক পাওয়া যাবে
+            {t.successExtra.digitalNote}
           </div>
         ) : null}
 
@@ -442,16 +442,16 @@ function SuccessInner() {
 
         {paymentVerifying ? (
           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-left text-xs leading-relaxed text-sky-900">
-            <p className="font-bold">আপনার পেমেন্ট যাচাই করা হচ্ছে…</p>
-            <p>গেটওয়ে থেকে ফিরে এসেছেন — পেমেন্ট সফল ধরা হবে শুধু গেটওয়ের সার্ভার-যাচাই (IPN) পৌঁছালে। যাচাই সম্পন্ন হলে অর্ডারের অবস্থা ট্র্যাকিং পেজে হালনাগাদ দেখা যাবে। ফিরে আসা মানেই পেমেন্ট সফল নয়।</p>
+            <p className="font-bold">{t.successExtra.verifyingWaitTitle}</p>
+            <p>{t.successExtra.verifyingWaitBody}</p>
           </div>
         ) : null}
 
         {loaded && order?.orderId && payOnlineAvailable(payOptions) ? (
           <div className="space-y-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-left">
-            <p className="text-sm font-bold text-slate-800">💳 এখনই অনলাইনে পেমেন্ট করুন</p>
+            <p className="text-sm font-bold text-slate-800">{t.successExtra.payNowTitle}</p>
             <p className="text-[11px] leading-relaxed text-slate-500">
-              নিচের যেকোনো মাধ্যমে অর্ডারের টাকা এখনই পরিশোধ করতে পারেন। পেমেন্ট সম্পন্ন ধরা হবে গেটওয়ের সার্ভার-যাচাইয়ের পরেই।
+              {t.successExtra.payNowBody}
             </p>
             {payError ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{payError}</p> : null}
             {payOptions.map((option) => (
@@ -462,7 +462,7 @@ function SuccessInner() {
                 onClick={() => void payOnline(option)}
                 className="block w-full rounded-xl bg-emerald-600 py-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {payBusy === `${option.provider}:${option.source}` ? "গেটওয়েতে নিয়ে যাওয়া হচ্ছে…" : `${payOptionLabel(option)} দিয়ে পেমেন্ট করুন`}
+                {payBusy === `${option.provider}:${option.source}` ? t.successExtra.redirecting : t.successExtra.payWith.replace("{method}", payOptionLabel(option))}
               </button>
             ))}
           </div>
@@ -470,19 +470,19 @@ function SuccessInner() {
 
         {/* Bangladeshi Fashion & Apparel Assurance */}
         <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4 text-left">
-          <p className="text-xs font-bold text-stone-900">🛍️ পোশাক ও সাইজ সম্পর্কিত সেবা:</p>
+          <p className="text-xs font-bold text-stone-900">{t.successExtra.fashionCareTitle}</p>
           <ul className="mt-2 space-y-1.5 text-[11px] text-stone-600">
             <li className="flex items-center gap-1.5">
               <span className="text-emerald-600 font-bold">✓</span>
-              <span><strong>সাইজ এক্সচেঞ্জ:</strong> সাইজ না মিললে পার্সেল পাওয়ার ৭ দিনের মধ্যে সহজে সাইজ পরিবর্তন সুবিধা।</span>
+              <span><strong>{t.successExtra.sizeExchangePrefix}</strong>{t.successExtra.sizeExchangeBody}</span>
             </li>
             <li className="flex items-center gap-1.5">
               <span className="text-emerald-600 font-bold">✓</span>
-              <span><strong>দ্রুত ডেলিভারি:</strong> ঢাকা সিটিতে ২৪-৪৮ ঘণ্টা এবং সারাদেশে ২-৩ কার্যদিবসের মধ্যে ডেলিভারি।</span>
+              <span><strong>{t.successExtra.fastDeliveryPrefix}</strong>{t.successExtra.fastDeliveryBody}</span>
             </li>
             <li className="flex items-center gap-1.5">
               <span className="text-emerald-600 font-bold">✓</span>
-              <span><strong>গ্রাহক সেবা:</strong> যেকোনো প্রয়োজনে বা সাইজ পরিবর্তনে ইনবক্স অথবা সাপোর্টে যোগাযোগ করুন।</span>
+              <span><strong>{t.successExtra.supportPrefix}</strong>{t.successExtra.supportBody}</span>
             </li>
           </ul>
         </div>

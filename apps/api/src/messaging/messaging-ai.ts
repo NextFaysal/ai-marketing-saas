@@ -1,3 +1,5 @@
+import { catalogText, type ApiLocale } from "../i18n/catalog/send-locale";
+
 /**
  * MS9 — the DETERMINISTIC half of Messaging AI: pure helpers for
  * the send-time suggestion (the org's own engagement events,
@@ -68,23 +70,23 @@ export interface SegmentSuggestion {
  * name) so the biggest opportunity is first and the order is
  * deterministic.
  */
-export function segmentSuggestionsFromCounts(counts: Record<string, number>): SegmentSuggestion[] {
+export function segmentSuggestionsFromCounts(counts: Record<string, number>, locale: ApiLocale = "bn"): SegmentSuggestion[] {
   const rules: { segment: string; kind: string; reason: (size: number) => string }[] = [
     {
       segment: "at_risk", kind: "winback_at_risk",
-      reason: (n) => `${n} জন কাস্টমার "At Risk" সেগমেন্টে আছেন — আগে নিয়মিত কিনতেন, এখন অনেকদিন অর্ডার করেননি। একটি Win-back Broadcast পাঠানোর কথা ভাবুন।`,
+      reason: (n) => catalogText("messaging.segmentReasonAtRisk", locale, { count: n }),
     },
     {
       segment: "lost", kind: "reactivate_lost",
-      reason: (n) => `${n} জন কাস্টমার "Lost" সেগমেন্টে আছেন — দীর্ঘদিন কোনো অর্ডার নেই। একটি পুনরায় সক্রিয় করার (Reactivation) অফার পাঠানো যেতে পারে।`,
+      reason: (n) => catalogText("messaging.segmentReasonLost", locale, { count: n }),
     },
     {
       segment: "champions", kind: "early_access_champions",
-      reason: (n) => `${n} জন কাস্টমার "Champions" সেগমেন্টে আছেন — আপনার সেরা কাস্টমার। নতুন পণ্য বা অফারের Early Access সবার আগে এদের দিন।`,
+      reason: (n) => catalogText("messaging.segmentReasonChampions", locale, { count: n }),
     },
     {
       segment: "new", kind: "welcome_new",
-      reason: (n) => `${n} জন কাস্টমার "New" সেগমেন্টে আছেন — সম্প্রতি প্রথম অর্ডার করেছেন। একটি Welcome / দ্বিতীয় অর্ডারের উৎসাহমূলক Broadcast পাঠানো যেতে পারে।`,
+      reason: (n) => catalogText("messaging.segmentReasonNew", locale, { count: n }),
     },
   ];
   const out: SegmentSuggestion[] = [];

@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CourierService } from "./courier.service";
 import { classifyShipmentStatus } from "./courier-performance";
 
@@ -183,11 +184,11 @@ describe("Sales & Data S5 — courier performance report", () => {
 
   it("validates days: integer 1..365 only, undefined defaults to 30", async () => {
     const svc = new CourierService(fakePrisma() as any, auditStub as any);
-    await expect(svc.performance("org-1", "0", NOW)).rejects.toThrow(BadRequestException);
-    await expect(svc.performance("org-1", "0", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.performance("org-1", "366", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.performance("org-1", "abc", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.performance("org-1", "30.5", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
+    await expect(svc.performance("org-1", "0", NOW)).rejects.toThrow(ApiException);
+    await expect(svc.performance("org-1", "0", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.performance("org-1", "366", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.performance("org-1", "abc", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.performance("org-1", "30.5", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
     await expect(svc.performance("org-1", undefined, NOW)).resolves.toMatchObject({ days: 30 });
     await expect(svc.performance("org-1", "90", NOW)).resolves.toMatchObject({ days: 90 });
   });

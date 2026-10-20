@@ -129,17 +129,15 @@ describe("EC23 accounting export — due", () => {
 describe("EC23 accounting export — validation", () => {
   it("period over 366 days ⇒ 400", async () => {
     const svc = new AccountingService(makePrisma());
-    await expect(svc.exportCsv("org-1", "sales", "2025-01-01", "2026-12-31")).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(svc.exportCsv("org-1", "sales", "2025-01-01", "2026-12-31")).rejects.toMatchObject({ code: "tax.aReportOfAtMost366" });
   });
 
   it("from after to, malformed dates, and rolled-over dates ⇒ 400", async () => {
     const svc = new AccountingService(makePrisma());
-    await expect(svc.exportCsv("org-1", "sales", "2026-10-31", "2026-10-01")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.exportCsv("org-1", "sales", "10/01/2026", "2026-10-31")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.exportCsv("org-1", "sales", "2026-02-30", "2026-03-01")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.exportCsv("org-1", "bogus", FROM, TO)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.exportCsv("org-1", "sales", "2026-10-31", "2026-10-01")).rejects.toMatchObject({ code: "tax.theStartDateCannotBeAfter" });
+    await expect(svc.exportCsv("org-1", "sales", "10/01/2026", "2026-10-31")).rejects.toMatchObject({ code: "tax.dateInvalidGiveFromAndToYyyyMmDd" });
+    await expect(svc.exportCsv("org-1", "sales", "2026-02-30", "2026-03-01")).rejects.toMatchObject({ code: "tax.dateInvalidGiveFromAndToYyyyMmDd" });
+    await expect(svc.exportCsv("org-1", "bogus", FROM, TO)).rejects.toMatchObject({ code: "tax.theReportTypeIsNotValid" });
   });
 
   it("a 366-day leap span is accepted", async () => {

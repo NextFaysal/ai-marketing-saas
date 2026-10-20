@@ -5,6 +5,7 @@ import { StorageService } from "../storage/storage.service";
 import { SocialService } from "../social/social.service";
 import { webBaseUrl } from "../courier/tracking-token";
 import { reviewMediaOf } from "./reviews.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC15 — unified product reviews (own CX12b OrderReviews +
@@ -202,11 +203,11 @@ export class ProductReviewsService {
   /** Public route resolution: org by slug + product by slug. */
   async getPublicBySlug(orgSlug: string, productSlug: string) {
     const org = await (this.p().organization?.findFirst({ where: { slug: orgSlug } }).catch(() => null) ?? null);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     const product = await (this.p().product?.findFirst({
       where: { organizationId: org.id, slug: productSlug, status: "ACTIVE" },
     }).catch(() => null) ?? null);
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+    if (!product) throw notFound("commerce.productNotFoundShort");
     const { summary, items } = await this.getPublicProductReviews(org.id, product.id);
     return {
       product: { id: product.id, name: product.name, slug: product.slug ?? null },
@@ -305,7 +306,7 @@ export class ProductReviewsService {
   async moderate(organizationId: string, source: string, id: string, dto: { isVisible?: boolean; replyText?: string }, actorId?: string) {
     if (source === "store") {
       const row = await (this.p().orderReview?.findFirst({ where: { id, organizationId } }).catch(() => null) ?? null);
-      if (!row) throw new NotFoundException("রিভিউটি পাওয়া যায়নি");
+      if (!row) throw notFound("orders.reviewNotFound");
       const data: any = {};
       if (dto.isVisible !== undefined) data.isVisible = dto.isVisible === true;
       if (dto.replyText !== undefined) {
@@ -325,9 +326,9 @@ export class ProductReviewsService {
     }
     // External sources: woocommerce / shopify / any platform label.
     const row = await (this.p().externalReview?.findFirst({ where: { id, organizationId } }).catch(() => null) ?? null);
-    if (!row) throw new NotFoundException("রিভিউটি পাওয়া যায়নি");
+    if (!row) throw notFound("orders.reviewNotFound");
     if (dto.replyText !== undefined) {
-      throw new BadRequestException("বাইরের রিভিউতে উত্তর দেওয়া যায় না");
+      throw badRequest("orders.externalReviewReplyBlocked");
     }
     const data: any = {};
     if (dto.isVisible !== undefined) data.status = dto.isVisible ? "visible" : "hidden";
@@ -376,15 +377,15 @@ export class ProductReviewsService {
    */
   async createSocialDraft(organizationId: string, reviewId: string, actorId: string, dto?: { socialAccountId?: string }) {
     const row = await (this.p().orderReview?.findFirst({ where: { id: reviewId, organizationId } }).catch(() => null) ?? null);
-    if (!row) throw new NotFoundException("রিভিউটি পাওয়া যায়নি");
+    if (!row) throw notFound("orders.reviewNotFound");
     if (row.rating == null || !row.receivedAt) {
-      throw new BadRequestException("এই রিভিউটি এখনো জমা হয়নি — জমা হওয়া রিভিউ থেকেই সোশ্যাল ড্রাফট তৈরি করা যায়।");
+      throw badRequest("orders.reviewNotSubmittedForDraft");
     }
     if (row.isVisible === false) {
-      throw new BadRequestException("লুকানো রিভিউ থেকে সোশ্যাল ড্রাফট তৈরি করা যাবে না — আগে রিভিউটি দেখান।");
+      throw badRequest("orders.hiddenReviewDraftBlocked");
     }
     if (!this.social) {
-      throw new BadRequestException("সোশ্যাল পোস্ট ইঞ্জিন উপলব্ধ নয়।");
+      throw badRequest("orders.socialEngineUnavailable");
     }
     // Exactly-once: an existing claim is the answer.
     if (row.socialDraftPostId) {
@@ -406,7 +407,7 @@ export class ProductReviewsService {
         where: { id: dto.socialAccountId, organizationId, status: "connected" },
       }).catch(() => null) ?? null);
       if (!account) {
-        throw new BadRequestException("নির্বাচিত Social অ্যাকাউন্টটি এই Organization-এর সংযুক্ত (connected) অ্যাকাউন্ট নয়।");
+        throw badRequest("orders.socialAccountNotConnected");
       }
     } else {
       account = await (this.p().socialAccount?.findFirst({
@@ -414,7 +415,7 @@ export class ProductReviewsService {
         orderBy: { createdAt: "asc" },
       }).catch(() => null) ?? null);
       if (!account) {
-        throw new BadRequestException("কোনো সংযুক্ত (connected) সোশ্যাল অ্যাকাউন্ট নেই — আগে Connect Center থেকে একটি অ্যাকাউন্ট সংযুক্ত করুন।");
+        throw badRequest("orders.noConnectedSocialAccount");
       }
     }
     const product = await this.productForOrder(organizationId, row.orderId);
@@ -432,7 +433,7 @@ export class ProductReviewsService {
       ...(linkUrl ? { linkUrl } : {}),
     });
     if (!post?.id) {
-      throw new BadRequestException("সোশ্যাল ড্রাফট তৈরি করা যায়নি।");
+      throw badRequest("orders.socialDraftFailed");
     }
     await this.p().orderReview.update({ where: { id: row.id }, data: { socialDraftPostId: post.id } });
     await this.audit?.log({

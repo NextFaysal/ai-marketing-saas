@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import { apiFetch, API_URL } from "@/lib/api";
 import { registerSchema } from "@repo/contracts";
 import { Sparkles, CheckCircle2, ShieldCheck, ArrowRight, Lock } from "lucide-react";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 const HIGHLIGHTS = [
   {
@@ -48,7 +51,7 @@ export default function RegisterPage() {
     setError("");
     const parsed = registerSchema.safeParse({ name, email, password });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "তথ্য যাচাই করুন");
+      setError(parsed.error.issues[0]?.message ?? t.auth.checkInfo);
       return;
     }
     setLoading(true);
@@ -60,7 +63,7 @@ export default function RegisterPage() {
       localStorage.setItem("accessToken", data.accessToken);
       router.push("/onboarding");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "রেজিস্ট্রেশন ব্যর্থ হয়েছে");
+      setError(err instanceof Error ? err.message : t.auth.registrationFailed);
     } finally {
       setLoading(false);
     }
@@ -73,13 +76,13 @@ export default function RegisterPage() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-2xl text-amber-400">
             🔒
           </div>
-          <h1 className="text-2xl font-black text-white">নতুন সাইনআপ আপাতত বন্ধ আছে</h1>
+          <h1 className="text-2xl font-black text-white">{t.auth.signupClosedTitle}</h1>
           <p className="text-sm leading-relaxed text-slate-400">
-            প্ল্যাটফর্ম টিম সাময়িকভাবে নতুন রেজিস্ট্রেশন বন্ধ রেখেছে। ইতিমধ্যে অ্যাকাউন্ট থাকলে{" "}
+            {t.auth.signupClosedTextPrefix}
             <Link className="text-indigo-400 underline font-semibold" href="/login">
-              লগইন করুন
+              {t.auth.signupClosedLogin}
             </Link>
-            ।
+            {t.auth.signupClosedTextSuffix}
           </p>
         </div>
       </main>
@@ -150,7 +153,7 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white">অ্যাকাউন্ট তৈরি করুন</h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-white">{t.auth.registerTitle}</h1>
             <p className="mt-1.5 text-xs text-slate-400">
               ১৪ দিনের ফ্রি ট্রায়াল দিয়ে শুরু করুন — ক্রেডিট কার্ড লাগবে না।
             </p>
@@ -182,7 +185,7 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300">পাসওয়ার্ড (কমপক্ষে ৮ অক্ষর)</label>
+              <label className="block text-xs font-semibold text-slate-300">{t.auth.passwordMinLabel}</label>
               <input
                 type="password"
                 className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -200,7 +203,7 @@ export default function RegisterPage() {
             ) : null}
 
             <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3 text-[11px] leading-relaxed text-indigo-200">
-              ✉️ রেজিস্ট্রেশনের পর আপনার ইমেইলে একটি <b>যাচাইকরণ লিংক</b> পাঠানো হবে — লিংকে ক্লিক করে অ্যাকাউন্ট ভেরিফাই করে নিন।
+              {t.auth.verifyNotePrefix}<b>{t.auth.verifyNoteBold}</b>{t.auth.verifyNoteSuffix}
             </div>
 
             <button
@@ -208,13 +211,13 @@ export default function RegisterPage() {
               disabled={loading}
               className="w-full rounded-xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:brightness-110 active:scale-[0.99] disabled:opacity-50"
             >
-              {loading ? "অপেক্ষা করুন..." : "বিনামূল্যে অ্যাকাউন্ট খুলুন"}
+              {loading ? t.auth.pleaseWait : "বিনামূল্যে অ্যাকাউন্ট খুলুন"}
             </button>
 
             <p className="text-center text-xs text-slate-400 pt-1">
-              আগেই অ্যাকাউন্ট আছে?{" "}
+              {t.auth.haveAccount}
               <Link className="font-semibold text-indigo-400 hover:text-indigo-300 underline" href="/login">
-                লগইন করুন
+                {t.auth.loginLink}
               </Link>
             </p>
           </form>

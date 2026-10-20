@@ -264,8 +264,8 @@ describe("CN16 recurring series sweep", () => {
     const draftId = s.tables.campaignPlan.rows.find((r: any) => r.seriesId === series.id).id;
     await s.frontier.seriesAction("org", "u1", series.id, "end");
     expect(s.tables.campaignPlan.rows.find((r: any) => r.id === draftId).status).toBe("draft"); // untouched
-    await expect(s.frontier.seriesAction("org", "u1", series.id, "resume")).rejects.toThrow(/ended series cannot be resumed/);
-    await expect(s.frontier.seriesAction("org", "u1", series.id, "bogus")).rejects.toThrow(/pause, resume or end/);
+    await expect(s.frontier.seriesAction("org", "u1", series.id, "resume")).rejects.toMatchObject({ code: "campaigns.anEndedSeriesCannotBeResumed" });
+    await expect(s.frontier.seriesAction("org", "u1", series.id, "bogus")).rejects.toMatchObject({ code: "campaigns.actionMustBePauseResumeOr" });
   });
 
   it("a dates series (Eid pack) generates its listed instance and auto-ends when the list is exhausted", async () => {

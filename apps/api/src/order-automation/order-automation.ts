@@ -273,13 +273,13 @@ export function evaluateConditions(conditions: any, facts: ConditionFacts): bool
  * placeholders {{orderNumber}} {{total}} {{customerName}}.
  */
 export const AUTOMATION_PRESETS: {
-  key: string; name: string; descriptionBn: string;
+  key: string; name: string; nameEn: string; descriptionBn: string; descriptionEn: string;
   trigger: string; triggerConfig: any; conditions: any; actions: any[];
 }[] = [
   {
     key: "big_cod_verify",
-    name: "বড় COD অর্ডার — আগে যাচাই",
-    descriptionBn: "৩,০০০ টাকা বা তার বেশি COD অর্ডার এলে অর্ডারটি আটকে স্টাফকে জানানো হবে — আগে ফোনে যাচাই করুন।",
+    name: "বড় COD অর্ডার — আগে যাচাই", nameEn: "Big COD Order — Verify First",
+    descriptionBn: "৩,০০০ টাকা বা তার বেশি COD অর্ডার এলে অর্ডারটি আটকে স্টাফকে জানানো হবে — আগে ফোনে যাচাই করুন।", descriptionEn: "When a COD order of 3,000 taka or more arrives, the order is held and staff are informed — verify by phone first.",
     trigger: "order_created",
     triggerConfig: null,
     conditions: { isCod: true, minTotalMinor: "300000" },
@@ -290,8 +290,8 @@ export const AUTOMATION_PRESETS: {
   },
   {
     key: "parcel_stuck",
-    name: "পার্সেল আটকে আছে",
-    descriptionBn: "পার্সেল ৭২ ঘণ্টা ধরে একই কুরিয়ার স্ট্যাটাসে থাকলে স্টাফ ও গ্রাহক দুজনকেই জানানো হবে।",
+    name: "পার্সেল আটকে আছে", nameEn: "Parcel Stuck",
+    descriptionBn: "পার্সেল ৭২ ঘণ্টা ধরে একই কুরিয়ার স্ট্যাটাসে থাকলে স্টাফ ও গ্রাহক দুজনকেই জানানো হবে।", descriptionEn: "If a parcel stays in the same courier status for 72 hours, both staff and the customer are informed.",
     trigger: "parcel_stuck_hours",
     triggerConfig: { hours: 72 },
     conditions: null,
@@ -302,8 +302,8 @@ export const AUTOMATION_PRESETS: {
   },
   {
     key: "due_aging",
-    name: "বকেয়া পুরনো হচ্ছে",
-    descriptionBn: "ডেলিভারি হওয়া অর্ডারের বকেয়া ৩ দিনের বেশি পুরনো হলে 'বকেয়া' ট্যাগ দিয়ে স্টাফকে জানানো হবে।",
+    name: "বকেয়া পুরনো হচ্ছে", nameEn: "Due Getting Old",
+    descriptionBn: "ডেলিভারি হওয়া অর্ডারের বকেয়া ৩ দিনের বেশি পুরনো হলে 'বকেয়া' ট্যাগ দিয়ে স্টাফকে জানানো হবে।", descriptionEn: "If a delivered order's due gets older than 3 days, it is tagged 'due' and staff are informed.",
     trigger: "due_overdue_days",
     triggerConfig: { days: 3 },
     conditions: null,
@@ -314,8 +314,8 @@ export const AUTOMATION_PRESETS: {
   },
   {
     key: "vip_customer",
-    name: "VIP গ্রাহক",
-    descriptionBn: "পুরনো গ্রাহকের ১০,০০০ টাকা বা তার বেশি অর্ডারে 'VIP' ট্যাগ দিয়ে স্টাফকে জানানো হবে।",
+    name: "VIP গ্রাহক", nameEn: "VIP Customer",
+    descriptionBn: "পুরনো গ্রাহকের ১০,০০০ টাকা বা তার বেশি অর্ডারে 'VIP' ট্যাগ দিয়ে স্টাফকে জানানো হবে।", descriptionEn: "On an order of 10,000 taka or more from an existing customer, it is tagged 'VIP' and staff are informed.",
     trigger: "order_created",
     triggerConfig: null,
     conditions: { customerIsNew: false, minTotalMinor: "1000000" },
@@ -326,8 +326,8 @@ export const AUTOMATION_PRESETS: {
   },
   {
     key: "risky_order",
-    name: "ঝুঁকিপূর্ণ অর্ডার",
-    descriptionBn: "Fraud Shield-এ উচ্চ ঝুঁকি (high) পাওয়া অর্ডার স্বয়ংক্রিয়ভাবে পর্যালোচনার জন্য আটকানো হবে।",
+    name: "ঝুঁকিপূর্ণ অর্ডার", nameEn: "Risky Order",
+    descriptionBn: "Fraud Shield-এ উচ্চ ঝুঁকি (high) পাওয়া অর্ডার স্বয়ংক্রিয়ভাবে পর্যালোচনার জন্য আটকানো হবে।", descriptionEn: "Orders found high risk in Fraud Shield are automatically held for review.",
     trigger: "order_created",
     triggerConfig: null,
     conditions: { riskBandAtLeast: "high" },

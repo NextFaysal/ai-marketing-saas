@@ -1,5 +1,6 @@
-import { ArgumentsHost, BadRequestException, Catch, ExceptionFilter } from "@nestjs/common";
+import { ArgumentsHost, Catch, ExceptionFilter } from "@nestjs/common";
 import { MulterError } from "multer";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * CX9: multer raises its own error type from inside FileInterceptor,
@@ -12,7 +13,7 @@ import { MulterError } from "multer";
 export class MulterErrorFilter implements ExceptionFilter {
   catch(exception: MulterError, host: ArgumentsHost) {
     if (exception.code === "LIMIT_FILE_SIZE") {
-      throw new BadRequestException("ফাইল অনেক বড় — সর্বোচ্চ ১০MB আপলোড করা যাবে");
+      throw badRequest("knowledge.theFileIsTooLargeAt");
     }
     throw exception;
   }

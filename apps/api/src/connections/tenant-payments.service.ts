@@ -11,6 +11,7 @@ import { TenantGatewayClient, type TenantAamarCreds, type TenantBkashCreds, type
 import { stripeKeyMode, verifyStripeWebhookSignature } from "../common/stripe.client";
 import { WalletService } from "./wallet.service";
 import { StepUpService, stepUpMarker } from "./step-up.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC9 — the tenant's OWN payment gateways.
@@ -399,10 +400,10 @@ export class TenantPaymentsService {
   async putGateway(organizationId: string, actorId: string, providerRaw: string, dto: any) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (provider === "rocket") {
-      throw new BadRequestException("Rocket-এর কোনো API গেটওয়ে নেই — এটি ম্যানুয়াল নম্বরের পেমেন্ট। Settings → পেমেন্ট নোটে Rocket নম্বর/নির্দেশনা দিন; এটিকে API গেটওয়ে হিসেবে দেখানো হবে না।");
+      throw badRequest("connections.rocketManualOnly");
     }
     if (!(TENANT_GATEWAY_PROVIDERS as readonly string[]).includes(provider)) {
-      throw new BadRequestException("provider must be sslcommerz | bkash | nagad | shurjopay | aamarpay | stripe");
+      throw badRequest("connections.providerGatewayEnum");
     }
     // GC12: fee columns — KEY-PRESENCE semantics. A key present
     // in the body (even as explicit null) sets/clears the
@@ -426,14 +427,14 @@ export class TenantPaymentsService {
     if (hasFeeBps && dto.feeBps != null) {
       const n = Number(dto.feeBps);
       if (!Number.isInteger(n) || n < 0 || n > 10000) {
-        throw new BadRequestException("feeBps 0–10000-এর মধ্যে পূর্ণসংখ্যা হতে হবে।");
+        throw badRequest("connections.feeBpsRange");
       }
       feeBpsValue = n;
     }
     if (hasFeeFixed && dto.feeFixedMinor != null) {
       const raw = String(dto.feeFixedMinor).trim();
       if (!/^\d+$/.test(raw)) {
-        throw new BadRequestException("feeFixedMinor অ-ঋণাত্মক পূর্ণসংখ্যা (পয়সায়, decimal string) হতে হবে।");
+        throw badRequest("connections.feeFixedMinorInvalid");
       }
       feeFixedValue = BigInt(raw);
     }
@@ -456,7 +457,7 @@ export class TenantPaymentsService {
     if (provider === "sslcommerz") {
       const storeId = String(dto?.storeId ?? "").trim();
       const storePass = String(dto?.storePass ?? "").trim();
-      if (!storeId || !storePass) throw new BadRequestException("SSLCommerz Store ID ও Store Password দুটোই প্রয়োজন।");
+      if (!storeId || !storePass) throw badRequest("connections.sslCredentialsRequired");
       creds = { storeId, storePass, sandbox } satisfies TenantSslCreds;
       // No pre-transaction credential check exists for
       // SSLCommerz — saved honestly as "configured".
@@ -466,12 +467,12 @@ export class TenantPaymentsService {
       const appKey = String(dto?.appKey ?? "").trim();
       const appSecret = String(dto?.appSecret ?? "").trim();
       if (!username || !password || !appKey || !appSecret) {
-        throw new BadRequestException("bKash-এর Username, Password, App Key ও App Secret — চারটিই প্রয়োজন।");
+        throw badRequest("connections.bkashCredentialsRequired");
       }
       creds = { username, password, appKey, appSecret, sandbox } satisfies TenantBkashCreds;
       // REAL credential check: the grant-token call.
       await this.gateway.bkashGrantToken(creds as TenantBkashCreds).catch((e) => {
-        throw new BadRequestException(e instanceof Error ? e.message : "bKash verification failed");
+        throw e instanceof Error ? new BadRequestException(e.message) : badRequest("connections.bkashVerificationFailed");
       });
       status = "verified";
       lastVerifiedAt = new Date();
@@ -481,20 +482,20 @@ export class TenantPaymentsService {
       const prefix = String(dto?.prefix ?? "").trim();
       const storeId = String(dto?.storeId ?? "").trim();
       if (!username || !password || !prefix) {
-        throw new BadRequestException("ShurjoPay Username, Password ও Prefix — তিনটিই প্রয়োজন (Store ID ঐচ্ছিক)।");
+        throw badRequest("connections.shurjopayCredentialsRequired");
       }
       creds = { username, password, prefix, ...(storeId ? { storeId } : {}), sandbox } satisfies TenantShurjoCreds;
       // REAL credential check: the get_token call. A failure
       // saves NOTHING and surfaces the gateway's own message.
       await this.gateway.shurjoGetToken(creds as TenantShurjoCreds).catch((e) => {
-        throw new BadRequestException(e instanceof Error ? e.message : "ShurjoPay verification failed");
+        throw e instanceof Error ? new BadRequestException(e.message) : badRequest("connections.shurjopayVerificationFailed");
       });
       status = "verified";
       lastVerifiedAt = new Date();
     } else if (provider === "aamarpay") {
       const storeId = String(dto?.storeId ?? "").trim();
       const signatureKey = String(dto?.signatureKey ?? "").trim();
-      if (!storeId || !signatureKey) throw new BadRequestException("aamarPay Store ID ও Signature Key দুটোই প্রয়োজন।");
+      if (!storeId || !signatureKey) throw badRequest("connections.aamarpayCredentialsRequired");
       creds = { storeId, signatureKey, sandbox } satisfies TenantAamarCreds;
       // No pre-transaction credential check exists for
       // aamarPay (its Search Transaction call needs a real
@@ -505,19 +506,19 @@ export class TenantPaymentsService {
       const webhookSecret = String(dto?.webhookSecret ?? "").trim();
       const publishableKey = String(dto?.publishableKey ?? "").trim();
       if (!secretKey || !webhookSecret) {
-        throw new BadRequestException("Stripe Secret Key ও Webhook Signing Secret (whsec_) দুটোই প্রয়োজন — webhook secret ছাড়া কোনো পেমেন্ট যাচাই করা যাবে না, তাই secret key একা সেভ করা হয় না।");
+        throw badRequest("connections.stripeCredentialsRequired");
       }
       if (!webhookSecret.startsWith("whsec_")) {
-        throw new BadRequestException("Stripe Webhook Signing Secret whsec_ দিয়ে শুরু হতে হবে (Stripe Dashboard → Developers → Webhooks → endpoint-এর Signing secret)।");
+        throw badRequest("connections.stripeWebhookSecretFormat");
       }
       const mode = stripeKeyMode(secretKey);
       if (!mode) {
-        throw new BadRequestException("Stripe Secret Key sk_test_ / sk_live_ (বা restricted rk_) দিয়ে শুরু হতে হবে।");
+        throw badRequest("connections.stripeSecretKeyFormat");
       }
       if (publishableKey) {
         const pkMode = publishableKey.startsWith("pk_test_") ? "test" : publishableKey.startsWith("pk_live_") ? "live" : null;
-        if (!pkMode) throw new BadRequestException("Stripe Publishable Key pk_test_ / pk_live_ দিয়ে শুরু হতে হবে।");
-        if (pkMode !== mode) throw new BadRequestException("Publishable Key ও Secret Key একই mode-এর হতে হবে (দুটোই test অথবা দুটোই live)।");
+        if (!pkMode) throw badRequest("connections.stripePublishableKeyFormat");
+        if (pkMode !== mode) throw badRequest("connections.stripeKeyModeMismatch");
       }
       // Mode coherence (see class doc): Stripe picks test/live
       // BY THE KEY, so the credential SET must match the key —
@@ -525,10 +526,10 @@ export class TenantPaymentsService {
       // complete real orders, and a live key in the sandbox set
       // would break the sandbox set's never-real promise.
       if (environment === "sandbox" && mode !== "test") {
-        throw new BadRequestException("Sandbox সেটে শুধু Stripe TEST key (sk_test_) সেভ করা যাবে — live key এখানে রাখা হয় না।");
+        throw badRequest("connections.stripeSandboxTestOnly");
       }
       if (environment === "live" && mode !== "live") {
-        throw new BadRequestException("Live সেটে শুধু Stripe LIVE key (sk_live_) সেভ করা যাবে — test key Sandbox সেটে রাখুন, সেখানে টেস্ট পেমেন্ট চালানো যায়।");
+        throw badRequest("connections.stripeLiveLiveOnly");
       }
       creds = {
         secretKey, webhookSecret,
@@ -540,17 +541,17 @@ export class TenantPaymentsService {
       // disagreement means the key is not what it claims, and
       // the save refuses. A failure saves NOTHING.
       const balance = await this.gateway.stripeRetrieveBalance(creds as TenantStripeCreds).catch((e) => {
-        throw new BadRequestException(e instanceof Error ? e.message : "Stripe verification failed");
+        throw e instanceof Error ? new BadRequestException(e.message) : badRequest("connections.stripeVerificationFailed");
       });
       if (balance.livemode !== (mode === "live")) {
-        throw new BadRequestException("Stripe key-এর mode ও Stripe-এর নিজের livemode উত্তরের মিল নেই — key টি যাচাই করা যায়নি, কিছুই সেভ হয়নি।");
+        throw badRequest("connections.stripeKeyModeLivemodeMismatch");
       }
       status = "verified";
       lastVerifiedAt = new Date();
     } else {
       const merchantId = String(dto?.merchantId ?? "").trim();
       const privateKey = String(dto?.privateKey ?? "").trim();
-      if (!merchantId || !privateKey) throw new BadRequestException("Nagad Merchant ID ও Private Key দুটোই প্রয়োজন।");
+      if (!merchantId || !privateKey) throw badRequest("connections.nagadCredentialsRequired");
       creds = { merchantId, privateKey } satisfies TenantNagadCreds;
       // No merchant-API credential check is wired for Nagad in
       // this codebase — saved honestly as "configured".
@@ -578,7 +579,7 @@ export class TenantPaymentsService {
     // before any mutation. Re-enabling needs no step-up.
     const stepUp = isEnabled ? "not_required" as const : await this.stepUp.check(actorId, totpCode);
     const existing = await this.findGatewayRow(organizationId, provider, environment);
-    if (!existing) throw new NotFoundException("Payment gateway not found");
+    if (!existing) throw notFound("connections.paymentGatewayNotFound");
     const row = await (this.prisma as any).tenantPaymentGateway.update({
       where: { id: existing.id }, data: { isEnabled: Boolean(isEnabled) },
     });
@@ -596,7 +597,7 @@ export class TenantPaymentsService {
     // deletes nothing.
     const stepUp = await this.stepUp.check(actorId, totpCode);
     const existing = await this.findGatewayRow(organizationId, provider, environment);
-    if (!existing) throw new NotFoundException("Payment gateway not found");
+    if (!existing) throw notFound("connections.paymentGatewayNotFound");
     await (this.prisma as any).tenantPaymentGateway.delete({ where: { id: existing.id } });
     await this.audit.log({
       organizationId, userId: actorId, action: "tenant_payment_gateway.deleted",
@@ -663,10 +664,10 @@ export class TenantPaymentsService {
     try { total = BigInt(order.totalMinor ?? 0); } catch { total = 0n; }
     const verifiedSum = await this.verifiedPaidSum(organizationId, String(order.id));
     if (total > 0n && verifiedSum >= total) {
-      throw new BadRequestException("এই অর্ডারের পেমেন্ট ইতিমধ্যে যাচাইকৃতভাবে সম্পন্ন হয়েছে — আবার পেমেন্ট শুরু করা যাবে না।");
+      throw badRequest("connections.orderVerifiedPaidNoRestart");
     }
     if (total <= 0n) {
-      throw new BadRequestException("অর্ডারের মোট পরিমাণ শূন্য বা তার কম — অনলাইন পেমেন্ট শুরু করা যাবে না।");
+      throw badRequest("connections.orderTotalZeroNoPayment");
     }
     const remaining = total - verifiedSum;
     let amountMinor: bigint;
@@ -674,13 +675,13 @@ export class TenantPaymentsService {
       try {
         amountMinor = BigInt(opts.amountMinor as any);
       } catch {
-        throw new BadRequestException("পেমেন্টের পরিমাণটি সঠিক পূর্ণসংখ্যায় (পয়সায়) দিতে হবে।");
+        throw badRequest("connections.paymentAmountInteger");
       }
       if (amountMinor <= 0n) {
-        throw new BadRequestException("পেমেন্টের পরিমাণ শূন্যের বেশি হতে হবে।");
+        throw badRequest("connections.paymentAmountPositive");
       }
       if (amountMinor > remaining) {
-        throw new BadRequestException("পেমেন্টের পরিমাণ এই অর্ডারের বাকি পরিমাণের চেয়ে বেশি হতে পারবে না।");
+        throw badRequest("connections.paymentAmountExceedsRemaining");
       }
     } else {
       amountMinor = remaining;
@@ -689,7 +690,7 @@ export class TenantPaymentsService {
     if (opts?.purpose != null) {
       purpose = String(opts.purpose).trim().toLowerCase();
       if (!["full", "deposit", "balance"].includes(purpose)) {
-        throw new BadRequestException("পেমেন্টের purpose সঠিক নয় — full, deposit বা balance হতে হবে।");
+        throw badRequest("connections.paymentPurposeInvalid");
       }
     } else {
       purpose = verifiedSum === 0n && amountMinor === total ? "full" : "balance";
@@ -769,17 +770,17 @@ export class TenantPaymentsService {
   async initiateOrderPayment(organizationId: string, orderId: string, providerRaw: string, opts?: { customerName?: string; customerPhone?: string; customerEmail?: string; amountMinor?: bigint | string; purpose?: string }) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (provider === "nagad") {
-      throw new BadRequestException("Nagad API চেকআউট এই সিস্টেমে সংযুক্ত নয় — Nagad-এর অফিশিয়াল API ডকুমেন্টেশন যাচাইযোগ্যভাবে পাওয়া যায়নি বলে যাচাই ছাড়া চেকআউট লেখা হয়নি; Nagad কনফিগটি শুধু সংরক্ষিত আছে। আপাতত ম্যানুয়াল Nagad নম্বরের পথটি ব্যবহার করুন (Settings → পেমেন্ট নোট)।");
+      throw badRequest("connections.nagadApiCheckoutNotConnected");
     }
     if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "shurjopay" && provider !== "aamarpay" && provider !== "stripe") {
-      throw new BadRequestException("provider must be sslcommerz | bkash | shurjopay | aamarpay | stripe");
+      throw badRequest("connections.providerGatewayEnumNoNagad");
     }
     const resolved = await this.resolveGateway(organizationId, provider);
-    if (!resolved) throw new BadRequestException("এই গেটওয়েটি কনফিগার করা নেই — আগে Connect Center-এ নিজের গেটওয়ে যোগ করুন।");
-    if (resolved.row.isEnabled === false) throw new BadRequestException("এই গেটওয়েটি বন্ধ (disabled) করা আছে।");
+    if (!resolved) throw badRequest("connections.gatewayNotConfiguredOwn");
+    if (resolved.row.isEnabled === false) throw badRequest("connections.gatewayDisabled");
     const order = await this.findOrder(organizationId, orderId);
-    if (!order) throw new NotFoundException("Order not found");
-    if (order.isPractice) throw new BadRequestException("Practice অর্ডারে আসল পেমেন্ট নেওয়া যায় না।");
+    if (!order) throw notFound("connections.orderNotFoundPlain");
+    if (order.isPractice) throw badRequest("connections.practiceOrderRealPaymentBlocked");
     // AB4 (AX5a): partial verified money no longer blocks a
     // further initiation — only a FULLY settled order refuses
     // (inside resolveInitiationAmount); the amount defaults
@@ -840,23 +841,23 @@ export class TenantPaymentsService {
   async initiateTestPayment(organizationId: string, actorId: string, providerRaw: string, amountMinorRaw?: unknown) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (provider === "nagad") {
-      throw new BadRequestException("Nagad-এর কোনো API চেকআউটই সংযুক্ত নয় — sandbox টেস্টও সম্ভব নয়।");
+      throw badRequest("connections.nagadNoCheckoutSandbox");
     }
     if (provider !== "sslcommerz" && provider !== "bkash" && provider !== "stripe") {
-      throw new BadRequestException("provider must be sslcommerz | bkash | stripe");
+      throw badRequest("connections.providerSandboxEnum");
     }
     const resolved = await this.resolveGateway(organizationId, provider, "sandbox");
     if (!resolved) {
-      throw new BadRequestException("এই প্রোভাইডারের sandbox credential সেট করা নেই — আগে Connect Center-এ sandbox গেটওয়ে যোগ করুন।");
+      throw badRequest("connections.sandboxCredentialNotSet");
     }
     let amountMinor = 10000n; // ৳100.00
     if (amountMinorRaw !== undefined && amountMinorRaw !== null && String(amountMinorRaw).trim() !== "") {
       const raw = String(amountMinorRaw).trim();
-      if (!/^\d+$/.test(raw)) throw new BadRequestException("amountMinor অবশ্যই minor unit-এ পূর্ণসংখ্যা হতে হবে।");
+      if (!/^\d+$/.test(raw)) throw badRequest("connections.amountMinorMustBeInteger");
       amountMinor = BigInt(raw);
     }
     if (amountMinor <= 0n || amountMinor > 100000n) {
-      throw new BadRequestException("Sandbox টেস্টের পরিমাণ ৳০.০১–৳১,০০০-এর মধ্যে হতে হবে।");
+      throw badRequest("connections.sandboxAmountRange");
     }
     const txn = await (this.prisma as any).tenantPaymentTransaction.create({
       data: {
@@ -934,7 +935,7 @@ export class TenantPaymentsService {
         where: { id: transactionId, organizationId },
       });
     } catch { row = null; }
-    if (!row) throw new NotFoundException("Transaction not found");
+    if (!row) throw notFound("connections.transactionNotFound");
     return {
       transaction: this.paymentTransactionView(row),
       ipnPayload: row.ipnPayload != null ? redactSensitiveKeys(row.ipnPayload) : null,
@@ -954,21 +955,21 @@ export class TenantPaymentsService {
   async initiatePlatformOrderPayment(organizationId: string, orderId: string, providerRaw: string, opts?: { customerName?: string; customerPhone?: string; customerEmail?: string; amountMinor?: bigint | string; purpose?: string }) {
     const provider = String(providerRaw ?? "").trim().toLowerCase();
     if (provider === "nagad") {
-      throw new BadRequestException("প্ল্যাটফর্মের Nagad API চেকআউট সংযুক্ত নয় — প্ল্যাটফর্ম গেটওয়ে হিসেবে আপাতত SSLCommerz ও bKash-ই আছে।");
+      throw badRequest("connections.platformNagadNotConnected");
     }
     if (provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("provider must be sslcommerz | bkash");
+      throw badRequest("connections.providerSslOrBkash");
     }
     if (!(await this.wallet.isPlatformEnabled(organizationId, provider))) {
-      throw new BadRequestException("আপনি এই প্রোভাইডারে প্ল্যাটফর্ম পেমেন্ট চালু করেননি — আগে Connect Center-এ প্ল্যাটফর্ম গেটওয়ে চালু করুন।");
+      throw badRequest("connections.platformPaymentNotEnabled");
     }
     const creds = this.wallet.platformCreds(provider);
     if (!creds) {
-      throw new BadRequestException("প্ল্যাটফর্মের এই গেটওয়েটি এখনো কনফিগার করা হয়নি — এই মুহূর্তে এই পথে পেমেন্ট নেওয়া যাচ্ছে না।");
+      throw badRequest("connections.platformGatewayNotConfigured");
     }
     const order = await this.findOrder(organizationId, orderId);
-    if (!order) throw new NotFoundException("Order not found");
-    if (order.isPractice) throw new BadRequestException("Practice অর্ডারে আসল পেমেন্ট নেওয়া যায় না।");
+    if (!order) throw notFound("connections.orderNotFoundPlain");
+    if (order.isPractice) throw badRequest("connections.practiceOrderRealPaymentBlocked");
     // AB4 (AX5a): same partial-payment scoping as the own path.
     const { amountMinor, purpose } = await this.resolveInitiationAmount(organizationId, order, opts);
     const currency = String(order.currency ?? "BDT").toUpperCase();
@@ -1025,7 +1026,7 @@ export class TenantPaymentsService {
     });
     const gateway = await this.gateway.sslInitSession(creds, form);
     if (!gateway || gateway.status !== "SUCCESS" || !gateway.GatewayPageURL) {
-      throw new BadRequestException(`SSLCommerz পেমেন্ট শুরু করতে অস্বীকার করেছে: ${gateway?.failed_reason ?? gateway?.status ?? "unknown error"}`);
+      throw badRequest("connections.sslStartRefused", { reason: gateway?.failed_reason ?? gateway?.status ?? "unknown error" });
     }
     await (this.prisma as any).tenantPaymentTransaction.update({
       where: { id: txn.id }, data: { providerTxnId: tranId },
@@ -1041,7 +1042,7 @@ export class TenantPaymentsService {
       callbackURL: `${this.apiBase()}/public/tenant-payments/bkash/callback`,
     });
     if (!created || String(created.statusCode) !== "0000" || !created.bkashURL || !created.paymentID) {
-      throw new BadRequestException(`bKash পেমেন্ট শুরু করতে অস্বীকার করেছে: ${created?.statusMessage ?? "unknown error"}`);
+      throw badRequest("connections.bkashStartRefused", { reason: created?.statusMessage ?? "unknown error" });
     }
     await (this.prisma as any).tenantPaymentTransaction.update({
       where: { id: txn.id }, data: { providerTxnId: String(created.paymentID) },
@@ -1072,11 +1073,11 @@ export class TenantPaymentsService {
       client_ip: "127.0.0.1",
     });
     if (!res?.checkout_url) {
-      throw new BadRequestException(`ShurjoPay পেমেন্ট শুরু করতে অস্বীকার করেছে: ${res?.message ?? res?.msg ?? "unknown error"}`);
+      throw badRequest("connections.shurjopayStartRefused", { reason: res?.message ?? res?.msg ?? "unknown error" });
     }
     const spOrderId = String(res?.sp_order_id ?? "").trim();
     if (!spOrderId) {
-      throw new BadRequestException("ShurjoPay সাড়া দিয়েছে কিন্তু sp_order_id দেয়নি — যাচাই অসম্ভব বলে এই পেমেন্টটি গ্রহণ করা যাচ্ছে না।");
+      throw badRequest("connections.shurjopayNoOrderId");
     }
     await (this.prisma as any).tenantPaymentTransaction.update({
       where: { id: txn.id }, data: { providerTxnId: spOrderId },
@@ -1104,7 +1105,7 @@ export class TenantPaymentsService {
       cancel_url: `${this.apiBase()}/public/tenant-payments/aamarpay/cancel`,
     });
     if (!res || String(res.result ?? "").toLowerCase() !== "true" || !res.payment_url) {
-      throw new BadRequestException(`aamarPay পেমেন্ট শুরু করতে অস্বীকার করেছে: ${res?.message ?? res?.msg ?? "unknown error"}`);
+      throw badRequest("connections.aamarpayStartRefused", { reason: res?.message ?? res?.msg ?? "unknown error" });
     }
     await (this.prisma as any).tenantPaymentTransaction.update({
       where: { id: txn.id }, data: { providerTxnId: tranId },
@@ -1852,7 +1853,7 @@ export class TenantPaymentsService {
         if (bySlug?.id) { orgId = String(bySlug.id); orgFound = true; }
       } catch { /* identifier used as-is */ }
     }
-    if (lookupAnswered && !orgFound) throw new NotFoundException("Shop not found");
+    if (lookupAnswered && !orgFound) throw notFound("connections.shopNotFound");
     const online: Array<{ provider: "sslcommerz" | "bkash" | "shurjopay" | "aamarpay" | "stripe"; source: "own" | "platform"; sandbox: boolean }> = [];
     try {
       for (const provider of ["sslcommerz", "bkash", "shurjopay", "aamarpay", "stripe"] as const) {
@@ -1907,7 +1908,7 @@ export class TenantPaymentsService {
     const { online } = await this.publicPaymentOptions(organizationId);
     const hit = online.find((o) => o.provider === provider && o.source === source);
     if (!hit) {
-      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+      throw badRequest("connections.onlinePaymentOptionUnavailable");
     }
     return { provider: hit.provider, source: hit.source };
   }
@@ -1928,10 +1929,10 @@ export class TenantPaymentsService {
     try {
       org = await (this.prisma as any).organization.findFirst({ where: { slug: String(orgSlug ?? "").trim() } });
     } catch { org = null; }
-    if (!org) throw new NotFoundException("Shop not found");
+    if (!org) throw notFound("connections.shopNotFound");
     const order = await this.findOrder(org.id, String(orderId ?? ""));
     if (!order || String(order.externalNumber ?? "") !== String(orderNumber ?? "").trim()) {
-      throw new NotFoundException("Order not found");
+      throw notFound("connections.orderNotFoundPlain");
     }
     let rows: any[] = [];
     try {
@@ -2001,10 +2002,10 @@ export class TenantPaymentsService {
     try {
       org = await (this.prisma as any).organization.findFirst({ where: { slug: String(orgSlug ?? "").trim() } });
     } catch { org = null; }
-    if (!org) throw new NotFoundException("Shop not found");
+    if (!org) throw notFound("connections.shopNotFound");
     const order = await this.findOrder(org.id, orderId);
     if (!order || String(order.externalNumber ?? "") !== String(orderNumber ?? "").trim()) {
-      throw new NotFoundException("Order not found");
+      throw notFound("connections.orderNotFoundPlain");
     }
     const customer = order.customerId
       ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId } }).catch(() => null)
@@ -2031,7 +2032,7 @@ export class TenantPaymentsService {
         .catch(() => null);
       const deposit = depositFor(profile, { totalMinor: total, kind: "online" });
       if (!deposit.active) {
-        throw new BadRequestException("এই অর্ডারের জন্য ডিপোজিট প্রযোজ্য নয়");
+        throw badRequest("connections.depositNotApplicableOrder");
       }
       const verifiedSum = await this.verifiedPaidSum(org.id, String(order.id));
       const remaining = total - verifiedSum;
@@ -2044,7 +2045,7 @@ export class TenantPaymentsService {
       const verifiedSum = await this.verifiedPaidSum(org.id, String(order.id));
       const remaining = total - verifiedSum;
       if (remaining <= 0n) {
-        throw new BadRequestException("এই অর্ডারের কোনো বাকি পরিমাণ নেই — ব্যালান্স পেমেন্ট শুরু করা যাবে না।");
+        throw badRequest("connections.orderNoBalanceDue");
       }
       opts.amountMinor = remaining;
       opts.purpose = "balance";

@@ -1,4 +1,5 @@
 import { ForbiddenException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { planLimits, planResourceLimits, billingGraceDays, DEFAULT_PLAN_LIMITS } from "./platform-settings";
 import {
   commerceBlocked, checkProductCreate, checkOrderCreate, checkMediaUpload,
@@ -158,14 +159,14 @@ describe("GC22 — checkProductCreate boundaries", () => {
     const at = (n: number) => makePrisma({ settings: limitsSetting({ productLimit: 3 }), productCount: n });
     await expect(checkProductCreate(at(2), "org-1")).resolves.toBeUndefined();
     const err = await checkProductCreate(at(3), "org-1").catch((e) => e);
-    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err).toMatchObject({ code: "common.planProductLimitReached", status: 403 });
     expect(err.message).toContain("3");
     expect(err.message).toContain("পণ্য সীমা");
   });
 
   it("productLimit 0 blocks the very first product", async () => {
     const p = makePrisma({ settings: limitsSetting({ productLimit: 0 }), productCount: 0 });
-    await expect(checkProductCreate(p, "org-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(checkProductCreate(p, "org-1")).rejects.toMatchObject({ code: "common.planProductLimitReached", status: 403 });
   });
 
   it("no productLimit → unlimited even with many products", async () => {
@@ -175,7 +176,7 @@ describe("GC22 — checkProductCreate boundaries", () => {
   it("paused org is refused before the limit is even read", async () => {
     const p = makePrisma({ sub: { plan: "GROWTH", status: "ACTIVE", pausedAt: new Date(), currentPeriodEnd: null } });
     const err = await checkProductCreate(p, "org-1").catch((e) => e);
-    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err).toMatchObject({ code: "common.subscriptionPausedBlock", status: 403 });
     expect(err.message).toContain("pause");
   });
 });
@@ -186,7 +187,11 @@ describe("GC22 — checkOrderCreate boundaries + notification throttle", () => {
     await expect(checkOrderCreate(at(4), "org-1")).resolves.toBeUndefined();
     const err = await checkOrderCreate(at(5), "org-1").catch((e) => e);
     expect(err).toBeInstanceOf(OrderLimitBlockedError);
+    // The class keeps its concrete ForbiddenException type by
+    // design (ML10 withCatalogCode pattern); MB4's contract is
+    // the catalog pointer the filter renders from.
     expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.catalogCode).toBe("common.monthlyOrderLimitReached");
     expect(err.code).toBe("ORDER_LIMIT_BLOCKED");
     expect(err.shopperMessage).toBe(SHOPPER_ORDER_BLOCK_MESSAGE);
     expect(err.shopperMessage).not.toContain("সীমা");
@@ -237,7 +242,7 @@ describe("GC22 — checkMediaUpload boundaries", () => {
     const p = makePrisma({ settings: limitsSetting({ storageLimitMb: 2 }), mediaSum: MB });
     await expect(checkMediaUpload(p, "org-1", MB)).resolves.toBeUndefined();
     const err = await checkMediaUpload(p, "org-1", MB + 1).catch((e) => e);
-    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err).toMatchObject({ code: "common.planStorageLimitReached", status: 403 });
     expect(err.message).toContain("স্টোরেজ সীমা");
     expect(err.message).toContain("2 MB");
   });
@@ -245,7 +250,7 @@ describe("GC22 — checkMediaUpload boundaries", () => {
   it("storageLimitMb 0 refuses any positive upload but allows a zero-byte probe", async () => {
     const p = makePrisma({ settings: limitsSetting({ storageLimitMb: 0 }), mediaSum: 0 });
     await expect(checkMediaUpload(p, "org-1", 0)).resolves.toBeUndefined();
-    await expect(checkMediaUpload(p, "org-1", 1)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(checkMediaUpload(p, "org-1", 1)).rejects.toMatchObject({ code: "common.planStorageLimitReached", status: 403 });
   });
 
   it("no storageLimitMb → unlimited", async () => {

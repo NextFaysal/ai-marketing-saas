@@ -1,5 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { notFound } from "../i18n";
+import {
+  catalogList,
+  catalogText,
+  resolveDocumentLocale,
+  type ApiLocale,
+} from "../i18n/catalog/send-locale";
+import { DOCUMENTS_CATALOG } from "../i18n/catalog/documents";
 import {
   NON_COUNTING_STATUSES,
   addDaysToKey,
@@ -43,6 +51,18 @@ export const REPORT_LABELS_BN: Record<string, string> = {
   messaging_summary: "মেসেজিং সারসংক্ষেপ",
 };
 
+export const REPORT_LABELS_EN: Record<string, string> = Object.fromEntries(
+  Object.keys(REPORT_LABELS_BN).map((k) => [
+    k,
+    (DOCUMENTS_CATALOG as Record<string, { en: string }>)[`finance.reportLabel.${k}`]?.en ?? k,
+  ]),
+);
+
+/** ML12: the report label in the document locale (D-MB4-6). */
+export function reportLabelFor(type: string, locale: ApiLocale): string {
+  return locale === "en" ? (REPORT_LABELS_EN[type] ?? type) : (REPORT_LABELS_BN[type] ?? type);
+}
+
 const TAKE = 5001;
 
 @Injectable()
@@ -53,28 +73,32 @@ export class FinanceReportsService {
     return (this.prisma as any)[name];
   }
 
-  async getReport(organizationId: string, type: string, from?: string, to?: string): Promise<any> {
+  async getReport(organizationId: string, type: string, from?: string, to?: string, locale?: ApiLocale): Promise<any> {
     const range = parseFinanceRange(from, to);
+    // ML12: documents render in the org's document locale
+    // (dashboardLocale, D-MB4-6) unless a locale is passed.
+    const loc = locale ?? (await resolveDocumentLocale(this.prisma as any, organizationId));
     switch (type) {
-      case "discounts": return this.discountsReport(organizationId, range);
-      case "refunds": return this.refundsReport(organizationId, range);
-      case "payment_sales": return this.paymentSalesReport(organizationId, range);
-      case "category_sales": return this.categorySalesReport(organizationId, range);
-      case "shipping_cost": return this.shippingCostReport(organizationId, range);
-      default: throw new Error("রিপোর্টের ধরনটি পাওয়া যায়নি");
+      case "discounts": return this.discountsReport(organizationId, range, loc);
+      case "refunds": return this.refundsReport(organizationId, range, loc);
+      case "payment_sales": return this.paymentSalesReport(organizationId, range, loc);
+      case "category_sales": return this.categorySalesReport(organizationId, range, loc);
+      case "shipping_cost": return this.shippingCostReport(organizationId, range, loc);
+      default: throw notFound("finance.reportTypeNotFound");
     }
   }
 
   /** Export file built from the SAME payload as the JSON view. */
-  async buildReportFile(organizationId: string, type: string, from: string | undefined, to: string | undefined, format: "csv" | "xlsx"): Promise<BuiltFile> {
+  async buildReportFile(organizationId: string, type: string, from: string | undefined, to: string | undefined, format: "csv" | "xlsx", locale?: ApiLocale): Promise<BuiltFile> {
     const range = parseFinanceRange(from, to);
-    const payload = await this.getReport(organizationId, type, range.from, range.to);
-    const sections = this.sectionsFor(type, payload);
+    const loc = locale ?? (await resolveDocumentLocale(this.prisma as any, organizationId));
+    const payload = await this.getReport(organizationId, type, range.from, range.to, loc);
+    const sections = this.sectionsFor(type, payload, loc);
     const notes = [
-      `${REPORT_LABELS_BN[type] ?? type} · সময়সীমা: ${range.from} থেকে ${range.to} (ঢাকা)`,
+      catalogText("finance.reportFileNote", loc, { label: reportLabelFor(type, loc), from: range.from, to: range.to }),
       ...(payload.coverage?.note ? [String(payload.coverage.note)] : []),
     ];
-    return buildFileFromSections(`${type}-${range.from}-to-${range.to}`, sections, format, this.summaryFor(type, payload), notes);
+    return buildFileFromSections(`${type}-${range.from}-to-${range.to}`, sections, format, this.summaryFor(type, payload, loc), notes);
   }
 
   // ---------------- shared loaders ----------------
@@ -163,7 +187,7 @@ export class FinanceReportsService {
    *    after stamping shipped; coverage counts state exactly how
    *    many of the period's orders carry stamps.
    */
-  async discountsReport(organizationId: string, range: FinanceRange) {
+  async discountsReport(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const { orders, truncated } = await this.loadCountedOrders(organizationId, range);
     let orderDiscount = 0n;
     let stampedDiscount = 0n;
@@ -203,7 +227,7 @@ export class FinanceReportsService {
         stampedOrders,
         ordersInPeriod: orders.length,
         truncated,
-        note: "স্ট্যাম্প-ভিত্তিক উৎস বিশ্লেষণ কেবল সেই অর্ডারগুলোতে আছে যেগুলো ছাড়-স্ট্যাম্প (GB7) চালু হওয়ার পর দেওয়া হয়েছে; অর্ডার-স্তরের মোট ছাড় সময়সীমার সব গণনাযোগ্য অর্ডার কভার করে। দুটি স্তর আলাদা রাখা হয়েছে — একীভূত ভুয়া ইতিহাস বানানো হয়নি।",
+        note: catalogText("finance.note.discountsCoverage", locale),
       },
       daily: [...daily.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, d]) => ({
         date, orderDiscountMinor: d.orderDiscount.toString(), stampedDiscountMinor: d.stampedDiscount.toString(), orders: d.orders,
@@ -231,7 +255,7 @@ export class FinanceReportsService {
    * is > 0 — this overlaps the return-recorded refunds and says
    * so.
    */
-  async refundsReport(organizationId: string, range: FinanceRange) {
+  async refundsReport(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const requests = await this.loadReturns(organizationId, range, "createdAt");
     const byStatus = new Map<string, number>();
     for (const r of requests) byStatus.set(String(r.status), (byStatus.get(String(r.status)) ?? 0) + 1);
@@ -273,7 +297,7 @@ export class FinanceReportsService {
         recordedRefundMinor: recordedRefund.toString(),
       },
       coverage: {
-        note: "রিটার্ন-ভিত্তিক হিসাব ReturnRequest রেকর্ড থেকে (তৈরির তারিখ অনুযায়ী)। অর্ডার-স্তরের হিসাবটি একই সময়ে হালনাগাদ হওয়া অর্ডারের সঞ্চিত refundedMinor — রিটার্নে রেকর্ড করা রিফান্ডের সঙ্গে এটি আংশিকভাবে মিলে যায় (overlap), দুটি যোগ করবেন না। স্টোরে রিফান্ড push সফল হয়েছে কিনা ReturnRequest-এ আলাদা করে রেকর্ড থাকে না — এখানে দাবি করা হয়নি।",
+        note: catalogText("finance.note.refundsCoverage", locale),
       },
     };
   }
@@ -315,7 +339,7 @@ export class FinanceReportsService {
    *    grouped by provider × source — money the gateway itself
    *    confirmed.
    */
-  async paymentSalesReport(organizationId: string, range: FinanceRange) {
+  async paymentSalesReport(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const { orders, truncated } = await this.loadCountedOrders(organizationId, range);
     const byMethod = new Map<string, { orders: number; total: bigint }>();
     let totalAll = 0n;
@@ -350,7 +374,7 @@ export class FinanceReportsService {
       onlineVerifiedTotals: { count: vCount, grossMinor: vGross.toString() },
       coverage: {
         truncated,
-        note: "অর্ডার-ভিত্তিক অংশটি Order.paymentMethod অনুযায়ী — পদ্ধতি ফাঁকা থাকলে COD অর্ডার 'cod' আর বাকিগুলো 'unknown' (অন্যান্য/অজানা) বাকেটে যায়, অনুমান করা হয় না। যাচাইকৃত অংশটি শুধু গেটওয়ে-নিশ্চিত verified_paid লেনদেন থেকে (updatedAt অনুযায়ী) — দুটি অংশের যোগফল মেলানোর চেষ্টা করবেন না, প্রশ্নই আলাদা।",
+        note: catalogText("finance.note.paymentSalesCoverage", locale),
       },
     };
   }
@@ -365,7 +389,7 @@ export class FinanceReportsService {
    * at placement. CAVEAT (stated in coverage): recategorizing a
    * product moves its whole history to the new category.
    */
-  async categorySalesReport(organizationId: string, range: FinanceRange) {
+  async categorySalesReport(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const { orders, truncated } = await this.loadCountedOrders(organizationId, range, { withItems: true, withShipments: true });
     const sold = orders.filter((o: any) => isSoldOrderShape(String(o.status), (o._shipments ?? []).map((s: any) => String(s.status))));
     const productIds = [...new Set(sold.flatMap((o: any) => (o.items ?? []).map((i: any) => i.productId).filter(Boolean).map(String)))];
@@ -383,7 +407,7 @@ export class FinanceReportsService {
       const rows = await this.t("category").findMany({ where: { organizationId, id: { in: categoryIds } }, select: { id: true, name: true } });
       for (const c of rows) categoryNames.set(String(c.id), String(c.name));
     }
-    const UNCATEGORIZED = "শ্রেণিবিহীন";
+    const UNCATEGORIZED = catalogText("finance.uncategorized", locale);
     const groups = new Map<string, { orders: Set<string>; quantity: number; revenue: bigint }>();
     for (const o of sold) {
       for (const item of o.items ?? []) {
@@ -411,7 +435,7 @@ export class FinanceReportsService {
       coverage: {
         soldOrders: sold.length,
         truncated,
-        note: "শ্রেণি = পণ্যের বর্তমান শ্রেণি (categoryId → Category, না থাকলে পণ্যের পুরনো ফ্রি-টেক্সট category)। সতর্কতা: কোনো পণ্যের শ্রেণি বদলালে তার পুরনো বিক্রির ইতিহাসও নতুন শ্রেণিতে চলে যায় — অর্ডারের সময়ের শ্রেণির snapshot সংরক্ষিত থাকে না। আয় = আইটেমের লাইন-মোট (OrderItem.totalMinor) যা অর্ডার দেওয়ার সময় stamp হয়েছিল।",
+        note: catalogText("finance.note.categorySalesCoverage", locale),
       },
     };
   }
@@ -434,7 +458,7 @@ export class FinanceReportsService {
    *    non-practice — shipping exists independent of the sales
    *    counting rules, stated here).
    */
-  async shippingCostReport(organizationId: string, range: FinanceRange) {
+  async shippingCostReport(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const rows = await this.t("order").findMany({
       where: { organizationId, isPractice: false },
       take: TAKE,
@@ -510,65 +534,68 @@ export class FinanceReportsService {
         ordersWithAnyActual,
         actualCoveragePct: ordersWithShipments > 0 ? Math.round((ordersWithAnyActual / ordersWithShipments) * 1000) / 10 : null,
         truncated: rows.length >= TAKE,
-        note: "আদায়কৃত চার্জ = Order.shippingMinor, অর্ডারটি তার প্রথম (সবচেয়ে পুরনো) শিপমেন্টের কুরিয়ারে attributed। প্রকৃত খরচ = ON7/GB5 precedence: প্রথমে reconciliation sheet-এর sheetChargeMinor, না থাকলে বুকিংয়ের সময় কুরিয়ারের ফেরত দেওয়া chargeMinor। কোনো শিপমেন্টেই প্রকৃত খরচ না থাকলে actualMinor null (শূন্য বানানো হয়নি)।",
+        note: catalogText("finance.note.shippingCoverage", locale),
       },
     };
   }
 
   // ---------------- sections + summaries (one row set) ----------------
 
-  sectionsFor(type: string, p: any): ReportSection[] {
+  sectionsFor(type: string, p: any, locale: ApiLocale = "bn"): ReportSection[] {
+    const T = (key: string, params?: Record<string, unknown>) => catalogText(key, locale, params);
+    const H = (key: string) => catalogList(key, locale);
     switch (type) {
       case "discounts": return [
-        { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
-          ["মোট গণনাযোগ্য অর্ডার", p.totals.ordersInPeriod],
-          ["অর্ডার-স্তরের মোট ছাড় (টাকা)", takaCell(toBig(p.totals.orderDiscountMinor))],
-          ["স্ট্যাম্প-ভিত্তিক মোট ছাড় (টাকা)", takaCell(toBig(p.totals.stampedDiscountMinor))],
-          ["স্ট্যাম্পযুক্ত অর্ডার", p.totals.stampedOrders],
+        { title: T("finance.section.summary"), headers: H("finance.headers.descriptionAmount"), rows: [
+          [T("finance.row.totalCountableOrders"), p.totals.ordersInPeriod],
+          [T("finance.row.orderLevelDiscountTotal"), takaCell(toBig(p.totals.orderDiscountMinor))],
+          [T("finance.row.stampDiscountTotal"), takaCell(toBig(p.totals.stampedDiscountMinor))],
+          [T("finance.row.stampedOrders"), p.totals.stampedOrders],
         ] },
-        { title: "দৈনিক ছাড়", headers: ["তারিখ", "অর্ডার", "অর্ডার-স্তরের ছাড় (টাকা)", "স্ট্যাম্প-ভিত্তিক ছাড় (টাকা)"], rows: p.daily.map((d: any) => [d.date, d.orders, takaCell(toBig(d.orderDiscountMinor)), takaCell(toBig(d.stampedDiscountMinor))]) },
-        { title: "উৎস অনুযায়ী ছাড়", headers: ["ধরন", "কোড/নাম", "প্রয়োগ", "ছাড় (টাকা)"], rows: p.bySource.map((s: any) => [s.kind, s.name, s.applications, takaCell(toBig(s.discountMinor))]) },
+        { title: T("finance.section.dailyDiscounts"), headers: H("finance.headers.dateOrderDiscounts"), rows: p.daily.map((d: any) => [d.date, d.orders, takaCell(toBig(d.orderDiscountMinor)), takaCell(toBig(d.stampedDiscountMinor))]) },
+        { title: T("finance.section.discountsBySource"), headers: H("finance.headers.discountSource"), rows: p.bySource.map((x: any) => [x.kind, x.name, x.applications, takaCell(toBig(x.discountMinor))]) },
       ];
       case "refunds": return [
-        { title: "স্ট্যাটাস অনুযায়ী রিটার্ন", headers: ["স্ট্যাটাস", "সংখ্যা"], rows: p.requests.byStatus.map((s: any) => [s.status, s.count]) },
-        { title: "সমাধান অনুযায়ী (সম্পন্ন)", headers: ["সমাধান", "সংখ্যা", "পরিমাণ (টাকা)", "পরিমাণ-জানা সংখ্যা"], rows: p.requests.byResolution.map((s: any) => [s.resolution, s.count, takaCell(toBig(s.amountMinor)), s.amountsKnown]) },
-        { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
-          ["মোট রিটার্ন অনুরোধ", p.requests.total],
-          ["পূর্ণ রিফান্ড (সম্পন্ন)", p.requests.fullCount],
-          ["আংশিক রিফান্ড (সম্পন্ন)", p.requests.partialCount],
-          ["পরিমাণ অজানা (সম্পন্ন রিফান্ড)", p.requests.amountUnknownCount],
-          ["রিফান্ডযুক্ত অর্ডার (অর্ডার-স্তর)", p.orderLevel.ordersWithRefunds],
-          ["অর্ডারে রেকর্ডকৃত সঞ্চিত রিফান্ড (টাকা)", takaCell(toBig(p.orderLevel.recordedRefundMinor))],
+        { title: T("finance.section.returnsByStatus"), headers: H("finance.headers.statusCount"), rows: p.requests.byStatus.map((x: any) => [x.status, x.count]) },
+        { title: T("finance.section.byResolution"), headers: H("finance.headers.resolution"), rows: p.requests.byResolution.map((x: any) => [x.resolution, x.count, takaCell(toBig(x.amountMinor)), x.amountsKnown]) },
+        { title: T("finance.section.summary"), headers: H("finance.headers.descriptionAmount"), rows: [
+          [T("finance.row.totalReturnRequests"), p.requests.total],
+          [T("finance.row.fullRefundsCompleted"), p.requests.fullCount],
+          [T("finance.row.partialRefundsCompleted"), p.requests.partialCount],
+          [T("finance.row.amountUnknownRefunds"), p.requests.amountUnknownCount],
+          [T("finance.row.ordersWithRefunds"), p.orderLevel.ordersWithRefunds],
+          [T("finance.row.recordedRefundTotal"), takaCell(toBig(p.orderLevel.recordedRefundMinor))],
         ] },
       ];
       case "payment_sales": return [
-        { title: "পেমেন্ট পদ্ধতি অনুযায়ী অর্ডার", headers: ["পদ্ধতি", "অর্ডার", "মোট (টাকা)"], rows: [...p.byMethod.map((m: any) => [m.method, m.orders, takaCell(toBig(m.totalMinor))]), ["মোট", p.totals.orders, takaCell(toBig(p.totals.totalMinor))]] },
-        { title: "যাচাইকৃত অনলাইন পেমেন্ট (verified_paid)", headers: ["প্রোভাইডার", "উৎস", "সংখ্যা", "মোট (টাকা)"], rows: [...p.onlineVerified.map((v: any) => [v.provider, v.source, v.count, takaCell(toBig(v.grossMinor))]), ["মোট", "", p.onlineVerifiedTotals.count, takaCell(toBig(p.onlineVerifiedTotals.grossMinor))]] },
+        { title: T("finance.section.ordersByPaymentMethod"), headers: H("finance.headers.methodOrdersTotal"), rows: [...p.byMethod.map((m: any) => [m.method, m.orders, takaCell(toBig(m.totalMinor))]), [T("finance.total"), p.totals.orders, takaCell(toBig(p.totals.totalMinor))]] },
+        { title: T("finance.section.verifiedOnlinePayments"), headers: H("finance.headers.providerSourceCountTotal"), rows: [...p.onlineVerified.map((v: any) => [v.provider, v.source, v.count, takaCell(toBig(v.grossMinor))]), [T("finance.total"), "", p.onlineVerifiedTotals.count, takaCell(toBig(p.onlineVerifiedTotals.grossMinor))]] },
       ];
       case "category_sales": return [
-        { title: "শ্রেণি অনুযায়ী বিক্রি", headers: ["শ্রেণি", "অর্ডার", "পরিমাণ", "আয় (টাকা)"], rows: [...p.rows.map((r: any) => [r.category, r.orders, r.quantity, takaCell(toBig(r.revenueMinor))]), ["মোট", p.totals.orders, p.totals.quantity, takaCell(toBig(p.totals.revenueMinor))]] },
+        { title: T("finance.section.salesByCategory"), headers: H("finance.headers.categorySales"), rows: [...p.rows.map((r: any) => [r.category, r.orders, r.quantity, takaCell(toBig(r.revenueMinor))]), [T("finance.total"), p.totals.orders, p.totals.quantity, takaCell(toBig(p.totals.revenueMinor))]] },
       ];
       case "shipping_cost": return [
-        { title: "কুরিয়ার অনুযায়ী ডেলিভারি খরচ", headers: ["কুরিয়ার", "শিপমেন্ট", "অর্ডার", "আদায়কৃত চার্জ (টাকা)", "প্রকৃত খরচ (টাকা)", "প্রকৃত-খরচযুক্ত শিপমেন্ট"], rows: [...p.rows.map((r: any) => [r.provider, r.shipments, r.orders, takaCell(toBig(r.chargedMinor)), r.actualMinor === null ? "" : takaCell(toBig(r.actualMinor)), r.shipmentsWithActual]),
-          ["মোট", p.totals.shipments, p.totals.orders, takaCell(toBig(p.totals.chargedMinor)), p.totals.actualMinor === null ? "" : takaCell(toBig(p.totals.actualMinor)), p.totals.shipmentsWithActual]] },
-        { title: "কভারেজ", headers: ["বিবরণ", "পরিমাণ"], rows: [
-          ["শিপমেন্টযুক্ত অর্ডার", p.coverage.ordersWithShipments],
-          ["প্রকৃত খরচ পাওয়া অর্ডার", p.coverage.ordersWithAnyActual],
-          ["প্রকৃত খরচের কভারেজ (%)", p.coverage.actualCoveragePct ?? ""],
+        { title: T("finance.section.deliveryCostByCourier"), headers: H("finance.headers.shippingCost"), rows: [...p.rows.map((r: any) => [r.provider, r.shipments, r.orders, takaCell(toBig(r.chargedMinor)), r.actualMinor === null ? "" : takaCell(toBig(r.actualMinor)), r.shipmentsWithActual]),
+          [T("finance.total"), p.totals.shipments, p.totals.orders, takaCell(toBig(p.totals.chargedMinor)), p.totals.actualMinor === null ? "" : takaCell(toBig(p.totals.actualMinor)), p.totals.shipmentsWithActual]] },
+        { title: T("finance.section.coverage"), headers: H("finance.headers.descriptionAmount"), rows: [
+          [T("finance.row.ordersWithShipments"), p.coverage.ordersWithShipments],
+          [T("finance.row.ordersWithActual"), p.coverage.ordersWithAnyActual],
+          [T("finance.row.actualCoveragePct"), p.coverage.actualCoveragePct ?? ""],
         ] },
       ];
       default: return [];
     }
   }
 
-  summaryFor(type: string, p: any): string {
-    const head = `${REPORT_LABELS_BN[type] ?? type} · ${p.range.from} — ${p.range.to}`;
+  summaryFor(type: string, p: any, locale: ApiLocale = "bn"): string {
+    const T = (key: string, params?: Record<string, unknown>) => catalogText(key, locale, params);
+    const head = `${reportLabelFor(type, locale)} · ${p.range.from} — ${p.range.to}`;
     switch (type) {
-      case "discounts": return [head, `অর্ডার: ${p.totals.ordersInPeriod}টি · অর্ডার-স্তরের ছাড়: ${takaText(toBig(p.totals.orderDiscountMinor))} · স্ট্যাম্প-ভিত্তিক ছাড়: ${takaText(toBig(p.totals.stampedDiscountMinor))} (${p.totals.stampedOrders}টি অর্ডারে স্ট্যাম্প আছে)`].join("\n");
-      case "refunds": return [head, `রিটার্ন অনুরোধ: ${p.requests.total}টি · পূর্ণ রিফান্ড: ${p.requests.fullCount}টি · আংশিক: ${p.requests.partialCount}টি`].join("\n");
-      case "payment_sales": return [head, `অর্ডার: ${p.totals.orders}টি · মোট: ${takaText(toBig(p.totals.totalMinor))} · যাচাইকৃত অনলাইন: ${p.onlineVerifiedTotals.count}টি · ${takaText(toBig(p.onlineVerifiedTotals.grossMinor))}`].join("\n");
-      case "category_sales": return [head, `বিক্রীত অর্ডার: ${p.totals.orders}টি · মোট আয়: ${takaText(toBig(p.totals.revenueMinor))} · শ্রেণি: ${p.rows.length}টি`].join("\n");
-      case "shipping_cost": return [head, `শিপমেন্ট: ${p.totals.shipments}টি · আদায়কৃত চার্জ: ${takaText(toBig(p.totals.chargedMinor))} · প্রকৃত খরচ: ${p.totals.actualMinor === null ? "রেকর্ড নেই" : takaText(toBig(p.totals.actualMinor))} (কভারেজ ${p.coverage.actualCoveragePct ?? "—"}%)`].join("\n");
+      case "discounts": return [head, T("finance.summary.discounts", { orders: p.totals.ordersInPeriod, orderDiscount: takaText(toBig(p.totals.orderDiscountMinor)), stampedDiscount: takaText(toBig(p.totals.stampedDiscountMinor)), stampedOrders: p.totals.stampedOrders })].join("\n");
+      case "refunds": return [head, T("finance.summary.refunds", { total: p.requests.total, full: p.requests.fullCount, partial: p.requests.partialCount })].join("\n");
+      case "payment_sales": return [head, T("finance.summary.paymentSales", { orders: p.totals.orders, total: takaText(toBig(p.totals.totalMinor)), verifiedCount: p.onlineVerifiedTotals.count, verifiedTotal: takaText(toBig(p.onlineVerifiedTotals.grossMinor)) })].join("\n");
+      case "category_sales": return [head, T("finance.summary.categorySales", { orders: p.totals.orders, revenue: takaText(toBig(p.totals.revenueMinor)), categories: p.rows.length })].join("\n");
+      case "shipping_cost": return [head, T("finance.summary.shippingCost", { shipments: p.totals.shipments, charged: takaText(toBig(p.totals.chargedMinor)), actual: p.totals.actualMinor === null ? T("finance.noRecord") : takaText(toBig(p.totals.actualMinor)), coverage: p.coverage.actualCoveragePct ?? "—" })].join("\n");
       default: return head;
     }
   }

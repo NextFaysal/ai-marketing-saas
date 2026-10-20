@@ -117,7 +117,7 @@ describe("Milestone 40 — SuperAdminGuard token-version pass-through (regressio
   });
   it("a stale token (old tv) is still refused", async () => {
     const { guard, ctx } = guardFor({ id: "a-1", isSuperAdmin: true, status: "ACTIVE", adminTier: "SUPER", totpEnabled: true, tokenVersion: 3 }, 2);
-    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ code: "common.adminSessionRevoked" });
   });
 });
 
@@ -176,7 +176,7 @@ describe("Milestone 40 — maintenance window, bulk, anomalies", () => {
 
   it("validates maintenance windows and reports an active window in the public status", async () => {
     const { svc } = setup();
-    await expect(svc.updateSettings(ADMIN, { maintenanceWindow: { startsAt: "2026-01-02", endsAt: "2026-01-01" } })).rejects.toThrow(/after startsAt/i);
+    await expect(svc.updateSettings(ADMIN, { maintenanceWindow: { startsAt: "2026-01-02", endsAt: "2026-01-01" } })).rejects.toMatchObject({ code: "admin.maintenancewindowEndsatMustBeAfterStartsat" });
     const now = Date.now();
     await svc.updateSettings(ADMIN, {
       maintenanceWindow: { startsAt: new Date(now - 3600000).toISOString(), endsAt: new Date(now + 3600000).toISOString(), message: "আপগ্রেড", hardLockout: true },
@@ -238,7 +238,7 @@ describe("Milestone 40 — export & verified permanent deletion", () => {
 
   it("permanent deletion demands DELETED status + the exact name, then certifies what it removed", async () => {
     const { svc, p, audit } = setup();
-    await expect(svc.deleteOrgPermanent(ADMIN, "org-1", "Wrong Name", "gdpr request")).rejects.toThrow(/exact name/i);
+    await expect(svc.deleteOrgPermanent(ADMIN, "org-1", "Wrong Name", "gdpr request")).rejects.toMatchObject({ code: "admin.confirmationFailedTypeTheOrganizationS" });
     const out: any = await svc.deleteOrgPermanent(ADMIN, "org-1", "Acme", "gdpr request");
     expect(out.deleted).toBe(true);
     expect(out.certificate.product).toBe(1);
@@ -254,7 +254,7 @@ describe("Milestone 40 — export & verified permanent deletion", () => {
   it("an ACTIVE org cannot be permanently deleted", async () => {
     const { svc, p } = setup();
     p.organization.rows[0].status = "ACTIVE";
-    await expect(svc.deleteOrgPermanent(ADMIN, "org-1", "Acme", "gdpr request")).rejects.toThrow(/DELETED status first/i);
+    await expect(svc.deleteOrgPermanent(ADMIN, "org-1", "Acme", "gdpr request")).rejects.toMatchObject({ code: "admin.permanentDeletionRequiresTheOrganizationTo" });
   });
 });
 

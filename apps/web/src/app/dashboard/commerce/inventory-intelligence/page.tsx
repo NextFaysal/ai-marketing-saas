@@ -1,8 +1,9 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate, fmtMoneyMinor } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { minorToTakaString } from "@/lib/storefront-money";
 import {
   demandBasisLabel, pickStockoutDisplay, trendGrowthDisplay,
   type VelocityV2Fields,
@@ -66,9 +67,9 @@ interface DamageReport {
 }
 
 const DAMAGE_REASON_LABELS: Record<string, string> = {
-  damaged: "নষ্ট",
-  lost: "হারানো",
-  expired: "মেয়াদোত্তীর্ণ",
+  damaged: "damaged",
+  lost: "lost2",
+  expired: "expired",
 };
 
 function isoDate(d: Date): string {
@@ -164,19 +165,18 @@ interface Valuation {
 }
 
 /** minor string → "৳1,250.50"; null → "—". */
-function taka(minor: string | null | undefined): string {
+function taka(minor: string | null | undefined, locale: "bn" | "en" = "bn"): string {
   if (minor === null || minor === undefined || minor === "") return "—";
-  const s = minorToTakaString(minor);
-  return s ? `৳${s}` : "—";
+  return fmtMoneyMinor(locale, BigInt(minor));
 }
 
 function velocityText(v: number): string {
   return String(Number(v.toFixed(2)));
 }
 
-function daysLeftText(v: number | null): string {
+function daysLeftText(v: number | null, t?: (path: string, params?: Record<string, string | number>) => string): string {
   if (v === null) return "—";
-  return `${Number(v.toFixed(1))} দিন`;
+  return t ? t("commerce.days3", { Number: Number(v.toFixed(1)) }) : `${Number(v.toFixed(1))} days`;
 }
 
 const inputCls = "w-full rounded-lg border px-3 py-2 text-sm";
@@ -205,6 +205,7 @@ function ProductCardHead({ name, variantName, sku }: { name: string; variantName
 }
 
 export default function InventoryIntelligencePage() {
+  const { dict, t, locale } = useLocale();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -259,7 +260,7 @@ export default function InventoryIntelligencePage() {
       setAllowBackorder(!!s.allowBackorder);
       setReserveMinutes(String(s.reserveMinutes ?? 0));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিংস লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadSettings);
     }
   }, []);
 
@@ -272,14 +273,14 @@ export default function InventoryIntelligencePage() {
       setAvailabilityItems(res.items ?? []);
       setAvailLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "প্রাপ্যতা লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadAvailability);
     } finally { setAvailBusy(false); }
   }, []);
 
   const loadDamageReport = useCallback(async (from: string, to: string) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!from || !to) { setError("শুরুর ও শেষের তারিখ দুটোই দিতে হবে"); return; }
+    if (!from || !to) { setError(dict.commerce.bothStartEndDatesAre); return; }
     setDamageBusy(true);
     try {
       const res = await apiFetch<DamageReport>(
@@ -288,7 +289,7 @@ export default function InventoryIntelligencePage() {
       setDamageReport(res);
       setDamageLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ক্ষতির রিপোর্ট লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadTheLoss);
     } finally { setDamageBusy(false); }
   }, []);
 
@@ -306,7 +307,7 @@ export default function InventoryIntelligencePage() {
       }
       setSugLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পরামর্শ লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadSuggestions);
     } finally { setSugBusy(false); }
   }, []);
 
@@ -321,7 +322,7 @@ export default function InventoryIntelligencePage() {
       setVelocityItems(res.items ?? []);
       setVelLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "বিক্রির গতি লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadSalesVelocity);
     } finally { setVelBusy(false); }
   }, []);
 
@@ -329,7 +330,7 @@ export default function InventoryIntelligencePage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     const d = Number(days);
-    if (!Number.isInteger(d) || d < 1 || d > 365) { setError("দিনের সংখ্যা ১ থেকে ৩৬৫-এর মধ্যে হতে হবে"); return; }
+    if (!Number.isInteger(d) || d < 1 || d > 365) { setError(dict.commerce.daysMustBeBetween1); return; }
     setDeadBusy(true);
     try {
       const res = await apiFetch<{ days: number; unvaluedCount: number; items: DeadStockItem[] }>(
@@ -339,18 +340,18 @@ export default function InventoryIntelligencePage() {
       setDeadUnvalued(res.unvaluedCount ?? 0);
       setDeadLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dead stock লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadDeadStock);
     } finally { setDeadBusy(false); }
   }, []);
 
   const loadValuation = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); return; }
     try {
       const res = await apiFetch<Valuation>(`/organizations/${orgId}/inventory/valuation`);
       setValuation(res);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "মূল্যায়ন লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : dict.commerce.couldNotLoadValuation);
     }
   }, []);
 
@@ -378,12 +379,12 @@ export default function InventoryIntelligencePage() {
     if (!orgId) return;
     const days = Number(leadTimeDays);
     if (!Number.isInteger(days) || days < 1 || days > 180) {
-      setError("লিড টাইম ১ থেকে ১৮০ দিনের মধ্যে পূর্ণসংখ্যা হতে হবে");
+      setError(dict.commerce.leadTimeMustBeAn);
       return;
     }
     const reserve = Number(reserveMinutes);
     if (!Number.isInteger(reserve) || reserve < 0) {
-      setError("কার্ট রিজার্ভ মিনিট ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+      setError(dict.commerce.cartReserveMinutesMustBe);
       return;
     }
     setSavingSettings(true); setError(""); setNotice("");
@@ -396,10 +397,10 @@ export default function InventoryIntelligencePage() {
       setLeadTimeDays(String(saved.leadTimeDays ?? days));
       setAllowBackorder(!!saved.allowBackorder);
       setReserveMinutes(String(saved.reserveMinutes ?? reserve));
-      setNotice("✅ ইনভেন্টরি সেটিংস সংরক্ষিত হয়েছে।");
+      setNotice(dict.commerce.inventorySettingsSaved);
       if (mode === "velocity") void loadSuggestions("velocity");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(err instanceof Error ? err.message : dict.commerce.saveFailed2);
     } finally { setSavingSettings(false); }
   }
 
@@ -407,7 +408,7 @@ export default function InventoryIntelligencePage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     const d = Number(deadDays);
-    if (!Number.isInteger(d) || d < 1 || d > 365) { setError("দিনের সংখ্যা ১ থেকে ৩৬৫-এর মধ্যে হতে হবে"); return; }
+    if (!Number.isInteger(d) || d < 1 || d > 365) { setError(dict.commerce.daysMustBeBetween1); return; }
     setDownloading(true); setError("");
     try {
       // CSV download mirrors the accounting page: raw fetch + blob.
@@ -417,7 +418,7 @@ export default function InventoryIntelligencePage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? `ডাউনলোড ব্যর্থ (HTTP ${res.status})`);
+        throw new Error(body.message ?? t("commerce.downloadFailedHTTP", { status: res.status }));
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -426,9 +427,9 @@ export default function InventoryIntelligencePage() {
       a.download = "dead-stock.csv";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      setNotice("✅ Dead stock CSV ডাউনলোড হয়েছে।");
+      setNotice(dict.commerce.deadStockCSVDownloaded);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ডাউনলোড ব্যর্থ হয়েছে");
+      setError(err instanceof Error ? err.message : dict.commerce.downloadFailed);
     } finally { setDownloading(false); }
   }
 
@@ -442,70 +443,63 @@ export default function InventoryIntelligencePage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-4">
       <div>
-        <h1 className="page-title">📊 ইনভেন্টরি বুদ্ধিমত্তা (Inventory Intelligence)</h1>
+        <h1 className="page-title">{dict.commerce.inventoryIntelligence}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          কোন পণ্য কত দ্রুত বিক্রি হচ্ছে, কবে ফুরিয়ে যেতে পারে, কোন স্টক আটকে আছে আর গুদামের মোট মূল্য কত —
-          সবই আসল বিক্রি, স্টক ও খরচের রেকর্ড থেকে হিসাব করা।
-        </p>
+          {dict.commerce.whichProductIsSellingHow}</p>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       {notice ? <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">{notice}</p> : null}
 
       <form onSubmit={saveSettings} className="card space-y-3 p-5">
-        <h2 className="font-semibold">ইনভেন্টরি সেটিংস</h2>
+        <h2 className="font-semibold">{dict.commerce.inventorySettings}</h2>
         <p className="text-xs text-slate-500">
-          সরবরাহকারীর কাছে অর্ডার দেওয়ার পর পণ্য হাতে পেতে যত দিন লাগে। এই সংখ্যাটাই velocity (বিক্রির গতি)
-          মোডের পুনঃঅর্ডার পরামর্শ চালায় — স্টক যেন লিড টাইমের বিক্রি মেটাতে পারে, সেভাবে পরামর্শিত পরিমাণ হিসাব হয়।
-        </p>
+          {dict.commerce.howManyDaysItTakes}</p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-48">
-            <label className={labelCls}>লিড টাইম (দিন)</label>
-            <input aria-label="লিড টাইম (দিন)" className={inputCls} type="number" min={1} max={180} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} />
+            <label className={labelCls}>{dict.commerce.leadTimeDays}</label>
+            <input aria-label={dict.commerce.leadTimeDays} className={inputCls} type="number" min={1} max={180} value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} />
           </div>
           <div className="w-56">
-            <label className={labelCls}>কার্ট রিজার্ভ (মিনিট)</label>
-            <input aria-label="কার্ট রিজার্ভ (মিনিট)" className={inputCls} type="number" min={0} value={reserveMinutes} onChange={(e) => setReserveMinutes(e.target.value)} />
-            <p className="mt-1 text-xs text-slate-500">কার্ট রিজার্ভ: ক্রেতা কার্টে পণ্য রাখলে যত মিনিট স্টক তার জন্য রিজার্ভ থাকবে; ০ = বন্ধ</p>
+            <label className={labelCls}>{dict.commerce.cartReserveMinutes}</label>
+            <input aria-label={dict.commerce.cartReserveMinutes} className={inputCls} type="number" min={0} value={reserveMinutes} onChange={(e) => setReserveMinutes(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">{dict.commerce.cartReserveHowManyMinutes}</p>
           </div>
           <button type="submit" className="btn-primary" disabled={savingSettings}>
-            {savingSettings ? "সংরক্ষণ হচ্ছে…" : "সংরক্ষণ করুন"}
+            {savingSettings ? dict.commerce.saving : dict.common.save}
           </button>
         </div>
         <label className="flex items-start gap-2 text-sm text-slate-700">
           <input type="checkbox" className="mt-0.5" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} />
           <span>
-            <span className="font-semibold">ব্যাকঅর্ডার অনুমোদন (Allow backorder)</span>
-            <span className="block text-xs text-slate-500">চালু থাকলে স্টক শেষ হয়ে গেলেও অনলাইন চেকআউটে অর্ডার নেওয়া হবে এবং স্টক ঋণাত্মক হতে পারে</span>
+            <span className="font-semibold">{dict.commerce.allowBackorder}</span>
+            <span className="block text-xs text-slate-500">{dict.commerce.ifOnOrdersWillBe}</span>
           </span>
         </label>
       </form>
 
       <div className="card space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">পুনঃঅর্ডার পরামর্শ</h2>
+          <h2 className="font-semibold">{dict.commerce.reorderSuggestion}</h2>
           <div className="flex gap-2">
-            {modeBtn("simple", "সরল নিয়ম")}
-            {modeBtn("velocity", "বিক্রির গতি (velocity)")}
+            {modeBtn("simple", dict.commerce.simpleRule)}
+            {modeBtn("velocity", dict.commerce.salesVelocity)}
           </div>
         </div>
 
         {mode === "velocity" ? (
           <>
             <p className="rounded-lg bg-amber-50 p-3 text-sm font-semibold text-amber-800">
-              আনুমানিক — শেষ ৩০ দিনের বিক্রির ভিত্তিতে
-            </p>
+              {dict.commerce.estimatedBasedOnTheLast}</p>
             <p className="text-xs text-slate-500">
-              পরামর্শিত পরিমাণ = দৈনিক বিক্রির গতি × লিড টাইম − বর্তমান স্টক। গতি শূন্য হলে পণ্যটি এই তালিকায় আসে না।
-            </p>
+              {dict.commerce.suggestedQuantityDailySalesVelocity}</p>
             {velocityData && velocityData.noRecentSalesCount > 0 ? (
               <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-700">
-                {velocityData.noRecentSalesCount}টি পণ্যের সাম্প্রতিক বিক্রি নেই — সাজেশনে আসেনি।
-              </p>
+                {velocityData.noRecentSalesCount}{dict.commerce.productsHaveNoRecentSales}</p>
             ) : null}
-            {sugBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+            {sugBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
             {!sugBusy && velocityData && velocityData.items.length === 0 ? (
-              <p className="text-sm text-slate-500">বিক্রির গতির ভিত্তিতে এখন কোনো পণ্যের পুনঃঅর্ডার দরকার নেই।</p>
+              <p className="text-sm text-slate-500">{dict.commerce.basedOnSalesVelocityNo}</p>
             ) : velocityData ? (
               <ResponsiveTable
                 table={
@@ -513,11 +507,11 @@ export default function InventoryIntelligencePage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
-                      <th className="py-2 pr-3">পণ্য</th>
-                      <th className="py-2 pr-3">বর্তমান স্টক</th>
-                      <th className="py-2 pr-3">দৈনিক গতি</th>
-                      <th className="py-2 pr-3">৩০ দিনে বিক্রি</th>
-                      <th className="py-2">পরামর্শিত পরিমাণ</th>
+                      <th className="py-2 pr-3">{dict.commerce.product}</th>
+                      <th className="py-2 pr-3">{dict.commerce.currentStock}</th>
+                      <th className="py-2 pr-3">{dict.commerce.dailyVelocity}</th>
+                      <th className="py-2 pr-3">{dict.commerce.soldIn30Days}</th>
+                      <th className="py-2">{dict.commerce.suggestedQuantity}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -525,8 +519,8 @@ export default function InventoryIntelligencePage() {
                       <tr key={`${s.productId}-${s.variantId ?? ""}`} className="border-b last:border-0">
                         <ProductCell name={s.productName} variantName={s.variantName} sku={s.sku} />
                         <td className="py-2 pr-3">{s.currentStock}</td>
-                        <td className="py-2 pr-3">{velocityText(s.dailyVelocity)} / দিন</td>
-                        <td className="py-2 pr-3">{s.unitsSold}টি</td>
+                        <td className="py-2 pr-3">{velocityText(s.dailyVelocity)} {dict.commerce.day}</td>
+                        <td className="py-2 pr-3">{s.unitsSold}{dict.commerce.text1ou8}</td>
                         <td className="py-2 font-semibold">{s.suggestedQty}</td>
                       </tr>
                     ))}
@@ -538,10 +532,10 @@ export default function InventoryIntelligencePage() {
                   <div key={`${s.productId}-${s.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                     <ProductCardHead name={s.productName} variantName={s.variantName} sku={s.sku} />
                     <dl className="mt-2 space-y-1.5">
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{s.currentStock}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দৈনিক গতি</dt><dd className="text-right">{velocityText(s.dailyVelocity)} / দিন</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">৩০ দিনে বিক্রি</dt><dd className="text-right">{s.unitsSold}টি</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরামর্শিত পরিমাণ</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.currentStock}</dt><dd className="text-right">{s.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.dailyVelocity}</dt><dd className="text-right">{velocityText(s.dailyVelocity)} {dict.commerce.day}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.soldIn30Days}</dt><dd className="text-right">{s.unitsSold}{dict.commerce.text1ou8}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.suggestedQuantity}</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
                     </dl>
                   </div>
                 ))}
@@ -551,11 +545,10 @@ export default function InventoryIntelligencePage() {
         ) : (
           <>
             <p className="text-xs text-slate-500">
-              স্টক threshold-এর নিচে নেমে যাওয়া পণ্য — পরামর্শটি আসল স্টক ও শেষ ক্রয়ের রেকর্ড থেকে।
-            </p>
-            {sugBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+              {dict.commerce.productsFallenBelowTheStock}</p>
+            {sugBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
             {!sugBusy && sugLoaded && simpleItems.length === 0 ? (
-              <p className="text-sm text-slate-500">এখন কোনো পণ্যের পুনঃঅর্ডার দরকার নেই।</p>
+              <p className="text-sm text-slate-500">{dict.commerce.noProductsNeedReorderingRight}</p>
             ) : (
               <ResponsiveTable
                 table={
@@ -563,11 +556,11 @@ export default function InventoryIntelligencePage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
-                      <th className="py-2 pr-3">পণ্য</th>
-                      <th className="py-2 pr-3">বর্তমান স্টক</th>
+                      <th className="py-2 pr-3">{dict.commerce.product}</th>
+                      <th className="py-2 pr-3">{dict.commerce.currentStock}</th>
                       <th className="py-2 pr-3">Threshold</th>
-                      <th className="py-2 pr-3">পরামর্শিত পরিমাণ</th>
-                      <th className="py-2">শেষ সরবরাহকারী / খরচ</th>
+                      <th className="py-2 pr-3">{dict.commerce.suggestedQuantity}</th>
+                      <th className="py-2">{dict.commerce.lastSupplierCost}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -579,8 +572,8 @@ export default function InventoryIntelligencePage() {
                         <td className="py-2 pr-3 font-semibold">{s.suggestedQty}</td>
                         <td className="py-2">
                           {s.lastSupplier ? (
-                            <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ খরচ: {taka(s.lastUnitCostMinor)}</span> : null}</>
-                          ) : <span className="text-slate-400">জানা নেই</span>}
+                            <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">{dict.commerce.lastCost}{taka(s.lastUnitCostMinor, locale)}</span> : null}</>
+                          ) : <span className="text-slate-400">{dict.commerce.unknown}</span>}
                         </td>
                       </tr>
                     ))}
@@ -592,10 +585,10 @@ export default function InventoryIntelligencePage() {
                   <div key={`${s.productId}-${s.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                     <ProductCardHead name={s.productName} variantName={s.variantName} sku={s.sku} />
                     <dl className="mt-2 space-y-1.5">
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{s.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.currentStock}</dt><dd className="text-right">{s.currentStock}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">Threshold</dt><dd className="text-right">{s.threshold}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরামর্শিত পরিমাণ</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ সরবরাহকারী / খরচ</dt><dd className="text-right">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">শেষ খরচ: {taka(s.lastUnitCostMinor)}</span> : null}</> : <span className="text-slate-400">জানা নেই</span>}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.suggestedQuantity}</dt><dd className="text-right font-semibold">{s.suggestedQty}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.lastSupplierCost}</dt><dd className="text-right">{s.lastSupplier ? <>{s.lastSupplier.name}{s.lastUnitCostMinor ? <span className="block text-xs text-slate-500">{dict.commerce.lastCost}{taka(s.lastUnitCostMinor, locale)}</span> : null}</> : <span className="text-slate-400">{dict.commerce.unknown}</span>}</dd></div>
                     </dl>
                   </div>
                 ))}
@@ -607,29 +600,27 @@ export default function InventoryIntelligencePage() {
 
       <div className="card space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">বিক্রির গতি (Velocity)</h2>
+          <h2 className="font-semibold">{dict.commerce.salesVelocity2}</h2>
           <div className="w-40">
             <select
-              aria-label="বিক্রির গতির সময়সীমা"
+              aria-label={dict.commerce.salesVelocityPeriod}
               className={inputCls}
               value={windowDays}
               onChange={(e) => { setWindowDays(e.target.value); void loadVelocity(e.target.value); }}
             >
-              <option value="30">শেষ ৩০ দিন</option>
-              <option value="60">শেষ ৬০ দিন</option>
-              <option value="90">শেষ ৯০ দিন</option>
+              <option value="30">{dict.commerce.last30Days}</option>
+              <option value="60">{dict.commerce.last60Days}</option>
+              <option value="90">{dict.commerce.last90Days}</option>
             </select>
           </div>
         </div>
         <p className="text-xs text-slate-500">
-          শুধু সম্পন্ন/ডেলিভারি-প্রমাণিত বিক্রি ধরা হয়। গতি শূন্য হলে stockout-এর কোনো সৎ পূর্বাভাস নেই — তাই সেই ঘরে "—" থাকে।
-        </p>
+          {dict.commerce.onlyCompletedDeliveryProvenSales}</p>
         <p className="rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-800">
-          পূর্বাভাসের ঘরগুলো সম্পর্কে: পরিসংখ্যানভিত্তিক অনুমান — নিশ্চয়তা নয়
-        </p>
-        {velBusy ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+          {dict.commerce.aboutTheForecastCellsStatistical}</p>
+        {velBusy ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
         {!velBusy && velLoaded && velocityItems.length === 0 ? (
-          <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
+          <p className="text-sm text-slate-500">{dict.commerce.noProductsWithTrackedStock}</p>
         ) : (
           <ResponsiveTable
             table={
@@ -637,14 +628,14 @@ export default function InventoryIntelligencePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">পণ্য</th>
-                  <th className="py-2 pr-3">বিক্রি (ইউনিট)</th>
-                  <th className="py-2 pr-3">দৈনিক গতি</th>
-                  <th className="py-2 pr-3">বর্তমান স্টক</th>
-                  <th className="py-2 pr-3">পূর্বাভাসের ভিত্তি</th>
-                  <th className="py-2 pr-3">ট্রেন্ড</th>
-                  <th className="py-2 pr-3">কতদিন চলবে</th>
-                  <th className="py-2">সম্ভাব্য Stockout তারিখ</th>
+                  <th className="py-2 pr-3">{dict.commerce.product}</th>
+                  <th className="py-2 pr-3">{dict.commerce.salesUnits}</th>
+                  <th className="py-2 pr-3">{dict.commerce.dailyVelocity}</th>
+                  <th className="py-2 pr-3">{dict.commerce.currentStock}</th>
+                  <th className="py-2 pr-3">{dict.commerce.forecastBasis}</th>
+                  <th className="py-2 pr-3">{dict.commerce.trend}</th>
+                  <th className="py-2 pr-3">{dict.commerce.howLongItWillLast}</th>
+                  <th className="py-2">{dict.commerce.possibleStockoutDate}</th>
                 </tr>
               </thead>
               <tbody>
@@ -656,29 +647,29 @@ export default function InventoryIntelligencePage() {
                   return (
                   <tr key={`${it.productId}-${it.variantId ?? ""}`} className="border-b last:border-0">
                     <ProductCell name={it.productName} variantName={it.variantName} sku={it.sku} />
-                    <td className="py-2 pr-3">{it.unitsSold}টি</td>
-                    <td className="py-2 pr-3">{velocityText(it.dailyVelocity)} / দিন</td>
+                    <td className="py-2 pr-3">{it.unitsSold}{dict.commerce.text1ou8}</td>
+                    <td className="py-2 pr-3">{velocityText(it.dailyVelocity)} {dict.commerce.day}</td>
                     <td className="py-2 pr-3">{it.currentStock}</td>
                     <td className="py-2 pr-3">
                       <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${it.demandBasis === "trend_seasonal" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"}`}>
-                        {demandBasisLabel(it.demandBasis)}
+                        {demandBasisLabel(it.demandBasis, locale)}
                       </span>
                       {it.projectedDailyDemand != null ? (
-                        <span className="block text-xs text-slate-500">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span>
+                        <span className="block text-xs text-slate-500">{dict.commerce.estimatedDailyDemand}{velocityText(it.projectedDailyDemand)}</span>
                       ) : null}
                     </td>
                     <td className={`py-2 pr-3 font-semibold ${trendCls}`}>{trend.text}</td>
                     <td className="py-2 pr-3">
-                      {daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft)}
+                      {daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft, t)}
                       {it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? (
-                        <span className="block text-xs font-normal text-slate-500">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span>
+                        <span className="block text-xs font-normal text-slate-500">{dict.commerce.basedOnVelocity}{daysLeftText(it.daysOfStockLeft, t)}</span>
                       ) : null}
                     </td>
                     <td className="py-2">
-                      {stockout.primary ? new Date(stockout.primary).toLocaleDateString("bn-BD") : "—"}
+                      {stockout.primary ? fmtDate(locale, new Date(stockout.primary)) : "—"}
                       {stockout.secondary ? (
                         <span className="block text-xs text-slate-500">
-                          গতি-ভিত্তিক হিসাবে: {new Date(stockout.secondary).toLocaleDateString("bn-BD")}
+                          {dict.commerce.basedOnVelocity}{fmtDate(locale, new Date(stockout.secondary))}
                         </span>
                       ) : null}
                     </td>
@@ -698,13 +689,13 @@ export default function InventoryIntelligencePage() {
               <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                 <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
                 <dl className="mt-2 space-y-1.5">
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বিক্রি (ইউনিট)</dt><dd className="text-right">{it.unitsSold}টি</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">দৈনিক গতি</dt><dd className="text-right">{velocityText(it.dailyVelocity)} / দিন</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বর্তমান স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পূর্বাভাসের ভিত্তি</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${it.demandBasis === "trend_seasonal" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{demandBasisLabel(it.demandBasis)}</span>{it.projectedDailyDemand != null ? <span className="block text-xs text-slate-500">আনুমানিক দৈনিক চাহিদা: {velocityText(it.projectedDailyDemand)}</span> : null}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ট্রেন্ড</dt><dd className={`text-right font-semibold ${trendCls}`}>{trend.text}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কতদিন চলবে</dt><dd className="text-right">{daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft)}{it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? <span className="block text-xs font-normal text-slate-500">গতি-ভিত্তিক হিসাবে: {daysLeftText(it.daysOfStockLeft)}</span> : null}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সম্ভাব্য Stockout তারিখ</dt><dd className="text-right">{stockout.primary ? new Date(stockout.primary).toLocaleDateString("bn-BD") : "—"}{stockout.secondary ? <span className="block text-xs text-slate-500">গতি-ভিত্তিক হিসাবে: {new Date(stockout.secondary).toLocaleDateString("bn-BD")}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.salesUnits}</dt><dd className="text-right">{it.unitsSold}{dict.commerce.text1ou8}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.dailyVelocity}</dt><dd className="text-right">{velocityText(it.dailyVelocity)} {dict.commerce.day}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.currentStock}</dt><dd className="text-right">{it.currentStock}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.forecastBasis}</dt><dd className="text-right"><span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${it.demandBasis === "trend_seasonal" ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{demandBasisLabel(it.demandBasis, locale)}</span>{it.projectedDailyDemand != null ? <span className="block text-xs text-slate-500">{dict.commerce.estimatedDailyDemand}{velocityText(it.projectedDailyDemand)}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.trend}</dt><dd className={`text-right font-semibold ${trendCls}`}>{trend.text}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.howLongItWillLast}</dt><dd className="text-right">{daysLeftText(it.daysOfStockLeftV2 ?? it.daysOfStockLeft, t)}{it.daysOfStockLeftV2 != null && it.daysOfStockLeft != null && it.daysOfStockLeftV2 !== it.daysOfStockLeft ? <span className="block text-xs font-normal text-slate-500">{dict.commerce.basedOnVelocity}{daysLeftText(it.daysOfStockLeft, t)}</span> : null}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.possibleStockoutDate}</dt><dd className="text-right">{stockout.primary ? fmtDate(locale, new Date(stockout.primary)) : "—"}{stockout.secondary ? <span className="block text-xs text-slate-500">{dict.commerce.basedOnVelocity}{fmtDate(locale, new Date(stockout.secondary))}</span> : null}</dd></div>
                 </dl>
               </div>
             );
@@ -714,26 +705,25 @@ export default function InventoryIntelligencePage() {
       </div>
 
       <div className="card space-y-4 p-5">
-        <h2 className="font-semibold">Dead Stock — বিক্রি হচ্ছে না</h2>
+        <h2 className="font-semibold">{dict.commerce.deadStockNotSelling}</h2>
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-40">
-            <label className={labelCls}>কত দিন বিক্রি নেই</label>
-            <input aria-label="কত দিন বিক্রি নেই" className={inputCls} type="number" min={1} max={365} value={deadDays} onChange={(e) => setDeadDays(e.target.value)} />
+            <label className={labelCls}>{dict.commerce.daysWithoutSales}</label>
+            <input aria-label={dict.commerce.daysWithoutSales} className={inputCls} type="number" min={1} max={365} value={deadDays} onChange={(e) => setDeadDays(e.target.value)} />
           </div>
           <button type="button" className="btn-primary" disabled={deadBusy} onClick={() => void loadDeadStock(deadDays)}>
-            {deadBusy ? "লোড হচ্ছে…" : "দেখুন"}
+            {deadBusy ? dict.common.loading : dict.commerce.view}
           </button>
           <button type="button" className="btn-secondary" disabled={downloading} onClick={() => void downloadDeadCsv()}>
-            {downloading ? "তৈরি হচ্ছে…" : "CSV ডাউনলোড"}
+            {downloading ? dict.commerce.creating : dict.commerce.downloadCSV}
           </button>
         </div>
         {deadLoaded && deadUnvalued > 0 ? (
           <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
-            {deadUnvalued}টি পণ্যের খরচ জানা নেই — তাদের মূল্য হিসাবের বাইরে রাখা হয়েছে।
-          </p>
+            {deadUnvalued}{dict.commerce.productsCostsAreUnknownTheir}</p>
         ) : null}
         {!deadBusy && deadLoaded && deadItems.length === 0 ? (
-          <p className="text-sm text-slate-500">এই সময়সীমায় কোনো Dead Stock পণ্য নেই।</p>
+          <p className="text-sm text-slate-500">{dict.commerce.noDeadStockProductsIn}</p>
         ) : deadItems.length > 0 ? (
           <ResponsiveTable
             table={
@@ -741,11 +731,11 @@ export default function InventoryIntelligencePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">পণ্য</th>
-                  <th className="py-2 pr-3">স্টক</th>
-                  <th className="py-2 pr-3">শেষ বিক্রি</th>
-                  <th className="py-2 pr-3">একক খরচ</th>
-                  <th className="py-2">আটকে থাকা মূল্য</th>
+                  <th className="py-2 pr-3">{dict.commerce.product}</th>
+                  <th className="py-2 pr-3">{dict.commerce.stock}</th>
+                  <th className="py-2 pr-3">{dict.commerce.lastSold}</th>
+                  <th className="py-2 pr-3">{dict.commerce.unitCost}</th>
+                  <th className="py-2">{dict.commerce.stuckValue}</th>
                 </tr>
               </thead>
               <tbody>
@@ -754,10 +744,10 @@ export default function InventoryIntelligencePage() {
                     <ProductCell name={it.productName} variantName={it.variantName} sku={it.sku} />
                     <td className="py-2 pr-3">{it.currentStock}</td>
                     <td className="py-2 pr-3">
-                      {it.lastSaleAt ? new Date(it.lastSaleAt).toLocaleDateString("bn-BD") : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}
+                      {it.lastSaleAt ? fmtDate(locale, new Date(it.lastSaleAt)) : <span className="text-amber-700">{dict.commerce.neverSold}</span>}
                     </td>
-                    <td className="py-2 pr-3">{taka(it.unitCostMinor)}</td>
-                    <td className="py-2 font-medium">{taka(it.stuckValueMinor)}</td>
+                    <td className="py-2 pr-3">{taka(it.unitCostMinor, locale)}</td>
+                    <td className="py-2 font-medium">{taka(it.stuckValueMinor, locale)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -768,10 +758,10 @@ export default function InventoryIntelligencePage() {
               <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                 <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
                 <dl className="mt-2 space-y-1.5">
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">শেষ বিক্রি</dt><dd className="text-right">{it.lastSaleAt ? new Date(it.lastSaleAt).toLocaleDateString("bn-BD") : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">একক খরচ</dt><dd className="text-right">{taka(it.unitCostMinor)}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আটকে থাকা মূল্য</dt><dd className="text-right font-medium">{taka(it.stuckValueMinor)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.stock}</dt><dd className="text-right">{it.currentStock}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.lastSold}</dt><dd className="text-right">{it.lastSaleAt ? fmtDate(locale, new Date(it.lastSaleAt)) : <span className="text-amber-700">{dict.commerce.neverSold}</span>}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.unitCost}</dt><dd className="text-right">{taka(it.unitCostMinor, locale)}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.stuckValue}</dt><dd className="text-right font-medium">{taka(it.stuckValueMinor, locale)}</dd></div>
                 </dl>
               </div>
             ))}
@@ -780,17 +770,15 @@ export default function InventoryIntelligencePage() {
       </div>
 
       <div className="card space-y-4 p-5">
-        <h2 className="font-semibold">গুদামের মোট মূল্যায়ন (Valuation)</h2>
+        <h2 className="font-semibold">{dict.commerce.totalWarehouseValuation}</h2>
         {valuation ? (
           <>
-            <div className="text-3xl font-bold">{taka(valuation.totalValueMinor)}</div>
+            <div className="text-3xl font-bold">{taka(valuation.totalValueMinor, locale)}</div>
             <p className="text-sm text-slate-500">
-              খরচ-জানা পণ্য {valuation.valuedProducts}টি, খরচ-অজানা {valuation.unvaluedProducts}টি।
-            </p>
+              {dict.commerce.costKnownProducts}{valuation.valuedProducts}{dict.commerce.costUnknown2}{valuation.unvaluedProducts}{dict.commerce.text1gfvo}</p>
             {valuation.unvaluedProducts > 0 ? (
               <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
-                মোট মূল্য শুধু খরচ-জানা stock-এর উপর — সম্পূর্ণ গুদাম মূল্য নয়। খরচ-অজানা পণ্যের মূল্য এতে ধরা হয়নি।
-              </p>
+                {dict.commerce.theTotalValueIsOnly}</p>
             ) : null}
             {valuation.items.length > 0 ? (
               <ResponsiveTable
@@ -799,10 +787,10 @@ export default function InventoryIntelligencePage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs text-slate-500">
-                      <th className="py-2 pr-3">পণ্য</th>
-                      <th className="py-2 pr-3">স্টক</th>
-                      <th className="py-2 pr-3">একক খরচ</th>
-                      <th className="py-2">মূল্য</th>
+                      <th className="py-2 pr-3">{dict.commerce.product}</th>
+                      <th className="py-2 pr-3">{dict.commerce.stock}</th>
+                      <th className="py-2 pr-3">{dict.commerce.unitCost}</th>
+                      <th className="py-2">{dict.commerce.price}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -810,8 +798,8 @@ export default function InventoryIntelligencePage() {
                       <tr key={`${it.productId}-${it.variantId ?? ""}`} className="border-b last:border-0">
                         <ProductCell name={it.productName} variantName={it.variantName} sku={it.sku} />
                         <td className="py-2 pr-3">{it.currentStock}</td>
-                        <td className="py-2 pr-3">{taka(it.unitCostMinor)}</td>
-                        <td className="py-2 font-medium">{taka(it.valueMinor)}</td>
+                        <td className="py-2 pr-3">{taka(it.unitCostMinor, locale)}</td>
+                        <td className="py-2 font-medium">{taka(it.valueMinor, locale)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -822,33 +810,33 @@ export default function InventoryIntelligencePage() {
                   <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                     <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
                     <dl className="mt-2 space-y-1.5">
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্টক</dt><dd className="text-right">{it.currentStock}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">একক খরচ</dt><dd className="text-right">{taka(it.unitCostMinor)}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মূল্য</dt><dd className="text-right font-medium">{taka(it.valueMinor)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.stock}</dt><dd className="text-right">{it.currentStock}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.unitCost}</dt><dd className="text-right">{taka(it.unitCostMinor, locale)}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.price}</dt><dd className="text-right font-medium">{taka(it.valueMinor, locale)}</dd></div>
                     </dl>
                   </div>
                 ))}
               />
             ) : (
-              <p className="text-sm text-slate-500">খরচ-জানা কোনো স্টক পণ্য নেই।</p>
+              <p className="text-sm text-slate-500">{dict.commerce.noCostKnownStockProducts}</p>
             )}
           </>
         ) : (
-          <p className="text-sm text-slate-500">লোড হচ্ছে…</p>
+          <p className="text-sm text-slate-500">{dict.common.loading}</p>
         )}
       </div>
 
       <div className="card space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold">স্টক প্রাপ্যতা (Availability)</h2>
+          <h2 className="font-semibold">{dict.commerce.stockAvailability}</h2>
           <button type="button" className="btn-secondary" disabled={availBusy} onClick={() => void loadAvailability()}>
-            {availBusy ? "লোড হচ্ছে…" : "রিফ্রেশ"}
+            {availBusy ? dict.common.loading : dict.commerce.refresh}
           </button>
         </div>
-        <p className="text-xs text-slate-500">শুধু ট্র্যাক করা স্টক Row দেখানো হয় — হাতে থাকা স্টক থেকে কার্ট রিজার্ভ বাদ দিলে যা সত্যিই পাওয়া যাবে।</p>
-        {availBusy && !availLoaded ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+        <p className="text-xs text-slate-500">{dict.commerce.onlyTrackedStockRowsAre}</p>
+        {availBusy && !availLoaded ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
         {availLoaded && availabilityItems.length === 0 ? (
-          <p className="text-sm text-slate-500">ট্র্যাক করা স্টকসহ কোনো পণ্য নেই।</p>
+          <p className="text-sm text-slate-500">{dict.commerce.noProductsWithTrackedStock}</p>
         ) : availabilityItems.length > 0 ? (
           <ResponsiveTable
             table={
@@ -856,10 +844,10 @@ export default function InventoryIntelligencePage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">পণ্য / ভ্যারিয়েন্ট</th>
-                  <th className="py-2 pr-3">হাতে আছে</th>
-                  <th className="py-2 pr-3">রিজার্ভ</th>
-                  <th className="py-2">পাওয়া যাবে</th>
+                  <th className="py-2 pr-3">{dict.commerce.productVariant}</th>
+                  <th className="py-2 pr-3">{dict.commerce.onHand}</th>
+                  <th className="py-2 pr-3">{dict.commerce.reserved}</th>
+                  <th className="py-2">{dict.commerce.willBeAvailable}</th>
                 </tr>
               </thead>
               <tbody>
@@ -879,9 +867,9 @@ export default function InventoryIntelligencePage() {
               <div key={`${it.productId}-${it.variantId ?? ""}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                 <ProductCardHead name={it.productName} variantName={it.variantName} sku={it.sku} />
                 <dl className="mt-2 space-y-1.5">
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">হাতে আছে</dt><dd className="text-right">{it.onHand}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">রিজার্ভ</dt><dd className="text-right">{it.reserved}</dd></div>
-                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পাওয়া যাবে</dt><dd className="text-right font-semibold">{it.available}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.onHand}</dt><dd className="text-right">{it.onHand}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.reserved}</dt><dd className="text-right">{it.reserved}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.willBeAvailable}</dt><dd className="text-right font-semibold">{it.available}</dd></div>
                 </dl>
               </div>
             ))}
@@ -890,29 +878,28 @@ export default function InventoryIntelligencePage() {
       </div>
 
       <div className="card space-y-4 p-5">
-        <h2 className="font-semibold">ক্ষতি / হারানো রিপোর্ট (Damage &amp; Loss)</h2>
+        <h2 className="font-semibold">{dict.commerce.damageLossReport}</h2>
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-44">
-            <label className={labelCls}>শুরুর তারিখ</label>
-            <input aria-label="শুরুর তারিখ" className={inputCls} type="date" value={damageFrom} onChange={(e) => setDamageFrom(e.target.value)} />
+            <label className={labelCls}>{dict.commerce.startDate}</label>
+            <input aria-label={dict.commerce.startDate} className={inputCls} type="date" value={damageFrom} onChange={(e) => setDamageFrom(e.target.value)} />
           </div>
           <div className="w-44">
-            <label className={labelCls}>শেষের তারিখ</label>
-            <input aria-label="শেষের তারিখ" className={inputCls} type="date" value={damageTo} onChange={(e) => setDamageTo(e.target.value)} />
+            <label className={labelCls}>{dict.commerce.endDate}</label>
+            <input aria-label={dict.commerce.endDate} className={inputCls} type="date" value={damageTo} onChange={(e) => setDamageTo(e.target.value)} />
           </div>
           <button type="button" className="btn-primary" disabled={damageBusy} onClick={() => void loadDamageReport(damageFrom, damageTo)}>
-            {damageBusy ? "লোড হচ্ছে…" : "রিপোর্ট দেখুন"}
+            {damageBusy ? dict.common.loading : dict.commerce.viewReport}
           </button>
         </div>
-        {damageBusy && !damageLoaded ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+        {damageBusy && !damageLoaded ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
         {damageLoaded && damageReport && damageReport.items.length === 0 ? (
-          <p className="text-sm text-slate-500">এই সময়ে কোনো নষ্ট / হারানো / মেয়াদোত্তীর্ণ পণ্যের রেকর্ড নেই।</p>
+          <p className="text-sm text-slate-500">{dict.commerce.noDamagedLostExpiredProduct}</p>
         ) : damageReport && damageReport.items.length > 0 ? (
           <>
             {damageReport.totals.uncostedMovements > 0 ? (
               <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
-                {damageReport.totals.uncostedMovements}টি Movement-এর খরচ রেকর্ড নেই — মোট খরচ মূল্য শুধু খরচ-জানা Movementগুলোর উপর হিসাব করা।
-              </p>
+                {damageReport.totals.uncostedMovements}{dict.commerce.movementsHaveNoCostRecords}</p>
             ) : null}
             <ResponsiveTable
               table={
@@ -920,29 +907,29 @@ export default function InventoryIntelligencePage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-slate-500">
-                    <th className="py-2 pr-3">তারিখ</th>
-                    <th className="py-2 pr-3">পণ্য</th>
-                    <th className="py-2 pr-3">কারণ</th>
-                    <th className="py-2 pr-3">পরিমাণ</th>
-                    <th className="py-2">আনুমানিক খরচ মূল্য</th>
+                    <th className="py-2 pr-3">{dict.commerce.date}</th>
+                    <th className="py-2 pr-3">{dict.commerce.product}</th>
+                    <th className="py-2 pr-3">{dict.commerce.reason2}</th>
+                    <th className="py-2 pr-3">{dict.commerce.quantity}</th>
+                    <th className="py-2">{dict.commerce.estimatedCostPrice}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {damageReport.items.map((it, i) => (
                     <tr key={`${it.productId}-${it.variantId ?? ""}-${it.createdAt}-${i}`} className="border-b last:border-0">
-                      <td className="py-2 pr-3">{new Date(it.createdAt).toLocaleDateString("bn-BD")}</td>
+                      <td className="py-2 pr-3">{fmtDate(locale, new Date(it.createdAt))}</td>
                       <ProductCell name={it.productName} variantName={it.variantName} sku={null} />
-                      <td className="py-2 pr-3">{DAMAGE_REASON_LABELS[it.reason] ?? it.reason}</td>
+                      <td className="py-2 pr-3">{DAMAGE_REASON_LABELS[it.reason] ? dict.commerce[DAMAGE_REASON_LABELS[it.reason] as keyof typeof dict.commerce] : it.reason}</td>
                       <td className="py-2 pr-3">{it.quantity}</td>
-                      <td className="py-2">{it.costValueMinor != null ? taka(it.costValueMinor) : "—"}</td>
+                      <td className="py-2">{it.costValueMinor != null ? taka(it.costValueMinor, locale) : "—"}</td>
                     </tr>
                   ))}
                   <tr className="font-semibold">
                     <td className="py-2 pr-3" colSpan={3}>
-                      মোট — নষ্ট {damageReport.totals.damagedQty} · হারানো {damageReport.totals.lostQty} · মেয়াদোত্তীর্ণ {damageReport.totals.expiredQty}
+                      {dict.commerce.totalDamaged}{damageReport.totals.damagedQty} {dict.commerce.lost}{damageReport.totals.lostQty} {dict.commerce.expired2}{damageReport.totals.expiredQty}
                     </td>
                     <td className="py-2 pr-3">{damageReport.totals.totalQty}</td>
-                    <td className="py-2">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor) : "—"}</td>
+                    <td className="py-2">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor, locale) : "—"}</td>
                   </tr>
                 </tbody>
               </table>
@@ -953,18 +940,18 @@ export default function InventoryIntelligencePage() {
                   <div key={`${it.productId}-${it.variantId ?? ""}-${it.createdAt}-${i}`} className="rounded-xl border bg-white p-3 text-sm shadow-sm">
                     <ProductCardHead name={it.productName} variantName={it.variantName} sku={null} />
                     <dl className="mt-2 space-y-1.5">
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">তারিখ</dt><dd className="text-right">{new Date(it.createdAt).toLocaleDateString("bn-BD")}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কারণ</dt><dd className="text-right">{DAMAGE_REASON_LABELS[it.reason] ?? it.reason}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{it.quantity}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আনুমানিক খরচ মূল্য</dt><dd className="text-right">{it.costValueMinor != null ? taka(it.costValueMinor) : "—"}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.date}</dt><dd className="text-right">{fmtDate(locale, new Date(it.createdAt))}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.reason2}</dt><dd className="text-right">{DAMAGE_REASON_LABELS[it.reason] ? dict.commerce[DAMAGE_REASON_LABELS[it.reason] as keyof typeof dict.commerce] : it.reason}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.quantity}</dt><dd className="text-right">{it.quantity}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.estimatedCostPrice}</dt><dd className="text-right">{it.costValueMinor != null ? taka(it.costValueMinor, locale) : "—"}</dd></div>
                     </dl>
                   </div>
                 ))}
                 <div className="rounded-xl border bg-slate-50 p-3 text-sm font-semibold shadow-sm">
-                  মোট — নষ্ট {damageReport.totals.damagedQty} · হারানো {damageReport.totals.lostQty} · মেয়াদোত্তীর্ণ {damageReport.totals.expiredQty}
+                  {dict.commerce.totalDamaged}{damageReport.totals.damagedQty} {dict.commerce.lost}{damageReport.totals.lostQty} {dict.commerce.expired2}{damageReport.totals.expiredQty}
                   <dl className="mt-2 space-y-1.5">
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">পরিমাণ</dt><dd className="text-right">{damageReport.totals.totalQty}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">আনুমানিক খরচ মূল্য</dt><dd className="text-right">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor) : "—"}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.quantity}</dt><dd className="text-right">{damageReport.totals.totalQty}</dd></div>
+                    <div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.commerce.estimatedCostPrice}</dt><dd className="text-right">{damageReport.totals.costValueMinor != null ? taka(damageReport.totals.costValueMinor, locale) : "—"}</dd></div>
                   </dl>
                 </div>
               </>)}

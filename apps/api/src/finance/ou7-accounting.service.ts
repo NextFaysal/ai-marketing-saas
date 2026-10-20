@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
+import { badRequest } from "../i18n";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { FinanceReportsService } from "./finance-reports.service";
@@ -76,7 +77,7 @@ export const DEFAULT_ACCOUNTS: AccountDef[] = [
 export const ACCOUNT_CODE_BY_NAME: ReadonlyMap<string, string> = new Map(DEFAULT_ACCOUNTS.map((a) => [a.name, a.code]));
 export function accountCodeOf(name: string): string {
   const code = ACCOUNT_CODE_BY_NAME.get(name);
-  if (!code) throw new Error(`অ্যাকাউন্ট ম্যাপিংয়ে নেই: ${name}`);
+  if (!code) throw badRequest("finance.accounting.mappingMissing", { name });
   return code;
 }
 export function receivableAccountName(order: { isCod?: unknown } | null | undefined): string {
@@ -159,17 +160,17 @@ export function buildExpenseLines(e: any): PostingLine[] {
 /** Throws (Bengali) unless the lines form a balanced entry against
  * known, active accounts. Shared by the service and the specs. */
 export function validateManualLines(raw: unknown, accounts: AccountDef[]): PostingLine[] {
-  if (!Array.isArray(raw) || raw.length < 2) throw new Error("ম্যানুয়াল এন্ট্রিতে অন্তত ২টি সারি লাগবে");
+  if (!Array.isArray(raw) || raw.length < 2) throw badRequest("finance.accounting.manualEntryMinLines");
   const known = new Map(accounts.map((a) => [a.code, a]));
   const lines: PostingLine[] = raw.map((l: any) => {
     const code = String(l?.accountCode ?? "");
-    if (!known.has(code)) throw new Error(`অ্যাকাউন্ট কোডটি চার্টে নেই: ${code || "—"}`);
+    if (!known.has(code)) throw badRequest("finance.accounting.codeNotInChart", { code: code || "—" });
     const debit = toBig(l?.debitMinor), credit = toBig(l?.creditMinor);
-    if (debit < 0n || credit < 0n) throw new Error("ডেবিট/ক্রেডিট ঋণাত্মক হতে পারে না");
-    if ((debit === 0n) === (credit === 0n)) throw new Error("প্রতি সারিতে ডেবিট অথবা ক্রেডিট — ঠিক একটিই থাকবে");
+    if (debit < 0n || credit < 0n) throw badRequest("finance.accounting.debitCreditNegative");
+    if ((debit === 0n) === (credit === 0n)) throw badRequest("finance.accounting.debitXorCredit");
     return { accountCode: code, debitMinor: debit, creditMinor: credit };
   });
-  if (!linesBalance(lines)) throw new Error("এন্ট্রিটি ব্যালান্স হয়নি — মোট ডেবিট ও মোট ক্রেডিট সমান হতে হবে");
+  if (!linesBalance(lines)) throw badRequest("finance.accounting.entryNotBalanced");
   return lines;
 }
 

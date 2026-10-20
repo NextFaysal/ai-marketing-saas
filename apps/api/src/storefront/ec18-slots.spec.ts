@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { ProductsService } from "../products/products.service";
 import { LandingsService } from "../landings/landings.service";
@@ -180,9 +181,9 @@ describe("EC18 slots — staff CRUD", () => {
       label: "x", startTime: "10:00", endTime: "11:00", districtScope: ["টেকনাফ"],
     })).rejects.toThrow(/অজানা জেলা/);
     await expect(svc.updateSlot("org-2", "user-1", created.slot.id, { label: "hijack" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.deleteSlot("org-2", "user-1", created.slot.id))
-      .rejects.toThrow("Delivery slot not found in this organization");
+      .rejects.toMatchObject({ code: "storefront.deliverySlotNotFoundInOrg", status: 404 });
     const upd: any = await svc.updateSlot("org-1", "user-1", created.slot.id, { capacityPerDay: null, active: false });
     expect(upd.slot.capacityPerDay).toBeNull();
     expect(upd.slot.active).toBe(false);
@@ -273,7 +274,7 @@ describe("EC18 slots — shop quote + checkout", () => {
     await expect(svc.validateSlotChoice("org-1", "slot-all", addDays(TODAY, -1), "ঢাকা"))
       .rejects.toThrow("ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে");
     await expect(svc.validateSlotChoice("org-1", "slot-all", addDays(TODAY, 8), "ঢাকা"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.validateSlotChoice("org-1", "slot-all", "2026-02-30", "ঢাকা"))
       .rejects.toThrow("ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে");
     const ok = await svc.validateSlotChoice("org-1", "slot-all", addDays(TODAY, 7), "ঢাকা");

@@ -3,7 +3,6 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -17,6 +16,8 @@ import { formatMinor } from "@repo/contracts";
 import { SocialService } from "./social.service";
 import { suggestSocialHashtags } from "./social-ai.service";
 import { GenerateContentDto } from "./content-generation.dto";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 
 /** SA-B19 (G1): the per-call variant cap — a named constant so
  *  no caller can turn generation into a cost storm. */
@@ -111,7 +112,7 @@ export class ContentGenerationService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "social.aiFeaturesTemporarilyPausedPlatformWide" : "social.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -121,21 +122,18 @@ export class ContentGenerationService {
       where: { organizationId, feature: CONTENT_GENERATION_FEATURE, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("social.dailyAiGenerationLimitReachedFor2", { limit: limit }, 429);
     }
   }
 
   private async resolveSource(organizationId: string, dto: GenerateContentDto): Promise<ResolvedSource> {
     if (dto.sourceType === "product") {
       const productId = typeof dto.productId === "string" ? dto.productId.trim() : "";
-      if (!productId) throw new BadRequestException("product source-এর জন্য productId দিন।");
+      if (!productId) throw badRequest("social.productSourceProductid");
       const product = await (this.prisma as any).product.findFirst({
         where: { id: productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("social.productNotFoundInThisOrganization");
       const factLines: string[] = [`Product name: ${product.name}`];
       if (product.category) factLines.push(`Category: ${product.category}`);
       if (product.description) factLines.push(`Description: ${product.description}`);
@@ -155,19 +153,17 @@ export class ContentGenerationService {
 
     if (dto.sourceType === "learned_item") {
       const learnedItemId = typeof dto.learnedItemId === "string" ? dto.learnedItemId.trim() : "";
-      if (!learnedItemId) throw new BadRequestException("learned_item source-এর জন্য learnedItemId দিন।");
+      if (!learnedItemId) throw badRequest("social.learnedItemSourceLearneditemid");
       const item = await (this.prisma as any).learnedItem.findFirst({
         where: { id: learnedItemId, organizationId },
       });
-      if (!item) throw new NotFoundException("Learned item not found in this organization");
+      if (!item) throw notFound("social.learnedItemNotFoundInThis");
       // D3/L2: only APPROVED learning is knowledge. A suggested
       // (or rejected) item is a proposal a human has not
       // accepted — generating content from it would launder an
       // unreviewed claim into a public post.
       if (item.status !== "approved") {
-        throw new BadRequestException(
-          "শুধু অনুমোদিত (approved) শেখা তথ্য দিয়ে content বানানো যায় — এই item-টি এখনো review queue-তে আছে। আগে Learning queue থেকে approve করুন।",
-        );
+        throw badRequest("social.contentCanOnlyBeMadeFrom");
       }
       const content = (item.content ?? {}) as any;
       const factLines: string[] = [`Approved insight (${item.sourceType}): ${item.title}`];
@@ -181,7 +177,7 @@ export class ContentGenerationService {
     }
 
     const topic = typeof dto.topic === "string" ? dto.topic.trim() : "";
-    if (!topic) throw new BadRequestException("topic source-এর জন্য একটা বিষয় (topic) লিখুন।");
+    if (!topic) throw badRequest("social.topicSourceTopic");
     return { type: "topic", ref: "topic", factLines: [`Topic: ${topic}`], product: null, tagTopic: topic };
   }
 
@@ -189,7 +185,13 @@ export class ContentGenerationService {
     // Enforcement FIRST (before any load), mirroring SP3/SU4.
     await this.checkDailyLimit(organizationId);
 
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8 #14): dto.language still wins; absent, the
+    // default comes from the shared OWNER chain, not a hardcoded bn.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId,
+      dtoLanguage: dto.language ?? null,
+    });
     const count = Math.min(
       CONTENT_GENERATION_MAX_VARIANTS,
       Math.max(1, Math.floor(dto.count ?? CONTENT_GENERATION_DEFAULT_VARIANTS)),
@@ -323,11 +325,9 @@ export class ContentGenerationService {
     }
 
     if (survivors.length === 0) {
-      throw new BadRequestException(
-        droppedCount > 0
-          ? `AI-এর ${droppedCount}টি variant-ই বাদ পড়েছে — প্রতিটিতে fact-এর বাইরের সংখ্যা ছিল। কিছুই save হয়নি; আবার চেষ্টা করুন।`
-          : "The AI provider returned no usable caption variants. Nothing was saved.",
-      );
+      throw droppedCount > 0
+        ? badRequest("social.aiVariantsAllDroppedNumbersOutsideFacts", { droppedCount })
+        : badRequest("social.theAiProviderReturnedNoUsable");
     }
 
     const hashtags = suggestSocialHashtags({

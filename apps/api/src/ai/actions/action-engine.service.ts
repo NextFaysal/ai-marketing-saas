@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { aiPauseReason, killSwitches } from "../../common/platform-settings";
 import { ACTION_CATALOG, AUTONOMY_LEVELS, DEFAULT_AUTONOMY_LEVEL, catalogAction, type CatalogAction } from "./action-catalog";
 import { ActionExecutorsService } from "./action-executors.service";
+import { badRequest, notFound } from "../../i18n/api-exception";
 
 export type ProposeResult =
   | { ok: true; proposal: any; autoExecuted: boolean; deduped?: boolean }
@@ -85,7 +86,7 @@ export class ActionEngineService {
     const row = await this.p().aIActionProposal.findFirst({
       where: { id: proposalId, organizationId: orgId, actionId: { not: null } },
     });
-    if (!row) throw new NotFoundException("Action proposal not found");
+    if (!row) throw notFound("ai.actionProposalNotFound");
     return row;
   }
 
@@ -120,7 +121,7 @@ export class ActionEngineService {
 
   async setAutonomy(orgId: string, actionId: string, level: unknown, actorId: string) {
     const entry = catalogAction(actionId);
-    if (!entry) throw new NotFoundException("Unknown catalog action");
+    if (!entry) throw notFound("ai.unknownCatalogAction");
     if (level === 3) {
       // D5: level 3 needs a separate owner decision. The refusal
       // itself is part of the record, not a silent no.
@@ -129,10 +130,10 @@ export class ActionEngineService {
         entityType: "AiAutonomySetting", entityId: actionId,
         metadata: { actionId, requestedLevel: 3, reason: "level_3_requires_separate_owner_decision" },
       });
-      throw new BadRequestException("স্তর ৩ (তত্ত্বাবধানে নিজে করা) এই build-এ চালু করা যায় না — এর জন্য মালিকের আলাদা সিদ্ধান্ত দরকার (পরিকল্পনা D5)।");
+      throw badRequest("ai.level3ActingOnItsOwn");
     }
     if (typeof level !== "number" || !Number.isInteger(level) || !(AUTONOMY_LEVELS as readonly number[]).includes(level)) {
-      throw new BadRequestException("level must be 0, 1 or 2");
+      throw badRequest("ai.levelMustBe01Or");
     }
     const row = await this.p().aiAutonomySetting.upsert({
       where: { organizationId_actionId: { organizationId: orgId, actionId } },
@@ -156,8 +157,8 @@ export class ActionEngineService {
     opts: { proposedBy: "ai" | "staff"; actorUserId?: string | null; sourceRef?: Record<string, unknown> | null; conversationId?: string | null },
   ): Promise<ProposeResult> {
     const entry = catalogAction(actionId);
-    if (!entry) throw new BadRequestException(`Unknown catalog action: ${actionId}`);
-    if (opts.proposedBy !== "ai" && opts.proposedBy !== "staff") throw new BadRequestException("proposedBy must be \"ai\" or \"staff\"");
+    if (!entry) throw badRequest("ai.unknownCatalogAction2", { actionId: actionId });
+    if (opts.proposedBy !== "ai" && opts.proposedBy !== "staff") throw badRequest("ai.proposedbyMustBeAiOrStaff");
 
     const level = await this.getAutonomyLevel(orgId, actionId);
     if (level === 0) {
@@ -320,9 +321,9 @@ export class ActionEngineService {
 
   async approve(orgId: string, actorId: string, proposalId: string) {
     const row = await this.getEngineProposalOrThrow(orgId, proposalId);
-    if (row.status !== "proposed") throw new BadRequestException(`This action proposal was already decided (status: ${row.status})`);
+    if (row.status !== "proposed") throw badRequest("ai.thisActionProposalWasAlreadyDecided2", { rowStatus: row.status });
     const claimed = await this.claimDecision(orgId, actorId, proposalId);
-    if (!claimed) throw new BadRequestException("This action proposal was already decided");
+    if (!claimed) throw badRequest("ai.thisActionProposalWasAlreadyDecided");
     const entry = catalogAction(row.actionId) as CatalogAction;
     if (entry.moneyAdjacent) {
       // Proposal-only by law (L5): approval records the human
@@ -346,12 +347,12 @@ export class ActionEngineService {
 
   async reject(orgId: string, actorId: string, proposalId: string) {
     const row = await this.getEngineProposalOrThrow(orgId, proposalId);
-    if (row.status !== "proposed") throw new BadRequestException(`This action proposal was already decided (status: ${row.status})`);
+    if (row.status !== "proposed") throw badRequest("ai.thisActionProposalWasAlreadyDecided2", { rowStatus: row.status });
     const claim = await this.p().aIActionProposal.updateMany({
       where: { id: proposalId, organizationId: orgId, status: "proposed" },
       data: { status: "rejected", decidedById: actorId, decidedAt: new Date() },
     });
-    if (!claim?.count) throw new BadRequestException("This action proposal was already decided");
+    if (!claim?.count) throw badRequest("ai.thisActionProposalWasAlreadyDecided");
     const updated = await this.getEngineProposalOrThrow(orgId, proposalId);
     await this.logAiAction(orgId, actorId, updated, "rejected", "denied");
     await this.audit.log({

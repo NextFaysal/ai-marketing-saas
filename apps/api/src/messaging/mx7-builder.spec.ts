@@ -94,9 +94,9 @@ describe("MX7 block-built templates", () => {
 
   it("refuses blocks on SMS, blocks+body together, and a body-less non-block template", async () => {
     const { svc, tables } = build(); seedCatalog(tables);
-    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "sms", body: "hi", blocks: BLOCKS })).rejects.toThrow(/only allowed for email/);
-    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "email", subject: "s", body: "hi", blocks: BLOCKS })).rejects.toThrow(/rendered from the blocks/);
-    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "email", subject: "s" })).rejects.toThrow(/body is required/);
+    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "sms", body: "hi", blocks: BLOCKS })).rejects.toMatchObject({ code: "messaging.blocksAreOnlyAllowedForEmail" });
+    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "email", subject: "s", body: "hi", blocks: BLOCKS })).rejects.toMatchObject({ code: "messaging.withBlocksBodyHtmlBodyAreRendered" });
+    await expect(svc.createTemplate("org-1", "u-1", { name: "x", channel: "email", subject: "s" })).rejects.toMatchObject({ code: "messaging.templateBodyIsRequiredWriteOne" });
   });
 
   it("composer discounts list only this org's ACTIVE StoreDiscount rows", async () => {
@@ -196,7 +196,7 @@ describe("MX7 content library + festival pack", () => {
     expect(filled.htmlBody).toContain("৳1,250.50");
     expect(filled.htmlBody).toContain("EID20");
     expect(filled.version).toBe(2);
-    await expect(svc.installFestivalPack("org-1", "u-1", "durga_unknown")).rejects.toThrow(/not found/);
+    await expect(svc.installFestivalPack("org-1", "u-1", "durga_unknown")).rejects.toMatchObject({ code: "messaging.festivalTemplatePackNotFound" });
   });
 
   it("brand kit reads the Organization row (single central place) with org-name fallback", async () => {

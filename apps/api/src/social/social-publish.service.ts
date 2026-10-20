@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
@@ -21,6 +21,7 @@ import { MediaStore } from "../inbox/media-store";
 import { SocialRasterService } from "./social-raster.service";
 import { SocialLinkService } from "./social-link.service";
 import { effectiveTiktokAppConfig, ensurePlatformConfig } from "../common/platform-config";
+import { badRequest, conflict, notFound } from "../i18n/api-exception";
 
 /**
  * SP5 — Social publish worker.
@@ -177,9 +178,9 @@ export class SocialPublishService {
     const account = await (this.prisma as any).socialAccount.findFirst({
       where: { id: accountId, organizationId },
     });
-    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (!account) throw notFound("social.socialAccountNotFoundInThis");
     if (account.platform !== "youtube") {
-      throw new BadRequestException("Playlist শুধু YouTube অ্যাকাউন্টের জন্য — এই অ্যাকাউন্টটি YouTube চ্যানেল নয়।");
+      throw badRequest("social.aPlaylistIsOnlyForYoutube");
     }
     const accessToken = await this.oauth.ensureAccessToken(organizationId, account);
     const playlists = await this.youtubeClient.listPlaylists(accessToken);
@@ -1084,7 +1085,7 @@ export class SocialPublishService {
    */
   async publishNow(organizationId: string, actorId: string, postId: string) {
     const row = await (this.prisma as any).socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!row) throw new NotFoundException("Social post not found in this organization");
+    if (!row) throw notFound("social.socialPostNotFoundInThis");
     // CC17: the manual publish path enforces the member deny-list
     // for the post's account. CC27: the scheduled sweep now
     // re-checks the AUTHOR's deny-list at publish time too (see
@@ -1092,13 +1093,13 @@ export class SocialPublishService {
     // the ACTING member, who may differ from the author.
     await this.social.assertAccountAccess(organizationId, actorId, row.socialAccountId);
     if (!["draft", "scheduled"].includes(row.status)) {
-      throw new ConflictException("এই পোস্টটি এখন প্রকাশ করা যাবে না — এটি ইতিমধ্যে প্রকাশিত/প্রকাশ হচ্ছে/বাতিল অবস্থায় আছে।");
+      throw conflict("social.thisPostCannotBePublishedNow");
     }
     // SP7 approval gate: while the org requires approval, a post
     // that is not approved (pending / rejected / never submitted)
     // cannot be published by hand either — approval first.
     if ((await this.approvalRequired(organizationId)) && row.approvalStatus !== "approved") {
-      throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে প্রকাশের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
+      throw conflict("social.thePostIsNotApprovedWhen");
     }
     // SN2 client-approval gate: beside the internal gate above —
     // while socialRequireClientApproval is on, the post also
@@ -1116,7 +1117,7 @@ export class SocialPublishService {
       data: { status: "publishing" },
     });
     if (!claim?.count) {
-      throw new ConflictException("পোস্টটি অন্য একটি প্রক্রিয়ায় প্রকাশ হচ্ছে — কিছুক্ষণ পর আবার চেষ্টা করুন।");
+      throw conflict("social.thePostIsBeingPublishedBy");
     }
     await this.audit.log({
       organizationId, userId: actorId, action: "social.post_publish_requested",

@@ -28,6 +28,28 @@ import {
   X,
 } from "lucide-react";
 import { publicApiBase, API_URL, getToken } from "@/lib/api";
+import { fmtMoney, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { pubT, publicDicts } from "@/lib/i18n/public";
+import { tr } from "@/lib/i18n/lookup";
+
+const t = pubT();
+
+/**
+ * Milestone 58 — public marketing landing (the app's root "/").
+ *
+ * Honesty rules baked in:
+ *  - Only capabilities that exist in the product TODAY are named.
+ *  - No testimonials, no customer logos, no invented statistics.
+ *    The showcase frames below are simplified CSS presentations in
+ *    the style of the real screens, captioned as such — they are
+ *    not screenshots and claim nothing a screenshot would.
+ *  - Prices come from the SAME operator-settings source as /pricing
+ *    (GET /public/pricing); nothing is hardcoded here.
+ *  - The ROI calculator computes only from the visitor's own inputs
+ *    and shows its formula on the page, labelled an estimate.
+ *  - Signup state honours /public/system-status exactly like the
+ *    register page does.
+ */
 
 interface Plan {
   tier: string;
@@ -45,12 +67,7 @@ interface SysStatus {
   announcement: { title: string; body: string } | null;
 }
 
-const TIER_BN: Record<string, string> = {
-  FREE: "ফ্রি",
-  STARTER: "স্টার্টার",
-  GROWTH: "গ্রোথ",
-  AGENCY: "এজেন্সি",
-};
+const TIER_BN: Record<string, string> = { FREE: t.landing.tierFREE, STARTER: t.landing.tierSTARTER, GROWTH: t.landing.tierGROWTH, AGENCY: t.landing.tierAGENCY };
 
 interface FaqItem {
   q: string;
@@ -138,7 +155,7 @@ function CompetitorSpyHeroFrame() {
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 space-y-2">
         <div className="flex items-center justify-between">
           <span className="rounded-full bg-amber-500 text-slate-950 px-2 py-0.5 text-[10px] font-bold">
-            🔥 WINNING AD (২৮ দিন লাইভ)
+            {tr(publicDicts, "bn", "landing.winningAdBadge", { days: fmtNumber("bn", 28) })}
           </span>
           <span className="text-[10px] text-slate-400">Facebook • Instagram</span>
         </div>
@@ -146,7 +163,7 @@ function CompetitorSpyHeroFrame() {
           "প্রিমিয়াম লেদার ওয়ালেট — সীমিত সময়ের জন্য বিশেষ ছাড়! ক্যাশ অন ডেলিভারি সুবিধা।"
         </p>
         <div className="rounded-lg bg-slate-900 border border-slate-800 p-2 text-[11px] text-slate-300">
-          <span className="font-bold text-indigo-400">⚡ AI Counter Strategy:</span> প্রতিদ্বন্দীর অফারে ফ্রি ডেলিভারি নেই। আমাদের ক্যাম্পেইনে "১ বছরের ওয়ারেন্টি + ফ্রি ডেলিভারি" অফার সেট করুন।
+          <span className="font-bold text-indigo-400">{t.landing.aiCounterLabel}</span> প্রতিদ্বন্দীর অফারে ফ্রি ডেলিভারি নেই। আমাদের ক্যাম্পেইনে "১ বছরের ওয়ারেন্টি + ফ্রি ডেলিভারি" অফার সেট করুন।
         </div>
       </div>
 
@@ -393,7 +410,7 @@ function RoiCalculator() {
     return { savedReturns, saving: savedReturns * returnCost };
   }, [orders, returnCost, currentPct, targetPct]);
 
-  const num = (v: number) => v.toLocaleString("bn-BD");
+  const num = (v: number) => fmtNumber("bn", v);
 
   return (
     <div className="mx-auto max-w-4xl rounded-3xl border border-slate-800 bg-slate-900/70 p-6 sm:p-10 shadow-2xl backdrop-blur-md text-left">
@@ -426,7 +443,7 @@ function RoiCalculator() {
       <div className="grid gap-6 sm:grid-cols-2">
         <div className="space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-300">
-            <span>মাসে মোট অর্ডার সংখ্যা</span>
+            <span>{t.landing.roiOrdersLabel}</span>
             <span className="text-indigo-400 font-bold">{num(orders)} টি</span>
           </div>
           <input
@@ -493,7 +510,7 @@ function RoiCalculator() {
             মাসে সম্ভাব্য প্রত্যক্ষ নগদ সাশ্রয়
           </div>
           <div className="mt-1 text-3xl sm:text-4xl font-black text-emerald-400">
-            ৳{num(Math.round(result.saving))}
+            {fmtMoney("bn", Math.round(result.saving))}
           </div>
           <div className="mt-1 text-xs text-slate-300">
             মাসে আনুমানিক <b className="text-white">{num(Math.round(result.savedReturns))}টি</b> পার্সেল রিটার্ন থেকে বাঁচবে।
@@ -510,8 +527,7 @@ function RoiCalculator() {
       </div>
 
       <p className="mt-4 text-[11px] leading-relaxed text-slate-400">
-        <b>হিসাবের সূত্র:</b> মাসিক সাশ্রয় = মাসিক অর্ডার × (বর্তমান রিটার্ন % − লক্ষ্য রিটার্ন %) ÷ ১০০ × প্রতি রিটার্নের কুরিয়ার খরচ।
-        এটি আপনার ইনপুট অনুযায়ী আনুমানিক হিসাব — কোনো প্রতিশ্রুত সংখ্যা নয়।
+        <b>{t.landing.roiFormulaPrefix}</b>{t.landing.roiFormulaBody}<b>{t.landing.roiEstimateBold}</b>{t.landing.roiFormulaSuffix}
       </p>
     </div>
   );
@@ -574,7 +590,7 @@ export default function Landing() {
   const signupClosed = status?.signupOpen === false;
   const RegisterCta = ({
     className,
-    label = "ফ্রি শুরু করুন",
+    label = t.landing.startFree,
   }: {
     className: string;
     label?: string;
@@ -582,9 +598,9 @@ export default function Landing() {
     signupClosed ? (
       <span
         className={`${className} cursor-not-allowed opacity-60`}
-        title="নতুন সাইনআপ আপাতত বন্ধ আছে"
+        title={t.landing.signupClosedTitle}
       >
-        সাইনআপ সাময়িক বন্ধ
+        {t.landing.signupClosedCta}
       </span>
     ) : (
       <a href="/register" className={className}>
@@ -604,7 +620,7 @@ export default function Landing() {
 
       {status?.maintenanceMode ? (
         <div className="relative z-50 bg-amber-400 px-4 py-2 text-center text-sm font-semibold text-amber-950">
-          🔧 রক্ষণাবেক্ষণ চলছে — কিছু ফিচার সাময়িকভাবে ধীর বা অনুপলব্ধ থাকতে পারে।
+          {t.landing.maintenanceBanner}
         </div>
       ) : null}
       {status?.announcement ? (
@@ -635,10 +651,10 @@ export default function Landing() {
             <Link href="/features" className="text-indigo-400 font-semibold hover:text-indigo-300 flex items-center gap-1">
               ফিচারসমূহ <span className="rounded bg-indigo-500/20 px-1 text-[10px]">New</span>
             </Link>
-            <a href="#how" className="transition hover:text-white">কীভাবে কাজ করে</a>
+            <a href="#how" className="transition hover:text-white">{t.landing.navHow}</a>
             <a href="#calculator" className="transition hover:text-white">সাশ্রয় ক্যালকুলেটর</a>
-            <a href="#pricing" className="transition hover:text-white">মূল্য</a>
-            <a href="#faq" className="transition hover:text-white">জিজ্ঞাসা</a>
+            <a href="#pricing" className="transition hover:text-white">{t.landing.navPricing}</a>
+            <a href="#faq" className="transition hover:text-white">{t.landing.navFaq}</a>
           </nav>
 
           <div className="hidden sm:flex items-center gap-3">
@@ -646,7 +662,7 @@ export default function Landing() {
               href="/login"
               className="rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
             >
-              লগইন
+              {t.landing.login}
             </Link>
             <RegisterCta className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition hover:brightness-110 active:scale-[0.98]" />
           </div>
@@ -675,7 +691,7 @@ export default function Landing() {
               onClick={() => setMobileMenuOpen(false)}
               className="block py-1 text-slate-300 hover:text-white"
             >
-              কীভাবে কাজ করে
+              {t.landing.navHow}
             </a>
             <a
               href="#calculator"
@@ -703,7 +719,7 @@ export default function Landing() {
                 href="/login"
                 className="flex-1 text-center py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold text-white"
               >
-                লগইন
+                {t.landing.login}
               </Link>
               <RegisterCta className="flex-1 text-center py-2.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold" />
             </div>
@@ -719,11 +735,11 @@ export default function Landing() {
         </div>
 
         <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
-          আপনার ই-কমার্স ব্যবসার{" "}
+          {t.landing.heroTitlePrefix}
           <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
             মেসেজ, বিজ্ঞাপন আর ডেলিভারি
-          </span>{" "}
-          — এক ড্যাশবোর্ডে
+          </span>
+          {t.landing.heroTitleSuffix}
         </h1>
 
         <p className="mx-auto mt-5 max-w-3xl text-base sm:text-lg leading-relaxed text-slate-400">
@@ -1001,7 +1017,7 @@ export default function Landing() {
             {[
               {
                 n: "০১",
-                t: "রেজিস্টার করুন",
+                t: t.landing.step1Title,
                 b: "ইমেইল দিয়ে অ্যাকাউন্ট খুলুন এবং আপনার ব্যবসার Organization সেট করুন। ট্রায়াল তাৎক্ষণিক শুরু হয়ে যাবে।",
               },
               {
@@ -1052,7 +1068,7 @@ export default function Landing() {
           </div>
           <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">সহজ ও স্বচ্ছ মূল্যতালিকা</h2>
           <p className="mx-auto mt-2 max-w-xl text-slate-400 text-sm">
-            সব প্ল্যানে {pricing?.trialDays ?? 14} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। এই মূল্য সরাসরি প্ল্যাটফর্মের লাইভ সেটিংস থেকে সিঙ্ক করা।
+            সব প্ল্যানে {fmtNumber("bn", pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। এই মূল্য সরাসরি প্ল্যাটফর্মের লাইভ সেটিংস থেকে সিঙ্ক করা।
           </p>
 
           {!pricing ? (
@@ -1079,22 +1095,22 @@ export default function Landing() {
                       {TIER_BN[p.tier] ?? p.tier}
                     </div>
                     <div className="mt-3 text-3xl font-black text-white">
-                      {p.priceMinor === 0 ? "৳০" : `৳${(p.priceMinor / 100).toLocaleString("bn-BD")}`}
-                      <span className="text-xs font-normal text-slate-400"> /মাস</span>
+                      {fmtMoneyMinor("bn", p.priceMinor)}
+                      <span className="text-xs font-normal text-slate-400">{t.landing.perMonth}</span>
                     </div>
 
                     <ul className="mt-6 space-y-2.5 text-xs text-slate-300">
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>{p.limits.seats} জন টিম মেম্বার সিট</span>
+                        <span>{fmtNumber("bn", p.limits.seats)} জন টিম মেম্বার সিট</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>প্রতিদিন {p.limits.aiDaily}টি AI ভেরিফাইড মেসেজ</span>
+                        <span>প্রতিদিন {fmtNumber("bn", p.limits.aiDaily)}টি AI ভেরিফাইড মেসেজ</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>ব্রডকাস্ট ক্যাপাসিটি {p.limits.broadcastCap.toLocaleString()} জন</span>
+                        <span>ব্রডকাস্ট ক্যাপাসিটি {fmtNumber("bn", p.limits.broadcastCap)} জন</span>
                       </li>
                     </ul>
 
@@ -1126,7 +1142,7 @@ export default function Landing() {
             <HelpCircle className="h-3.5 w-3.5 text-indigo-400" />
             <span>Frequently Asked Questions</span>
           </div>
-          <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">সাধারণ জিজ্ঞাসা</h2>
+          <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">{t.landing.faqTitle}</h2>
           <p className="mx-auto mt-2 max-w-lg text-slate-400 text-xs sm:text-sm">
             মার্চেন্টদের সবচেয়ে সাধারণ প্রশ্ন ও উত্তর এক নজরে।
           </p>
@@ -1258,7 +1274,7 @@ export default function Landing() {
             আজই আপনার ব্যবসার সবকিছু আনুন এক কেন্দ্রীয় ড্যাশবোর্ডে
           </h2>
           <p className="mx-auto max-w-2xl text-base text-slate-300">
-            {pricing?.trialDays ?? 14} দিনের ফ্রি ট্রায়াল দিয়ে শুরু করুন — কোনো বাধ্যবাধকতা নেই।
+            {fmtNumber("bn", pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল দিয়ে শুরু করুন — কোনো বাধ্যবাধকতা নেই।
             বিজ্ঞাপন, কুরিয়ার ও কাস্টমার মেসেজ হ্যান্ডল করুন আধুনিকতম উপায়ে।
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
@@ -1282,11 +1298,11 @@ export default function Landing() {
           <div>© {new Date().getFullYear()} Qosprey — AI Marketing OS. সর্বস্বত্ব সংরক্ষিত।</div>
           <div className="flex flex-wrap gap-5 sm:gap-6">
             <Link href="/features" className="hover:text-slate-300">ফিচারসমূহ</Link>
-            <Link href="/pricing" className="hover:text-slate-300">মূল্য</Link>
+            <Link href="/pricing" className="hover:text-slate-300">{t.landing.footerPricing}</Link>
             <Link href="/privacy" className="hover:text-slate-300">গোপনীয়তা নীতি</Link>
             <Link href="/terms" className="hover:text-slate-300">শর্তাবলি</Link>
-            <Link href="/login" className="hover:text-slate-300">লগইন</Link>
-            <Link href="/register" className="hover:text-slate-300">রেজিস্টার</Link>
+            <Link href="/login" className="hover:text-slate-300">{t.landing.footerLogin}</Link>
+            <Link href="/register" className="hover:text-slate-300">{t.landing.footerRegister}</Link>
           </div>
         </div>
       </footer>

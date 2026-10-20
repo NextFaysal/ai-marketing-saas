@@ -90,6 +90,12 @@ export class UpdateOrgIdentityDto {
   @IsOptional() @IsString() @MaxLength(64) timezone?: string;
   @IsOptional() @IsString() @MaxLength(10) country?: string;
 }
+/** ML1 (Multi-Language MB1): the organization's dashboard
+ * default UI language. Only "bn" / "en" exist — the allowlist
+ * is the DTO itself; the service stores exactly what passed. */
+export class UpdateOrgLocaleDto {
+  @IsIn(["bn", "en"]) dashboardLocale!: string;
+}
 /** ORG11 (Organization Next OB4): org security policy. OWNER-only
  * at the controller; the service re-checks. sessionMaxAgeHours:
  * an integer 1..720 sets the cap, explicit null clears it, and

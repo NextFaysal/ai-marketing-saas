@@ -99,7 +99,7 @@ describe("A4 template install", () => {
   });
 
   it("unknown template key is a 404", async () => {
-    await expect(service(fakeDb()).installJobTemplate(ORG, "owner", "nope")).rejects.toThrow(/not found/i);
+    await expect(service(fakeDb()).installJobTemplate(ORG, "owner", "nope")).rejects.toMatchObject({ code: "automation.jobTemplateNotFound" });
   });
 
   it("competitor template requires a chosen, org-owned competitor", async () => {

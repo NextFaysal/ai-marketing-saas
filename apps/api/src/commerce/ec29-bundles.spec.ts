@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { allocateBundle } from "./ec29-bundles";
 import { BundlesService } from "./bundles.service";
 
@@ -155,7 +156,7 @@ describe("EC29 BundlesService.validateItems", () => {
     const svc = new BundlesService(prisma, auditStub);
     await expect(
       svc.validateItems("org-1", [{ productId: "p-1", qty: 1 }]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     const eleven = Array.from({ length: 11 }, (_, i) => ({ productId: `p-1`, qty: 1, variantSku: `SKU-${i}` }));
     // distinct SKUs would fail variant lookup; use repeated products with distinct fake skus is
     // not possible — the count check must fire BEFORE any lookup, so any 11 entries throw the count error.
@@ -195,7 +196,7 @@ describe("EC29 BundlesService.validateItems", () => {
         { productId: "p-1", qty: 1, variantSku: "NOPE" },
         { productId: "p-2", qty: 1 },
       ]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("happy path normalizes items (variantSku kept, absent → null)", async () => {
@@ -256,7 +257,7 @@ describe("EC29 BundlesService CRUD", () => {
         { productId: "p-2", qty: 1 },
       ],
     } as any);
-    await expect(svc.getOne("org-2", created.bundle.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getOne("org-2", created.bundle.id)).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.create("org-1", "u1", {
         name: "খারাপ",
@@ -266,6 +267,6 @@ describe("EC29 BundlesService CRUD", () => {
           { productId: "p-2", qty: 1 },
         ],
       } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 });

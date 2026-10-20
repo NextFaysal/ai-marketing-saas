@@ -88,16 +88,16 @@ describe("CX9 extractKnowledgeText", () => {
 
   it("rejects undecodable / binary junk renamed .txt", async () => {
     await expect(extractKnowledgeText("junk.txt", Buffer.from([0xff, 0xfe, 0x00, 0x41, 0x80, 0x81])))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "knowledge.theFileIsNotReadableText" });
     await expect(extractKnowledgeText("nul.txt", Buffer.from("abc\u0000def", "utf-8")))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "knowledge.theFileIsNotReadableText" });
   });
 
   it("rejects unsupported extensions", async () => {
     await expect(extractKnowledgeText("photo.png", Buffer.from("whatever")))
       .rejects.toThrow(/সমর্থিত নয়/);
     await expect(extractKnowledgeText("noextension", Buffer.from("whatever")))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "knowledge.unsupportedFileType" });
   });
 
   it("docx fixture (built in-spec) extracts paragraphs + decoded entities", async () => {
@@ -257,7 +257,7 @@ describe("CX9 limits + helpers", () => {
       filter.catch(new MulterError("LIMIT_FILE_SIZE"), null as any);
       fail("should have thrown");
     } catch (e) {
-      expect(e).toBeInstanceOf(BadRequestException);
+      expect(e).toMatchObject({ code: "knowledge.theFileIsTooLargeAt" });
     }
   });
 

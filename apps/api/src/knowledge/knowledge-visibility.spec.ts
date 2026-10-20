@@ -96,9 +96,9 @@ describe("SA-B1 KnowledgeService visibility", () => {
     expect(entries.some((e) => e.action === "knowledge.update" && e.entityId === doc.id)).toBe(true);
     const back = await service.updateDoc("org-a", "u1", doc.id, { visibility: "public" });
     expect(back.visibility).toBe("public");
-    await expect(service.updateDoc("org-a", "u1", "missing", { visibility: "internal" })).rejects.toThrow(/not found/i);
+    await expect(service.updateDoc("org-a", "u1", "missing", { visibility: "internal" })).rejects.toMatchObject({ code: "knowledge.documentNotFoundInThisOrganization" });
     // Cross-org: org B cannot touch org A's document.
-    await expect(service.updateDoc("org-b", "u2", doc.id, { visibility: "internal" })).rejects.toThrow(/not found/i);
+    await expect(service.updateDoc("org-b", "u2", doc.id, { visibility: "internal" })).rejects.toMatchObject({ code: "knowledge.documentNotFoundInThisOrganization" });
   });
 
   it("upload path (multipart): uploaded chunks are kind note => internal by the same rule", async () => {

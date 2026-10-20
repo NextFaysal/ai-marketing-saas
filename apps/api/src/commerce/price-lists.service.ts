@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB5 (AX7) — B2B customer groups + explicit price lists.
@@ -46,7 +47,7 @@ function isUniqueViolation(e: unknown): boolean {
 export function parsePriceMinor(raw: unknown): bigint {
   const s = raw === null || raw === undefined ? "" : String(raw).trim();
   if (!/^\d+$/.test(s)) {
-    throw new BadRequestException("দাম সঠিক নয় — priceMinor অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে");
+    throw badRequest("commerce.priceMinorInvalid");
   }
   return BigInt(s);
 }
@@ -101,7 +102,7 @@ export class PriceListsService {
     const row = await this.t("customerGroup").findFirst({
       where: { id: groupId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("কাস্টমার গ্রুপটি পাওয়া যায়নি");
+    if (!row) throw notFound("commerce.customerGroupNotFound");
     return row;
   }
 
@@ -150,12 +151,12 @@ export class PriceListsService {
 
   async createGroup(orgId: string, actorId: string, dto: { name?: string } | string) {
     const name = String(typeof dto === "string" ? dto : dto?.name ?? "").trim();
-    if (!name) throw new BadRequestException("গ্রুপের নাম আবশ্যক");
+    if (!name) throw badRequest("commerce.groupNameRequired");
     const existing = await this.t("customerGroup")
       .findFirst({ where: { organizationId: orgId, name } })
       .catch(() => null);
     if (existing) {
-      throw new BadRequestException("এই নামে ইতিমধ্যে একটি কাস্টমার গ্রুপ আছে — অন্য নাম দিন");
+      throw badRequest("commerce.customerGroupNameExists");
     }
     let row: any;
     try {
@@ -164,7 +165,7 @@ export class PriceListsService {
       });
     } catch (e) {
       if (isUniqueViolation(e)) {
-        throw new BadRequestException("এই নামে ইতিমধ্যে একটি কাস্টমার গ্রুপ আছে — অন্য নাম দিন");
+        throw badRequest("commerce.customerGroupNameExists");
       }
       throw e;
     }
@@ -178,13 +179,13 @@ export class PriceListsService {
   async updateGroup(orgId: string, actorId: string, groupId: string, dto: { name?: string }) {
     const group = await this.loadGroupOr404(orgId, groupId);
     const name = String(dto?.name ?? "").trim();
-    if (!name) throw new BadRequestException("গ্রুপের নাম আবশ্যক");
+    if (!name) throw badRequest("commerce.groupNameRequired");
     if (name !== group.name) {
       const clash = await this.t("customerGroup")
         .findFirst({ where: { organizationId: orgId, name } })
         .catch(() => null);
       if (clash && clash.id !== groupId) {
-        throw new BadRequestException("এই নামে ইতিমধ্যে একটি কাস্টমার গ্রুপ আছে — অন্য নাম দিন");
+        throw badRequest("commerce.customerGroupNameExists");
       }
     }
     let updated: any;
@@ -192,7 +193,7 @@ export class PriceListsService {
       updated = await this.t("customerGroup").update({ where: { id: groupId }, data: { name } });
     } catch (e) {
       if (isUniqueViolation(e)) {
-        throw new BadRequestException("এই নামে ইতিমধ্যে একটি কাস্টমার গ্রুপ আছে — অন্য নাম দিন");
+        throw badRequest("commerce.customerGroupNameExists");
       }
       throw e;
     }
@@ -316,12 +317,12 @@ export class PriceListsService {
   ) {
     const group = await this.loadGroupOr404(orgId, groupId);
     const productId = String(dto?.productId ?? "").trim();
-    if (!productId) throw new BadRequestException("পণ্যের আইডি দিতে হবে");
+    if (!productId) throw badRequest("commerce.productIdRequired");
     const product = await this.t("product").findFirst({
       where: { id: productId, organizationId: orgId },
     });
     if (!product) {
-      throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${productId}`);
+      throw badRequest("commerce.productNotOfOrg", { productId });
     }
     let variantId: string | null = null;
     if (dto?.variantId !== undefined && dto?.variantId !== null && dto?.variantId !== "") {
@@ -330,7 +331,7 @@ export class PriceListsService {
         where: { id: variantId, productId },
       });
       if (!variant) {
-        throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        throw badRequest("commerce.variantNotOfProduct");
       }
     }
     const priceMinor = parsePriceMinor(dto?.priceMinor);
@@ -354,11 +355,11 @@ export class PriceListsService {
   async removeItem(orgId: string, actorId: string, groupId: string, itemId: string) {
     await this.loadGroupOr404(orgId, groupId);
     const list = await this.findList(orgId, groupId);
-    if (!list) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    if (!list) throw notFound("commerce.priceListItemNotFound");
     const item = await this.t("priceListItem").findFirst({
       where: { id: itemId, priceListId: list.id },
     });
-    if (!item) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    if (!item) throw notFound("commerce.priceListItemNotFound");
     await this.t("priceListItem").delete({ where: { id: itemId } });
     await this.safeAudit({
       organizationId: orgId, userId: actorId, action: "price_list.item_removed",
@@ -383,7 +384,7 @@ export class PriceListsService {
     const group = await this.loadGroupOr404(orgId, groupId);
     const percentOff = Number(dto?.percentOff);
     if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 99) {
-      throw new BadRequestException("ছাড়ের হার ১–৯৯ শতাংশের মধ্যে হতে হবে");
+      throw badRequest("commerce.discountRateRange");
     }
     let products: any[];
     if (Array.isArray(dto?.productIds) && dto.productIds.length > 0) {
@@ -393,7 +394,7 @@ export class PriceListsService {
           where: { id: String(pid), organizationId: orgId },
         });
         if (!product) {
-          throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${String(pid)}`);
+          throw badRequest("commerce.productNotOfOrg", { productId: String(pid) });
         }
         products.push(product);
       }
@@ -433,7 +434,7 @@ export class PriceListsService {
     const row = await this.t("tierDefinition").findFirst({
       where: { id: tierId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("মেম্বারশিপ টিয়ারটি পাওয়া যায়নি");
+    if (!row) throw notFound("commerce.membershipTierNotFound");
     return row;
   }
 
@@ -502,12 +503,12 @@ export class PriceListsService {
   ) {
     const tier = await this.loadTierOr404(orgId, tierId);
     const productId = String(dto?.productId ?? "").trim();
-    if (!productId) throw new BadRequestException("পণ্যের আইডি দিতে হবে");
+    if (!productId) throw badRequest("commerce.productIdRequired");
     const product = await this.t("product").findFirst({
       where: { id: productId, organizationId: orgId },
     });
     if (!product) {
-      throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${productId}`);
+      throw badRequest("commerce.productNotOfOrg", { productId });
     }
     let variantId: string | null = null;
     if (dto?.variantId !== undefined && dto?.variantId !== null && dto?.variantId !== "") {
@@ -516,7 +517,7 @@ export class PriceListsService {
         where: { id: variantId, productId },
       });
       if (!variant) {
-        throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        throw badRequest("commerce.variantNotOfProduct");
       }
     }
     const priceMinor = parsePriceMinor(dto?.priceMinor);
@@ -542,11 +543,11 @@ export class PriceListsService {
     const list = await this.t("priceList")
       .findFirst({ where: { tierId, organizationId: orgId } })
       .catch(() => null);
-    if (!list) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    if (!list) throw notFound("commerce.priceListItemNotFound");
     const item = await this.t("priceListItem").findFirst({
       where: { id: itemId, priceListId: list.id },
     });
-    if (!item) throw new NotFoundException("প্রাইস লিস্টের আইটেমটি পাওয়া যায়নি");
+    if (!item) throw notFound("commerce.priceListItemNotFound");
     await this.t("priceListItem").delete({ where: { id: itemId } });
     await this.safeAudit({
       organizationId: orgId, userId: actorId, action: "price_list.tier_item_removed",

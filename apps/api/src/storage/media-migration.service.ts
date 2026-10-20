@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { MediaStore } from "../inbox/media-store";
 import { StorageService, defaultVisibilityForSurface, type StorageVisibility } from "./storage.service";
 import { StorageRegistryService } from "./storage-registry.service";
 import { mediaKeyFromCdnUrl } from "./media-url";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * RM10 — the legacy local-media migration tool (platform admin
@@ -203,9 +204,7 @@ export class MediaMigrationService {
 
   async run(dto: { batchSize?: number } = {}) {
     if (!this.storage || this.storage.mode !== "s3") {
-      throw new BadRequestException(
-        "মাইগ্রেশন চালানো যাচ্ছে না — object storage (Cloudflare R2) সেটআপ হয়নি, কপি করার গন্তব্যই নেই। আগে MEDIA_S3_*/MEDIA_R2_* env বসান।",
-      );
+      throw badRequest("storage.migrationCannotBeRunObjectStorage");
     }
     const batchSize = Math.min(
       MEDIA_MIGRATION_MAX_BATCH,

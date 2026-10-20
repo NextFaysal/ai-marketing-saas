@@ -68,7 +68,7 @@ describe("ON1 bulk", () => {
     expect(o2.ok).toBe(false);
     expect(o2.error).toContain("নেওয়া যাবে না");
     const missing = out.results.find((r: any) => r.orderId === "missing");
-    expect(missing.error).toBe("Order not found in this organization");
+    expect(missing.error).toBe("এই অর্গানাইজেশনে অর্ডারটি পাওয়া যায়নি");
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
       action: "orders.bulk", metadata: { action: "set_status", total: 3, succeeded: 1, failed: 2 },
     }));

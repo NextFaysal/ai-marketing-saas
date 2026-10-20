@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 export interface Competitor {
   id: string;
@@ -102,6 +103,7 @@ export default function CompetitorDossierModal({
   loading,
   data,
 }: CompetitorDossierModalProps) {
+  const { t, locale } = useLocale();
   if (!isOpen) return null;
 
   return (
@@ -117,7 +119,7 @@ export default function CompetitorDossierModal({
                 {data?.agencyBranding.organizationName || "Client"} Competitor Intelligence Dossier
               </h3>
               <p className="text-xs text-slate-500">
-                তারিখ: {data ? new Date(data.generatedAt).toLocaleDateString() : ""} • প্রস্তুতকারক: Marketing Intelligence OS
+                {t("social.cmDossierMeta", { date: data ? fmtDate(locale, data.generatedAt) : "" })}
               </p>
             </div>
           </div>
@@ -126,7 +128,7 @@ export default function CompetitorDossierModal({
               onClick={() => window.print()}
               className="btn-dark btn-sm min-h-[40px]"
             >
-              🖨️ প্রিন্ট / PDF ডাউনলোড
+              {t("social.cmPrintBtn")}
             </button>
             <button
               onClick={onClose}
@@ -153,7 +155,7 @@ export default function CompetitorDossierModal({
               <div className="skeleton h-20 w-full" />
             </div>
             <p className="text-center text-sm text-slate-500">
-              হোয়াইট-লেবেল অডিট রিপোর্ট প্রস্তুত হচ্ছে...
+              {t("social.cmDossierLoading")}
             </p>
           </div>
         ) : data ? (
@@ -161,23 +163,23 @@ export default function CompetitorDossierModal({
             {/* Executive Summary Cards */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
-                <span className="stat-label">ট্র্যাকড প্রতিযোগী</span>
-                <p className="stat-value">{data.summary.totalCompetitorsTracked}</p>
+                <span className="stat-label">{t("social.cmDossierTracked")}</span>
+                <p className="stat-value">{fmtNumber(locale, data.summary.totalCompetitorsTracked)}</p>
               </div>
               <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
-                <span className="stat-label">সক্রিয় অপরচুনিটি অ্যালার্ট</span>
-                <p className="stat-value text-amber-600">{data.summary.totalAlertsActive}</p>
+                <span className="stat-label">{t("social.cmDossierAlerts")}</span>
+                <p className="stat-value text-amber-600">{fmtNumber(locale, data.summary.totalAlertsActive)}</p>
               </div>
               <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/60">
-                <span className="stat-label">মূল্য পার্থক্যের রেকর্ড</span>
-                <p className="stat-value text-brand-700">{data.summary.priceGapsDetected}</p>
+                <span className="stat-label">{t("social.cmDossierPriceGaps")}</span>
+                <p className="stat-value text-brand-700">{fmtNumber(locale, data.summary.priceGapsDetected)}</p>
               </div>
             </div>
 
             {/* Competitors Detailed Breakdown */}
             <div className="space-y-4">
               <h4 className="font-bold text-slate-900 uppercase tracking-wider text-xs border-b pb-2">
-                ১. প্রতিযোগী ব্র্যান্ড বিশ্লেষণ ও উইনিং ক্যাম্পেইন
+                {t("social.cmDossierSection1")}
               </h4>
               {data.competitors.map((item, idx) => (
                 <div key={idx} className="rounded-2xl p-4 bg-slate-50/50 space-y-3 ring-1 ring-inset ring-slate-200/60">
@@ -187,17 +189,17 @@ export default function CompetitorDossierModal({
                       <span className="ml-2 text-xs text-slate-400">({item.competitor.websiteUrl || "No website"})</span>
                     </div>
                     <div className="text-xs font-semibold text-slate-600">
-                      মোট বিজ্ঞাপন: {item.totalAds} • সক্রিয়: {item.activeAds} • 🔥 Winning: {item.winningAdsCount}
+                      {t("social.cmDossierAdsLine", { total: fmtNumber(locale, item.totalAds), active: fmtNumber(locale, item.activeAds), winning: fmtNumber(locale, item.winningAdsCount) })}
                     </div>
                   </div>
 
                   {item.winningAds.length > 0 ? (
                     <div>
-                      <span className="text-xs font-bold text-amber-800">সেরা লাভজনক বিজ্ঞাপন (Winning Ads):</span>
+                      <span className="text-xs font-bold text-amber-800">{t("social.cmDossierWinningLabel")}</span>
                       <div className="mt-2 space-y-1.5">
                         {item.winningAds.map((w) => (
                           <div key={w.id} className="rounded bg-white p-2.5 text-xs border border-amber-200">
-                            <span className="font-semibold text-slate-700">{w.daysRunning} দিন ধরে চলছে:</span>
+                            <span className="font-semibold text-slate-700">{t("social.cmDossierDaysRunning", { days: fmtNumber(locale, w.daysRunning ?? 0) })}</span>
                             <p className="mt-1 text-slate-800 whitespace-pre-wrap line-clamp-3">{w.creativeText}</p>
                           </div>
                         ))}
@@ -211,25 +213,25 @@ export default function CompetitorDossierModal({
             {/* Price Gap Matrix */}
             <div className="space-y-3">
               <h4 className="font-bold text-slate-900 uppercase tracking-wider text-xs border-b pb-2">
-                ২. বাজার মূল্যের তুলনামূলক ম্যাট্রিক্স
+                {t("social.cmDossierSection2")}
               </h4>
               <div className="table-wrap">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr>
-                      <th>আপনার প্রোডাক্ট</th>
-                      <th>আপনার দাম</th>
-                      <th>প্রতিযোগীর দাম</th>
-                      <th>মূল্যের পার্থক্য</th>
+                      <th>{t("social.cmThYourProduct")}</th>
+                      <th>{t("social.cmThYourPrice")}</th>
+                      <th>{t("social.cmThCompPrice")}</th>
+                      <th>{t("social.cmThPriceDiff")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.priceComparisonMatrix.slice(0, 8).map((p, i) => (
                       <tr key={i}>
                         <td className="font-medium">{p.productName}</td>
-                        <td>{formatMinor(BigInt(p.ownPriceMinor), p.currency)}</td>
+                        <td>{fmtMoneyMinor(locale, BigInt(p.ownPriceMinor), { currency: p.currency })}</td>
                         <td>
-                          {p.competitorPrices[0] ? `${p.competitorPrices[0].competitorName}: ${formatMinor(BigInt(p.competitorPrices[0].priceMinor), p.competitorPrices[0].currency)}` : "—"}
+                          {p.competitorPrices[0] ? `${p.competitorPrices[0].competitorName}: ${fmtMoneyMinor(locale, BigInt(p.competitorPrices[0].priceMinor), { currency: p.competitorPrices[0].currency })}` : "—"}
                         </td>
                         <td className="font-bold">
                           {p.competitorPrices[0]?.diffPercent !== undefined && p.competitorPrices[0]?.diffPercent !== null
@@ -245,7 +247,7 @@ export default function CompetitorDossierModal({
 
             {/* Footer disclaimer */}
             <div className="border-t pt-3 text-[11px] text-slate-400 text-center">
-              গোপনীয়তা চুক্তি: এই রিপোর্টটি ক্লায়েন্টের অভ্যন্তরীণ মার্কেটিং স্ট্র্যাটেজির জন্য সংরক্ষিত। কোনো বাণিজ্যিক বিজ্ঞাপনের অনুমান বা বিক্রয় ডেটা অন্তর্ভুক্ত নয়।
+              {t("social.cmDossierDisclaimer")}
             </div>
           </div>
         ) : null}

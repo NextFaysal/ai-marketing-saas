@@ -120,7 +120,7 @@ function makePrisma() {
     storeCartBundle: makeTable(), bundle: makeTable(), order: makeTable(), orderItem: makeTable(),
     fulfillment: makeTable(), deliverySlot: makeTable(), shopPage: makeTable(), customer: makeTable(),
     contentTranslation: makeTable(), displayCurrencyRate: makeTable(), aIUsageRecord: makeTable(),
-    auditLog: makeTable(),
+    auditLog: makeTable(), blogPost: makeTable(),
   } as any;
 }
 
@@ -353,7 +353,7 @@ describe("NF5 staff translations service", () => {
     const svc = makeSvc(prisma);
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-b", field: "name", locale: "en", text: "X",
-    })).rejects.toBeInstanceOf(NotFoundException);
+    })).rejects.toMatchObject({ status: 404 });
   });
 
   it("validation: bad locale / bad field / empty text are Bengali 400s", async () => {
@@ -361,13 +361,13 @@ describe("NF5 staff translations service", () => {
     const svc = makeSvc(prisma);
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "name", locale: "fr", text: "X",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "price", locale: "en", text: "X",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "name", locale: "en", text: "  ",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it("(f) AI draft path creates status=draft + source=ai — never auto-approved", async () => {
@@ -393,7 +393,7 @@ describe("NF5 staff translations service", () => {
     const prisma = makePrisma(); seedShop(prisma);
     const svc = makeSvc(prisma, fakeLlm(devProvider));
     await expect(svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     try {
       await svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" });
     } catch (e: any) {
@@ -410,7 +410,7 @@ describe("NF5 staff translations service", () => {
     };
     const svc = makeSvc(prisma, fakeLlm(realProvider));
     await expect(svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" }))
-      .rejects.toBeInstanceOf(HttpException);
+      .rejects.toMatchObject({ status: 403 });
     expect(prisma.contentTranslation.rows).toHaveLength(0);
   });
 
@@ -429,15 +429,139 @@ describe("NF5 staff translations service", () => {
     expect(out.items.every((i: any) => i.status === "draft" && i.source === "ai" && i.entityType === "storefront_string")).toBe(true);
   });
 
+  // ---------- MB5 (ML15): category + blog_post entities ----------
+
+  function seedCategoryAndBlog(prisma: any) {
+    prisma.category.rows.push(
+      { id: "cat-1", organizationId: "org-1", name: "ওয়ালেট", slug: "wallets", description: "সব ধরনের ওয়ালেট" },
+      { id: "cat-2", organizationId: "org-2", name: "Other Org Category", slug: "other", description: null },
+    );
+    prisma.blogPost.rows.push(
+      { id: "bp-1", organizationId: "org-1", slug: "first-post", title: "প্রথম পোস্ট", excerpt: null, coverImageUrl: null, blocks: [], tags: [], status: "published", authorName: null, publishedAt: new Date(), createdAt: new Date(), updatedAt: new Date(), seoTitle: null, seoDescription: null },
+      { id: "bp-2", organizationId: "org-2", slug: "other-post", title: "Other Org Post", excerpt: null, coverImageUrl: null, blocks: [], tags: [], status: "published", authorName: null, publishedAt: new Date(), createdAt: new Date(), updatedAt: new Date(), seoTitle: null, seoDescription: null },
+    );
+  }
+
+  it("ML15 category: human upsert + list mirror the product pattern (draft by default)", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    const svc = makeSvc(prisma);
+    const created: any = await svc.upsertHuman("org-1", "u1", {
+      entityType: "category", entityId: "cat-1", field: "name", locale: "en", text: "Wallets",
+    });
+    expect(created).toMatchObject({ entityType: "category", entityId: "cat-1", field: "name", status: "draft", source: "human" });
+    const list: any = await svc.listForCategory("org-1", "cat-1");
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0].text).toBe("Wallets");
+  });
+
+  it("ML15 category/blog: org isolation — another org's entity 404s on write and on list", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    const svc = makeSvc(prisma);
+    await expect(svc.upsertHuman("org-1", "u1", {
+      entityType: "category", entityId: "cat-2", field: "name", locale: "en", text: "X",
+    })).rejects.toMatchObject({ status: 404 });
+    await expect(svc.listForCategory("org-1", "cat-2")).rejects.toMatchObject({ status: 404 });
+    await expect(svc.upsertHuman("org-1", "u1", {
+      entityType: "blog_post", entityId: "bp-2", field: "title", locale: "en", text: "X",
+    })).rejects.toMatchObject({ status: 404 });
+    await expect(svc.listForBlogPost("org-1", "bp-2")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("ML15 validation: category field allowlist, blog_post is TITLE ONLY (content refused), unknown entity 400", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    const svc = makeSvc(prisma);
+    await expect(svc.upsertHuman("org-1", "u1", {
+      entityType: "category", entityId: "cat-1", field: "price", locale: "en", text: "X",
+    })).rejects.toMatchObject({ status: 400, code: "translations.categoryFieldMustBeNameOrDescription" });
+    await expect(svc.upsertHuman("org-1", "u1", {
+      entityType: "blog_post", entityId: "bp-1", field: "content", locale: "en", text: "X",
+    })).rejects.toMatchObject({ status: 400, code: "translations.blogPostFieldMustBeTitle" });
+    await expect(svc.upsertHuman("org-1", "u1", {
+      entityType: "page", entityId: "x", field: "title", locale: "en", text: "X",
+    })).rejects.toMatchObject({ status: 400, code: "translations.entityTypeMustBeProductCategoryBlogPostOrStorefrontString" });
+    expect(prisma.contentTranslation.rows).toHaveLength(0);
+  });
+
+  it("ML15 category AI draft: draft + source ai only, and a fresh draft demotes a previously approved row", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    prisma.contentTranslation.rows.push(translationRow({
+      entityType: "category", entityId: "cat-1", field: "name", locale: "hi", text: "पुराना नाम", status: "approved", source: "human",
+    }));
+    const catProvider = {
+      name: "openai", isRealLlm: true,
+      complete: async () => ({
+        text: JSON.stringify({ name: "बटुए", description: "सभी प्रकार के बटुए" }),
+        model: "gpt-test", inputTokens: 10, outputTokens: 6, tokensEstimated: false,
+      }),
+    };
+    const svc = makeSvc(prisma, fakeLlm(catProvider));
+    const out: any = await svc.generateCategoryDraft("org-1", "u1", "cat-1", { locale: "hi" });
+    expect(out.mode).toBe("ai_draft");
+    expect(out.items).toHaveLength(2);
+    expect(out.items.every((i: any) => i.status === "draft" && i.source === "ai" && i.entityType === "category")).toBe(true);
+    const nameRow = out.items.find((i: any) => i.field === "name");
+    expect(nameRow.text).toBe("बटुए");
+  });
+
+  it("ML15 blog AI draft: translates the TITLE only, stays draft", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    const blogProvider = {
+      name: "openai", isRealLlm: true,
+      complete: async () => ({
+        text: JSON.stringify({ title: "First Post" }),
+        model: "gpt-test", inputTokens: 5, outputTokens: 3, tokensEstimated: false,
+      }),
+    };
+    const svc = makeSvc(prisma, fakeLlm(blogProvider));
+    const out: any = await svc.generateBlogPostDraft("org-1", "u1", "bp-1", { locale: "en" });
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0]).toMatchObject({ entityType: "blog_post", field: "title", text: "First Post", status: "draft", source: "ai" });
+    // No real LLM → honest failure, nothing written (blog path).
+    const svc2 = makeSvc(prisma, fakeLlm(devProvider));
+    await expect(svc2.generateBlogPostDraft("org-1", "u1", "bp-1", { locale: "en" }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(prisma.contentTranslation.rows).toHaveLength(1);
+  });
+
+  it("ML15 public: approved category name is served in shopHome categories; a draft is not", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    prisma.product.rows[0].categoryId = "cat-1";
+    prisma.contentTranslation.rows.push(translationRow({
+      entityType: "category", entityId: "cat-1", field: "name", locale: "hi", text: "बटुए", status: "draft",
+    }));
+    const { svc: shop } = makeStorefront(prisma);
+    const homeDraft: any = await shop.shopHome("shop-one", { locale: "hi" });
+    expect(homeDraft.categories.find((c: any) => c.id === "cat-1")?.name).toBe("ওয়ালেট");
+    prisma.contentTranslation.rows[0].status = "approved";
+    const home: any = await shop.shopHome("shop-one", { locale: "hi" });
+    expect(home.categories.find((c: any) => c.id === "cat-1")?.name).toBe("बटुए");
+  });
+
+  it("ML15 public blog: approved title overlay is served by list + detail; a draft title is not", async () => {
+    const prisma = makePrisma(); seedShop(prisma); seedCategoryAndBlog(prisma);
+    // The seeded shop setting locale is bn, so the overlay locale is bn.
+    prisma.contentTranslation.rows.push(translationRow({
+      entityType: "blog_post", entityId: "bp-1", field: "title", locale: "bn", text: "অনুবাদ করা শিরোনাম", status: "draft",
+    }));
+    const { svc: shop } = makeStorefront(prisma);
+    const listDraft: any = await shop.listPublicBlogPosts("shop-one");
+    expect(listDraft.posts[0].title).toBe("প্রথম পোস্ট");
+    prisma.contentTranslation.rows[0].status = "approved";
+    const list: any = await shop.listPublicBlogPosts("shop-one");
+    expect(list.posts[0].title).toBe("অনুবাদ করা শিরোনাম");
+    const detail: any = await shop.getPublicBlogPost("shop-one", "first-post");
+    expect(detail.post.title).toBe("অনুবাদ করা শিরোনাম");
+  });
+
   it("currency rates: human-entered only — source note required, base currency rejected, bad rate rejected", async () => {
     const prisma = makePrisma(); seedShop(prisma);
     const svc = makeSvc(prisma);
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "USD", ratePerUnit: "119.50", sourceNote: "" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "BDT", ratePerUnit: "1", sourceNote: "নিজে" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "USD", ratePerUnit: "live?", sourceNote: "নিজে" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     const saved: any = await svc.upsertCurrencyRate("org-1", "u1", { currency: "usd", ratePerUnit: "119.50", sourceNote: "বাংলাদেশ ব্যাংকের ওয়েবসাইট, ১৭ অক্টোবর" });
     expect(saved).toMatchObject({ currency: "USD", ratePerUnit: "119.50", baseCurrency: "BDT" });
     const list: any = await svc.listCurrencyRates("org-1");

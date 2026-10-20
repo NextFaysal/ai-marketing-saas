@@ -90,10 +90,10 @@ describe("CN4 lead form shape validation", () => {
     const { svc } = setup();
     await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, privacyPolicyUrl: "" })).rejects.toThrow(/Privacy Policy URL/);
     await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, privacyPolicyUrl: "http://insecure.example/p" })).rejects.toThrow(/Privacy Policy URL/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [] })).rejects.toThrow(/at least one question/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "CUSTOM", key: "q1" }] })).rejects.toThrow(/needs a label/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "FULL_NAME", key: "dup" }, { type: "EMAIL", key: "dup" }] })).rejects.toThrow(/Duplicate question key/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "MOON", key: "q1" }] })).rejects.toThrow(/not a Meta lead form question type/);
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [] })).rejects.toMatchObject({ code: "campaigns.aLeadFormNeedsAtLeast" });
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "CUSTOM", key: "q1" }] })).rejects.toMatchObject({ code: "campaigns.questionACustomQuestionNeedsA" });
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "FULL_NAME", key: "dup" }, { type: "EMAIL", key: "dup" }] })).rejects.toMatchObject({ code: "campaigns.duplicateQuestionKey" });
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, questions: [{ type: "MOON", key: "q1" }] })).rejects.toMatchObject({ code: "campaigns.questionTypeIsNotAMeta" });
     const form: any = await svc.createLeadForm("org", "u", FORM_DTO);
     expect(form.status).toBe("local");
     expect(form.externalFormId).toBeNull();
@@ -104,9 +104,9 @@ describe("CN4 lead form shape validation", () => {
     const { tables, svc } = setup();
     tables.customFieldDef.rows.push({ id: "cf-1", organizationId: "org", entity: "lead", key: "city", label: "City", archivedAt: null });
     tables.customFieldDef.rows.push({ id: "cf-2", organizationId: "org", entity: "lead", key: "old_field", label: "Old", archivedAt: new Date() });
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { nope_q: "name" } })).rejects.toThrow(/not one of this form's questions/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { city_q: "custom:missing" } })).rejects.toThrow(/not a live lead Custom Field/);
-    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { city_q: "custom:old_field" } })).rejects.toThrow(/not a live lead Custom Field/);
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { nope_q: "name" } })).rejects.toMatchObject({ code: "campaigns.fieldmappingNamesQuestionWhichIsNot" });
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { city_q: "custom:missing" } })).rejects.toMatchObject({ code: "campaigns.fieldmappingForTargetsCustomFieldWhich" });
+    await expect(svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { city_q: "custom:old_field" } })).rejects.toMatchObject({ code: "campaigns.fieldmappingForTargetsCustomFieldWhich" });
     const form: any = await svc.createLeadForm("org", "u", { ...FORM_DTO, fieldMapping: { full_name: "name", phone_number: "phone", city_q: "custom:city" } });
     expect(form.fieldMapping).toEqual({ full_name: "name", phone_number: "phone", city_q: "custom:city" });
   });
@@ -164,8 +164,8 @@ describe("CN4 attachment + validatePlan + publish", () => {
     const { svc } = setup();
     const form: any = await svc.createLeadForm("org", "u", { ...FORM_DTO, pageId: "other-page" });
     const plan: any = await svc.createPlan("org", "u", { name: "Leads", objective: "OUTCOME_LEADS", adAccountId: "acc-1" });
-    await expect(svc.addAdSet("org", plan.id, { name: "L1", dailyBudget: "300", optimizationGoal: "LEAD_GENERATION", pageId: "pg", countries: ["BD"], leadFormId: form.id })).rejects.toThrow(/belongs to Page other-page/);
-    await expect(svc.addAdSet("org", plan.id, { name: "L1", dailyBudget: "300", optimizationGoal: "LEAD_GENERATION", pageId: "pg", countries: ["BD"], leadFormId: "missing" })).rejects.toThrow(/Lead form not found/);
+    await expect(svc.addAdSet("org", plan.id, { name: "L1", dailyBudget: "300", optimizationGoal: "LEAD_GENERATION", pageId: "pg", countries: ["BD"], leadFormId: form.id })).rejects.toMatchObject({ code: "campaigns.leadFormBelongsToPageBut" });
+    await expect(svc.addAdSet("org", plan.id, { name: "L1", dailyBudget: "300", optimizationGoal: "LEAD_GENERATION", pageId: "pg", countries: ["BD"], leadFormId: "missing" })).rejects.toMatchObject({ code: "campaigns.leadFormNotFoundInThis" });
   });
 
   it("validatePlan: a bad stored form (no privacy URL / no questions) and a wrong CTA are errors", async () => {

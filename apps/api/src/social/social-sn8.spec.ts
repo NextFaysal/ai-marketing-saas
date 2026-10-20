@@ -513,6 +513,6 @@ describe("SN8 automation — social_syndication_sweep", () => {
 
     const bare: any = Object.create(AutomationService.prototype);
     await expect(bare.executeJob({ organizationId: "org-1", createdById: "u1", type: "social_syndication_sweep" }))
-      .rejects.toThrow("Social syndication service is not available");
+      .rejects.toMatchObject({ code: "automation.socialSyndicationServiceIsNotAvailable" });
   });
 });

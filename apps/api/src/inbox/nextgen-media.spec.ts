@@ -109,10 +109,10 @@ describe("InboxService.sendMediaReply", () => {
     const svc = new InboxService(prisma as any, auditStub, llmStub);
     await expect(svc.sendMediaReply("org-1", "user-1", "conv-tg", {
       dataBase64: PNG.toString("base64"), fileName: "photo.png", contentType: "image/png",
-    })).rejects.toThrow(/Media was NOT sent: No connected telegram integration for this organization/);
+    })).rejects.toMatchObject({ code: "inbox.mediaWasNotSent" });
     expect(msgRows).toHaveLength(1);
     expect(msgRows[0].status).toBe("failed");
-    expect(msgRows[0].error).toMatch(/No connected telegram integration for this organization/);
+    expect(msgRows[0].error).toContain("কোনো connected telegram integration নেই");
   });
 
   it("rejects files over the decoded cap before creating any row", async () => {
@@ -121,7 +121,7 @@ describe("InboxService.sendMediaReply", () => {
     const big = Buffer.alloc(MEDIA_UPLOAD_MAX_BYTES + 1, 7);
     await expect(svc.sendMediaReply("org-1", "user-1", "conv-web", {
       dataBase64: big.toString("base64"), fileName: "big.png", contentType: "image/png",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "inbox.theFileIsTooLargeUploads" });
     expect(msgRows).toHaveLength(0);
   });
 

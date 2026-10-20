@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EmbeddingsService } from "./embeddings.service";
 import { LearningService } from "./learning.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SA-B6 (Smart AI Phase 0, P9): the management/read surface the
@@ -227,7 +228,7 @@ export class BrainAdminService {
 
   private async getAnswerOrThrow(organizationId: string, answerId: string) {
     const row = await this.db().aiStoredAnswer.findFirst({ where: { id: answerId, organizationId } });
-    if (!row) throw new NotFoundException("Stored answer not found");
+    if (!row) throw notFound("ai.storedAnswerNotFound");
     return row;
   }
 
@@ -238,13 +239,11 @@ export class BrainAdminService {
    * SA-B3 proved stale, breaking L4. */
   async setStoredAnswerStatus(organizationId: string, actorId: string, answerId: string, status: string) {
     if (status !== "active" && status !== "disabled") {
-      throw new BadRequestException("status must be \"active\" or \"disabled\"");
+      throw badRequest("ai.statusMustBeActiveOrDisabled");
     }
     const row = await this.getAnswerOrThrow(organizationId, answerId);
     if (row.status === "invalidated") {
-      throw new BadRequestException(
-        `This answer was invalidated (${row.invalidReason ?? "stale source"}) and cannot be re-enabled. Delete it, or let a fresh verified answer replace it.`,
-      );
+      throw badRequest("ai.thisAnswerWasInvalidatedAndCannot", { p1: row.invalidReason ?? "stale source" });
     }
     if (row.status === status) return row;
     const updated = await this.db().aiStoredAnswer.update({
@@ -312,7 +311,7 @@ export class BrainAdminService {
    * forgetting is about the stored row, recorded in the audit. */
   async deleteCustomerMemory(organizationId: string, actorId: string, memoryId: string) {
     const row = await this.db().customerMemory.findFirst({ where: { id: memoryId, organizationId } });
-    if (!row) throw new NotFoundException("Customer memory not found");
+    if (!row) throw notFound("ai.customerMemoryNotFound");
     await this.db().customerMemory.delete({ where: { id: row.id } });
     await this.audit?.log({
       organizationId,

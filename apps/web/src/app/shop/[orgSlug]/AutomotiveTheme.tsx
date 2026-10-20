@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { patchCartLine, notifyCartUpdated } from "@/lib/storefront-cart";
@@ -10,20 +10,22 @@ import { SortSelect } from "./SortSelect";
 import { FlashCountdown } from "./FlashCountdown";
 import { RecentlyViewedStrip } from "./RecentlyViewed";
 
-export function formatAutoPrice(minor: number | string | null | undefined): string {
-  if (minor == null) return "৳০";
+export function formatAutoPrice(minor: number | string | null | undefined, locale: string = "bn"): string {
+  const loc: "bn" | "en" = locale === "en" ? "en" : "bn";
+  if (minor == null) return fmtMoneyMinor(loc, 0);
   const num = typeof minor === "string" ? parseInt(minor, 10) : minor;
-  if (isNaN(num)) return "৳০";
-  return `৳${Math.round(num / 100).toLocaleString("bn-BD")}`;
+  if (isNaN(num)) return fmtMoneyMinor(loc, 0);
+  return fmtMoneyMinor(loc, Math.round(num / 100) * 100);
 }
 
 /** 4 Automotive & Bike Parts Trust Pillars */
-export function AutomotiveTrustBar() {
+export function AutomotiveTrustBar({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const pillars = [
-    { icon: "⚙️", title: "১০০% জেনুইন পার্টস", desc: "সরাসরি অফিসিয়াল ইমপোর্টার ও ব্র্যান্ড ওয়্যারেন্টি" },
-    { icon: "🏍️", title: "১০০% ফিটমেন্ট গ্যারান্টি", desc: "মডেলের সাথে ম্যাচ না করলে ইনস্ট্যান্ট এক্সচেঞ্জ" },
-    { icon: "🛠️", title: "এক্সপার্ট মেকানিক সাপোর্ট", desc: "পার্টনার গ্যারেজে ফ্রি ইনস্টলেশন পরামর্শ" },
-    { icon: "🚚", title: "সারা দেশে সুপারফাস্ট কুরিয়ার", desc: "নিরাপদ প্যাকেজিং ও ক্যাশ অন ডেলিভারি" },
+    { icon: "⚙️", title: t.themeAutomotive.trust1Title, desc: t.themeAutomotive.trust1Desc },
+    { icon: "🏍️", title: t.themeAutomotive.trust2Title, desc: t.themeAutomotive.trust2Desc },
+    { icon: "🛠️", title: t.themeAutomotive.trust3Title, desc: t.themeAutomotive.trust3Desc },
+    { icon: "🚚", title: t.themeAutomotive.trust4Title, desc: t.themeAutomotive.trust4Desc },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4 my-6">
@@ -50,11 +52,14 @@ export function AutomotiveFitmentModal({
   open,
   onClose,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [brand, setBrand] = useState("Yamaha");
   const [model, setModel] = useState("R15 V3 / V4");
   const [year, setYear] = useState("2023 - 2026");
@@ -82,8 +87,8 @@ export function AutomotiveFitmentModal({
               🏍️
             </span>
             <div>
-              <h3 className="text-base font-black text-white">বাইক মডেল ফিটমেন্ট চেকার</h3>
-              <p className="text-xs text-zinc-400">আপনার বাইকে পার্টসটি ম্যাচ করবে কিনা যাচাই করুন</p>
+              <h3 className="text-base font-black text-white">{t.themeAutomotive.fitTitle}</h3>
+              <p className="text-xs text-zinc-400">{t.themeAutomotive.fitSub}</p>
             </div>
           </div>
           <button
@@ -98,13 +103,13 @@ export function AutomotiveFitmentModal({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-red-500">নির্বাচিত পার্টস</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-red-500">{t.themeAutomotive.selectedPart}</span>
             <h4 className="mt-0.5 text-sm font-extrabold text-white truncate">{productName}</h4>
           </div>
 
           <div className="space-y-3">
             <div>
-              <label className="mb-1 block font-bold text-zinc-300">বাইকের ব্র্যান্ড (Brand):</label>
+              <label className="mb-1 block font-bold text-zinc-300">{t.themeAutomotive.brandLabel}</label>
               <div className="grid grid-cols-3 gap-2">
                 {bikeList.map((b) => (
                   <button
@@ -128,7 +133,7 @@ export function AutomotiveFitmentModal({
             </div>
 
             <div>
-              <label className="mb-1 block font-bold text-zinc-300">বাইকের মডেল (Model):</label>
+              <label className="mb-1 block font-bold text-zinc-300">{t.themeAutomotive.modelLabel}</label>
               <select
                 value={model}
                 onChange={(e) => {
@@ -146,7 +151,7 @@ export function AutomotiveFitmentModal({
             </div>
 
             <div>
-              <label className="mb-1 block font-bold text-zinc-300">ম্যানুফ্যাকচারিং সাল (Year):</label>
+              <label className="mb-1 block font-bold text-zinc-300">{t.themeAutomotive.yearLabel}</label>
               <select
                 value={year}
                 onChange={(e) => {
@@ -155,9 +160,9 @@ export function AutomotiveFitmentModal({
                 }}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 font-bold text-white focus:border-red-600 focus:outline-none"
               >
-                <option value="2023 - 2026">২০২৩ — ২০২৬ (লেটেস্ট বিএস-৬ / ওবিডি-২)</option>
-                <option value="2020 - 2022">২০২০ — ২০২২ (বিএস-৪ / বিএস-৬)</option>
-                <option value="2016 - 2019">২০১৬ — ২০১৯ (কার্বুরেটর / আর্লি এফআই)</option>
+                <option value="2023 - 2026">{t.themeAutomotive.year1}</option>
+                <option value="2020 - 2022">{t.themeAutomotive.year2}</option>
+                <option value="2016 - 2019">{t.themeAutomotive.year3}</option>
               </select>
             </div>
           </div>
@@ -167,19 +172,18 @@ export function AutomotiveFitmentModal({
             onClick={() => setChecked(true)}
             className="w-full rounded-xl bg-red-600 py-2.5 text-xs font-black uppercase tracking-wider text-white hover:bg-red-500 transition shadow-lg"
           >
-            ফিটমেন্ট ভেরিফাই করুন 🔍
+            {t.themeAutomotive.verifyFitment}
           </button>
 
           {checked && (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4 text-emerald-400 animate-in fade-in">
               <div className="flex items-center gap-2 font-black text-sm text-emerald-300">
-                <span>✅ পারফেক্ট ফিট কনফার্মড!</span>
+                <span>{t.themeAutomotive.fitOk}</span>
               </div>
               <p className="mt-1 leading-relaxed text-zinc-300">
-                এই পার্টসটি আপনার <span className="font-bold text-white">{brand} {model} ({year})</span> বাইকে শতভাগ নির্বিঘ্নে সরাসরি ফিট হবে। কোনো প্লাগ বা কাটিং মডিফিকেশনের প্রয়োজন নেই।
-              </p>
+                {t.themeAutomotive.fitBodyPrefix}<span className="font-bold text-white">{brand} {model} ({year})</span>{t.themeAutomotive.fitBodySuffix}</p>
               <span className="mt-2 block text-[11px] font-bold text-emerald-400">
-                ✓ যদি কোনো কারণে ফিট না হয়, ৭ দিনের ভেতর ১০০% ফ্রি রিটার্ন গ্যারান্টি!
+                {t.themeAutomotive.fitReturn}
               </span>
             </div>
           )}
@@ -192,8 +196,8 @@ export function AutomotiveFitmentModal({
             onClick={onClose}
             className="w-full rounded-xl border border-zinc-700 bg-zinc-900 py-2 text-xs font-bold text-zinc-300 hover:bg-zinc-800"
           >
-            বন্ধ করুন
-          </button>
+              {t.themeAutomotive.close}
+            </button>
         </div>
       </div>
     </div>
@@ -204,21 +208,24 @@ export function AutomotiveFitmentModal({
 export function AutomotiveViscositySelector({
   selectedGrade,
   onSelectGrade,
+  locale = "bn",
 }: {
   selectedGrade: string;
   onSelectGrade: (grade: string) => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const grades = [
-    { id: "10w40", grade: "10W-40", type: "Full Synthetic", desc: "স্পোর্টস ও হাই-আরপিএম বাইকের জন্য সেরা", badge: "টপ চয়েস" },
-    { id: "10w30", grade: "10W-30", type: "Semi Synthetic", desc: "স্মুথ কমিউটার ও সর্বোচ্চ মাইলেজ", badge: "মাইলেজ" },
-    { id: "20w50", grade: "20W-50", type: "Premium Mineral", desc: "হাই-হিট ও লং ট্যুরিং ইঞ্জিনের জন্য", badge: "হেভি ডিউটি" },
+    { id: "10w40", grade: "10W-40", type: "Full Synthetic", desc: "স্পোর্টস ও হাই-আরপিএম বাইকের জন্য সেরা", badge: t.themeAutomotive.badgeTopChoice },
+    { id: "10w30", grade: "10W-30", type: "Semi Synthetic", desc: "স্মুথ কমিউটার ও সর্বোচ্চ মাইলেজ", badge: t.themeAutomotive.badgeMileage },
+    { id: "20w50", grade: "20W-50", type: "Premium Mineral", desc: "হাই-হিট ও লং ট্যুরিং ইঞ্জিনের জন্য", badge: t.themeAutomotive.badgeHeavyDuty },
   ];
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label className="text-xs font-bold text-zinc-800">
-          ইঞ্জিন অয়েল গ্রেড ও ভিসকোসিটি: <span className="text-red-600 font-extrabold">{selectedGrade}</span>
+          {t.themeAutomotive.gradeLabel}<span className="text-red-600 font-extrabold">{selectedGrade}</span>
         </label>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -250,7 +257,8 @@ export function AutomotiveViscositySelector({
 }
 
 /** OEM Specifications & Compatibility Matrix */
-export function AutomotivePartSpecs() {
+export function AutomotivePartSpecs({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const specs = [
     { label: "OEM পার্ট নম্বর", value: "2FB-E2461-00-JP" },
     { label: "কান্ট্রি অব অরিজিন", value: "জাপান / ইন্দোনেশিয়া (অরিজিনাল)" },
@@ -265,7 +273,7 @@ export function AutomotivePartSpecs() {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-xs">
       <h4 className="font-bold text-zinc-900 text-sm mb-3 flex items-center gap-1.5 font-mono">
-        <span>⚙️</span> OEM টেকনিক্যাল স্পেসিফিকেশন ও সিকিউরিটি ডাটা
+        <span>⚙️</span> {t.themeAutomotive.specsHeading}
       </h4>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {specs.map((s, idx) => (
@@ -283,10 +291,13 @@ export function AutomotivePartSpecs() {
 export function AutomotiveTuneupBundle({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -315,10 +326,10 @@ export function AutomotiveTuneupBundle({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-4">
         <div>
           <span className="rounded-full bg-red-600 px-3 py-0.5 text-[11px] font-black uppercase text-white">
-            🛠️ ফুল পিরিওডিক বাইক টিউন-আপ কম্বো
+            {t.themeAutomotive.comboTitle}
           </span>
           <h3 className="mt-1 font-mono text-base sm:text-lg font-black text-white">
-            ইঞ্জিন অয়েল + জেনুইন ফিল্টার + ইরিডিয়াম প্লাগ একত্রে নিলে ইনস্ট্যান্ট ৳৩৫০ ক্যাশ ছাড়!
+            {t.themeAutomotive.comboSubPrefix}{formatAutoPrice(35000, locale)}{t.themeAutomotive.comboSubSuffix}
           </h3>
         </div>
         <div className="text-right">
@@ -333,7 +344,7 @@ export function AutomotiveTuneupBundle({
             🛢️
           </div>
           <div className="min-w-0">
-            <span className="text-[10px] font-bold text-red-400">মূল আইটেম</span>
+            <span className="text-[10px] font-bold text-red-400">{t.themeAutomotive.comboMain}</span>
             <h5 className="truncate text-xs font-bold text-white">{mainProduct.name}</h5>
             <span className="text-xs font-extrabold text-zinc-300 font-mono">{formatAutoPrice(mainPrice)}</span>
           </div>
@@ -364,7 +375,7 @@ export function AutomotiveTuneupBundle({
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
         <span className="text-xs text-zinc-400 font-medium">
-          🎁 প্রতিটি টিউন-আপ কম্বোর সাথে ১টি বাইক কি-রিং ও মাইক্রোফাইবার ক্লিনিং ক্লথ ফ্রি!
+          {t.themeAutomotive.comboGift}
         </span>
         <button
           type="button"
@@ -372,7 +383,7 @@ export function AutomotiveTuneupBundle({
           disabled={busy}
           className="rounded-xl bg-red-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-lg hover:bg-red-500 transition disabled:opacity-50"
         >
-          {added ? "✓ কম্বো কার্টে যোগ হয়েছে!" : "এক ক্লিকে ৩টি পার্টস কিনুন (৳৩৫০ ছাড়)"}
+          {added ? t.themeAutomotive.comboAdded : `${t.themeAutomotive.comboBuyPrefix}${formatAutoPrice(35000, locale)}${t.themeAutomotive.comboBuySuffix}`}
         </button>
       </div>
     </div>
@@ -389,6 +400,7 @@ export function AutomotiveProductCard({
   product: ShopProduct;
   locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
   const [fitmentOpen, setFitmentOpen] = useState(false);
@@ -457,7 +469,7 @@ export function AutomotiveProductCard({
               onClick={handleCheckFit}
               className="w-full rounded-xl bg-zinc-950/90 py-1.5 text-center text-xs font-bold text-white shadow-md backdrop-blur-xs hover:bg-red-600"
             >
-              🔍 ফিটমেন্ট চেক করুন
+              {t.themeAutomotive.checkFitment}
             </button>
           </div>
         </Link>
@@ -479,7 +491,7 @@ export function AutomotiveProductCard({
             </Link>
 
             <span className="mt-1 inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 font-mono">
-              ফিট: R15 / FZ / Gixxer / Pulsar
+              {t.themeAutomotive.fitLabel}R15 / FZ / Gixxer / Pulsar
             </span>
           </div>
 
@@ -506,14 +518,14 @@ export function AutomotiveProductCard({
                     : "bg-zinc-900 text-white hover:bg-red-600"
                 }`}
               >
-                <span>{added ? "✓ কার্টে যোগ হয়েছে" : "🛒 কার্টে যোগ করুন"}</span>
+                <span>{added ? t.themeAutomotive.addedToCart : t.themeAutomotive.addToCart}</span>
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <AutomotiveFitmentModal
+      <AutomotiveFitmentModal locale={locale}
         open={fitmentOpen}
         onClose={() => setFitmentOpen(false)}
         productName={product.name}
@@ -561,23 +573,23 @@ export function AutomotiveThemeHome({
       <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-zinc-950 via-neutral-900 to-red-950 p-8 sm:p-12 text-white shadow-2xl border border-red-600/30">
         <div className="relative z-10 max-w-2xl space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-950/60 px-4 py-1 text-xs font-black uppercase text-red-300 backdrop-blur-xs font-mono">
-            <span>🏁 ১০০% জেনুইন বাইক পার্টস ও লুব্রিকেন্ট হাব</span>
+            <span>{t.themeAutomotive.heroBadge}</span>
           </div>
           <h1 className="text-3xl font-black sm:text-5xl uppercase tracking-tight leading-tight text-white font-mono">
-            আপনার বাইকের পিক পারফরম্যান্স নিশ্চিত করুন
+            {t.themeAutomotive.heroTitle}
           </h1>
           <p className="text-sm sm:text-base text-zinc-300 font-medium leading-relaxed">
-            সরাসরি অথরাইজড ডিস্ট্রিবিউটর থেকে সংগৃহীত অরিজিনাল ইঞ্জিন অয়েল, ড্রাইভ চেইন, ডিস্ক প্যাড ও পারফরম্যান্স পার্টস। ১০০% মডেল ফিটমেন্ট গ্যারান্টি সহ ঘরে বসেই ডেলিভারি নিন।
+            {t.themeAutomotive.heroDesc}
           </p>
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <a
               href="#all-parts"
               className="rounded-xl bg-red-600 px-6 py-3 text-xs font-black uppercase tracking-wider text-white shadow-lg hover:bg-red-500 transition font-mono"
             >
-              পার্টস ক্যাটালগ দেখুন ⚡
+              {t.themeAutomotive.heroCta}
             </a>
             <span className="text-xs font-bold text-zinc-400">
-              ✓ স্ক্র্যাচ কিউআর ভেরিফিকেশন ও ক্যাশ অন ডেলিভারি
+              {t.themeAutomotive.heroNote}
             </span>
           </div>
         </div>
@@ -589,16 +601,16 @@ export function AutomotiveThemeHome({
       </section>
 
       {/* 4 Trust Pillars */}
-      <AutomotiveTrustBar />
+      <AutomotiveTrustBar locale={locale} />
 
       {/* Bike Brands Explorer */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-red-600 uppercase tracking-wider font-mono">ব্র্যান্ড ক্যাটালগ</span>
-            <h2 className="text-xl sm:text-2xl font-black text-zinc-900">শীর্ষ বাইক ব্র্যান্ড অনুযায়ী পার্টস</h2>
+            <span className="text-xs font-bold text-red-600 uppercase tracking-wider font-mono">{t.themeAutomotive.brandsEyebrow}</span>
+            <h2 className="text-xl sm:text-2xl font-black text-zinc-900">{t.themeAutomotive.brandsHeading}</h2>
           </div>
-          <span className="text-xs font-bold text-red-600">সব ব্র্যান্ড →</span>
+          <span className="text-xs font-bold text-red-600">{t.themeAutomotive.allBrands}</span>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           {topBrands.map((b, idx) => (
@@ -624,7 +636,7 @@ export function AutomotiveThemeHome({
       {/* Parts Category Matrix */}
       <section className="space-y-4">
         <h2 className="text-xl sm:text-2xl font-black text-zinc-900">
-          পার্টস ও এক্সেসরিজ ক্যাটাগরি
+          {t.themeAutomotive.categoriesHeading}
         </h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {partCategories.map((c, idx) => (
@@ -648,10 +660,10 @@ export function AutomotiveThemeHome({
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-4">
             <div>
               <span className="rounded-full bg-red-600 px-3 py-0.5 text-xs font-black uppercase text-white font-mono">
-                ⚡ লিমিটেড মেগা টিউন-আপ ফ্ল্যাশ ডিল
+                {t.themeAutomotive.flashDeal}
               </span>
               <h2 className="mt-1 text-xl sm:text-2xl font-black text-white font-mono">
-                আজকের সুপার মোটর পার্টস অফার
+                {t.themeAutomotive.flashSub}
               </h2>
             </div>
             {home.flashSales.sales[0]?.endsAt ? (
@@ -675,10 +687,10 @@ export function AutomotiveThemeHome({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-4">
           <div>
             <h2 className="text-2xl font-black text-zinc-900 font-mono">
-              সকল অটোমোটিভ ও বাইক পার্টস
+              {t.themeAutomotive.allPartsHeading}
             </h2>
             <p className="text-xs text-zinc-500 font-mono">
-              মোট {home.pagination?.total ?? products.length} টি পার্টস পাওয়া যাচ্ছে
+              {t.themeAutomotive.partsFoundPrefix}{fmtNumber(locale === "en" ? "en" : "bn", home.pagination?.total ?? products.length)}{t.themeAutomotive.partsFoundSuffix}
             </p>
           </div>
           <SortSelect orgSlug={orgSlug} locale={locale} value="featured" />
@@ -687,7 +699,7 @@ export function AutomotiveThemeHome({
         {products.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
             <span className="text-4xl">🏍️</span>
-            <p className="mt-3 text-sm font-bold text-zinc-600">বর্তমানে কোনো পার্টস পাওয়া যায়নি</p>
+            <p className="mt-3 text-sm font-bold text-zinc-600">{t.themeAutomotive.noParts}</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4">

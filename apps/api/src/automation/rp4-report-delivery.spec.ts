@@ -40,13 +40,13 @@ describe("RP4 report delivery jobs", () => {
 
   it("a missing saved report and an empty recipient union both fail the job honestly", async () => {
     const { svc } = build();
-    await expect(svc.deliverSavedReport("org", "nope")).rejects.toThrow(/not found/);
+    await expect(svc.deliverSavedReport("org", "nope")).rejects.toMatchObject({ code: "automation.savedReportNotFoundForThis" });
     const empty = build({ prisma: {
       savedReport: { findFirst: async () => ({ id: "sr-1", recipients: [] }) },
       membership: { findMany: async () => [] },
       businessProfile: { findUnique: async () => ({ billingEmails: [] }) },
     } });
-    await expect(empty.svc.deliverSavedReport("org", "sr-1")).rejects.toThrow(/No email recipients/);
+    await expect(empty.svc.deliverSavedReport("org", "sr-1")).rejects.toMatchObject({ code: "automation.noEmailRecipientsFoundForThis" });
   });
 
   it("a provider failure propagates (the job fails, nothing counts as sent)", async () => {

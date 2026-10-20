@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber, fmtTime } from "@repo/contracts";
 
 interface SocialCommentItem {
   id: string;
@@ -62,6 +64,7 @@ interface CommentListResponse {
 }
 
 export default function SocialCommentsPage() {
+  const { t, locale } = useLocale();
   const [comments, setComments] = useState<SocialCommentItem[]>([]);
   const [stats, setStats] = useState<{ pendingCount: number; spamCount: number; hiddenCount?: number; hiddenSpamCount?: number }>({ pendingCount: 0, spamCount: 0 });
   const [loading, setLoading] = useState(true);
@@ -116,11 +119,11 @@ export default function SocialCommentsPage() {
       setStats(res.stats || { pendingCount: 0, spamCount: 0 });
       setSettings(setRes);
     } catch (e) {
-      if (!isSilent) setError(e instanceof Error ? e.message : "কমেন্ট লোড করতে সমস্যা হয়েছে");
+      if (!isSilent) setError(e instanceof Error ? e.message : t("inbox.cmtLoadError"));
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, [selectedPlatform, selectedStatus, searchQuery]);
+  }, [selectedPlatform, selectedStatus, searchQuery, t]);
 
   useEffect(() => {
     loadData();
@@ -152,11 +155,11 @@ export default function SocialCommentsPage() {
           }),
         }
       );
-      setNotice(`✅ সফলভাবে ${res.affected} টি কমেন্টের উপর ${action === "AI_REPLY_ALL" ? "AI অটো-রিপ্লাই" : action === "HIDE_ALL" ? "হাইড" : "সমাধান"} সম্পন্ন হয়েছে!`);
+      setNotice(t("inbox.cmtBulkDone", { count: fmtNumber(locale, res.affected), action: action === "AI_REPLY_ALL" ? t("inbox.cmtBulkAiReply") : action === "HIDE_ALL" ? t("inbox.cmtBulkHide") : t("inbox.cmtBulkResolve") }));
       setSelectedIds([]);
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "বাল্ক অ্যাকশন ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("inbox.cmtBulkFailed"));
     } finally {
       setBulkBusy(false);
     }
@@ -168,7 +171,7 @@ export default function SocialCommentsPage() {
     platform: "facebook" as const,
     authorName: "",
     commentText: "",
-    postTitle: "প্রিমিয়াম লেদার কম্বো প্যাক",
+    postTitle: t("inbox.cmtSimPostTitleDefault"),
   });
   const [simulating, setSimulating] = useState(false);
 
@@ -186,16 +189,16 @@ export default function SocialCommentsPage() {
           externalPostId: `post_${Date.now()}`,
           externalCommentId: `cmt_${Date.now()}`,
           postTitle: simForm.postTitle,
-          authorName: simForm.authorName || "রিয়েল কাস্টমার",
+          authorName: simForm.authorName || t("inbox.cmtSimAuthorDefault"),
           commentText: simForm.commentText,
         }),
       });
-      setNotice("🎉 নতুন টেস্ট কমেন্ট ইনজেস্ট হয়েছে এবং AI স্বয়ংক্রিয়ভাবে প্রসেস করেছে!");
+      setNotice(t("inbox.cmtSimDone"));
       setIsSimulatorOpen(false);
-      setSimForm({ platform: "facebook", authorName: "", commentText: "", postTitle: "প্রিমিয়াম লেদার কম্বো প্যাক" });
+      setSimForm({ platform: "facebook", authorName: "", commentText: "", postTitle: t("inbox.cmtSimPostTitleDefault") });
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সিমুলেশন ব্যর্থ");
+      setError(e instanceof Error ? e.message : t("inbox.cmtSimFailed"));
     } finally {
       setSimulating(false);
     }
@@ -223,7 +226,7 @@ export default function SocialCommentsPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    setNotice("📥 সকল সোশ্যাল কমেন্ট ও উত্তর সফলভাবে CSV ফাইলে ডাউনলোড হয়েছে!");
+    setNotice(t("inbox.cmtExportDone"));
   }
 
   // Open Reply Modal & Generate Contextual AI Suggestion
@@ -277,16 +280,16 @@ export default function SocialCommentsPage() {
       // otherwise). The DM is reported separately — never claim
       // it was sent when Meta did not confirm it.
       if (res?.privateDmError) {
-        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর পোস্ট হয়েছে (Meta নিশ্চিত করেছে), তবে DM পাঠানো যায়নি: ${res.privateDmError}`);
+        setNotice(t("inbox.cmtReplyDmFailed", { name: activeComment.authorName, error: res.privateDmError }));
       } else if (sendDmCheckbox && res?.isPrivateDmSent) {
-        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর ও ইনবক্স DM — দুটোই Meta নিশ্চিত করেছে।`);
+        setNotice(t("inbox.cmtReplyBothDone", { name: activeComment.authorName }));
       } else {
-        setNotice(`✅ ${activeComment.authorName} এর কমেন্টে উত্তর পোস্ট হয়েছে (Meta নিশ্চিত করেছে)।`);
+        setNotice(t("inbox.cmtReplyDone", { name: activeComment.authorName }));
       }
       setActiveComment(null);
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রিপ্লাই পাঠাতে ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("inbox.cmtReplyFailed"));
     } finally {
       setSubmittingReply(false);
     }
@@ -296,7 +299,7 @@ export default function SocialCommentsPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     try {
-      setNotice(`🤖 ${cmt.authorName}-এর জন্য AI উত্তর জেনারেট হচ্ছে...`);
+      setNotice(t("inbox.cmtAiGenerating", { name: cmt.authorName }));
       const suggestion = await apiFetch<{ aiPlan: { publicCommentReply: string; privateDmText?: string; shouldSendDm: boolean } }>(
         `/organizations/${orgId}/social-comments/${cmt.id}/suggest-ai`,
         { method: "POST" }
@@ -310,11 +313,11 @@ export default function SocialCommentsPage() {
             privateDmText: suggestion.aiPlan.privateDmText,
           }),
         });
-        setNotice(`⚡ ${cmt.authorName}-এর কমেন্টে ১-ক্লিকে মানুষের মতো AI রিপ্লাই সফলভাবে পাঠানো হয়েছে!`);
+        setNotice(t("inbox.cmtQuickReplyDone", { name: cmt.authorName }));
         await loadData();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "১-ক্লিক রিপ্লাই ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("inbox.cmtQuickReplyFailed"));
     }
   }
 
@@ -326,7 +329,7 @@ export default function SocialCommentsPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     if (!cmt.privateDmText) {
-      setError("এই কমেন্টের জন্য কোনো DM লেখা তৈরি নেই — আগে রিপ্লাই মডালে গিয়ে DM লেখাটি তৈরি/সম্পাদনা করুন।");
+      setError(t("inbox.cmtNoDmText"));
       return;
     }
     try {
@@ -334,10 +337,10 @@ export default function SocialCommentsPage() {
         method: "POST",
         body: JSON.stringify({ message: cmt.privateDmText }),
       });
-      setNotice(`📩 ${cmt.authorName}-কে private DM পাঠানো হয়েছে (Meta নিশ্চিত করেছে) এবং কথোপকথনটি ইনবক্সে যুক্ত হয়েছে।`);
+      setNotice(t("inbox.cmtDmSent", { name: cmt.authorName }));
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "DM পাঠাতে ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("inbox.cmtDmFailed"));
     }
   }
 
@@ -348,10 +351,10 @@ export default function SocialCommentsPage() {
     if (!orgId) return;
     try {
       await apiFetch(`/organizations/${orgId}/social-comments/${cmt.id}`, { method: "DELETE" });
-      setNotice(`🗑️ ${cmt.authorName}-এর কমেন্ট প্ল্যাটফর্ম থেকে ডিলিট হয়েছে (Meta নিশ্চিত করেছে)।`);
+      setNotice(t("inbox.cmtDeleted", { name: cmt.authorName }));
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ডিলিট ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("inbox.cmtDeleteFailed"));
     }
   }
 
@@ -363,10 +366,10 @@ export default function SocialCommentsPage() {
         method: "PATCH",
         body: JSON.stringify({ status: newStatus }),
       });
-      setNotice(`স্ট্যাটাস আপডেট হয়েছে: ${newStatus}`);
+      setNotice(t("inbox.cmtStatusUpdated", { status: newStatus }));
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "স্ট্যাটাস পরিবর্তন ব্যর্থ");
+      setError(e instanceof Error ? e.message : t("inbox.cmtStatusFailed"));
     }
   }
 
@@ -386,10 +389,10 @@ export default function SocialCommentsPage() {
         }
       );
       setSettings(updated);
-      setNotice("AI রিপ্লাই ও স্প্যাম ফিল্টার সেটিংস সফলভাবে সংরক্ষিত হয়েছে! ⚙️");
+      setNotice(t("inbox.cmtSettingsSaved"));
       setIsSettingsOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সেটিংস সংরক্ষণ ব্যর্থ");
+      setError(e instanceof Error ? e.message : t("inbox.cmtSettingsFailed"));
     } finally {
       setSavingSettings(false);
     }
@@ -411,30 +414,30 @@ export default function SocialCommentsPage() {
   const sentimentBadge = (s: string) => {
     switch (s) {
       case "POSITIVE":
-        return <span className="rounded bg-emerald-100 text-emerald-800 text-[11px] px-1.5 py-0.5 font-semibold">পজিটিভ</span>;
+        return <span className="rounded bg-emerald-100 text-emerald-800 text-[11px] px-1.5 py-0.5 font-semibold">{t("inbox.sentPositive")}</span>;
       case "NEGATIVE":
-        return <span className="rounded bg-rose-100 text-rose-800 text-[11px] px-1.5 py-0.5 font-semibold">অভিযোগ / নেগেটিভ</span>;
+        return <span className="rounded bg-rose-100 text-rose-800 text-[11px] px-1.5 py-0.5 font-semibold">{t("inbox.sentNegative")}</span>;
       case "SPAM":
-        return <span className="rounded bg-purple-100 text-purple-800 text-[11px] px-1.5 py-0.5 font-semibold">স্প্যাম</span>;
+        return <span className="rounded bg-purple-100 text-purple-800 text-[11px] px-1.5 py-0.5 font-semibold">{t("inbox.sentSpam")}</span>;
       default:
-        return <span className="rounded bg-slate-100 text-slate-700 text-[11px] px-1.5 py-0.5 font-semibold">সাধারণ</span>;
+        return <span className="rounded bg-slate-100 text-slate-700 text-[11px] px-1.5 py-0.5 font-semibold">{t("inbox.sentNeutral")}</span>;
     }
   };
 
   const intentBadge = (i: string) => {
     switch (i) {
       case "PRICE_QUERY":
-        return <span className="rounded border border-amber-300 bg-amber-50 text-amber-800 text-[11px] px-1.5 py-0.5 font-bold">💰 দাম জানতে চেয়েছে</span>;
+        return <span className="rounded border border-amber-300 bg-amber-50 text-amber-800 text-[11px] px-1.5 py-0.5 font-bold">{t("inbox.intentPrice")}</span>;
       case "BARGAIN":
-        return <span className="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] px-1.5 py-0.5 font-bold">🏷️ দামাদামি / ছাড় চেয়েছে</span>;
+        return <span className="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] px-1.5 py-0.5 font-bold">{t("inbox.intentBargain")}</span>;
       case "COMPETITOR_MENTION":
-        return <span className="rounded border border-orange-300 bg-orange-50 text-orange-800 text-[11px] px-1.5 py-0.5 font-bold">🛑 প্রতিদ্বন্দীর তুলনা</span>;
+        return <span className="rounded border border-orange-300 bg-orange-50 text-orange-800 text-[11px] px-1.5 py-0.5 font-bold">{t("inbox.intentCompetitor")}</span>;
       case "DELIVERY_QUERY":
-        return <span className="rounded border border-blue-300 bg-blue-50 text-blue-800 text-[11px] px-1.5 py-0.5 font-bold">🚚 ডেলিভারি জানতে চেয়েছে</span>;
+        return <span className="rounded border border-blue-300 bg-blue-50 text-blue-800 text-[11px] px-1.5 py-0.5 font-bold">{t("inbox.intentDelivery")}</span>;
       case "COMPLAINT":
-        return <span className="rounded border border-rose-300 bg-rose-50 text-rose-800 text-[11px] px-1.5 py-0.5 font-bold">🚨 কাস্টমার কমপ্লেইন্ট</span>;
+        return <span className="rounded border border-rose-300 bg-rose-50 text-rose-800 text-[11px] px-1.5 py-0.5 font-bold">{t("inbox.intentComplaint")}</span>;
       default:
-        return <span className="rounded border border-slate-200 bg-slate-50 text-slate-600 text-[11px] px-1.5 py-0.5">💬 সাধারণ মতামত</span>;
+        return <span className="rounded border border-slate-200 bg-slate-50 text-slate-600 text-[11px] px-1.5 py-0.5">{t("inbox.intentGeneral")}</span>;
     }
   };
 
@@ -452,7 +455,7 @@ export default function SocialCommentsPage() {
             </span>
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            Facebook, Instagram, ও TikTok-এর সকল কমেন্ট এক স্ক্রিনে দেখুন। মানুষের মতো মিষ্টি ভাষায় কনটেক্সট-অ্যাওয়ার রিপ্লাই ও অটো প্রাইভেট ইনবক্স মেসেজ।
+            {t("inbox.cmtIntro")}
           </p>
         </div>
 
@@ -461,13 +464,13 @@ export default function SocialCommentsPage() {
             onClick={() => setIsSimulatorOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm"
           >
-            🧪 টেস্ট কমেন্ট সিমুলেট (Live Simulator)
+            {t("inbox.cmtSimulateBtn")}
           </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            ⚙️ AI রিপ্লাই ও স্প্যাম সেটিংস
+            {t("inbox.cmtSettingsBtn")}
           </button>
           <button
             onClick={() => setAutoRefresh(!autoRefresh)}
@@ -476,17 +479,17 @@ export default function SocialCommentsPage() {
                 ? "border-emerald-300 bg-emerald-50 text-emerald-800" 
                 : "border-slate-200 bg-white text-slate-500"
             }`}
-            title="১৫ সেকেন্ড পরপর নতুন কমেন্ট স্বয়ংক্রিয়ভাবে স্ক্রিনে আনুন"
+            title={t("inbox.cmtAutoRefreshTitle")}
           >
             <span className={`h-2 w-2 rounded-full ${autoRefresh ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
-            {autoRefresh ? "Live Sync (অন)" : "Live Sync (অফ)"}
+            {autoRefresh ? t("inbox.cmtLiveSyncOn") : t("inbox.cmtLiveSyncOff")}
           </button>
           <button
             onClick={() => loadData(false)}
             disabled={loading}
             className="rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50"
           >
-            🔄 রিফ্রেশ স্ট্রিম
+            {t("inbox.cmtRefresh")}
           </button>
         </div>
       </div>
@@ -497,66 +500,66 @@ export default function SocialCommentsPage() {
       {/* Top Stats Cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium text-slate-500">মোট কমেন্ট</div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{comments.length}</div>
+          <div className="text-xs font-medium text-slate-500">{t("inbox.cmtTotal")}</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{fmtNumber(locale, comments.length)}</div>
         </div>
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium text-slate-500">অপেক্ষমাণ (Pending)</div>
-          <div className="mt-1 text-2xl font-bold text-amber-600">{stats.pendingCount}</div>
+          <div className="text-xs font-medium text-slate-500">{t("inbox.cmtPending")}</div>
+          <div className="mt-1 text-2xl font-bold text-amber-600">{fmtNumber(locale, stats.pendingCount)}</div>
         </div>
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium text-slate-500">AI স্বয়ংক্রিয় উত্তর দিয়েছে</div>
+          <div className="text-xs font-medium text-slate-500">{t("inbox.cmtAiReplied")}</div>
           <div className="mt-1 text-2xl font-bold text-emerald-600">
-            {comments.filter((c) => c.status === "AUTO_REPLIED").length}
+            {fmtNumber(locale, comments.filter((c) => c.status === "AUTO_REPLIED").length)}
           </div>
         </div>
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-medium text-slate-500">হিডেন কমেন্ট (Hidden)</div>
-          <div className="mt-1 text-2xl font-bold text-purple-600">{stats.hiddenCount ?? 0}</div>
-          <div className="text-[11px] text-slate-500">এর মধ্যে অটো-হাইড স্প্যাম: {stats.hiddenSpamCount ?? 0} · মোট স্প্যাম শনাক্ত: {stats.spamCount}</div>
+          <div className="text-xs font-medium text-slate-500">{t("inbox.cmtHidden")}</div>
+          <div className="mt-1 text-2xl font-bold text-purple-600">{fmtNumber(locale, stats.hiddenCount ?? 0)}</div>
+          <div className="text-[11px] text-slate-500">{t("inbox.cmtHiddenSpamLine", { hidden: fmtNumber(locale, stats.hiddenSpamCount ?? 0), spam: fmtNumber(locale, stats.spamCount) })}</div>
         </div>
       </div>
 
       {/* 📊 Sentiment & Intent Analytics Banner */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold text-slate-800 mb-2">📈 কাস্টমার সেন্টিমেন্ট অনুপাত (Sentiment Distribution)</div>
+          <div className="text-xs font-bold text-slate-800 mb-2">{t("inbox.cmtSentimentTitle")}</div>
           <div className="flex items-center gap-3 text-xs">
             <div className="flex-1">
               <div className="h-3 w-full rounded-full bg-slate-100 flex overflow-hidden">
-                <div style={{ width: `${(comments.filter(c => c.sentiment === 'POSITIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-emerald-500 h-full" title="পজিটিভ" />
-                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEUTRAL').length / Math.max(1, comments.length)) * 100}%` }} className="bg-slate-400 h-full" title="সাধারণ" />
-                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEGATIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-rose-500 h-full" title="অভিযোগ" />
-                <div style={{ width: `${(comments.filter(c => c.sentiment === 'SPAM').length / Math.max(1, comments.length)) * 100}%` }} className="bg-purple-500 h-full" title="স্প্যাম" />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'POSITIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-emerald-500 h-full" title={t("inbox.sentPositive")} />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEUTRAL').length / Math.max(1, comments.length)) * 100}%` }} className="bg-slate-400 h-full" title={t("inbox.sentNeutral")} />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'NEGATIVE').length / Math.max(1, comments.length)) * 100}%` }} className="bg-rose-500 h-full" title={t("inbox.sentComplaintShort")} />
+                <div style={{ width: `${(comments.filter(c => c.sentiment === 'SPAM').length / Math.max(1, comments.length)) * 100}%` }} className="bg-purple-500 h-full" title={t("inbox.sentSpam")} />
               </div>
             </div>
           </div>
           <div className="flex items-center justify-between mt-3 text-[11px] text-slate-600">
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> পজিটিভ ({comments.filter(c => c.sentiment === 'POSITIVE').length})</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-400" /> সাধারণ ({comments.filter(c => c.sentiment === 'NEUTRAL').length})</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> অভিযোগ ({comments.filter(c => c.sentiment === 'NEGATIVE').length})</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-purple-500" /> স্প্যাম ({comments.filter(c => c.sentiment === 'SPAM').length})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {t("inbox.sentPositive")} ({fmtNumber(locale, comments.filter(c => c.sentiment === 'POSITIVE').length)})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-400" /> {t("inbox.sentNeutral")} ({fmtNumber(locale, comments.filter(c => c.sentiment === 'NEUTRAL').length)})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> {t("inbox.sentComplaintShort")} ({fmtNumber(locale, comments.filter(c => c.sentiment === 'NEGATIVE').length)})</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-purple-500" /> {t("inbox.sentSpam")} ({fmtNumber(locale, comments.filter(c => c.sentiment === 'SPAM').length)})</span>
           </div>
         </div>
 
         <div className="rounded-xl border bg-white p-4 shadow-sm">
-          <div className="text-xs font-bold text-slate-800 mb-2">🎯 কাস্টমার প্রশ্নের ধরন (Buyer Intent)</div>
+          <div className="text-xs font-bold text-slate-800 mb-2">{t("inbox.cmtIntentTitle")}</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
             <div className="rounded-lg bg-amber-50 p-2 border border-amber-200">
-              <div className="font-bold text-amber-900 text-sm">{comments.filter(c => c.intent === 'PRICE_QUERY').length}</div>
-              <div className="text-[10px] text-amber-700 font-semibold mt-0.5">💰 দাম জিজ্ঞাসা</div>
+              <div className="font-bold text-amber-900 text-sm">{fmtNumber(locale, comments.filter(c => c.intent === 'PRICE_QUERY').length)}</div>
+              <div className="text-[10px] text-amber-700 font-semibold mt-0.5">{t("inbox.intentPriceShort")}</div>
             </div>
             <div className="rounded-lg bg-emerald-50 p-2 border border-emerald-200">
-              <div className="font-bold text-emerald-900 text-sm">{comments.filter(c => c.intent === 'BARGAIN').length}</div>
-              <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">🏷️ দামাদামি / ছাড়</div>
+              <div className="font-bold text-emerald-900 text-sm">{fmtNumber(locale, comments.filter(c => c.intent === 'BARGAIN').length)}</div>
+              <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">{t("inbox.intentBargainShort")}</div>
             </div>
             <div className="rounded-lg bg-orange-50 p-2 border border-orange-200">
-              <div className="font-bold text-orange-900 text-sm">{comments.filter(c => c.intent === 'COMPETITOR_MENTION').length}</div>
-              <div className="text-[10px] text-orange-700 font-semibold mt-0.5">🛑 প্রতিদ্বন্দীর তুলনা</div>
+              <div className="font-bold text-orange-900 text-sm">{fmtNumber(locale, comments.filter(c => c.intent === 'COMPETITOR_MENTION').length)}</div>
+              <div className="text-[10px] text-orange-700 font-semibold mt-0.5">{t("inbox.intentCompetitorShort")}</div>
             </div>
             <div className="rounded-lg bg-rose-50 p-2 border border-rose-200">
-              <div className="font-bold text-rose-900 text-sm">{comments.filter(c => c.intent === 'COMPLAINT').length}</div>
-              <div className="text-[10px] text-rose-700 font-semibold mt-0.5">🚨 কমপ্লেইন্ট</div>
+              <div className="font-bold text-rose-900 text-sm">{fmtNumber(locale, comments.filter(c => c.intent === 'COMPLAINT').length)}</div>
+              <div className="text-[10px] text-rose-700 font-semibold mt-0.5">{t("inbox.intentComplaintShort")}</div>
             </div>
           </div>
         </div>
@@ -570,7 +573,7 @@ export default function SocialCommentsPage() {
             onChange={(e) => setSelectedPlatform(e.target.value)}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
           >
-            <option value="all">সব প্ল্যাটফর্ম (All)</option>
+            <option value="all">{t("inbox.cmtAllPlatforms")}</option>
             <option value="facebook">Facebook</option>
             <option value="instagram">Instagram</option>
             <option value="tiktok">TikTok</option>
@@ -582,19 +585,19 @@ export default function SocialCommentsPage() {
             onChange={(e) => setSelectedStatus(e.target.value)}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 font-medium"
           >
-            <option value="all">সব স্ট্যাটাস</option>
-            <option value="PENDING">অপেক্ষমাণ (Pending)</option>
+            <option value="all">{t("inbox.cmtAllStatus")}</option>
+            <option value="PENDING">{t("inbox.cmtStatusPending")}</option>
             <option value="AUTO_REPLIED">AI Replied</option>
-            <option value="MANUALLY_REPLIED">ম্যানুয়ালি রিপ্লাইড</option>
-            <option value="HIDDEN">হিডেন / স্প্যাম</option>
-            <option value="DELETED">ডিলিট হয়েছে</option>
+            <option value="MANUALLY_REPLIED">{t("inbox.cmtStatusManual")}</option>
+            <option value="HIDDEN">{t("inbox.cmtStatusHidden")}</option>
+            <option value="DELETED">{t("inbox.cmtStatusDeleted")}</option>
           </select>
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <input
             type="text"
-            placeholder="কমেন্ট, কাস্টমার নাম বা প্রোডাক্ট সার্চ..."
+            placeholder={t("inbox.cmtSearchPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 w-full sm:w-64"
@@ -603,7 +606,7 @@ export default function SocialCommentsPage() {
             onClick={handleExportCsv}
             disabled={comments.length === 0}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
-            title="সকল কমেন্ট এক্সেল/সিএসভি ফাইলে এক্সপোর্ট করুন"
+            title={t("inbox.cmtExportTitle")}
           >
             📥 Export CSV
           </button>
@@ -623,7 +626,7 @@ export default function SocialCommentsPage() {
             className="rounded border-slate-700"
           />
           <span className="font-semibold">
-            {selectedIds.length > 0 ? `${selectedIds.length}টি কমেন্ট নির্বাচিত` : "সবগুলো একসাথে সিলেক্ট করুন"}
+            {selectedIds.length > 0 ? t("inbox.cmtSelectedCount", { count: fmtNumber(locale, selectedIds.length) }) : t("inbox.cmtSelectAll")}
           </span>
         </div>
 
@@ -634,14 +637,14 @@ export default function SocialCommentsPage() {
               disabled={bulkBusy}
               className="rounded-lg bg-indigo-600 px-3 py-1 font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              ⚡ একসাথে সবগুলোতে AI রিপ্লাই দিন
+              {t("inbox.cmtBulkAi")}
             </button>
             <button
               onClick={() => handleBulkAction("HIDE_ALL")}
               disabled={bulkBusy}
               className="rounded-lg bg-slate-800 px-3 py-1 font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50"
             >
-              🛡️ একসাথে হাইড করুন
+              {t("inbox.cmtBulkHideBtn")}
             </button>
           </div>
         ) : null}
@@ -651,11 +654,11 @@ export default function SocialCommentsPage() {
       <div className="space-y-4">
         {loading ? (
           <div className="rounded-xl border bg-white p-12 text-center text-sm text-slate-500">
-            সোশ্যাল কমেন্ট লোড হচ্ছে...
+            {t("inbox.cmtLoading")}
           </div>
         ) : comments.length === 0 ? (
           <div className="rounded-xl border bg-white p-12 text-center text-sm text-slate-500">
-            কোনো কমেন্ট পাওয়া যায়নি।
+            {t("inbox.cmtEmpty")}
           </div>
         ) : (
           comments.map((cmt) => (
@@ -681,7 +684,7 @@ export default function SocialCommentsPage() {
                     {platformBadge(cmt.platform)}
                     <span className="font-bold text-slate-900 text-sm">{cmt.authorName}</span>
                     <span className="text-xs text-slate-400">
-                      • {new Date(cmt.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      • {fmtTime(locale, cmt.createdAt)}
                     </span>
                     {sentimentBadge(cmt.sentiment)}
                     {intentBadge(cmt.intent)}
@@ -697,7 +700,7 @@ export default function SocialCommentsPage() {
                         />
                       ) : null}
                       <span className="text-slate-600 line-clamp-1 font-medium">
-                        📌 <b>পোস্ট:</b> {cmt.postTitle}
+                        📌 <b>{t("inbox.cmtPostLabel")}:</b> {cmt.postTitle}
                       </span>
                     </div>
                   ) : null}
@@ -712,11 +715,11 @@ export default function SocialCommentsPage() {
                     <div className="mt-2 ml-4 rounded-lg bg-indigo-50/70 p-3 text-xs border border-indigo-200">
                       <div className="flex items-center justify-between text-indigo-900 font-semibold mb-1">
                         <span>
-                          {cmt.status === "AUTO_REPLIED" ? "🤖 AI স্বয়ংক্রিয় উত্তর:" : "👤 সাপোর্ট এজেন্টের উত্তর:"}
+                          {cmt.status === "AUTO_REPLIED" ? t("inbox.cmtAiReplyLabel") : t("inbox.cmtAgentReplyLabel")}
                         </span>
                         {cmt.isPrivateDmSent ? (
                           <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.2 text-[10px] font-bold">
-                            📩 ইনবক্স DM পাঠানো হয়েছে
+                            {t("inbox.cmtDmSentBadge")}
                           </span>
                         ) : null}
                       </div>
@@ -731,9 +734,9 @@ export default function SocialCommentsPage() {
                     <button
                       onClick={() => handleQuickAutoReply(cmt)}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1"
-                      title="মডেল ছাড়াই সরাসরি মানুষের মতো AI দিয়ে অটো-রিপ্লাই ও DM পাঠান"
+                      title={t("inbox.cmtQuickReplyTitle")}
                     >
-                      <span>⚡ ১-ক্লিক অটো-রিপ্লাই</span>
+                      <span>{t("inbox.cmtQuickReplyBtn")}</span>
                     </button>
                   ) : null}
 
@@ -741,7 +744,7 @@ export default function SocialCommentsPage() {
                     onClick={() => openReplyModal(cmt)}
                     className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm"
                   >
-                    {cmt.replyText ? "✏️ রিপ্লাই এডিট / পুনরায় পাঠান" : "✨ রিভিউ করে রিপ্লাই"}
+                    {cmt.replyText ? t("inbox.cmtEditReplyBtn") : t("inbox.cmtReviewReplyBtn")}
                   </button>
 
                   {cmt.status !== "HIDDEN" ? (
@@ -749,28 +752,28 @@ export default function SocialCommentsPage() {
                       onClick={() => toggleStatus(cmt.id, "HIDDEN")}
                       className="rounded-lg border px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
                     >
-                      🛡️ হাইড করুন
+                      {t("inbox.cmtHideBtn")}
                     </button>
                   ) : (
                     <button
                       onClick={() => toggleStatus(cmt.id, "PENDING")}
                       className="rounded-lg border px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
                     >
-                      আন-হাইড করুন
+                      {t("inbox.cmtUnhideBtn")}
                     </button>
                   )}
 
                   {/* IN8c: comment -> DM (one Graph private reply) */}
                   {cmt.isPrivateDmSent ? (
                     <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
-                      📩 DM হয়েছে{cmt.dmConversationId ? " · ইনবক্সে যুক্ত" : ""}
+                      {t("inbox.cmtDmDoneBadge")}{cmt.dmConversationId ? t("inbox.cmtDmLinkedSuffix") : ""}
                     </span>
                   ) : cmt.privateDmText && cmt.status !== "DELETED" ? (
                     <button
                       onClick={() => handlePrivateReply(cmt)}
                       className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
                     >
-                      📩 DM করুন
+                      {t("inbox.cmtDmBtn")}
                     </button>
                   ) : null}
 
@@ -779,14 +782,14 @@ export default function SocialCommentsPage() {
                       onClick={() => handleDeleteComment(cmt)}
                       className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
                     >
-                      🗑️ ডিলিট
+                      {t("inbox.cmtDeleteBtn")}
                     </button>
                   ) : (
-                    <span className="rounded-full bg-rose-100 text-rose-800 px-2 py-0.5 text-[10px] font-bold">ডিলিট হয়েছে</span>
+                    <span className="rounded-full bg-rose-100 text-rose-800 px-2 py-0.5 text-[10px] font-bold">{t("inbox.cmtDeletedBadge")}</span>
                   )}
 
                   {cmt.assignedUserId ? (
-                    <span className="text-[10px] text-slate-500">দায়িত্বে: {cmt.assignedUserId.slice(0, 8)}…</span>
+                    <span className="text-[10px] text-slate-500">{t("inbox.cmtAssignedTo")}: {cmt.assignedUserId.slice(0, 8)}…</span>
                   ) : null}
                 </div>
               </div>
@@ -805,10 +808,10 @@ export default function SocialCommentsPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  {activeComment.authorName} এর কমেন্টে উত্তর দিন
+                  {t("inbox.cmtReplyModalTitle", { name: activeComment.authorName })}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  প্ল্যাটফর্ম: {activeComment.platform.toUpperCase()}
+                  {t("inbox.cmtPlatformLabel")}: {activeComment.platform.toUpperCase()}
                 </p>
               </div>
               <button
@@ -821,17 +824,17 @@ export default function SocialCommentsPage() {
             </div>
 
             <div className="rounded-lg bg-slate-50 p-3 text-xs border text-slate-800">
-              <b>মূল কমেন্ট:</b> "{activeComment.commentText}"
+              <b>{t("inbox.cmtOriginalComment")}:</b> "{activeComment.commentText}"
             </div>
 
             {/* Public Reply Textarea */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-xs font-bold text-slate-700">
-                  পাবলিক কমেন্ট রিপ্লাই (ফেসবুক/ইনস্টাতে সবাই দেখবে)
+                  {t("inbox.cmtPublicReplyLabel")}
                 </label>
                 {loadingAiSuggestion ? (
-                  <span className="text-[11px] text-indigo-600 font-medium">✨ AI সাজেশন লোড হচ্ছে...</span>
+                  <span className="text-[11px] text-indigo-600 font-medium">{t("inbox.cmtAiSuggestionLoading")}</span>
                 ) : null}
               </div>
 
@@ -840,31 +843,31 @@ export default function SocialCommentsPage() {
                 <span className="text-[10px] text-slate-400 font-medium mr-1">⚡ Quick Snippets:</span>
                 <button
                   type="button"
-                  onClick={() => setReplyInput("জি ভাইয়া/আপু, আপনার ইনবক্সে বিস্তারিত মূল্য ও ডিসকাউন্ট লিংক পাঠানো হয়েছে! অনুগ্রহ করে মেসেজ চেক করুন।")}
+                  onClick={() => setReplyInput(t("inbox.snippetCheckInboxText"))}
                   className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
                 >
-                  📨 চেক ইনবক্স
+                  {t("inbox.snippetCheckInbox")}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setReplyInput("আমাদের সারা বাংলাদেশে ক্যাশ অন ডেলিভারি সুবিধা আছে। ঢাকা সিটিতে ২৪-৪৮ ঘণ্টা, ঢাকার বাইরে ২-৩ দিনে পৌঁছে যাবে ইনশাআল্লাহ।")}
+                  onClick={() => setReplyInput(t("inbox.snippetDeliveryText"))}
                   className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
                 >
-                  🚚 ডেলিভারি নিয়ম
+                  {t("inbox.snippetDelivery")}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setReplyInput("প্রোডাক্ট হাতে পেয়ে চেক করে পেমেন্ট করার ১০০% গ্যারান্টি সুবিধা পাবেন। কোনো সমস্যা হলে ৭ দিনের ইজি রিপ্লেসমেন্ট পলিসি রয়েছে।")}
+                  onClick={() => setReplyInput(t("inbox.snippetReturnText"))}
                   className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
                 >
-                  🛡️ রিটার্ন/ওয়ারেন্টি
+                  {t("inbox.snippetReturn")}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setReplyInput("জি অবশ্যই! আজকের স্পেশাল কম্বো অফারে অতিরিক্ত ডিসকাউন্ট পাবেন। অর্ডার করতে এখনই ইনবক্সে আপনার নম্বর ও ঠিকানা দিন।")}
+                  onClick={() => setReplyInput(t("inbox.snippetDiscountText"))}
                   className="rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200 transition-colors"
                 >
-                  🎁 ডিসকাউন্ট অফার
+                  {t("inbox.snippetDiscount")}
                 </button>
               </div>
 
@@ -874,7 +877,7 @@ export default function SocialCommentsPage() {
                 rows={3}
                 required
                 className="w-full rounded-lg border p-2.5 text-xs focus:border-indigo-500 focus:outline-none"
-                placeholder="মানুষের মতো মিষ্টি ভাষায় উত্তর লিখুন..."
+                placeholder={t("inbox.cmtReplyPlaceholder")}
               />
             </div>
 
@@ -887,20 +890,20 @@ export default function SocialCommentsPage() {
                   onChange={(e) => setSendDmCheckbox(e.target.checked)}
                   className="rounded border-slate-300 text-indigo-600"
                 />
-                📩 কাস্টমারের ইনবক্সে সরাসরি প্রাইভেট মেসেজ ও অর্ডার লিংক পাঠান (Auto Private DM)
+                {t("inbox.cmtDmCheckbox")}
               </label>
 
               {sendDmCheckbox ? (
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    ইনবক্স মেসেজের ড্রাফট (Order Link & Offer Included):
+                    {t("inbox.cmtDmDraftLabel")}
                   </label>
                   <textarea
                     value={privateDmInput}
                     onChange={(e) => setPrivateDmInput(e.target.value)}
                     rows={4}
                     className="w-full rounded-lg border p-2.5 text-xs bg-white focus:border-indigo-500 focus:outline-none"
-                    placeholder="ইনবক্স মেসেজ লিখুন..."
+                    placeholder={t("inbox.cmtDmPlaceholder")}
                   />
                 </div>
               ) : null}
@@ -912,14 +915,14 @@ export default function SocialCommentsPage() {
                 onClick={() => setActiveComment(null)}
                 className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
+                {t("inbox.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={submittingReply}
                 className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {submittingReply ? "পাঠানো হচ্ছে..." : "🚀 রিপ্লাই ও ইনবক্স সেন্ড করুন"}
+                {submittingReply ? t("inbox.cmtSending") : t("inbox.cmtSendReply")}
               </button>
             </div>
           </form>
@@ -939,7 +942,7 @@ export default function SocialCommentsPage() {
                   ⚙️ AI Auto-Reply & Spam Shield Settings
                 </h3>
                 <p className="text-xs text-slate-500">
-                  স্বয়ংক্রিয় উত্তর, সুরক্ষাব্যবস্থা এবং টোন পছন্দ নির্ধারণ করুন
+                  {t("inbox.cmtSettingsIntro")}
                 </p>
               </div>
               <button
@@ -958,7 +961,7 @@ export default function SocialCommentsPage() {
                   checked={settings.aiAutoReplyEnabled}
                   onChange={(e) => setSettings({ ...settings, aiAutoReplyEnabled: e.target.checked })}
                 />
-                🤖 24/7 AI অটোপাইলট রিপ্লাই চালু রাখুন (নতুন কমেন্টে স্বয়ংক্রিয় উত্তর যাবে)
+                {t("inbox.cmtAutopilotLabel")}
               </label>
 
               <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -967,7 +970,7 @@ export default function SocialCommentsPage() {
                   checked={settings.sendPrivateDm}
                   onChange={(e) => setSettings({ ...settings, sendPrivateDm: e.target.checked })}
                 />
-                📩 দাম বা প্রোডাক্ট জিজ্ঞাসায় স্বয়ংক্রিয়ভাবে ইনবক্সে মেসেজ পাঠান
+                {t("inbox.cmtAutoDmLabel")}
               </label>
 
               <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -976,12 +979,12 @@ export default function SocialCommentsPage() {
                   checked={settings.autoHideSpam}
                   onChange={(e) => setSettings({ ...settings, autoHideSpam: e.target.checked })}
                 />
-                🛡️ স্প্যাম, অন্য পেজের লিংক বা গালিগালাজ যুক্ত কমেন্ট সাথে সাথে অটো-হাইড করুন
+                {t("inbox.cmtAutoHideLabel")}
               </label>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  রিপ্লাই দেওয়ার সময় বিলম্ব (Delay Seconds - মানুষের মতো দেখাতে):
+                  {t("inbox.cmtDelayLabel")}
                 </label>
                 <input
                   type="number"
@@ -991,27 +994,27 @@ export default function SocialCommentsPage() {
                   onChange={(e) => setSettings({ ...settings, replyDelaySeconds: Number(e.target.value) })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 />
-                <p className="mt-1 text-[11px] text-slate-500">এই Delay এখন সত্যিই কার্যকর: AI উত্তরটি এই সময় পর্যন্ত অপেক্ষা করবে, আর একই লেখক একই পোস্টে পরপর কমেন্ট করলে সবগুলো জমিয়ে একটাই উত্তর যাবে। স্প্যাম হাইড সঙ্গে সঙ্গেই হয় — Delay-র জন্য অপেক্ষা করে না। কার্যকর হতে Automations পেজ থেকে &apos;Comment Auto-Reply Sweep&apos; job চালু থাকতে হবে (কার্যকর বিলম্ব = Delay + সর্বোচ্চ ১ মিনিট)।</p>
+                <p className="mt-1 text-[11px] text-slate-500">{t("inbox.cmtDelayNote")} {t("inbox.cmtDelayNoteSuffix")}</p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  কথোপকথনের টোন (AI Personality):
+                  {t("inbox.cmtToneLabel")}
                 </label>
                 <select
                   value={settings.tonePreference}
                   onChange={(e) => setSettings({ ...settings, tonePreference: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
                 >
-                  <option value="FRIENDLY_SALES">Friendly & High-Converting (বন্ধুভাবাপন্ন ও সেলস ফোকাস্ড)</option>
-                  <option value="PROFESSIONAL">Professional Corporate (মার্জিত ও পেশাদার)</option>
-                  <option value="HELPFUL_SUPPORT">Helpful Customer Support (কাস্টমার সাপোর্ট)</option>
+                  <option value="FRIENDLY_SALES">{t("inbox.cmtToneFriendly")}</option>
+                  <option value="PROFESSIONAL">{t("inbox.cmtToneProfessional")}</option>
+                  <option value="HELPFUL_SUPPORT">{t("inbox.cmtToneHelpful")}</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  ডিফল্ট সেলস পেজ / অর্ডার ইউআরএল (ইনবক্স মেসেজে যাবে):
+                  {t("inbox.cmtSalesUrlLabel")}
                 </label>
                 <input
                   type="url"
@@ -1031,17 +1034,17 @@ export default function SocialCommentsPage() {
                     onChange={(e) => setSettings({ ...settings, nightOwlEnabled: e.target.checked })}
                     className="rounded border-amber-300 text-amber-600"
                   />
-                  🦉 নাইট-আউল আশ্বাসন (রাত ১২টা থেকে সকাল ৮টার কমেন্টে বিশেষ বার্তা)
+                  {t("inbox.cmtNightOwlLabel")}
                 </label>
                 <p className="text-[11px] text-amber-700">
-                  অফিস বন্ধের সময়েও কাস্টমারকে আশ্বস্ত করবে যে তাদের অর্ডার ও কুয়েরি সকাল ৯টায় ফার্স্ট প্রায়োরিটিতে প্রসেস করা হবে।
+                  {t("inbox.cmtNightOwlNote")}
                 </p>
                 {settings.nightOwlEnabled ? (
                   <input
                     type="text"
                     value={settings.nightOwlMessage || ""}
                     onChange={(e) => setSettings({ ...settings, nightOwlMessage: e.target.value })}
-                    placeholder="শুভরাত্রি! আমাদের অফিস এখন বন্ধ থাকলেও সকাল ৯টায় ফার্স্ট প্রায়োরিটিতে আপনার অর্ডার প্রসেস করা হবে।"
+                    placeholder={t("inbox.cmtNightOwlPlaceholder")}
                     className="w-full rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs"
                   />
                 ) : null}
@@ -1056,10 +1059,10 @@ export default function SocialCommentsPage() {
                     onChange={(e) => setSettings({ ...settings, urgentAlertTelegramEnabled: e.target.checked })}
                     className="rounded border-sky-300 text-sky-600"
                   />
-                  🔔 টেলিগ্রাম আর্জেন্ট অ্যালার্ট (অভিযোগ ও কম্পিটিটর হাইজ্যাক হলে সাথে সাথে নোটিফিকেশন)
+                  {t("inbox.cmtTelegramLabel")}
                 </label>
                 <p className="text-[11px] text-sky-800">
-                  কোনো কাস্টমার ব্যাড রিভিউ দিলে বা প্রতিদ্বন্দ্বী ব্র্যান্ড হাইজ্যাক করার চেষ্টা করলে সরাসরি টেলিগ্রাম গ্রুপ বা বটে পুশ অ্যালার্ট যাবে।
+                  {t("inbox.cmtTelegramNote")}
                 </p>
                 {settings.urgentAlertTelegramEnabled ? (
                   <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1098,14 +1101,14 @@ export default function SocialCommentsPage() {
                 onClick={() => setIsSettingsOpen(false)}
                 className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
+                {t("inbox.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={savingSettings}
                 className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {savingSettings ? "সংরক্ষণ হচ্ছে..." : "সেটিংস সংরক্ষণ করুন"}
+                {savingSettings ? t("inbox.cmtSavingSettings") : t("inbox.cmtSaveSettings")}
               </button>
             </div>
           </form>
@@ -1122,10 +1125,10 @@ export default function SocialCommentsPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  🧪 লাইভ কমেন্ট সিমুলেটর (Live Comment Simulator)
+                  {t("inbox.cmtSimTitle")}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  সোশ্যাল মিডিয়া থেকে কমেন্ট এলে AI কীভাবে রেসপন্স করে তা এখনই লাইভ টেস্ট করুন
+                  {t("inbox.cmtSimIntro")}
                 </p>
               </div>
               <button
@@ -1139,7 +1142,7 @@ export default function SocialCommentsPage() {
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">প্ল্যাটফর্ম:</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{t("inbox.cmtSimPlatform")}</label>
                 <select
                   value={simForm.platform}
                   onChange={(e) => setSimForm({ ...simForm, platform: e.target.value as any })}
@@ -1153,78 +1156,78 @@ export default function SocialCommentsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">পোস্টের বিষয় / প্রোডাক্টের নাম:</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{t("inbox.cmtSimPostTitle")}</label>
                 <input
                   type="text"
                   required
                   value={simForm.postTitle}
                   onChange={(e) => setSimForm({ ...simForm, postTitle: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
-                  placeholder="যেমন: প্রিমিয়াম লেদার ওয়ালেট ও বেল্ট কম্বো"
+                  placeholder={t("inbox.cmtSimPostPlaceholder")}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">কাস্টমারের নাম:</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{t("inbox.cmtSimAuthor")}</label>
                 <input
                   type="text"
                   required
                   value={simForm.authorName}
                   onChange={(e) => setSimForm({ ...simForm, authorName: e.target.value })}
                   className="w-full rounded-lg border px-3 py-1.5 text-xs"
-                  placeholder="যেমন: আসিফ ইকবাল"
+                  placeholder={t("inbox.cmtSimAuthorPlaceholder")}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">কাস্টমারের মন্তব্য (Comment):</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{t("inbox.cmtSimComment")}</label>
                 <textarea
                   required
                   rows={3}
                   value={simForm.commentText}
                   onChange={(e) => setSimForm({ ...simForm, commentText: e.target.value })}
                   className="w-full rounded-lg border p-2 text-xs"
-                  placeholder="যেমন: ভাইয়া এটার দাম কত? চট্টগ্রামে কতদিনের মধ্যে ডেলিভারি হবে?"
+                  placeholder={t("inbox.cmtSimCommentPlaceholder")}
                 />
               </div>
 
               <div className="rounded-lg bg-indigo-50/70 p-2.5 text-[11px] text-indigo-900 border border-indigo-200">
-                💡 <b>দ্রুত টেস্ট আইডিয়া:</b> 
+                💡 <b>{t("inbox.cmtSimIdeas")}</b> 
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setSimForm({ ...simForm, commentText: "ভাইয়া এটার বর্তমান অফার প্রাইস কত? হোম ডেলিভারি কি ফ্রি?" })}
+                    onClick={() => setSimForm({ ...simForm, commentText: t("inbox.simIdeaPriceText") })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
                   >
-                    দাম জিজ্ঞাসা
+                    {t("inbox.simIdeaPrice")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSimForm({ ...simForm, commentText: "ভাইয়া ১০০০ টাকা রাখা যাবে? কিছু ছাড় দিলে এখনই নিয়ে নিব।" })}
+                    onClick={() => setSimForm({ ...simForm, commentText: t("inbox.simIdeaBargainText") })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 font-medium text-emerald-700"
                   >
-                    🏷️ দামাদামি / ছাড়
+                    {t("inbox.simIdeaBargain")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSimForm({ ...simForm, commentText: "দারাজ এ তো এটা কম দামে পাওয়া যায়, আপনাদের এত দাম কেন?" })}
+                    onClick={() => setSimForm({ ...simForm, commentText: t("inbox.simIdeaCompetitorText") })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 font-medium text-orange-700"
                   >
-                    🛑 প্রতিদ্বন্দীর তুলনা
+                    {t("inbox.simIdeaCompetitor")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSimForm({ ...simForm, commentText: "পার্সেল হাতে পেয়ে দেখলাম সাইজ ছোট, এক্সচেঞ্জ করতে চাই।" })}
+                    onClick={() => setSimForm({ ...simForm, commentText: t("inbox.simIdeaComplaintText") })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100"
                   >
-                    কমপ্লেইন্ট
+                    {t("inbox.simIdeaComplaint")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSimForm({ ...simForm, commentText: "ঘরে বসে সহজে ইনকাম করতে আমাদের টেলিগ্রাম লিংকে ক্লিক করুন bit.ly/spam" })}
+                    onClick={() => setSimForm({ ...simForm, commentText: t("inbox.simIdeaSpamText") })}
                     className="rounded bg-white border border-indigo-200 px-2 py-0.5 text-[10px] hover:bg-indigo-100 text-rose-600"
                   >
-                    স্প্যাম
+                    {t("inbox.simIdeaSpam")}
                   </button>
                 </div>
               </div>
@@ -1236,14 +1239,14 @@ export default function SocialCommentsPage() {
                 onClick={() => setIsSimulatorOpen(false)}
                 className="rounded-lg border px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
+                {t("inbox.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={simulating}
                 className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {simulating ? "সিমুলেট হচ্ছে..." : "🚀 কমেন্ট সেন্ড করুন"}
+                {simulating ? t("inbox.cmtSimulating") : t("inbox.cmtSendComment")}
               </button>
             </div>
           </form>

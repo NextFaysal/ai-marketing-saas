@@ -107,8 +107,8 @@ function setup() {
 describe("DeliveryService riders", () => {
   it("creates a rider (name + phone both required) and audits", async () => {
     const { svc, auditCalls } = setup();
-    await expect(svc.createRider("org-1", "owner", { name: "  ", phone: "017" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createRider("org-1", "owner", { name: "Jamal" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createRider("org-1", "owner", { name: "  ", phone: "017" })).rejects.toMatchObject({ code: "delivery.aRiderNameIsRequired" });
+    await expect(svc.createRider("org-1", "owner", { name: "Jamal" })).rejects.toMatchObject({ code: "delivery.aRiderPhoneNumberIsRequired" });
     const rider = await svc.createRider("org-1", "owner", { name: "Jamal", phone: "01744444444" });
     expect(rider.active).toBe(true);
     expect(auditCalls.some((c) => c.action === "rider.created" && c.entityId === rider.id)).toBe(true);
@@ -119,8 +119,8 @@ describe("DeliveryService riders", () => {
     const out = await svc.removeRider("org-1", "owner", "rider-1");
     expect(out.active).toBe(false);
     expect(prisma.rider.rows.find((r: any) => r.id === "rider-1")).toBeTruthy(); // row kept
-    await expect(svc.updateRider("org-1", "owner", "rider-foreign", { name: "X" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.removeRider("org-1", "owner", "rider-foreign")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateRider("org-1", "owner", "rider-foreign", { name: "X" })).rejects.toMatchObject({ code: "delivery.theRiderWasNotFound" });
+    await expect(svc.removeRider("org-1", "owner", "rider-foreign")).rejects.toMatchObject({ code: "delivery.theRiderWasNotFound" });
   });
 });
 
@@ -136,11 +136,11 @@ describe("DeliveryService assignments", () => {
   it("inactive rider => 400; foreign order => 404; foreign rider => 404", async () => {
     const { svc } = setup();
     await expect(svc.createAssignment("org-1", "agent", { orderId: "ord-1", riderId: "rider-off" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "delivery.thisRiderIsNotActiveActivate" });
     await expect(svc.createAssignment("org-1", "agent", { orderId: "ord-foreign", riderId: "rider-1" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "delivery.orderNotFoundInThisOrganization" });
     await expect(svc.createAssignment("org-1", "agent", { orderId: "ord-1", riderId: "rider-foreign" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "delivery.theRiderWasNotFound" });
   });
 
   it("a second ACTIVE assignment for the same order => 400; after return, re-assign works", async () => {
@@ -162,7 +162,7 @@ describe("DeliveryService transitions", () => {
       .rejects.toMatchObject({ status: 400, message: expect.stringContaining("picked_up") });
     await expect(svc.transition("org-1", "agent", a.id, { status: "assigned" })).rejects.toBeInstanceOf(BadRequestException);
     await expect(svc.transition("org-1", "agent", a.id, { status: "lost" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.transition("org-2", "agent", a.id, { status: "picked_up" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.transition("org-2", "agent", a.id, { status: "picked_up" })).rejects.toMatchObject({ code: "delivery.theDeliveryAssignmentWasNotFound" });
   });
 
   it("picked_up stamps pickedUpAt and does not touch the order", async () => {
@@ -227,6 +227,6 @@ describe("DeliveryService listAssignments enrichment + filters", () => {
     const todayDhaka = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     await expect(svc.listAssignments("org-1", { date: todayDhaka })).resolves.toHaveLength(1);
     await expect(svc.listAssignments("org-1", { date: "2020-01-01" })).resolves.toHaveLength(0);
-    await expect(svc.listAssignments("org-1", { date: "13/10/2026" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.listAssignments("org-1", { date: "13/10/2026" })).rejects.toMatchObject({ code: "delivery.dateMustBeInYyyyMm" });
   });
 });

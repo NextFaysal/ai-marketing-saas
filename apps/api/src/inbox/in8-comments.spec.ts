@@ -216,13 +216,13 @@ describe("IN8 service: local status moves only on Graph confirmation", () => {
     const db = { socialComment: table(comments), socialReplySetting: table([] as Row[]), product: table([] as Row[]), lead: table([] as Row[]) };
     const audit = { log: jest.fn(async () => undefined) };
     const bare = new SocialCommentsService(db as any, audit as any); // graphClientFor NOT stubbed
-    await expect(bare.sendReply(ORG, "agent-1", "c1", { replyText: "x" })).rejects.toThrow(/No connected Meta/);
+    await expect(bare.sendReply(ORG, "agent-1", "c1", { replyText: "x" })).rejects.toMatchObject({ code: "inbox.noConnectedMetaMessengerInstagramIntegration" });
     expect(comments[0].status).toBe("PENDING");
 
     const ttComments: Row[] = [commentRow({ platform: "tiktok" })];
     const ttDb = { socialComment: table(ttComments), socialReplySetting: table([] as Row[]), product: table([] as Row[]), lead: table([] as Row[]) };
     const ttService = new SocialCommentsService(ttDb as any, audit as any); // unpatched: platform check precedes any integration lookup
-    await expect(ttService.updateCommentStatus(ORG, "c1", "HIDDEN")).rejects.toThrow(/not available for platform "tiktok"/);
+    await expect(ttService.updateCommentStatus(ORG, "c1", "HIDDEN")).rejects.toMatchObject({ code: "inbox.metaGraphCommentActionsAreNot" });
     expect(ttComments[0].status).toBe("PENDING");
   });
 });
@@ -257,7 +257,7 @@ describe("IN8c: comment -> DM with inbox context", () => {
 
   it("a second private reply is refused up front (Meta allows one per comment) without any Graph call", async () => {
     const s = setup([], [commentRow({ isPrivateDmSent: true })]);
-    await expect(s.service.sendPrivateReply(ORG, "agent-1", "c1", "again")).rejects.toThrow(/already sent/);
+    await expect(s.service.sendPrivateReply(ORG, "agent-1", "c1", "again")).rejects.toMatchObject({ code: "inbox.aPrivateReplyWasAlreadySent" });
     expect(s.calls).toHaveLength(0);
   });
 

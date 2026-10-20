@@ -3,6 +3,11 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
+import { fmtDate, fmtNumber } from "@repo/contracts";
+import { pubT, publicDicts } from "@/lib/i18n/public";
+import { tr } from "@/lib/i18n/lookup";
+
+const t = pubT();
 
 interface RewardCoupon {
   code: string;
@@ -42,9 +47,9 @@ interface UploadedMedia {
 function GoogleOfferCard({ url, storeName }: { url: string; storeName: string }) {
   return (
     <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-center shadow-sm">
-      <p className="text-sm font-bold text-slate-800">আপনার অভিজ্ঞতা Google-এও শেয়ার করতে চান?</p>
+      <p className="text-sm font-bold text-slate-800">{t.reviewPublic.googleOfferTitle}</p>
       <p className="mt-1 text-xs text-slate-600">
-        চাইলে {storeName}-এর Google পেজেও একটি রিভিউ দিতে পারেন — এটি সম্পূর্ণ আপনার ইচ্ছা, না দিলেও কোনো অসুবিধা নেই।
+        {t.reviewPublic.googleOfferPrefix}{storeName}{t.reviewPublic.googleOfferSuffix}
       </p>
       <a
         href={url}
@@ -52,19 +57,19 @@ function GoogleOfferCard({ url, storeName }: { url: string; storeName: string })
         rel="noopener noreferrer"
         className="mt-3 inline-block rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white shadow transition hover:bg-sky-700"
       >
-        ⭐ {storeName}-এর Google পেজে রিভিউ দিন
+        ⭐ {storeName}{t.reviewPublic.googleOfferButtonSuffix}
       </a>
     </div>
   );
 }
 
 const QUICK_TAGS = [
-  "⚡ দ্রুত ডেলিভারি",
-  "💯 ১০০% আসল পণ্য",
-  "👌 চমৎকার প্যাকেজিং",
-  "🤝 আন্তরিক কাস্টমার সার্ভিস",
-  "❤️ কাপড়ের কোয়ালিটি দারুণ",
-  "📦 সাইজ একদম নিখুঁত",
+  t.reviewPublic.tag1,
+  t.reviewPublic.tag2,
+  t.reviewPublic.tag3,
+  t.reviewPublic.tag4,
+  t.reviewPublic.tag5,
+  t.reviewPublic.tag6,
 ];
 
 /**
@@ -111,7 +116,7 @@ export default function PublicReviewPage() {
         if (json.rewardCoupon) setReward(json.rewardCoupon);
         if (json.googleReviewOffer) setGoogleOffer(json.googleReviewOffer);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "রিভিউ লিংকটি কার্যকর নেই বা মেয়াদ উত্তীর্ণ হয়েছে");
+        setError(e instanceof Error ? e.message : t.reviewPublic.linkInvalid);
       }
     })();
   }, [token]);
@@ -126,9 +131,9 @@ export default function PublicReviewPage() {
     setSelectedTags(nextTags);
 
     // Auto append or refresh tags inside comment
-    const baseText = comment.split("\n\nট্যাগ: ")[0].trim();
+    const baseText = comment.split(`\n\n${t.reviewPublic.tagPrefix}`)[0].trim();
     if (nextTags.length > 0) {
-      setComment(baseText ? `${baseText}\n\nট্যাগ: ${nextTags.join(", ")}` : `ট্যাগ: ${nextTags.join(", ")}`);
+      setComment(baseText ? `${baseText}\n\n${t.reviewPublic.tagPrefix}${nextTags.join(", ")}` : `${t.reviewPublic.tagPrefix}${nextTags.join(", ")}`);
     } else {
       setComment(baseText);
     }
@@ -154,19 +159,19 @@ export default function PublicReviewPage() {
         body: JSON.stringify({ kind, contentType: file.type, sizeBytes: file.size }),
       });
       const pre = await preRes.json().catch(() => null);
-      if (!preRes.ok) throw new Error(pre?.message ?? "আপলোড শুরু করা যায়নি");
+      if (!preRes.ok) throw new Error(pre?.message ?? t.reviewPublic.uploadStartFailed);
       const putRes = await fetch(pre.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
-      if (!putRes.ok) throw new Error("ফাইল আপলোড করা যায়নি — আবার চেষ্টা করুন");
+      if (!putRes.ok) throw new Error(t.reviewPublic.uploadFileFailed);
       const doneRes = await fetch(`${API_URL}/public/review/${token}/media/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: pre.key, kind, contentType: file.type, sizeBytes: file.size }),
       });
       const doneJson = await doneRes.json().catch(() => null);
-      if (!doneRes.ok) throw new Error(doneJson?.message ?? "আপলোড সম্পূর্ণ করা যায়নি");
+      if (!doneRes.ok) throw new Error(doneJson?.message ?? t.reviewPublic.uploadCompleteFailed);
       setUploads((u) => [...u, { kind, previewUrl: URL.createObjectURL(file), name: file.name }]);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "আপলোড ব্যর্থ হয়েছে");
+      setUploadError(err instanceof Error ? err.message : t.reviewPublic.uploadFailed);
     } finally {
       setUploading(false);
     }
@@ -174,7 +179,7 @@ export default function PublicReviewPage() {
 
   async function submit() {
     if (!rating) {
-      setError("অনুগ্রহ করে ১–৫ তারার মধ্যে একটি রেটিং বেছে নিন");
+      setError(t.reviewPublic.ratingRequired);
       return;
     }
     setBusy(true);
@@ -186,7 +191,7 @@ export default function PublicReviewPage() {
         body: JSON.stringify({ rating, comment: comment.trim() || undefined }),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.message ?? "পাঠানো যায়নি");
+      if (!res.ok) throw new Error(j?.message ?? t.reviewPublic.submitFailed);
       if (j.rewardCoupon) setReward(j.rewardCoupon);
       // NF8: the Google offer is computed from the STORED review
       // (rating 4–5 + the org's configured link) — re-read the
@@ -202,7 +207,7 @@ export default function PublicReviewPage() {
       } catch { /* no offer shown */ }
       setDone(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : t.reviewPublic.submitFailed);
     } finally {
       setBusy(false);
     }
@@ -216,7 +221,7 @@ export default function PublicReviewPage() {
 
   const accent = data?.branding?.primaryColor ?? undefined;
   const already = data?.rating != null;
-  const storeName = data?.branding?.name ?? data?.business ?? "আমাদের স্টোর";
+  const storeName = data?.branding?.name ?? data?.business ?? t.reviewPublic.storeFallback;
 
   return (
     <main className="mx-auto max-w-xl space-y-5 p-4 sm:p-6">
@@ -232,16 +237,16 @@ export default function PublicReviewPage() {
         <p className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-500" style={accent ? { color: accent } : undefined}>
           {storeName}
         </p>
-        <h1 className="mt-1 text-2xl font-black text-slate-900">⭐ আপনার কেনাকাটার অভিজ্ঞতা</h1>
+        <h1 className="mt-1 text-2xl font-black text-slate-900">{t.reviewPublic.title}</h1>
         {data?.orderNumber ? (
-          <p className="mt-0.5 text-xs font-medium text-slate-500">অর্ডার নম্বর: #{data.orderNumber}</p>
+          <p className="mt-0.5 text-xs font-medium text-slate-500">{t.reviewPublic.orderNumberPrefix}{data.orderNumber}</p>
         ) : null}
       </header>
 
       {!data && !error ? (
         <div className="card p-8 text-center text-sm text-slate-400">
           <div className="mx-auto mb-2 h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-          রিভিউ ফরম লোড হচ্ছে...
+          {t.reviewPublic.formLoading}
         </div>
       ) : null}
 
@@ -259,10 +264,10 @@ export default function PublicReviewPage() {
               {"★★★★★".slice(0, data.rating ?? 0)}
               <span className="text-slate-200">{"★★★★★".slice(data.rating ?? 0)}</span>
             </p>
-            <h2 className="mt-2 text-base font-bold text-slate-800">আপনার রিভিউ ইতিমধ্যে জমা হয়েছে — ধন্যবাদ!</h2>
+            <h2 className="mt-2 text-base font-bold text-slate-800">{t.reviewPublic.alreadyTitle}</h2>
             {data.receivedAt && (
               <p className="mt-1 text-xs text-slate-400">
-                জমা দেওয়ার তারিখ: {new Date(data.receivedAt).toLocaleDateString("bn-BD")}
+                {t.reviewPublic.receivedAtPrefix}{fmtDate("bn", data.receivedAt)}
               </p>
             )}
           </div>
@@ -281,9 +286,9 @@ export default function PublicReviewPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
-                    🎁 লয়ালটি গিফট ভাউচার
+                    {t.reviewPublic.voucherBadge}
                   </span>
-                  <h3 className="mt-1.5 text-base font-black text-slate-900">{reward.discount} কুপন কোড</h3>
+                  <h3 className="mt-1.5 text-base font-black text-slate-900">{reward.discount}{t.reviewPublic.couponCodeSuffix}</h3>
                   <p className="text-xs text-slate-600">{reward.desc}</p>
                 </div>
                 <div className="text-right">
@@ -294,7 +299,7 @@ export default function PublicReviewPage() {
                     onClick={() => copyCouponCode(reward.code)}
                     className="mt-1.5 text-[11px] font-bold text-emerald-700 hover:underline"
                   >
-                    {copiedCoupon ? "✓ কপি হয়েছে!" : "📋 কোড কপি করুন"}
+                    {copiedCoupon ? t.reviewPublic.copied : t.reviewPublic.copyCode}
                   </button>
                 </div>
               </div>
@@ -308,15 +313,15 @@ export default function PublicReviewPage() {
         <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
           {/* Star Rating Selector */}
           <div className="text-center">
-            <p className="mb-2 text-sm font-bold text-slate-700">পণ্য ও ডেলিভারি সেবা কেমন ছিল?</p>
-            <div className="flex justify-center gap-2" role="radiogroup" aria-label="রেটিং">
+            <p className="mb-2 text-sm font-bold text-slate-700">{t.reviewPublic.ratingQuestion}</p>
+            <div className="flex justify-center gap-2" role="radiogroup" aria-label={t.reviewPublic.ratingAria}>
               {[1, 2, 3, 4, 5].map((n) => (
                 <button
                   key={n}
                   type="button"
                   role="radio"
                   aria-checked={rating === n}
-                  aria-label={`${n} তারা`}
+                  aria-label={`${fmtNumber("bn", n)}${t.reviewPublic.starSuffix}`}
                   className={`text-4xl sm:text-5xl leading-none transition-transform hover:scale-110 active:scale-95 ${
                     (hover || rating) >= n ? "text-amber-400" : "text-slate-200"
                   }`}
@@ -330,21 +335,21 @@ export default function PublicReviewPage() {
             </div>
             <p className="mt-1 text-xs text-slate-400">
               {rating === 5
-                ? "🌟 অসাধারণ! দারুণ অভিজ্ঞতা"
+                ? t.reviewPublic.rating5
                 : rating === 4
-                ? "👍 ভালো"
+                ? t.reviewPublic.rating4
                 : rating === 3
-                ? "😐 মোটামুটি"
+                ? t.reviewPublic.rating3
                 : rating > 0
-                ? "👎 সন্তুষ্ট নই"
-                : "রেটিং দিতে তারায় ক্লিক করুন"}
+                ? t.reviewPublic.ratingLow
+                : t.reviewPublic.ratingHint}
             </p>
           </div>
 
           {/* Quick Experience Chips */}
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-2">
-              💡 এক ক্লিকে হাইলাইট যোগ করুন:
+              {t.reviewPublic.chipsLabel}
             </label>
             <div className="flex flex-wrap gap-1.5">
               {QUICK_TAGS.map((tag) => {
@@ -370,7 +375,7 @@ export default function PublicReviewPage() {
           {/* Freeform Comment */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              আপনার মতামত ও পরামর্শ (ঐচ্ছিক)
+              {t.reviewPublic.commentLabel}
             </label>
             <textarea
               className="input w-full text-xs"
@@ -378,7 +383,7 @@ export default function PublicReviewPage() {
               maxLength={1000}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
-              placeholder="পণ্য বা প্যাকেজিং সম্পর্কে আপনার অনুভূতি লিখুন..."
+              placeholder={t.reviewPublic.commentPlaceholder}
             />
           </div>
 
@@ -391,11 +396,11 @@ export default function PublicReviewPage() {
               before that. */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              📸 আনবক্সিং বা পণ্যের ছবি/ভিডিও আপলোড (ঐচ্ছিক)
+              {t.reviewPublic.uploadLabel}
             </label>
             <div className="flex flex-wrap items-center gap-3">
               <label className={`inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition ${uploading ? "opacity-50" : "cursor-pointer hover:bg-slate-100"}`}>
-                <span>{uploading ? "আপলোড হচ্ছে…" : "📁 ছবি/ভিডিও বেছে নিন"}</span>
+                <span>{uploading ? t.reviewPublic.uploading : t.reviewPublic.chooseFile}</span>
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
@@ -409,7 +414,7 @@ export default function PublicReviewPage() {
                   {u.kind === "image" ? (
                     <img
                       src={u.previewUrl}
-                      alt="আপলোড করা ছবি"
+                      alt={t.reviewPublic.uploadedAlt}
                       className="h-12 w-12 rounded-lg object-cover border border-indigo-200 shadow-sm"
                     />
                   ) : (
@@ -425,7 +430,7 @@ export default function PublicReviewPage() {
               ))}
             </div>
             {uploads.length > 0 ? (
-              <p className="mt-1.5 text-[11px] font-medium text-emerald-700">✓ {uploads.length}টি ফাইল আপলোড হয়েছে — রিভিউয়ের সঙ্গে যুক্ত হয়েছে। দোকান অনুমোদন করার পরই এগুলো পাবলিক পেজে দেখা যাবে।</p>
+              <p className="mt-1.5 text-[11px] font-medium text-emerald-700">{tr(publicDicts, "bn", "reviewPublic.uploadedNote", { count: fmtNumber("bn", uploads.length) })}</p>
             ) : null}
             {uploadError ? (
               <p className="mt-1.5 text-[11px] font-medium text-red-600">{uploadError}</p>
@@ -439,7 +444,7 @@ export default function PublicReviewPage() {
             disabled={busy || rating === 0 || uploading}
             onClick={submit}
           >
-            {busy ? "জমা হচ্ছে..." : uploading ? "আপলোড শেষ হওয়ার অপেক্ষা করুন…" : "⭐ রিভিউ জমা দিন ও পুরস্কার জিতুন"}
+            {busy ? t.reviewPublic.submitting : uploading ? t.reviewPublic.waitUpload : t.reviewPublic.submitButton}
           </button>
         </section>
       ) : null}
@@ -450,15 +455,15 @@ export default function PublicReviewPage() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-3xl">
             🎉
           </div>
-          <h2 className="text-xl font-black text-emerald-900">রিভিউ সফলভাবে জমা হয়েছে!</h2>
+          <h2 className="text-xl font-black text-emerald-900">{t.reviewPublic.doneTitle}</h2>
           <p className="text-xs text-emerald-700">
-            আপনার মতামত আমাদের সার্ভিসকে আরও উন্নত করতে সাহায্য করবে। রিভিউ দেওয়ার জন্য আপনার জন্য বিশেষ উপহার:
+            {t.reviewPublic.doneText}
           </p>
 
           {reward && (
             <div className="mx-auto max-w-sm rounded-2xl border-2 border-dashed border-emerald-400 bg-white p-5 shadow-sm">
               <span className="rounded-full bg-emerald-100 px-3 py-0.5 text-xs font-bold text-emerald-800">
-                🎁 {reward.discount} ডিসকাউন্ট উপহার
+                🎁 {reward.discount}{t.reviewPublic.discountGiftSuffix}
               </span>
               <p className="mt-2 text-xs text-slate-600">{reward.desc}</p>
 
@@ -471,10 +476,11 @@ export default function PublicReviewPage() {
                   onClick={() => copyCouponCode(reward.code)}
                   className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow transition hover:bg-emerald-700"
                 >
-                  {copiedCoupon ? "✓ কপিড!" : "কপি"}
+                  {copiedCoupon ? t.reviewPublic.copiedShort : t.reviewPublic.copyShort}
                 </button>
               </div>
-              <p className="mt-2 text-[11px] text-slate-400">পরবর্তী যেকোনো অর্ডারে চেকআউটে এই কোডটি ব্যবহার করুন</p>
+              <p className="mt-2 text-[11px] text-slate-400">{t.reviewPublic.useCodeNote}</p>
+
             </div>
           )}
 

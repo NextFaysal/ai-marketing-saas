@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fmtDate, fmtMoney } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -28,15 +30,16 @@ type RefData = {
 };
 type Ledger = { balanceMinor: string; entries: { id: string; deltaMinor: string; reason: string; expiresAt: string | null; createdAt: string }[] };
 
-const taka = (minor: number | string) => `৳${(Number(minor) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+const taka = (minor: number | string, locale: "bn" | "en" = "bn") => fmtMoney(locale, Number(minor) / 100, { minimumFractionDigits: 2 });
 const REASON_BN: Record<string, string> = {
-  referral_reward: "🎁 রেফারেল রিওয়ার্ড", referral_welcome: "👋 ওয়েলকাম ক্রেডিট",
-  milestone_bonus: "🏆 মাইলস্টোন বোনাস", checkout_credit_spend: "💳 বিলে ক্রেডিট ব্যবহার",
-  referral_clawback: "↩️ রিফান্ডে রিওয়ার্ড ফেরত", credit_expired: "⏰ মেয়াদ শেষে বাদ",
-  admin_adjustment: "🛠️ Admin সমন্বয়",
+  referral_reward: "referralReward2", referral_welcome: "welcomeCredit",
+  milestone_bonus: "milestoneBonus", checkout_credit_spend: "creditUsedOnABill",
+  referral_clawback: "rewardReturnedOnRefund", credit_expired: "removedOnExpiry",
+  admin_adjustment: "adminAdjustment",
 };
 
 export default function ReferralPage() {
+  const { dict, t, locale } = useLocale();
   const [data, setData] = useState<RefData | null>(null);
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [copied, setCopied] = useState("");
@@ -48,7 +51,7 @@ export default function ReferralPage() {
       setData(d);
       const orgId = getOrganizationId();
       if (orgId) setLedger(await apiFetch<Ledger>(`/organizations/${orgId}/billing/credit-ledger`).catch(() => null));
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড হয়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : dict.commerce.didNotLoad); }
   }
   useEffect(() => { void load(); }, []);
 
@@ -57,17 +60,17 @@ export default function ReferralPage() {
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const link = `${origin}/register?ref=${data.code}`;
-  const shareText = encodeURIComponent(`আমি Qosprey AI Marketing ব্যবহার করছি — Facebook/WooCommerce বিক্রেতাদের জন্য AI মার্কেটিং প্ল্যাটফর্ম। আমার লিংক দিয়ে জয়েন করুন: ${link}`);
+  const shareText = encodeURIComponent(t("commerce.iAmUsingQospreyAI", { link: link }));
   const copy = async (text: string, which: string) => {
     await navigator.clipboard.writeText(text).catch(() => undefined);
     setCopied(which); setTimeout(() => setCopied(""), 1500);
   };
   const cfg = data.config;
   const rewardExplain = cfg.mode === "percent"
-    ? `বন্ধুর প্রথম পেমেন্টের ${cfg.percentOfFirstPayment}% ক্রেডিট`
+    ? t("commerce.creditOfTheFriendS", { percentOfFirstPayment: cfg.percentOfFirstPayment })
     : cfg.mode === "per_plan"
-      ? `প্ল্যান অনুযায়ী ক্রেডিট (যেমন GROWTH: ${taka(cfg.perPlanMinor.GROWTH ?? data.rewardMinor)})`
-      : `প্রতিটি পেইড রেফারেলে ${taka(data.rewardMinor)} ক্রেডিট`;
+      ? t("commerce.creditPerPlanEG", { taka: taka(cfg.perPlanMinor.GROWTH ?? data.rewardMinor, locale) })
+      : t("commerce.creditForEveryPaidReferral", { taka: taka(data.rewardMinor, locale) });
   const nextMilestone = cfg.milestones.find((m) => data.stats.rewarded < m.count);
 
   return (
@@ -75,36 +78,34 @@ export default function ReferralPage() {
       <section className="hero-panel p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-white sm:text-2xl">🎁 রেফারেল প্রোগ্রাম</h1>
+            <h1 className="text-xl font-bold text-white sm:text-2xl">{dict.commerce.referralProgram}</h1>
             <p className="mt-1 max-w-xl text-sm text-white/80">
-              বন্ধুকে আমন্ত্রণ জানান — তিনি প্রথম পেমেন্ট করলেই আপনি পাবেন {rewardExplain}
-              {cfg.refereeBonusMinor > 0 ? <>, আর তিনিও পাবেন {taka(cfg.refereeBonusMinor)} ওয়েলকাম ক্রেডিট</> : null}।
-              ক্রেডিট শুধু বিলিংয়ে ব্যবহারযোগ্য — নগদ তোলা যায় না।
-              {cfg.creditExpiryDays > 0 ? <> ক্রেডিটের মেয়াদ {cfg.creditExpiryDays} দিন।</> : null}
+              {dict.commerce.inviteAFriendWhenThey}{rewardExplain}
+              {cfg.refereeBonusMinor > 0 ? <>{dict.commerce.andTheyWillAlsoGet}{taka(cfg.refereeBonusMinor, locale)} {dict.commerce.welcomeCredit2}</> : null}{dict.commerce.creditCanOnlyBeUsed}{cfg.creditExpiryDays > 0 ? <> {dict.commerce.creditValidity}{cfg.creditExpiryDays} {dict.commerce.days6}</> : null}
             </p>
           </div>
-          <span className={`hero-chip ${data.programEnabled ? "" : "opacity-70"}`}>{data.programEnabled ? "✅ প্রোগ্রাম চালু" : "⏸️ প্রোগ্রাম বন্ধ"}</span>
+          <span className={`hero-chip ${data.programEnabled ? "" : "opacity-70"}`}>{data.programEnabled ? dict.commerce.programOn : dict.commerce.programOff}</span>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <code className="rounded-xl bg-white/15 px-3 py-2 text-sm font-bold tracking-wide text-white">{data.code}</code>
-          <button type="button" className="btn-secondary !bg-white/15 !text-white hover:!bg-white/25" onClick={() => void copy(data.code, "code")}>{copied === "code" ? "কপি হয়েছে ✓" : "কোড কপি"}</button>
+          <button type="button" className="btn-secondary !bg-white/15 !text-white hover:!bg-white/25" onClick={() => void copy(data.code, "code")}>{copied === "code" ? dict.commerce.copied : dict.commerce.copyCode}</button>
           <code className="max-w-full truncate rounded-xl bg-white/10 px-3 py-2 text-xs text-white/90">{link}</code>
-          <button type="button" className="btn-secondary !bg-white/15 !text-white hover:!bg-white/25" onClick={() => void copy(link, "link")}>{copied === "link" ? "কপি হয়েছে ✓" : "লিংক কপি"}</button>
+          <button type="button" className="btn-secondary !bg-white/15 !text-white hover:!bg-white/25" onClick={() => void copy(link, "link")}>{copied === "link" ? dict.commerce.copied : dict.commerce.copyLink3}</button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <a className="btn-primary !bg-[#25D366]" target="_blank" rel="noreferrer" href={`https://wa.me/?text=${shareText}`}>WhatsApp এ শেয়ার</a>
-          <a className="btn-primary !bg-[#1877F2]" target="_blank" rel="noreferrer" href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`}>Facebook এ শেয়ার</a>
-          <a className="btn-primary !bg-[#229ED9]" target="_blank" rel="noreferrer" href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${shareText}`}>Telegram এ শেয়ার</a>
+          <a className="btn-primary !bg-[#25D366]" target="_blank" rel="noreferrer" href={`https://wa.me/?text=${shareText}`}>{dict.commerce.shareOnWhatsApp}</a>
+          <a className="btn-primary !bg-[#1877F2]" target="_blank" rel="noreferrer" href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`}>{dict.commerce.shareOnFacebook}</a>
+          <a className="btn-primary !bg-[#229ED9]" target="_blank" rel="noreferrer" href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${shareText}`}>{dict.commerce.shareOnTelegram}</a>
         </div>
       </section>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {[
-          { label: "মোট সাইন আপ", value: String(data.stats.signups), icon: "👥" },
-          { label: "পেমেন্ট করেছে", value: String(data.stats.rewarded), icon: "💳" },
-          { label: "অপেক্ষমাণ", value: String(data.stats.pending), icon: "⏳" },
-          { label: "কনভার্সন", value: data.stats.conversionPercent != null ? `${data.stats.conversionPercent}%` : "—", icon: "📈" },
-          { label: "মোট অর্জিত ক্রেডিট", value: taka(data.stats.earnedMinor), icon: "🎁" },
+          { label: dict.commerce.totalSignUps, value: String(data.stats.signups), icon: "👥" },
+          { label: dict.commerce.havePaid, value: String(data.stats.rewarded), icon: "💳" },
+          { label: dict.commerce.pending, value: String(data.stats.pending), icon: "⏳" },
+          { label: dict.commerce.conversion, value: data.stats.conversionPercent != null ? `${data.stats.conversionPercent}%` : "—", icon: "📈" },
+          { label: dict.commerce.totalCreditEarned, value: taka(data.stats.earnedMinor, locale), icon: "🎁" },
         ].map((s) => (
           <div key={s.label} className="stat-card">
             <div className="stat-icon stat-icon-brand">{s.icon}</div>
@@ -115,7 +116,7 @@ export default function ReferralPage() {
 
       {cfg.milestones.length ? (
         <section className="card p-5">
-          <h2 className="section-title">🏆 মাইলস্টোন বোনাস</h2>
+          <h2 className="section-title">{dict.commerce.milestoneBonus}</h2>
           <div className="mt-3 space-y-3">
             {cfg.milestones.map((m) => {
               const done = data.stats.rewarded >= m.count;
@@ -123,37 +124,37 @@ export default function ReferralPage() {
               return (
                 <div key={m.count}>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-slate-700">{m.count}টি পেইড রেফারেল → বোনাস {taka(m.bonusMinor)}</span>
-                    <span className={done ? "font-bold text-emerald-600" : "text-slate-500"}>{done ? "পেয়ে গেছেন ✓" : `${data.stats.rewarded}/${m.count}`}</span>
+                    <span className="font-medium text-slate-700">{m.count}{dict.commerce.paidReferralsBonus}{taka(m.bonusMinor, locale)}</span>
+                    <span className={done ? "font-bold text-emerald-600" : "text-slate-500"}>{done ? dict.commerce.received3 : `${data.stats.rewarded}/${m.count}`}</span>
                   </div>
                   <div className="meter mt-1"><div className={`meter-fill ${done ? "meter-fill-ok" : ""}`} style={{ width: `${pct}%` }} /></div>
                 </div>
               );
             })}
           </div>
-          {nextMilestone ? <p className="mt-2 text-xs text-slate-400">আর {nextMilestone.count - data.stats.rewarded}টি পেইড রেফারেল হলেই পরের বোনাস।</p> : null}
+          {nextMilestone ? <p className="mt-2 text-xs text-slate-400">{dict.commerce.and}{nextMilestone.count - data.stats.rewarded}{dict.commerce.morePaidReferralsForThe}</p> : null}
         </section>
       ) : null}
 
       <section className="card p-5">
-        <h2 className="section-title">👥 আমার রেফারেলসমূহ</h2>
+        <h2 className="section-title">{dict.commerce.myReferrals}</h2>
         {data.referrals.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">এখনো কেউ আপনার লিংকে সাইন আপ করেননি — লিংকটি শেয়ার করুন!</p>
+          <p className="mt-3 text-sm text-slate-500">{dict.commerce.nobodyHasSignedUpWith}</p>
         ) : (
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
-              <thead><tr className="text-left text-xs text-slate-400"><th className="py-2">ব্যবসা / ব্যক্তি</th><th>প্ল্যান</th><th>অবস্থা</th><th>সাইন আপ</th><th>রিওয়ার্ড</th></tr></thead>
+              <thead><tr className="text-left text-xs text-slate-400"><th className="py-2">{dict.commerce.businessPerson}</th><th>{dict.commerce.plan}</th><th>{dict.commerce.status}</th><th>{dict.commerce.signUp}</th><th>{dict.commerce.reward2}</th></tr></thead>
               <tbody>
                 {data.referrals.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100">
                     <td className="py-2.5">
                       <div className="font-medium text-slate-700">{r.referredOrgName ?? r.referredName ?? "—"}</div>
-                      <div className="text-xs text-slate-400">{r.referredEmail ?? ""}{r.sourceKind === "campaign" ? " · ক্যাম্পেইন" : ""}</div>
+                      <div className="text-xs text-slate-400">{r.referredEmail ?? ""}{r.sourceKind === "campaign" ? dict.commerce.campaign : ""}</div>
                     </td>
                     <td>{r.referredPlan ?? "—"}</td>
-                    <td>{r.status === "rewarded" ? <span className="font-semibold text-emerald-600">✅ পেইড</span> : r.status === "clawed_back" ? <span className="text-red-500">↩️ ফেরত</span> : <span className="text-amber-600">⏳ অপেক্ষমাণ</span>}</td>
-                    <td className="text-slate-500">{new Date(r.createdAt).toLocaleDateString("bn-BD")}</td>
-                    <td className="font-semibold">{r.rewardMinor != null ? taka(r.rewardMinor) : "—"}</td>
+                    <td>{r.status === "rewarded" ? <span className="font-semibold text-emerald-600">{dict.commerce.paid2}</span> : r.status === "clawed_back" ? <span className="text-red-500">{dict.commerce.returned}</span> : <span className="text-amber-600">{dict.commerce.pending2}</span>}</td>
+                    <td className="text-slate-500">{fmtDate(locale, new Date(r.createdAt))}</td>
+                    <td className="font-semibold">{r.rewardMinor != null ? taka(r.rewardMinor, locale) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -165,17 +166,17 @@ export default function ReferralPage() {
       {ledger ? (
         <section className="card p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="section-title">💰 এই ওয়ার্কস্পেসের ক্রেডিট ইতিহাস</h2>
-            <span className="text-sm font-bold text-slate-800">ব্যালান্স: {taka(ledger.balanceMinor)}</span>
+            <h2 className="section-title">{dict.commerce.thisWorkspaceSCreditHistory}</h2>
+            <span className="text-sm font-bold text-slate-800">{dict.commerce.balance3}{taka(ledger.balanceMinor, locale)}</span>
           </div>
           {ledger.entries.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">এখনো কোনো ক্রেডিট লেনদেন রেকর্ড হয়নি। (R1 এর আগের ক্রেডিট লেজারে নেই — ব্যালান্সটাই চূড়ান্ত।)</p>
+            <p className="mt-3 text-sm text-slate-500">{dict.commerce.noCreditTransactionsRecordedYet}</p>
           ) : (
             <ul className="mt-3 divide-y divide-slate-100 text-sm">
               {ledger.entries.map((e) => (
                 <li key={e.id} className="flex items-center justify-between py-2">
-                  <span>{REASON_BN[e.reason] ?? e.reason} <span className="text-xs text-slate-400">· {new Date(e.createdAt).toLocaleDateString("bn-BD")}{e.expiresAt ? ` · মেয়াদ ${new Date(e.expiresAt).toLocaleDateString("bn-BD")}` : ""}</span></span>
-                  <span className={`font-bold ${Number(e.deltaMinor) >= 0 ? "text-emerald-600" : "text-red-500"}`}>{Number(e.deltaMinor) >= 0 ? "+" : ""}{taka(e.deltaMinor)}</span>
+                  <span>{REASON_BN[e.reason] ? dict.commerce[REASON_BN[e.reason] as keyof typeof dict.commerce] : e.reason} <span className="text-xs text-slate-400">· {fmtDate(locale, new Date(e.createdAt))}{e.expiresAt ? t("commerce.expiry3", { p0: fmtDate(locale, new Date(e.expiresAt)) }) : ""}</span></span>
+                  <span className={`font-bold ${Number(e.deltaMinor) >= 0 ? "text-emerald-600" : "text-red-500"}`}>{Number(e.deltaMinor) >= 0 ? "+" : ""}{taka(e.deltaMinor, locale)}</span>
                 </li>
               ))}
             </ul>

@@ -10,8 +10,11 @@ import {
   convertBnDigitsToEn,
 } from "@/lib/live-selling";
 import { getOrganizationId } from "@/lib/org";
+import { fmtMoney, fmtMoneyMinor, fmtNumber, fmtTime } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 export default function SocialSellingPage() {
+  const { t, locale } = useLocale();
   const [isLiveActive, setIsLiveActive] = useState(true);
   const [platform, setPlatform] = useState<"facebook" | "tiktok" | "instagram">("facebook");
   const [liveDurationSeconds, setLiveDurationSeconds] = useState(2054); // ~34 mins
@@ -100,18 +103,18 @@ export default function SocialSellingPage() {
 
   const totalGmv = useMemo(() => {
     const totalMinor = capturedOrders.reduce((sum, ord) => sum + BigInt(ord.totalPriceMinor), 0n);
-    return `৳${(Number(totalMinor) / 100).toLocaleString("en-IN")}`;
-  }, [capturedOrders]);
+    return fmtMoneyMinor(locale, totalMinor);
+  }, [capturedOrders, locale]);
 
   const handleSimulate = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!simComment.trim()) return;
 
-    const parsed = parseLiveComment(simComment, rules, "আমাদের শপ");
+    const parsed = parseLiveComment(simComment, rules, t("misc.zzSocialShopFallback"), undefined, locale);
     setSimResult(parsed);
 
     if (parsed) {
-      setSimFeedback("✓ লাইভ কমেন্ট থেকে সফলভাবে অর্ডার ক্যাপচার করা হয়েছে!");
+      setSimFeedback(t("social.ssSimOk"));
       // add to captured list
       setCapturedOrders((prev) => [parsed, ...prev]);
       // decrement rule stock
@@ -123,7 +126,7 @@ export default function SocialSellingPage() {
         )
       );
     } else {
-      setSimFeedback("⚠️ কোনো নিবন্ধিত পণ্যের কোড বা কি-ওয়ার্ড পাওয়া যায়নি।");
+      setSimFeedback(t("social.ssSimFail"));
     }
     setTimeout(() => setSimFeedback(""), 4000);
   };
@@ -153,11 +156,11 @@ export default function SocialSellingPage() {
 
   const openWhatsAppLink = (order: ParsedLiveOrder) => {
     if (!order.customerPhone) {
-      alert("এই কমেন্টে কোনো ফোন নম্বর পাওয়া যায়নি। আপনি মেসেঞ্জারে রিপ্লাই দিতে পারেন।");
+      alert(t("social.ssNoPhoneAlert"));
       return;
     }
     const clean = convertBnDigitsToEn(order.customerPhone).replace(/[^0-9]/g, "");
-    const msg = order.whatsappReplyMessage || `আসসালামু আলাইকুম! লাইভে আপনার অর্ডারকৃত ${order.rule.productName} এর লিংক: ${order.checkoutUrl}`;
+    const msg = order.whatsappReplyMessage || t("social.ssWaFallback", { product: order.rule.productName, url: order.checkoutUrl });
     window.open(`https://wa.me/${clean}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
@@ -173,20 +176,18 @@ export default function SocialSellingPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="page-title">🔴 সোশ্যাল লাইভ সেলিং ও কমেন্ট-টু-অর্ডার</h1>
+            <h1 className="page-title">{t("social.ssTitle")}</h1>
             {isLiveActive ? (
               <span className="flex items-center gap-1.5 rounded-full bg-red-100 px-3 py-0.5 text-xs font-bold text-red-700 animate-pulse">
-                <span className="h-2 w-2 rounded-full bg-red-600" /> লাইভ অ্যাক্টিভ ({formatTimer(liveDurationSeconds)})
+                <span className="h-2 w-2 rounded-full bg-red-600" /> {t("social.ssLiveActive", { time: formatTimer(liveDurationSeconds) })}
               </span>
             ) : (
               <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                ⚪ লাইভ শেষ
+                {t("social.ssLiveEnded")}
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500">
-            ফেসবুক, টিকটক ও ইনস্টাগ্রাম লাইভ চলার সময় গ্রাহকের কমেন্ট (যেমন: &quot;101 2 ta nibo 017...&quot;) স্বয়ংক্রিয়ভাবে অর্ডারে রূপান্তর করুন
-          </p>
+          <p className="text-xs text-slate-500">{t("social.ssSub")}</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -226,7 +227,7 @@ export default function SocialSellingPage() {
                 : "bg-red-600 text-white hover:bg-red-700"
             }`}
           >
-            {isLiveActive ? "⏹️ লাইভ শেষ করুন" : "🔴 লাইভ শুরু করুন"}
+            {isLiveActive ? t("social.ssEndLive") : t("social.ssStartLive")}
           </button>
         </div>
       </div>
@@ -234,27 +235,27 @@ export default function SocialSellingPage() {
       {/* Realtime Live KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="card border-l-4 border-l-red-600 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">লাইভ সেশন বুকড সেলস</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t("social.ssKpiSalesLabel")}</p>
           <p className="mt-1 text-2xl font-black text-slate-900">{totalGmv}</p>
-          <p className="mt-1 text-xs text-emerald-600 font-medium">লাইভ চলাকালীন নিশ্চিত হওয়া অর্ডার</p>
+          <p className="mt-1 text-xs text-emerald-600 font-medium">{t("social.ssKpiSalesSub")}</p>
         </div>
 
         <div className="card border-l-4 border-l-blue-600 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">মোট ক্যাপচার্ড অর্ডার</p>
-          <p className="mt-1 text-2xl font-black text-blue-700">{capturedOrders.length} টি</p>
-          <p className="mt-1 text-xs text-slate-500">কমেন্ট পার্স করে সংরক্ষিত অর্ডার</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t("social.ssKpiOrdersLabel")}</p>
+          <p className="mt-1 text-2xl font-black text-blue-700">{t("social.ssCountItems", { count: fmtNumber(locale, capturedOrders.length) })}</p>
+          <p className="mt-1 text-xs text-slate-500">{t("social.ssKpiOrdersSub")}</p>
         </div>
 
         <div className="card border-l-4 border-l-emerald-600 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">সক্রিয় প্রডাক্ট কি-ওয়ার্ড</p>
-          <p className="mt-1 text-2xl font-black text-emerald-700">{rules.filter((r) => r.isActive).length} টি</p>
-          <p className="mt-1 text-xs text-slate-500">স্টক রিজার্ভেশন সক্রিয়</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t("social.ssKpiKeywordsLabel")}</p>
+          <p className="mt-1 text-2xl font-black text-emerald-700">{t("social.ssCountItems", { count: fmtNumber(locale, rules.filter((r) => r.isActive).length) })}</p>
+          <p className="mt-1 text-xs text-slate-500">{t("social.ssKpiKeywordsSub")}</p>
         </div>
 
         <div className="card border-l-4 border-l-purple-600 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">কমেন্ট কনভার্সন রেট</p>
-          <p className="mt-1 text-2xl font-black text-purple-700">৮৪.২%</p>
-          <p className="mt-1 text-xs text-purple-600 font-medium">কমেন্ট থেকে সরাসরি চেকআউট রূপান্তর</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t("social.ssKpiConvLabel")}</p>
+          <p className="mt-1 text-2xl font-black text-purple-700">{fmtNumber(locale, 84.2, { maximumFractionDigits: 1 })}%</p>
+          <p className="mt-1 text-xs text-purple-600 font-medium">{t("social.ssKpiConvSub")}</p>
         </div>
       </div>
 
@@ -266,20 +267,20 @@ export default function SocialSellingPage() {
           <div className="card space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">🏷️ লাইভ প্রডাক্ট কি-ওয়ার্ড ও স্টক অ্যালোকেশন</h3>
-                <p className="text-xs text-slate-500">গ্রাহকরা লাইভে এই কোড লিখলেই স্বয়ংক্রিয়ভাবে অর্ডার কার্ট তৈরি হবে</p>
+                <h3 className="text-sm font-bold text-slate-900">{t("social.ssKwTitle")}</h3>
+                <p className="text-xs text-slate-500">{t("social.ssKwSub")}</p>
               </div>
               <button
                 onClick={() => setShowAddRuleModal(true)}
                 className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold"
               >
-                + নতুন কি-ওয়ার্ড যোগ করুন
+                {t("social.ssAddKeyword")}
               </button>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               {rules.map((rule) => {
-                const priceTaka = (Number(rule.priceMinor) / 100).toLocaleString("en-IN");
+                const priceTaka = fmtMoney(locale, Number(rule.priceMinor) / 100);
                 return (
                   <div
                     key={rule.id}
@@ -299,7 +300,7 @@ export default function SocialSellingPage() {
                               : "bg-red-100 text-red-800"
                           }`}
                         >
-                          স্টক: {rule.stockQuantity}টি
+                          {t("social.ssStock", { count: fmtNumber(locale, rule.stockQuantity) })}
                         </span>
                       </div>
                       <h4 className="mt-2 text-xs font-bold text-slate-800 truncate">{rule.productName}</h4>
@@ -307,9 +308,9 @@ export default function SocialSellingPage() {
                     </div>
 
                     <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-                      <span className="font-extrabold text-slate-900">৳{priceTaka}</span>
+                      <span className="font-extrabold text-slate-900">{priceTaka}</span>
                       <span className="text-[10px] text-indigo-600">
-                        উদাহরণ: &quot;{rule.keyword} 1 ta&quot;
+                        {t("social.ssExample", { kw: rule.keyword })}
                       </span>
                     </div>
                   </div>
@@ -322,18 +323,18 @@ export default function SocialSellingPage() {
           <div className="card space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">📥 লাইভে ক্যাপচার্ড অর্ডারসমূহ ({capturedOrders.length}টি)</h3>
-                <p className="text-xs text-slate-500">সরাসরি হোয়াটসঅ্যাপে ক্লিক করে চেকআউট লিংক পাঠান বা অর্ডার কনফার্ম করুন</p>
+                <h3 className="text-sm font-bold text-slate-900">{t("social.ssOrdersTitle", { count: fmtNumber(locale, capturedOrders.length) })}</h3>
+                <p className="text-xs text-slate-500">{t("social.ssOrdersSub")}</p>
               </div>
               <button
                 onClick={() => {
                   const csv = capturedOrders
                     .map(
                       (o) =>
-                        `"${o.rule.productName}",${o.quantity},"${o.customerPhone || ""}",৳${(Number(o.totalPriceMinor) / 100).toFixed(0)},"${o.rawComment}"`
+                        `"${o.rule.productName}",${o.quantity},"${o.customerPhone || ""}",${fmtMoney(locale, Number(o.totalPriceMinor) / 100)},"${o.rawComment}"`
                     )
                     .join("\n");
-                  const blob = new Blob([`পণ্য,পরিমাণ,ফোন,মূল্য,কমেন্ট\n${csv}`], { type: "text/csv;charset=utf-8;" });
+                  const blob = new Blob([`${t("social.ssCsvHeader")}\n${csv}`], { type: "text/csv;charset=utf-8;" });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;
@@ -342,7 +343,7 @@ export default function SocialSellingPage() {
                 }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
               >
-                📤 CSV ডাউনলোড
+                {t("social.ssCsvDownload")}
               </button>
             </div>
 
@@ -350,12 +351,12 @@ export default function SocialSellingPage() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b bg-slate-50 font-semibold text-slate-600">
                   <tr>
-                    <th className="py-2.5 px-3">মূল কমেন্ট</th>
-                    <th className="py-2.5 px-3">ম্যাচড প্রডাক্ট</th>
-                    <th className="py-2.5 px-3">পরিমাণ</th>
-                    <th className="py-2.5 px-3">ফোন নম্বর</th>
-                    <th className="py-2.5 px-3">মোট টাকা</th>
-                    <th className="py-2.5 px-3 text-right">অ্যাকশন</th>
+                    <th className="py-2.5 px-3">{t("social.ssThComment")}</th>
+                    <th className="py-2.5 px-3">{t("social.ssThProduct")}</th>
+                    <th className="py-2.5 px-3">{t("social.ssThQty")}</th>
+                    <th className="py-2.5 px-3">{t("social.ssThPhone")}</th>
+                    <th className="py-2.5 px-3">{t("social.ssThTotal")}</th>
+                    <th className="py-2.5 px-3 text-right">{t("social.ssThAction")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -366,7 +367,7 @@ export default function SocialSellingPage() {
                           &quot;{ord.rawComment}&quot;
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          {new Date(ord.createdAt).toLocaleTimeString("bn-BD")}
+                          {fmtTime(locale, ord.createdAt)}
                         </div>
                       </td>
 
@@ -380,10 +381,10 @@ export default function SocialSellingPage() {
                       </td>
 
                       <td className="py-3 px-3">
-                        <span className="font-bold text-slate-800">{ord.quantity} টি</span>
+                        <span className="font-bold text-slate-800">{t("social.ssQtyValue", { count: fmtNumber(locale, ord.quantity) })}</span>
                         {ord.extractedSize ? (
                           <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold">
-                            সাইজ: {ord.extractedSize}
+                            {t("social.ssSizePrefix", { size: ord.extractedSize })}
                           </span>
                         ) : null}
                       </td>
@@ -392,13 +393,13 @@ export default function SocialSellingPage() {
                         {ord.customerPhone ? (
                           <span className="font-mono text-emerald-700 font-semibold">{ord.customerPhone}</span>
                         ) : (
-                          <span className="text-[10px] text-amber-600 italic">ফোনের অপেক্ষায়</span>
+                          <span className="text-[10px] text-amber-600 italic">{t("social.ssWaitingPhone")}</span>
                         )}
                       </td>
 
                       <td className="py-3 px-3">
                         <span className="font-bold text-slate-900">
-                          ৳{((Number(ord.totalPriceMinor) || 0) / 100).toLocaleString("en-IN")}
+                          {fmtMoney(locale, (Number(ord.totalPriceMinor) || 0) / 100)}
                         </span>
                       </td>
 
@@ -407,7 +408,7 @@ export default function SocialSellingPage() {
                           {ord.customerPhone ? (
                             <button
                               onClick={() => openWhatsAppLink(ord)}
-                              title="সরাসরি হোয়াটসঅ্যাপে চেকআউট লিংক পাঠান"
+                              title={t("social.ssWaTitle")}
                               className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100"
                             >
                               <span>💬</span> WhatsApp
@@ -415,10 +416,10 @@ export default function SocialSellingPage() {
                           ) : null}
                           <button
                             onClick={() => copyCheckoutUrl(ord.checkoutUrl)}
-                            title="ইনস্ট্যান্ট চেকআউট লিংক কপি করুন"
+                            title={t("social.ssCopyTitle")}
                             className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
                           >
-                            {copiedLink === ord.checkoutUrl ? "✓ লিংক কপিড" : "📋 লিংক"}
+                            {copiedLink === ord.checkoutUrl ? t("social.ssLinkCopied") : t("social.ssLink")}
                           </button>
                         </div>
                       </td>
@@ -436,14 +437,14 @@ export default function SocialSellingPage() {
             <div className="flex items-center gap-2">
               <span className="text-xl">⚡</span>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">লাইভ কমেন্ট পার্সার সিমুলেটর</h3>
-                <p className="text-[11px] text-slate-500">কমেন্ট লিখে তাৎক্ষণিক ম্যাচিং ও চেকআউট লিংক পরীক্ষা করুন</p>
+                <h3 className="text-sm font-bold text-slate-900">{t("social.ssSimTitle")}</h3>
+                <p className="text-[11px] text-slate-500">{t("social.ssSimSub")}</p>
               </div>
             </div>
 
             <form onSubmit={handleSimulate} className="mt-4 space-y-3">
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700">কমেন্টকারীর নাম</label>
+                <label className="block text-[11px] font-semibold text-slate-700">{t("social.ssAuthorLabel")}</label>
                 <input
                   type="text"
                   value={simAuthor}
@@ -453,12 +454,12 @@ export default function SocialSellingPage() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-700">লাইভ কমেন্টের টেক্সট</label>
+                <label className="block text-[11px] font-semibold text-slate-700">{t("social.ssCommentLabel")}</label>
                 <textarea
                   rows={2}
                   value={simComment}
                   onChange={(e) => setSimComment(e.target.value)}
-                  placeholder="যেমন: 101 2 ta nibo 017xxxxxxxx size 42"
+                  placeholder={t("misc.zzSocialSimPlaceholder")}
                   className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 text-xs font-mono"
                 />
               </div>
@@ -483,7 +484,7 @@ export default function SocialSellingPage() {
               </div>
 
               <button type="submit" className="btn-primary w-full py-2.5 text-xs font-bold shadow-sm">
-                ⚡ পার্স ও অর্ডার তৈরি করুন
+                {t("social.ssParseBtn")}
               </button>
             </form>
 
@@ -501,35 +502,35 @@ export default function SocialSellingPage() {
             {simResult ? (
               <div className="mt-4 rounded-xl border border-emerald-200 bg-white p-3.5 shadow-sm space-y-2.5">
                 <div className="flex items-center justify-between border-b pb-2">
-                  <span className="font-bold text-xs text-slate-800">ম্যাচিং ফলাফল:</span>
+                  <span className="font-bold text-xs text-slate-800">{t("social.ssResultTitle")}</span>
                   <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
-                    #{simResult.keywordMatched} কনফার্মড
+                    {t("social.ssConfirmed", { kw: simResult.keywordMatched })}
                   </span>
                 </div>
 
                 <div className="text-xs space-y-1">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">পণ্য:</span>
+                    <span className="text-slate-500">{t("social.ssProductLabel")}</span>
                     <span className="font-semibold text-slate-800">{simResult.rule.productName}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">পরিমাণ:</span>
-                    <span className="font-bold">{simResult.quantity} টি</span>
+                    <span className="text-slate-500">{t("social.ssQtyLabel")}</span>
+                    <span className="font-bold">{t("social.ssQtyValue", { count: fmtNumber(locale, simResult.quantity) })}</span>
                   </div>
                   {simResult.extractedSize ? (
                     <div className="flex justify-between">
-                      <span className="text-slate-500">সাইজ:</span>
+                      <span className="text-slate-500">{t("social.ssSizeLabel")}</span>
                       <span className="font-bold text-indigo-600">{simResult.extractedSize}</span>
                     </div>
                   ) : null}
                   <div className="flex justify-between">
-                    <span className="text-slate-500">গ্রাহকের ফোন:</span>
-                    <span className="font-mono font-bold text-emerald-700">{simResult.customerPhone || "নেই"}</span>
+                    <span className="text-slate-500">{t("social.ssPhoneLabel")}</span>
+                    <span className="font-mono font-bold text-emerald-700">{simResult.customerPhone || t("social.ssNone")}</span>
                   </div>
                   <div className="flex justify-between border-t pt-1 font-bold">
-                    <span>মোট প্রদেয়:</span>
+                    <span>{t("social.ssTotalDue")}</span>
                     <span className="text-indigo-700">
-                      ৳{((Number(simResult.totalPriceMinor) || 0) / 100).toLocaleString("en-IN")}
+                      {fmtMoney(locale, (Number(simResult.totalPriceMinor) || 0) / 100)}
                     </span>
                   </div>
                 </div>
@@ -545,7 +546,7 @@ export default function SocialSellingPage() {
                       onClick={() => openWhatsAppLink(simResult)}
                       className="btn-primary flex-1 py-1.5 text-[11px] font-bold"
                     >
-                      💬 WhatsApp-এ পাঠান
+                      {t("social.ssSendWa")}
                     </button>
                   ) : null}
                   <button
@@ -553,7 +554,7 @@ export default function SocialSellingPage() {
                     onClick={() => copyCheckoutUrl(simResult.checkoutUrl)}
                     className="flex-1 rounded-lg border border-slate-200 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    {copiedLink === simResult.checkoutUrl ? "✓ লিংক কপিড!" : "📋 লিংক কপি"}
+                    {copiedLink === simResult.checkoutUrl ? t("social.ssCopiedBang") : t("social.ssCopyLink")}
                   </button>
                 </div>
               </div>
@@ -562,11 +563,11 @@ export default function SocialSellingPage() {
 
           {/* Quick Setup Guide Card */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs space-y-2">
-            <h4 className="font-bold text-slate-800">💡 লাইভ সেলিং সফল করার নিয়মাবলী:</h4>
+            <h4 className="font-bold text-slate-800">{t("social.ssTipsTitle")}</h4>
             <ul className="list-disc pl-4 space-y-1 text-slate-600 text-[11px]">
-              <li>লাইভ চলাকালে লাইভ স্ক্রিনে পণ্যের কোড (যেমন: &quot;Code: 101&quot;) লিখে রাখুন।</li>
-              <li>গ্রাহকদের বলুন: &quot;অর্ডার করতে কোড, পরিমাণ ও ফোন নম্বর লিখে কমেন্ট করুন&quot;।</li>
-              <li>অটো-পার্সার তাৎক্ষণিকভাবে মেসেঞ্জার বা হোয়াটসঅ্যাপে চেকআউট লিংক পাঠিয়ে দেবে।</li>
+              <li>{t("social.ssTip1")}</li>
+              <li>{t("social.ssTip2")}</li>
+              <li>{t("social.ssTip3")}</li>
             </ul>
           </div>
         </div>
@@ -577,7 +578,7 @@ export default function SocialSellingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
-              <h3 className="text-sm font-bold text-slate-900">🏷️ নতুন লাইভ প্রডাক্ট কি-ওয়ার্ড যোগ করুন</h3>
+              <h3 className="text-sm font-bold text-slate-900">{t("social.ssModalTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setShowAddRuleModal(false)}
@@ -589,24 +590,24 @@ export default function SocialSellingPage() {
 
             <form onSubmit={handleAddRule} className="space-y-3 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700">কি-ওয়ার্ড / ট্রিগার কোড</label>
+                <label className="block font-semibold text-slate-700">{t("social.ssKwLabel")}</label>
                 <input
                   type="text"
                   value={newKeyword}
                   onChange={(e) => setNewKeyword(e.target.value)}
-                  placeholder="যেমন: 104, PANJABI, DRESS-RED"
+                  placeholder={t("social.ssKwPlaceholder")}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 uppercase font-mono font-bold"
                   required
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700">পণ্যের নাম</label>
+                <label className="block font-semibold text-slate-700">{t("social.ssProductNameLabel")}</label>
                 <input
                   type="text"
                   value={newProductName}
                   onChange={(e) => setNewProductName(e.target.value)}
-                  placeholder="যেমন: ডিজাইনার শিফন শাড়ি"
+                  placeholder={t("social.ssProductNamePlaceholder")}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 font-medium"
                   required
                 />
@@ -614,7 +615,7 @@ export default function SocialSellingPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700">লাইভ মূল্য (৳)</label>
+                  <label className="block font-semibold text-slate-700">{t("social.ssPriceLabel")}</label>
                   <input
                     type="number"
                     value={newPrice}
@@ -625,7 +626,7 @@ export default function SocialSellingPage() {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700">লাইভ স্টক সংখ্যা</label>
+                  <label className="block font-semibold text-slate-700">{t("social.ssStockLabel")}</label>
                   <input
                     type="number"
                     value={newStock}
@@ -638,7 +639,7 @@ export default function SocialSellingPage() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700">SKU কোড (ঐচ্ছিক)</label>
+                <label className="block font-semibold text-slate-700">{t("social.ssSkuLabel")}</label>
                 <input
                   type="text"
                   value={newSku}
@@ -654,10 +655,10 @@ export default function SocialSellingPage() {
                   onClick={() => setShowAddRuleModal(false)}
                   className="flex-1 rounded-lg border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
-                  বাতিল
+                  {t("common.cancel")}
                 </button>
                 <button type="submit" className="btn-primary flex-1 py-2 text-xs font-semibold">
-                  যোগ করুন
+                  {t("common.add")}
                 </button>
               </div>
             </form>

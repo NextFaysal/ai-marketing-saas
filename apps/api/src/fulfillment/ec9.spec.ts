@@ -210,8 +210,8 @@ describe("EC9 Returns — full cycle", () => {
 
   it("a bad token is a 404, and staff actions on foreign orgs are 404", async () => {
     const s = setup();
-    await expect(s.returns.publicView("nope")).rejects.toThrow("not found");
+    await expect(s.returns.publicView("nope")).rejects.toMatchObject({ code: "fulfillment.returnLinkNotFound" });
     const link = await s.returns.createLink("org-1", "u1", "o1");
-    await expect(s.returns.decide("org-2", "u1", link.id, { decision: "approve" })).rejects.toThrow("not found");
+    await expect(s.returns.decide("org-2", "u1", link.id, { decision: "approve" })).rejects.toMatchObject({ code: "fulfillment.returnRequestNotFoundInThis" });
   });
 });

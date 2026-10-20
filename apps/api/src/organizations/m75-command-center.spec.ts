@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -39,7 +40,7 @@ describe("M75 operational profile", () => {
   it("a malformed payment number and bogus hours are refused", async () => {
     const { svc } = db();
     await expect(svc.updateBusinessProfile("org", "boss", { bkashNumber: "12345" } as any))
-      .rejects.toThrow(BadRequestException);
+      .rejects.toThrow(ApiException);
     await expect(svc.updateBusinessProfile("org", "boss", {
       businessHours: { timezone: "Asia/Dhaka", windows: { sat: [["25:00", "26:00"]] } },
     } as any)).rejects.toThrow(/উইন্ডো/);

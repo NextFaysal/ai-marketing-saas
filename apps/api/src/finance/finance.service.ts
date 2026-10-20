@@ -1,4 +1,6 @@
 import { Injectable, Optional } from "@nestjs/common";
+import { badRequest, notFound } from "../i18n";
+import { catalogText, resolveDocumentLocale, type ApiLocale } from "../i18n/catalog/send-locale";
 import { AuditService } from "../audit/audit.service";
 import { AccountingService } from "../accounting/accounting.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -42,18 +44,18 @@ function pageArgs(page?: string, pageSize?: string): { page: number; pageSize: n
 
 /** A merchant date (YYYY-MM-DD) → the Dhaka-midnight instant. */
 export function parseSpentAt(raw: unknown): Date {
-  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error("খরচের তারিখ YYYY-MM-DD আকারে দিন");
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw badRequest("finance.expense.dateFormat");
   const d = new Date(`${raw}T00:00:00+06:00`);
-  if (Number.isNaN(d.getTime()) || dhakaDateKey(d) !== raw) throw new Error("খরচের তারিখটি সঠিক নয়");
+  if (Number.isNaN(d.getTime()) || dhakaDateKey(d) !== raw) throw badRequest("finance.expense.dateInvalid");
   return d;
 }
 
 export function parseAmountMinor(raw: unknown): bigint {
   let v: bigint;
   try { v = toBig(typeof raw === "string" || typeof raw === "number" || typeof raw === "bigint" ? (raw as any) : "__bad__"); }
-  catch { throw new Error("পরিমাণটি সঠিক সংখ্যা নয়"); }
-  if (v <= 0n) throw new Error("পরিমাণ শূন্যের বেশি হতে হবে");
-  if (v > MAX_EXPENSE_MINOR) throw new Error("পরিমাণটি অস্বাভাবিক বড়");
+  catch { throw badRequest("finance.expense.amountNotNumber"); }
+  if (v <= 0n) throw badRequest("finance.expense.amountMustBePositive");
+  if (v > MAX_EXPENSE_MINOR) throw badRequest("finance.expense.amountTooLarge");
   return v;
 }
 
@@ -126,25 +128,25 @@ export class FinanceService {
   private validateExpenseBody(body: any, partial: boolean): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (!partial || body.category !== undefined) {
-      if (!EXPENSE_CATEGORIES.includes(body.category)) throw new Error("খরচের শ্রেণিটি তালিকা থেকে বেছে নিন");
+      if (!EXPENSE_CATEGORIES.includes(body.category)) throw badRequest("finance.expense.categoryFromList");
       out.category = body.category;
     }
     if (!partial || body.amountMinor !== undefined) out.amountMinor = parseAmountMinor(body.amountMinor);
     if (!partial || body.spentAt !== undefined) out.spentAt = parseSpentAt(body.spentAt);
     if (body.note !== undefined) {
-      if (body.note !== null && typeof body.note !== "string") throw new Error("নোট লেখা হতে হবে");
+      if (body.note !== null && typeof body.note !== "string") throw badRequest("finance.expense.noteMustBeString");
       out.note = body.note === null ? null : String(body.note).slice(0, 500);
     }
     if (body.paymentMethod !== undefined) {
-      if (body.paymentMethod !== null && !EXPENSE_PAYMENT_METHODS.includes(body.paymentMethod)) throw new Error("পরিশোধের মাধ্যমটি তালিকা থেকে বেছে নিন");
+      if (body.paymentMethod !== null && !EXPENSE_PAYMENT_METHODS.includes(body.paymentMethod)) throw badRequest("finance.expense.paymentMethodFromList");
       out.paymentMethod = body.paymentMethod;
     }
     if (body.receiptUrl !== undefined) {
       if (body.receiptUrl === null || body.receiptUrl === "") out.receiptUrl = null;
       else {
         let u: URL;
-        try { u = new URL(String(body.receiptUrl)); } catch { throw new Error("রসিদের লিংকটি সঠিক URL নয়"); }
-        if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("রসিদের লিংক http(s) হতে হবে");
+        try { u = new URL(String(body.receiptUrl)); } catch { throw badRequest("finance.expense.receiptUrlInvalid"); }
+        if (u.protocol !== "http:" && u.protocol !== "https:") throw badRequest("finance.expense.receiptUrlMustBeHttp");
         out.receiptUrl = u.toString();
       }
     }
@@ -181,7 +183,7 @@ export class FinanceService {
 
   async updateExpense(organizationId: string, actorId: string | undefined, id: string, body: any) {
     const existing = await this.t("expense").findFirst({ where: { id, organizationId } });
-    if (!existing) throw new Error("খরচের রেকর্ডটি পাওয়া যায়নি");
+    if (!existing) throw notFound("finance.expense.notFound");
     const data = this.validateExpenseBody(body ?? {}, true);
     const row = await this.t("expense").update({ where: { id }, data });
     await this.audit.log({ organizationId, userId: actorId, action: "finance.expense_updated", entityType: "Expense", entityId: id, metadata: { fields: Object.keys(data) } }).catch(() => undefined);
@@ -190,7 +192,7 @@ export class FinanceService {
 
   async deleteExpense(organizationId: string, actorId: string | undefined, id: string) {
     const existing = await this.t("expense").findFirst({ where: { id, organizationId } });
-    if (!existing) throw new Error("খরচের রেকর্ডটি পাওয়া যায়নি");
+    if (!existing) throw notFound("finance.expense.notFound");
     await this.t("expense").delete({ where: { id } });
     await this.audit.log({ organizationId, userId: actorId, action: "finance.expense_deleted", entityType: "Expense", entityId: id, metadata: { category: existing.category, amountMinor: toBig(existing.amountMinor).toString() } }).catch(() => undefined);
     return { ok: true };
@@ -474,7 +476,7 @@ export class FinanceService {
         const { rows, totals } = await this.reports.refundLedgerRows(organizationId, range);
         return { kind: "refunds", range: { from: range.from, to: range.to }, rows, totals };
       }
-      default: throw new Error("লেজারের ধরনটি পাওয়া যায়নি");
+      default: throw notFound("finance.ledgerTypeNotFound");
     }
   }
 
@@ -503,7 +505,7 @@ export class FinanceService {
    * reality account. Refunds with NO recorded amount are skipped
    * and the skip count is stated in the export notes.
    */
-  async glRows(organizationId: string, range: FinanceRange) {
+  async glRows(organizationId: string, range: FinanceRange, locale: ApiLocale = "bn") {
     const legs: Array<{ date: string; account: string; debit: bigint; credit: bigint; memo: string }> = [];
     const push = (date: string, account: string, debit: bigint, credit: bigint, memo: string) => {
       if (debit === 0n && credit === 0n) return;
@@ -528,7 +530,7 @@ export class FinanceService {
     };
     for (const o of sold) {
       const date = dhakaDateKey(orderEffectiveDate(o));
-      const memo = `অর্ডার ${o.externalNumber ?? o.id}`;
+      const memo = catalogText("finance.gl.memoOrder", locale, { ref: o.externalNumber ?? o.id });
       const total = toBig(o.totalMinor), discount = toBig(o.discountMinor);
       const subtotal = toBig(o.subtotalMinor), shipping = toBig(o.shippingMinor), tax = toBig(o.taxMinor);
       push(date, realityOf(o), total, 0n, memo);
@@ -545,7 +547,7 @@ export class FinanceService {
       const fee = toBig(tx.feeMinor);
       if (fee <= 0n) continue;
       const date = dhakaDateKey(new Date(tx.updatedAt));
-      const memo = `গেটওয়ে ফি · ${String(tx.provider ?? "")} ${String(tx.providerTxnId ?? tx.id)}`;
+      const memo = catalogText("finance.gl.memoGatewayFee", locale, { provider: String(tx.provider ?? ""), ref: String(tx.providerTxnId ?? tx.id) });
       push(date, "Gateway Fees", fee, 0n, memo);
       push(date, "Gateway Clearing", 0n, fee, memo);
     }
@@ -555,7 +557,7 @@ export class FinanceService {
     });
     for (const e of expenses) {
       const date = dhakaDateKey(new Date(e.spentAt));
-      const memo = `খরচ · ${String(e.category)}${e.note ? ` · ${String(e.note).slice(0, 60)}` : ""}`;
+      const memo = `${catalogText("finance.gl.memoExpense", locale, { category: String(e.category) })}${e.note ? ` · ${String(e.note).slice(0, 60)}` : ""}`;
       push(date, `Expense: ${String(e.category)}`, toBig(e.amountMinor), 0n, memo);
       push(date, "Cash", 0n, toBig(e.amountMinor), memo);
     }
@@ -575,7 +577,7 @@ export class FinanceService {
       const order = orderById.get(String(r.orderId));
       const creditAccount = order ? (verifiedOrderIds.has(String(order.id)) ? "Gateway Clearing" : order.isCod ? "COD Receivable" : "Cash") : "Cash";
       const date = dhakaDateKey(new Date(r.updatedAt));
-      const memo = `রিফান্ড · অর্ডার ${order?.externalNumber ?? r.orderId}`;
+      const memo = catalogText("finance.gl.memoRefund", locale, { ref: order?.externalNumber ?? r.orderId });
       push(date, "Refunds", amount, 0n, memo);
       push(date, creditAccount, 0n, amount, memo);
     }
@@ -584,20 +586,26 @@ export class FinanceService {
     return { legs, skippedRefunds, totalDebit, totalCredit, balanced: totalDebit === totalCredit };
   }
 
-  async glExportFile(organizationId: string, from: string | undefined, to: string | undefined, format: "csv" | "xlsx"): Promise<BuiltFile> {
+  async glExportFile(organizationId: string, from: string | undefined, to: string | undefined, format: "csv" | "xlsx", locale?: ApiLocale): Promise<BuiltFile> {
     const range = parseFinanceRange(from, to);
-    const { legs, skippedRefunds, totalDebit, totalCredit, balanced } = await this.glRows(organizationId, range);
+    // ML12: document locale = org dashboardLocale (D-MB4-6). The
+    // CSV column headers (date/account/debit_minor/...) stay
+    // as-is in BOTH locales — they are the machine import keys
+    // for Tally/QuickBooks-style consumers, not display labels.
+    const loc = locale ?? (await resolveDocumentLocale(this.prisma as any, organizationId));
+    const { legs, skippedRefunds, totalDebit, totalCredit, balanced } = await this.glRows(organizationId, range, loc);
+    const T = (key: string, params?: Record<string, unknown>) => catalogText(key, loc, params);
     const section: ReportSection = {
-      title: "ডাবল-এন্ট্রি সারি",
+      title: T("finance.gl.sectionTitle"),
       headers: ["date", "account", "debit_minor", "credit_minor", "memo"],
       rows: legs.map((l) => [l.date, l.account, l.debit.toString(), l.credit.toString(), l.memo]),
     };
     const notes = [
-      "সাধারণ ডাবল-এন্ট্রি CSV — Tally/QuickBooks-এ import-এর আগে আপনার হিসাবরক্ষকের সঙ্গে মিলিয়ে নিন",
-      "পরিমাণ পয়সায় (minor units)। এটি কোনো নির্দিষ্ট accounting software-এর native ফাইল নয় — একটি সাধারণ double-entry সারণি।",
-      `মোট ডেবিট: ${totalDebit.toString()} · মোট ক্রেডিট: ${totalCredit.toString()} · ব্যালান্স: ${balanced ? "মিলেছে" : "মেলেনি"}`,
-      ...(skippedRefunds > 0 ? [`পরিমাণ রেকর্ড না থাকায় ${skippedRefunds}টি রিফান্ড এই এক্সপোর্টে আসেনি।`] : []),
+      T("finance.gl.noteGeneric"),
+      T("finance.gl.noteMinorUnits"),
+      T("finance.gl.balanceLine", { debit: totalDebit.toString(), credit: totalCredit.toString(), balanced: T(balanced ? "finance.gl.balanced" : "finance.gl.notBalanced") }),
+      ...(skippedRefunds > 0 ? [T("finance.gl.skippedRefundsNote", { count: skippedRefunds })] : []),
     ];
-    return buildFileFromSections(`gl-export-${range.from}-to-${range.to}`, [section], format, `ডাবল-এন্ট্রি সারি: ${legs.length}টি`, notes);
+    return buildFileFromSections(`gl-export-${range.from}-to-${range.to}`, [section], format, T("finance.gl.summary", { count: legs.length }), notes);
   }
 }

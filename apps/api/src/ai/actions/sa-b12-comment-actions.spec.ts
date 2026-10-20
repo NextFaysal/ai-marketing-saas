@@ -295,7 +295,7 @@ describe("SA-B12 Item 1 — comment executors through the real staff paths", () 
     await expect(s.engine.propose(ORG, "reply_to_comment", { commentId: "cmt-plain", replyText: "উত্তর" }, { proposedBy: "staff", actorUserId: OWNER }))
       .rejects.toThrow(/মুছে ফেলা/);
     await expect(s.engine.propose(ORG, "reply_to_comment", { commentId: "cmt-foreign", replyText: "উত্তর" }, { proposedBy: "staff", actorUserId: OWNER }))
-      .rejects.toThrow(/not found/i);
+      .rejects.toMatchObject({ code: "ai.commentNotFoundInThisOrganization" });
     expect(s.proposals).toHaveLength(0);
   });
 
@@ -325,7 +325,7 @@ describe("SA-B12 Item 1 — comment executors through the real staff paths", () 
     byId(s, "cmt-plain").isPrivateDmSent = true; // staff DM'd it from the queue meanwhile
     const done: any = await s.engine.approve(ORG, OWNER, res.proposal.id);
     expect(done.status).toBe("failed");
-    expect(done.error).toContain("already sent for this comment");
+    expect(done.error).toContain("ইতিমধ্যে একটি private reply পাঠানো হয়েছে");
     expect(s.graph.privateReplyToComment).not.toHaveBeenCalled();
   });
 

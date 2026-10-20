@@ -164,14 +164,14 @@ describe("M12 notes, quick replies, tags", () => {
     const note = await svc.addNote("org-1", "agent-1", "conv-1", "গ্রাহক COD চান, ঠিকানা যাচাই বাকি");
     expect(note.content).toContain("COD");
     expect(await svc.listNotes("org-1", "conv-1")).toHaveLength(1);
-    await expect(svc.listNotes("org-2", "conv-1")).rejects.toThrow("not found");
+    await expect(svc.listNotes("org-2", "conv-1")).rejects.toMatchObject({ code: "inbox.conversationNotFoundInThisOrganization" });
   });
   it("quick replies CRUD with tenant isolation on delete", async () => {
     const tables = fakePrisma();
     const svc = new InboxService(tables as any, auditStub, llmStub);
     const qr = await svc.createQuickReply("org-1", "agent-1", { title: "দাম", content: "স্যার, দাম {{productPrice}}" });
     expect(await svc.listQuickReplies("org-1")).toHaveLength(1);
-    await expect(svc.deleteQuickReply("org-2", qr.id)).rejects.toThrow("not found");
+    await expect(svc.deleteQuickReply("org-2", qr.id)).rejects.toMatchObject({ code: "inbox.quickReplyNotFoundInThis" });
     await svc.deleteQuickReply("org-1", qr.id);
     expect(await svc.listQuickReplies("org-1")).toHaveLength(0);
   });
@@ -198,7 +198,7 @@ describe("M12 template + image sends (honesty discipline)", () => {
   it("registers templates, rejects duplicates, and sends with Meta confirmation", async () => {
     const { tables, svc } = setup(async () => new Response(JSON.stringify({ messages: [{ id: "wamid.tpl1" }] }), { status: 200 }));
     const tpl = await svc.createWhatsAppTemplate("org-1", { name: "order_confirmation", language: "bn", bodyText: "আপনার অর্ডার {{1}} কনফার্ম হয়েছে" });
-    await expect(svc.createWhatsAppTemplate("org-1", { name: "order_confirmation", language: "bn" })).rejects.toThrow("already registered");
+    await expect(svc.createWhatsAppTemplate("org-1", { name: "order_confirmation", language: "bn" })).rejects.toMatchObject({ code: "inbox.thisTemplateNameLanguageIsAlready" });
     const sent = await svc.sendTemplate("org-1", "agent-1", "conv-1", tpl.id, ["#1023"]);
     expect(sent.status).toBe("sent");
     expect(sent.externalId).toBe("wamid.tpl1");
@@ -208,7 +208,7 @@ describe("M12 template + image sends (honesty discipline)", () => {
   it("template send failure marks the row failed and throws - never claims success", async () => {
     const { tables, svc } = setup(async () => new Response(JSON.stringify({ error: { message: "Template does not exist" } }), { status: 400 }));
     const tpl = await svc.createWhatsAppTemplate("org-1", { name: "ghost_template", language: "bn" });
-    await expect(svc.sendTemplate("org-1", "agent-1", "conv-1", tpl.id)).rejects.toThrow("NOT sent");
+    await expect(svc.sendTemplate("org-1", "agent-1", "conv-1", tpl.id)).rejects.toMatchObject({ code: "inbox.templateMessageWasNotSent" });
     expect(tables.channelMessage.rows[0].status).toBe("failed");
     expect(tables.channelMessage.rows[0].error).toContain("Template does not exist");
   });
@@ -256,7 +256,7 @@ describe("M12 customer context + media proxy", () => {
       const media = await svc.getMessageMedia("org-1", "conv-1", "m1");
       expect(media.contentType).toBe("image/jpeg");
       expect(media.bytes.length).toBe(3);
-      await expect(svc.getMessageMedia("org-2", "conv-1", "m1")).rejects.toThrow("not found");
+      await expect(svc.getMessageMedia("org-2", "conv-1", "m1")).rejects.toMatchObject({ code: "inbox.conversationNotFoundInThisOrganization" });
     } finally { global.fetch = realFetch; }
   });
 });

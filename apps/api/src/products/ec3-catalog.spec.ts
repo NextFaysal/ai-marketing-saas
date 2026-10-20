@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ProductsService, bulkPercentMinor, minorToDecimalString } from "./products.service";
 
 // Fake Prisma in the variant-management.spec makeTable style.
@@ -225,7 +226,7 @@ describe("EC3 bulk edit — preview + apply", () => {
     const { svc } = setup();
     await expect(
       svc.bulkEditPreview("org-1", { productIds: ["p1"], action: "category_set", categoryId: "cat-foreign" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
   });
 });
 
@@ -258,10 +259,10 @@ describe("EC3 create / update with categoryId + tags", () => {
     const before = prisma.product.rows.length;
     await expect(
       svc.create("org-1", "actor-1", { name: "Xyz", price: "10.00", categoryId: "cat-foreign" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
     await expect(
       svc.create("org-1", "actor-1", { name: "Xyz", price: "10.00", tagIds: ["tag-nope"] } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
     expect(prisma.product.rows).toHaveLength(before);
   });
 
@@ -319,7 +320,7 @@ describe("EC3 categories & tags CRUD", () => {
     expect(created.slug).toBe("winter-wear");
     await expect(
       svc.createCategory("org-1", "actor-1", { name: "winter wear" } as any),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toThrow(ApiException);
     const list = await svc.listCategories("org-1");
     const fashion = list.find((c: any) => c.id === "cat-1");
     expect(fashion.productCount).toBe(1); // p1
@@ -336,25 +337,21 @@ describe("EC3 categories & tags CRUD", () => {
     const child = await svc.createCategory("org-1", "actor-1", { name: "Sub", parentId: "cat-1" } as any);
     await expect(
       svc.updateCategory("org-1", "actor-1", "cat-1", { parentId: "cat-1" } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
     await expect(
       svc.updateCategory("org-1", "actor-1", "cat-1", { parentId: child.id } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
     await expect(
       svc.createCategory("org-1", "actor-1", { name: "Orphan", parentId: "cat-foreign" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
   });
 
   it("createTag slugifies and conflicts on duplicates", async () => {
     const { svc } = setup();
     const tag = await svc.createTag("org-1", "actor-1", { name: "Hot Deal" } as any);
     expect(tag.slug).toBe("hot-deal");
-    await expect(svc.createTag("org-1", "actor-1", { name: "hot deal" } as any)).rejects.toThrow(
-      ConflictException,
-    );
-    await expect(svc.createTag("org-1", "actor-1", { name: "Bestseller" } as any)).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(svc.createTag("org-1", "actor-1", { name: "hot deal" } as any)).rejects.toMatchObject({ status: 409 });
+    await expect(svc.createTag("org-1", "actor-1", { name: "Bestseller" } as any)).rejects.toMatchObject({ status: 409 });
   });
 });
 
@@ -380,7 +377,7 @@ describe("EC3 images", () => {
     expect(prisma.product.rows.find((p: any) => p.id === "p-img").imageUrl).toBe("https://img/b.jpg");
     await expect(
       svc.reorderImages("org-1", "actor-1", "p-img", ["img-b", "img-foreign"]),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
   });
 
   it("addImage appends at max+1 and fills an empty cover; deleteImage of the cover mirrors the next image", async () => {
@@ -397,9 +394,7 @@ describe("EC3 images", () => {
 
     await svc.deleteImage("org-1", "actor-1", "p-img", "img-a");
     expect(prisma.product.rows.find((p: any) => p.id === "p-img").imageUrl).toBe("https://img/b.jpg");
-    await expect(svc.deleteImage("org-1", "actor-1", "p-img", "img-a")).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(svc.deleteImage("org-1", "actor-1", "p-img", "img-a")).rejects.toMatchObject({ status: 404 });
 
     // Empty cover adopts the first added image.
     prisma.product.rows.push({
@@ -449,7 +444,7 @@ describe("EC3 duplicate", () => {
     // Second duplicate of the original takes the -copy-2 suffix.
     const copy2 = await svc.duplicate("org-1", "actor-1", "p1");
     expect(copy2.sku).toBe("SHIRT-1-copy-2");
-    await expect(svc.duplicate("org-1", "actor-1", "p-foreign")).rejects.toThrow(NotFoundException);
+    await expect(svc.duplicate("org-1", "actor-1", "p-foreign")).rejects.toThrow(ApiException);
   });
 });
 
@@ -458,20 +453,20 @@ describe("EC4 bundle items", () => {
     const { prisma, svc } = setup();
     await expect(
       svc.addBundleItem("org-1", "actor-1", "p1", { componentProductId: "p1", quantity: 1 }),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
     await expect(
       svc.addBundleItem("org-1", "actor-1", "p1", { componentProductId: "p1", quantity: 1 }),
     ).rejects.toThrow(/component/);
     await expect(
       svc.addBundleItem("org-1", "actor-1", "p1", { componentProductId: "p-foreign", quantity: 1 }),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
     await expect(
       svc.addBundleItem("org-1", "actor-1", "p1", {
         componentProductId: "p2",
         componentVariantId: "v1", // v1 belongs to p1, not p2
         quantity: 1,
       }),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toThrow(ApiException);
 
     const item = await svc.addBundleItem("org-1", "actor-1", "p1", {
       componentProductId: "p2",
@@ -485,7 +480,7 @@ describe("EC4 bundle items", () => {
         componentVariantId: "v-comp",
         quantity: 1,
       }),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toThrow(ApiException);
 
     const list = await svc.listBundleItems("org-1", "p1");
     expect(list).toHaveLength(1);
@@ -494,9 +489,7 @@ describe("EC4 bundle items", () => {
     const del = await svc.deleteBundleItem("org-1", "actor-1", "p1", item.id);
     expect(del.deleted).toBe(true);
     expect(prisma.bundleItem.rows).toHaveLength(0);
-    await expect(svc.deleteBundleItem("org-1", "actor-1", "p1", item.id)).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(svc.deleteBundleItem("org-1", "actor-1", "p1", item.id)).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -525,6 +518,6 @@ describe("EC3 channels view", () => {
     });
     const withPending = await svc.getChannels("org-1", "p1");
     expect(withPending.listings[0].stockDiverged).toBe(false);
-    await expect(svc.getChannels("org-1", "p-foreign")).rejects.toThrow(NotFoundException);
+    await expect(svc.getChannels("org-1", "p-foreign")).rejects.toThrow(ApiException);
   });
 });

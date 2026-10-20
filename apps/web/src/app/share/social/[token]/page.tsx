@@ -20,6 +20,10 @@ import {
   type PublicSharePost,
   type PublicSharePreview,
 } from "@/lib/social-posts-sn";
+import { fmtDateTime } from "@repo/contracts";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 const PLATFORM_LABEL: Record<string, string> = {
   meta_page: "Facebook Page",
@@ -52,13 +56,13 @@ export default function SocialSharePage() {
         setState({
           kind: "error",
           message: body?.message
-            ?? (res.status === 404 ? "লিংকটি পাওয়া যায়নি।" : "লিংকটি আর ব্যবহার করা যাচ্ছে না।"),
+            ?? (res.status === 404 ? t.shareSocial.notFound : t.shareSocial.unusable),
         });
         return;
       }
       setState({ kind: "ready", preview: (await res.json()) as PublicSharePreview });
     } catch {
-      setState({ kind: "error", message: "সার্ভারের সঙ্গে যোগাযোগ করা যায়নি — একটু পরে আবার চেষ্টা করুন।" });
+      setState({ kind: "error", message: t.shareSocial.serverError });
     }
   }, [token]);
 
@@ -67,7 +71,7 @@ export default function SocialSharePage() {
   async function submitReview(post: PublicSharePost, decision: ClientReviewDecision) {
     const reviewerName = (names[post.postId] ?? "").trim();
     if (!reviewerName) {
-      setFormError((s) => ({ ...s, [post.postId]: "আপনার নাম লেখা আবশ্যক।" }));
+      setFormError((s) => ({ ...s, [post.postId]: t.shareSocial.nameRequired }));
       return;
     }
     setFormError((s) => ({ ...s, [post.postId]: "" }));
@@ -85,7 +89,7 @@ export default function SocialSharePage() {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        setFormError((s) => ({ ...s, [post.postId]: body?.message ?? "সিদ্ধান্ত পাঠানো যায়নি — আবার চেষ্টা করুন।" }));
+        setFormError((s) => ({ ...s, [post.postId]: body?.message ?? t.shareSocial.submitFailed }));
         return;
       }
       // Reflect the new effective review locally (the server record
@@ -110,23 +114,23 @@ export default function SocialSharePage() {
         };
       });
     } catch {
-      setFormError((s) => ({ ...s, [post.postId]: "সার্ভারের সঙ্গে যোগাযোগ করা যায়নি — আবার চেষ্টা করুন।" }));
+      setFormError((s) => ({ ...s, [post.postId]: t.shareSocial.serverError }));
     } finally { setBusyPost(""); }
   }
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8">
       <header className="space-y-1 text-center">
-        <h1 className="text-2xl font-bold">📣 পোস্ট অনুমোদন</h1>
-        <p className="text-sm text-slate-500">নিচের পোস্টগুলো দেখে প্রতিটির জন্য অনুমোদন দিন অথবা পরিবর্তন চান। আপনার সিদ্ধান্ত সঙ্গে সঙ্গে রেকর্ড হয়ে যাবে।</p>
+        <h1 className="text-2xl font-bold">{t.shareSocial.title}</h1>
+        <p className="text-sm text-slate-500">{t.shareSocial.intro}</p>
       </header>
 
       {state.kind === "loading" ? (
-        <p className="py-10 text-center text-sm text-slate-400">লোড হচ্ছে…</p>
+        <p className="py-10 text-center text-sm text-slate-400">{t.shareSocial.loading}</p>
       ) : state.kind === "error" ? (
         <div className="rounded-xl bg-red-50 px-4 py-6 text-center text-sm text-red-700">{state.message}</div>
       ) : state.preview.posts.length === 0 ? (
-        <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">এই লিংকে কোনো পোস্ট নেই।</div>
+        <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">{t.shareSocial.empty}</div>
       ) : state.preview.posts.map((post) => (
         <article key={post.postId} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -153,33 +157,34 @@ export default function SocialSharePage() {
                 {CLIENT_REVIEW_META[post.clientReview.decision].label}
               </span>
               <span className="text-slate-600">{post.clientReview.reviewerName}</span>
-              <span className="text-slate-400"> · {new Date(post.clientReview.createdAt).toLocaleString("bn-BD")}</span>
+              <span className="text-slate-400"> · {fmtDateTime("bn", post.clientReview.createdAt)}</span>
               {post.clientReview.comment ? <p className="mt-1 text-slate-600">“{post.clientReview.comment}”</p> : null}
             </div>
           ) : (
-            <p className="text-sm text-slate-400">এখনো কোনো সিদ্ধান্ত দেওয়া হয়নি।</p>
+            <p className="text-sm text-slate-400">{t.shareSocial.noDecision}</p>
           )}
 
           <div className="space-y-2 border-t border-slate-100 pt-3">
-            <label className="block text-sm">আপনার নাম (আবশ্যক)
+            <label className="block text-sm">{t.shareSocial.nameLabel}
               <input className="input mt-1 w-full" value={names[post.postId] ?? ""}
                 onChange={(e) => setNames((s) => ({ ...s, [post.postId]: e.target.value }))}
-                placeholder="যেমন: Rahim Uddin" />
+                placeholder={t.shareSocial.namePlaceholder} />
             </label>
-            <label className="block text-sm">মন্তব্য (ঐচ্ছিক)
+            <label className="block text-sm">{t.shareSocial.commentLabel}
               <textarea className="input mt-1 w-full" rows={2} value={comments[post.postId] ?? ""}
                 onChange={(e) => setComments((s) => ({ ...s, [post.postId]: e.target.value }))}
-                placeholder="পরিবর্তন চাইলে কী বদলাতে হবে লিখুন" />
+                placeholder={t.shareSocial.commentPlaceholder} />
             </label>
             {formError[post.postId] ? <p className="text-sm text-red-600">{formError[post.postId]}</p> : null}
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-primary disabled:opacity-50" disabled={busyPost !== ""}
                 onClick={() => void submitReview(post, "approved")}>
-                {busyPost === post.postId ? "পাঠানো হচ্ছে…" : "✓ অনুমোদন দিন"}
+                {busyPost === post.postId ? t.shareSocial.sending : t.shareSocial.approve}
               </button>
               <button type="button" className="btn-secondary disabled:opacity-50" disabled={busyPost !== ""}
                 onClick={() => void submitReview(post, "changes_requested")}>
-                পরিবর্তন চান
+                {t.shareSocial.requestChanges}
+
               </button>
             </div>
           </div>

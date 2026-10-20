@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { AbandonedCheckoutsService, NATIVE_CART_RECOVERY_ACTION } from "../commerce/abandoned-checkouts.service";
 import { validateDiscount } from "../commerce/discounts";
@@ -256,7 +257,7 @@ describe("EC8 quote — zone tiers", () => {
     seedShop(prisma);
     const { svc } = makeService(prisma);
     const { cartToken } = await svc.createCart("shop-one");
-    await expect(svc.quote("shop-one", { cartToken, district: "ঢাকা" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.quote("shop-one", { cartToken, district: "ঢাকা" })).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -350,7 +351,7 @@ describe("EC8 checkout", () => {
       svc.checkout("shop-one", {
         cartToken: token, name: "রহিম", phone: "01711111111", address: "বাড়ি ১", district: "ঢাকা",
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(integrations.upsertOrder).toHaveBeenCalledTimes(1);
   });
 
@@ -413,14 +414,14 @@ describe("EC8 custom domain", () => {
 
   it("token issue resets verification; verify passes only on the exact TXT token; by-domain resolves only when verified", async () => {
     const { prisma, svc, dns } = domainWorld();
-    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(ApiException);
 
     const issued = await svc.issueDomainVerifyToken("org-1", "user-1");
     expect(issued.recordHost).toBe("_qosprey-verify.shop.example.com");
     expect(issued.recordType).toBe("TXT");
     expect(issued.token).toMatch(/^[0-9a-f]{64}$/);
     expect(prisma.storefrontSetting.rows[0].domainVerifiedAt).toBeNull();
-    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(ApiException);
 
     dns.resolveTxt.mockResolvedValue(["some-other-token"]);
     await expect(svc.verifyDomain("org-1", "user-1")).rejects.toThrow(/মেলেনি/);
@@ -438,12 +439,12 @@ describe("EC8 custom domain", () => {
 
     const resolved = await svc.byDomain("shop.example.com");
     expect(resolved).toEqual({ organizationSlug: "shop-one", domain: "shop.example.com" });
-    await expect(svc.byDomain("unknown.example.com")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.byDomain("unknown.example.com")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("check-routing requires verification and real shop evidence in the fetched body", async () => {
     const { svc, dns, fetcher } = domainWorld();
-    await expect(svc.checkDomainRouting("org-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.checkDomainRouting("org-1")).rejects.toBeInstanceOf(ApiException);
 
     const issued = await svc.issueDomainVerifyToken("org-1", "user-1");
     dns.resolveTxt.mockResolvedValue([issued.token]);
@@ -559,7 +560,7 @@ describe("EC8/EC10 native abandoned carts", () => {
 
     await expect(svc.sendRecovery("org-1", "user-1", "c3")).rejects.toThrow(/ইমেইল ঠিকানা নেই/);
     await expect(svc.sendRecovery("org-1", "user-1", "c4")).rejects.toThrow(/রূপান্তরিত/);
-    await expect(svc.sendRecovery("org-1", "user-1", "missing-id")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.sendRecovery("org-1", "user-1", "missing-id")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("a failed send writes no marker and emits no event", async () => {

@@ -90,10 +90,10 @@ describe("Scheduled jobs", () => {
   });
   it("rejects unknown job types and too-short intervals", async () => {
     const { svc } = buildSvc();
-    await expect(svc.createJob("org-1", "o", { name: "x", type: "rm_rf", targetId: "t", intervalMinutes: 60 })).rejects.toThrow("Invalid job type");
+    await expect(svc.createJob("org-1", "o", { name: "x", type: "rm_rf", targetId: "t", intervalMinutes: 60 })).rejects.toMatchObject({ code: "automation.invalidJobType" });
     // CX3: the job-interval minimum is now 1 (the reply-debounce
     // sweeps run every minute); 0 is still rejected.
-    await expect(svc.createJob("org-1", "o", { name: "x", type: "meta_insights", targetId: "t", intervalMinutes: 0 })).rejects.toThrow("at least 1");
+    await expect(svc.createJob("org-1", "o", { name: "x", type: "meta_insights", targetId: "t", intervalMinutes: 0 })).rejects.toMatchObject({ code: "automation.intervalminutesMustBeAtLeast1" });
   });
 });
 

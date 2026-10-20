@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional,
+  BadRequestException, Injectable, Logger, Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
@@ -15,6 +15,7 @@ import {
   AUTOMATION_PRESETS, evaluateConditions, normalizeRuleInput, validateRuleInput,
   type ConditionFacts,
 } from "./order-automation";
+import { badRequest, conflict, notFound } from "../i18n/api-exception";
 
 /**
  * ON8 — Orders Automation Studio engine (DEDICATED — see the
@@ -175,7 +176,7 @@ export class OrderAutomationService {
 
   async getRule(orgId: string, ruleId: string) {
     const row = await this.loadRule(orgId, ruleId);
-    if (!row) throw new NotFoundException("অটোমেশন নিয়মটি পাওয়া যায়নি");
+    if (!row) throw notFound("orderAutomation.theAutomationRuleWasNotFound");
     const stats = await this.runStats(orgId, [String(row.id)]);
     const s = stats.get(String(row.id));
     return this.rulePublic(row, { runCount: s?.count ?? 0, lastRunAt: s?.last ?? null });
@@ -183,7 +184,7 @@ export class OrderAutomationService {
 
   async updateRule(orgId: string, actorId: string, ruleId: string, dto: any) {
     const row = await this.loadRule(orgId, ruleId);
-    if (!row) throw new NotFoundException("অটোমেশন নিয়মটি পাওয়া যায়নি");
+    if (!row) throw notFound("orderAutomation.theAutomationRuleWasNotFound");
     // Partial PATCH (incl. the enabled toggle alone): merge
     // over the stored rule, then validate the MERGED shape so
     // a partial edit can never leave an invalid rule behind.
@@ -209,7 +210,7 @@ export class OrderAutomationService {
 
   async deleteRule(orgId: string, actorId: string, ruleId: string) {
     const row = await this.loadRule(orgId, ruleId);
-    if (!row) throw new NotFoundException("অটোমেশন নিয়মটি পাওয়া যায়নি");
+    if (!row) throw notFound("orderAutomation.theAutomationRuleWasNotFound");
     await this.t("orderAutomationRule").delete({ where: { id: row.id } });
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: "orders.automation_rule_deleted",
@@ -231,7 +232,7 @@ export class OrderAutomationService {
 
   async installPreset(orgId: string, actorId: string, key: string) {
     const preset = AUTOMATION_PRESETS.find((p) => p.key === key);
-    if (!preset) throw new NotFoundException("প্রিসেটটি পাওয়া যায়নি");
+    if (!preset) throw notFound("orderAutomation.thePresetWasNotFound");
     // presetKey uniqueness per org is enforced HERE with a
     // lookup (Prisma cannot express a partial unique index);
     // a second install of the same preset is a 409 refusal.
@@ -239,7 +240,7 @@ export class OrderAutomationService {
       where: { organizationId: orgId, presetKey: key },
     }).catch(() => null);
     if (existing) {
-      throw new ConflictException(`"${preset.name}" প্রিসেটটি ইতিমধ্যে ইনস্টল করা আছে`);
+      throw conflict("orderAutomation.thePresetIsAlreadyInstalled", { presetName: preset.name });
     }
     const row = await this.t("orderAutomationRule").create({
       data: {
@@ -260,7 +261,7 @@ export class OrderAutomationService {
 
   async listRuleLogs(orgId: string, ruleId: string, q?: { page?: number; pageSize?: number }) {
     const rule = await this.loadRule(orgId, ruleId);
-    if (!rule) throw new NotFoundException("অটোমেশন নিয়মটি পাওয়া যায়নি");
+    if (!rule) throw notFound("orderAutomation.theAutomationRuleWasNotFound");
     const page = Math.max(1, q?.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, q?.pageSize ?? 20));
     const rows = ((await this.t("orderAutomationLog").findMany({
@@ -279,7 +280,7 @@ export class OrderAutomationService {
    * web log viewer / debugging). Foreign order → 404. */
   async listOrderLogs(orgId: string, orderId: string) {
     const order = await this.t("order").findFirst({ where: { id: orderId, organizationId: orgId } }).catch(() => null);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("orderAutomation.orderNotFoundInThisOrganization");
     const rows = ((await this.t("orderAutomationLog").findMany({
       where: { organizationId: orgId, orderId },
     }).catch(() => [])) ?? [])
@@ -388,7 +389,7 @@ export class OrderAutomationService {
             const member = await this.t("membership").findFirst({
               where: { userId, organizationId: orgId, status: "ACTIVE" },
             }).catch(() => null);
-            if (!member) throw new BadRequestException("দায়িত্বপ্রাপ্ত ব্যক্তি এই প্রতিষ্ঠানের সক্রিয় সদস্য নন");
+            if (!member) throw badRequest("orderAutomation.theAssigneeIsNotAnActive");
           }
           await this.t("order").update({ where: { id: order.id }, data: { assigneeId: userId } });
         }

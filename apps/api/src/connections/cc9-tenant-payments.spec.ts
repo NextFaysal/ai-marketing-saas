@@ -277,7 +277,7 @@ describe("CC9 bKash checkout + callback trust chain", () => {
   it("public initiation requires the matching order number", async () => {
     const { svc } = buildService();
     await seedBkash(svc);
-    await expect(svc.initiatePublicPayment("myshop", "order-1", "WRONG-NUM", "bkash")).rejects.toThrow("Order not found");
+    await expect(svc.initiatePublicPayment("myshop", "order-1", "WRONG-NUM", "bkash")).rejects.toMatchObject({ code: "connections.orderNotFoundPlain" });
     const out: any = await svc.initiatePublicPayment("myshop", "order-1", "ORD-1", "bkash");
     expect(out.redirectUrl).toBe("https://bkash.example/pay");
   });

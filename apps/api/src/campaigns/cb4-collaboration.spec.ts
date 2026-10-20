@@ -109,6 +109,6 @@ describe("CB4 collaboration", () => {
     // Simulate a bypass: a row changed directly (the
     // state machine normally locks edits).
     tables.campaignAd.rows[0].primaryText = "বদলে দেওয়া টেক্সট";
-    await expect(svc.publish("org", "owner-1", plan.id)).rejects.toThrow(/changed since approval/);
+    await expect(svc.publish("org", "owner-1", plan.id)).rejects.toMatchObject({ code: "campaigns.planChangedSinceApprovalThePublished" });
   });
 });

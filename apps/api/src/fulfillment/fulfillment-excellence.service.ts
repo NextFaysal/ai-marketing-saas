@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
@@ -9,6 +9,7 @@ import { OrderNotificationService } from "../order-notifications/order-notificat
 import { TRANSIT_STATUSES } from "../orders/order-queues";
 import { parseBdAddress } from "../orders/bd-address";
 import { SLA_DEFAULTS } from "./sla";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * ON6 — Fulfillment Excellence (API side):
@@ -98,7 +99,7 @@ export class FulfillmentExcellenceService {
       if (dto?.[key] === undefined) continue;
       const v = dto[key];
       if (!Number.isInteger(v) || v < 1 || v > 720) {
-        throw new BadRequestException(`${key} অবশ্যই ১–৭২০-এর মধ্যে একটি পূর্ণসংখ্যা হতে হবে`);
+        throw badRequest("fulfillment.mustBeAnIntegerBetween1", { key: key });
       }
       data[key] = v;
     }
@@ -163,7 +164,7 @@ export class FulfillmentExcellenceService {
     const rawIds = Array.isArray(dto?.orderIds) ? dto.orderIds.map((x) => String(x)).filter(Boolean) : [];
     const orderIds = [...new Set(rawIds)];
     if (orderIds.length < 1 || orderIds.length > 100) {
-      throw new BadRequestException("একটি ওয়েভে ১–১০০টি অর্ডার বেছে নিন");
+      throw badRequest("fulfillment.select1100OrdersInA");
     }
     const results: { orderId: string; ok: boolean; error?: string }[] = [];
     const passing: string[] = [];
@@ -190,7 +191,7 @@ export class FulfillmentExcellenceService {
     }
     if (passing.length === 0) {
       const reasons = results.map((r) => `${r.orderId}: ${r.error}`).join("; ");
-      throw new BadRequestException(`কোনো অর্ডারই ওয়েভে নেওয়া যায়নি — ${reasons}`);
+      throw badRequest("fulfillment.noOrderCouldBeTakenInto", { reasons: reasons });
     }
     const wave = await this.t("pickWave").create({
       data: { organizationId, status: "open", note: dto?.note?.trim() ? dto.note.trim() : null, createdById: actorId },
@@ -225,7 +226,7 @@ export class FulfillmentExcellenceService {
 
   private async loadWave(organizationId: string, waveId: string) {
     const wave = await this.t("pickWave").findFirst({ where: { id: waveId, organizationId } }).catch(() => null);
-    if (!wave) throw new NotFoundException("Pick wave not found in this organization");
+    if (!wave) throw notFound("fulfillment.pickWaveNotFoundInThis");
     return wave;
   }
 
@@ -289,11 +290,11 @@ export class FulfillmentExcellenceService {
   async pickWaveOrder(organizationId: string, actorId: string, waveId: string, orderId: string) {
     const wave = await this.loadWave(organizationId, waveId);
     const row = await this.t("pickWaveOrder").findFirst({ where: { waveId, orderId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Order is not in this wave");
+    if (!row) throw notFound("fulfillment.orderIsNotInThisWave");
     // Idempotent: an already-picked row returns unchanged and
     // never creates a second fulfilment.
     if (row.pickedAt) return row;
-    if (wave.status !== "open") throw new BadRequestException("ওয়েভটি বন্ধ হয়ে গেছে — আর পিক করা যাবে না");
+    if (wave.status !== "open") throw badRequest("fulfillment.theWaveIsClosedPickingIs");
     const order = await this.fulfillments.loadOrder(organizationId, orderId);
     const remaining = await this.fulfillments.remainingFor(organizationId, order);
     const lines = [...remaining.entries()]
@@ -328,9 +329,9 @@ export class FulfillmentExcellenceService {
 
   async removeWaveOrder(organizationId: string, actorId: string, waveId: string, orderId: string) {
     const wave = await this.loadWave(organizationId, waveId);
-    if (wave.status !== "open") throw new BadRequestException("বন্ধ ওয়েভ থেকে অর্ডার সরানো যাবে না");
+    if (wave.status !== "open") throw badRequest("fulfillment.anOrderCannotBeRemovedFrom");
     const row = await this.t("pickWaveOrder").findFirst({ where: { waveId, orderId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Order is not in this wave");
+    if (!row) throw notFound("fulfillment.orderIsNotInThisWave");
     await this.t("pickWaveOrder").delete({ where: { id: row.id } });
     await this.audit?.log({
       organizationId, userId: actorId, action: "fulfillment.wave_order_removed",
@@ -387,7 +388,7 @@ export class FulfillmentExcellenceService {
 
   private async loadOrderOr404(organizationId: string, orderId: string) {
     const order = await this.t("order").findFirst({ where: { id: orderId, organizationId } }).catch(() => null);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("fulfillment.orderNotFoundInThisOrganization");
     return order;
   }
 
@@ -396,7 +397,7 @@ export class FulfillmentExcellenceService {
   }) {
     const outcome = String(dto?.outcome ?? "");
     if (!(DELIVERY_ATTEMPT_OUTCOMES as readonly string[]).includes(outcome)) {
-      throw new BadRequestException(`outcome অবশ্যই এর একটি হতে হবে: ${DELIVERY_ATTEMPT_OUTCOMES.join(", ")}`);
+      throw badRequest("fulfillment.outcomeMustBeOneOf", { p1: DELIVERY_ATTEMPT_OUTCOMES.join(", ") });
     }
     await this.loadOrderOr404(organizationId, orderId);
     let shipment: any = null;
@@ -406,22 +407,22 @@ export class FulfillmentExcellenceService {
       }).catch(() => null);
       // Documented choice: 400 (the request names a shipment
       // that contradicts the order), not 404.
-      if (!shipment) throw new BadRequestException("shipmentId এই অর্ডারের শিপমেন্ট নয়");
+      if (!shipment) throw badRequest("fulfillment.shipmentidIsNotAShipmentOf");
     } else {
       const rows = await this.safeFindMany("courierShipment", { where: { organizationId, orderId } });
       shipment = [...rows].sort((a: any, b: any) =>
         new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0] ?? null;
-      if (!shipment) throw new BadRequestException("এই অর্ডারের কোনো শিপমেন্ট নেই — ডেলিভারি চেষ্টা রেকর্ড করা যাবে না");
+      if (!shipment) throw badRequest("fulfillment.thisOrderHasNoShipmentA");
     }
     let rescheduleDate: string | null = null;
     if (dto?.rescheduleDate !== undefined && dto.rescheduleDate !== null && dto.rescheduleDate !== "") {
       if (!isValidYmd(String(dto.rescheduleDate))) {
-        throw new BadRequestException("rescheduleDate সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন");
+        throw badRequest("fulfillment.rescheduledateIsNotValidGiveIt");
       }
       rescheduleDate = String(dto.rescheduleDate);
     }
     if (outcome === "rescheduled" && !rescheduleDate) {
-      throw new BadRequestException("পুনঃনির্ধারিত ডেলিভারির জন্য rescheduleDate (YYYY-MM-DD) দরকার");
+      throw badRequest("fulfillment.aRescheduledateYyyyMmDdIs");
     }
     const row = await this.t("deliveryAttempt").create({
       data: {

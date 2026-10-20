@@ -1,4 +1,7 @@
-export const metadata = { title: "অফলাইন — AI Marketing OS" };
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
+export const metadata = { title: "অফলাইন — AI Marketing OS" }; // metadata (not rendered UI) — classified exception, stays bn
 
 /**
  * Milestone 60: offline fallback. Precached by the service worker;
@@ -10,13 +13,11 @@ export default function OfflinePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
       <div className="text-5xl">📡</div>
-      <h1 className="mt-4 text-2xl font-bold text-slate-900">আপনি এখন অফলাইনে আছেন</h1>
-      <p className="mt-2 text-sm leading-relaxed text-slate-500">
-        ইন্টারনেট সংযোগ ফিরে এলেই সবকিছু আবার লাইভ হবে। ইনবক্সের মেসেজ ও অর্ডারের মতো লাইভ ডেটা
-        অফলাইনে দেখানো হয় না — পুরনো ডেটা দেখিয়ে বিভ্রান্ত করা হবে না।
-      </p>
-      <a href="/dashboard/inbox" className="btn-primary mt-6">আবার চেষ্টা করুন</a>
-      <a href="/dashboard" className="mt-3 text-sm font-medium text-indigo-600 hover:underline">ড্যাশবোর্ডে যান</a>
+      <h1 className="mt-4 text-2xl font-bold text-slate-900">{t.offline.title}</h1>
+      <p className="mt-2 text-sm leading-relaxed text-slate-500">{t.offline.text}</p>
+      <a href="/dashboard/inbox" className="btn-primary mt-6">{t.offline.retry}</a>
+      <a href="/dashboard" className="mt-3 text-sm font-medium text-indigo-600 hover:underline">{t.offline.goDashboard}</a>
+
     </main>
   );
 }

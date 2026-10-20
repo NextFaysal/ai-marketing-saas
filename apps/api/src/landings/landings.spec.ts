@@ -420,24 +420,24 @@ describe("LandingsService — staff CRUD", () => {
     const { svc } = setup();
     await expect(
       svc.create("org-1", "user-1", { productId: "p-other", title: "X" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toMatchObject({ code: "landings.productNotFoundInThisOrganization" });
     await expect(
       svc.create("org-1", "user-1", { productId: "p-a", title: "X", upsellProductId: "p-other" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toMatchObject({ code: "landings.productNotFoundInThisOrganization" });
   });
 
   it("409s on an explicit slug that clashes globally, 400s on a non-URL-safe slug", async () => {
     const { svc } = setup();
     await expect(
       svc.create("org-1", "user-1", { productId: "p-a", title: "X", slug: "wallet-offer" } as any),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toMatchObject({ code: "landings.aLandingPageWithSlugAlready" });
     // slug uniqueness is global — org-2's slug also clashes from org-1.
     await expect(
       svc.create("org-2", "user-1", { productId: "p-other", title: "X", slug: "wallet-offer" } as any),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toMatchObject({ code: "landings.aLandingPageWithSlugAlready" });
     await expect(
       svc.create("org-1", "user-1", { productId: "p-a", title: "X", slug: "Bad Slug!" } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toMatchObject({ code: "landings.slugMustBeUrlFriendlyLowercase" });
   });
 
   it("validates sections on create (unknown type ⇒ 400)", async () => {
@@ -453,23 +453,23 @@ describe("LandingsService — staff CRUD", () => {
 
   it("404s foreign landings on getOne / update / variant create", async () => {
     const { svc } = setup();
-    await expect(svc.getOne("org-2", "land-1")).rejects.toThrow(NotFoundException);
+    await expect(svc.getOne("org-2", "land-1")).rejects.toMatchObject({ code: "landings.landingPageNotFoundInThis" });
     await expect(
       svc.update("org-2", "user-1", "land-1", { title: "Hacked" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toMatchObject({ code: "landings.landingPageNotFoundInThis" });
     await expect(
       svc.createVariant("org-2", "user-1", "land-1", { name: "V" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toMatchObject({ code: "landings.landingPageNotFoundInThis" });
     await expect(
       svc.updateVariant("org-1", "user-1", "land-1", "lv-foreign", { name: "V" } as any),
-    ).rejects.toThrow(NotFoundException);
+    ).rejects.toMatchObject({ code: "landings.variantNotFoundForThisLanding" });
   });
 
   it("PATCH slug re-validates uniqueness excluding itself", async () => {
     const { svc } = setup();
     await expect(
       svc.update("org-1", "user-1", "land-1", { slug: "draft-offer" } as any),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toMatchObject({ code: "landings.aLandingPageWithSlugAlready" });
     const ok = await svc.update("org-1", "user-1", "land-1", { slug: "wallet-offer" } as any);
     expect(ok.slug).toBe("wallet-offer");
   });
@@ -495,7 +495,7 @@ describe("LandingsService — staff CRUD", () => {
     const { svc } = setup();
     await expect(
       svc.createVariant("org-1", "user-1", "land-1", { name: "V", weight: 101 } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toMatchObject({ code: "landings.weightMustBeAnIntegerBetween" });
   });
 
   it("DELETE archives instead of hard-deleting (attributed orders keep history)", async () => {
@@ -504,7 +504,7 @@ describe("LandingsService — staff CRUD", () => {
     expect(res.status).toBe("archived");
     expect(res.archived).toBe(true);
     expect(prisma.landingPage.rows.some((r: any) => r.id === "land-1")).toBe(true);
-    await expect(svc.getPublicLanding("wallet-offer", "v-1")).rejects.toThrow(NotFoundException);
+    await expect(svc.getPublicLanding("wallet-offer", "v-1")).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
   });
 
   it("list carries product name + attributed order/revenue aggregates", async () => {
@@ -527,15 +527,15 @@ describe("LandingsService — staff CRUD", () => {
 describe("LandingsService — public payload", () => {
   it("404s for a draft landing and for an unknown slug", async () => {
     const { svc } = setup();
-    await expect(svc.getPublicLanding("draft-offer", "v-1")).rejects.toThrow(NotFoundException);
-    await expect(svc.getPublicLanding("no-such-slug", "v-1")).rejects.toThrow(NotFoundException);
+    await expect(svc.getPublicLanding("draft-offer", "v-1")).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
+    await expect(svc.getPublicLanding("no-such-slug", "v-1")).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
   });
 
   it("404s when the landing's product is not ACTIVE", async () => {
     const { svc, prisma } = setup();
     await svc.create("org-1", "user-1", { productId: "p-draft", title: "Draft product landing", slug: "draft-product-offer", status: "published" } as any);
     expect(prisma.landingPage.rows.some((r: any) => r.slug === "draft-product-offer")).toBe(true);
-    await expect(svc.getPublicLanding("draft-product-offer", "v-1")).rejects.toThrow(NotFoundException);
+    await expect(svc.getPublicLanding("draft-product-offer", "v-1")).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
   });
 
   it("serves product (with gallery), org pixels, default sections, variant, upsell, reviews, districts", async () => {
@@ -554,6 +554,9 @@ describe("LandingsService — public payload", () => {
       // EC18 (B8): trust copy comes from StorefrontSetting; the fake
       // has no setting row, so all three are null (blocks hidden).
       returnPolicyText: null, deliveryPromiseText: null, supportPhone: null,
+      // MB4 (CD-3): the public payload now carries the storefront
+      // locale the web reads (fake has no setting row → bn default).
+      locale: "bn",
     });
     expect(res.sections.map((s: any) => s.type)).toEqual([
       "hero", "description", "benefits", "gallery", "reviews", "faq", "offer", "trust",
@@ -607,7 +610,7 @@ describe("LandingsService — public payload", () => {
 
   it("records view / checkout-started events; a foreign variantId is stored as null", async () => {
     const { svc, prisma } = setup();
-    await expect(svc.recordEvent("draft-offer", "view", {})).rejects.toThrow(NotFoundException);
+    await expect(svc.recordEvent("draft-offer", "view", {})).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
     await svc.recordEvent("wallet-offer", "view", { variantId: "lv-a" });
     await svc.recordEvent("wallet-offer", "checkout_started", { variantId: "lv-foreign" });
     const events = prisma.landingEvent.rows.filter((e: any) => e.landingId === "land-1");
@@ -685,7 +688,7 @@ describe("LandingsService — public order (no active zones)", () => {
     const { svc, prisma } = setup();
     await expect(
       svc.placeOrder("wallet-offer", { ...ORDER_BODY, couponCode: "NOPE" } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toMatchObject({ code: "landings.theCouponCouldNotBeApplied" });
     expect(prisma.order.rows).toHaveLength(0);
   });
 
@@ -702,7 +705,7 @@ describe("LandingsService — public order (no active zones)", () => {
     expect(res.totals.subtotalMinor).toBe("55000");
     await expect(
       svc.placeOrder("wallet-offer", { ...ORDER_BODY, variantId: "pv-up" } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toMatchObject({ code: "landings.theVariantDoesNotBelongTo" });
   });
 
   it("stamps landingPageId + served landingVariantId on the created order (foreign served variant ⇒ null)", async () => {
@@ -720,9 +723,7 @@ describe("LandingsService — public order (no active zones)", () => {
 
   it("404s ordering from a draft landing", async () => {
     const { svc } = setup();
-    await expect(svc.placeOrder("draft-offer", { ...ORDER_BODY } as any)).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(svc.placeOrder("draft-offer", { ...ORDER_BODY } as any)).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
   });
 });
 
@@ -751,9 +752,7 @@ describe("LandingsService — public order (ShippingZones)", () => {
   it("400s when the district is missing in zone mode", async () => {
     const { svc, prisma } = setup();
     addZones(prisma);
-    await expect(svc.placeOrder("wallet-offer", { ...ORDER_BODY } as any)).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(svc.placeOrder("wallet-offer", { ...ORDER_BODY } as any)).rejects.toMatchObject({ code: "landings.yourDistrictMustBeGivenTo" });
     expect(prisma.order.rows).toHaveLength(0);
   });
 
@@ -829,9 +828,9 @@ describe("LandingsService — post-order upsell", () => {
   it("refuses when the order did not come from this landing", async () => {
     const { svc, prisma } = setup();
     const orderId = await placeLandingOrder(svc);
-    await expect(svc.addUpsell("draft-offer", orderId)).rejects.toThrow(BadRequestException);
+    await expect(svc.addUpsell("draft-offer", orderId)).rejects.toMatchObject({ code: "landings.thisOrderDidNotComeFrom" });
     prisma.order.rows.find((o: any) => o.id === orderId).landingPageId = null;
-    await expect(svc.addUpsell("wallet-offer", orderId)).rejects.toThrow(BadRequestException);
+    await expect(svc.addUpsell("wallet-offer", orderId)).rejects.toMatchObject({ code: "landings.thisOrderDidNotComeFrom" });
   });
 
   it("refuses a closed (non-open) order status", async () => {
@@ -872,8 +871,8 @@ describe("LandingsService — post-order upsell", () => {
 
   it("404s an unknown landing slug, 400s an unknown order", async () => {
     const { svc } = setup();
-    await expect(svc.addUpsell("no-such-slug", "whatever")).rejects.toThrow(NotFoundException);
-    await expect(svc.addUpsell("wallet-offer", "no-such-order")).rejects.toThrow(BadRequestException);
+    await expect(svc.addUpsell("no-such-slug", "whatever")).rejects.toMatchObject({ code: "landings.theLandingPageWasNotFound" });
+    await expect(svc.addUpsell("wallet-offer", "no-such-order")).rejects.toMatchObject({ code: "landings.theOrderWasNotFound" });
   });
 
   it("aborts with 400 and writes NO item when the stock step throws", async () => {
@@ -884,7 +883,7 @@ describe("LandingsService — post-order upsell", () => {
         throw new Error("stock ledger unavailable");
       }),
     };
-    await expect(svc.addUpsell("wallet-offer", orderId)).rejects.toThrow(BadRequestException);
+    await expect(svc.addUpsell("wallet-offer", orderId)).rejects.toMatchObject({ code: "landings.theStockCouldNotBeUpdated" });
     const items = prisma.orderItem.rows.filter((i: any) => i.orderId === orderId);
     expect(items.some((i: any) => i.productId === "p-up")).toBe(false);
     const order = prisma.order.rows.find((o: any) => o.id === orderId);
@@ -938,6 +937,6 @@ describe("LandingsService — stats", () => {
 
   it("404s stats for a foreign landing", async () => {
     const { svc } = setup();
-    await expect(svc.stats("org-2", "land-1")).rejects.toThrow(NotFoundException);
+    await expect(svc.stats("org-2", "land-1")).rejects.toMatchObject({ code: "landings.landingPageNotFoundInThis" });
   });
 });

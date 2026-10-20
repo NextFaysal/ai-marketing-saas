@@ -29,11 +29,29 @@ import { dhakaHour } from "./messaging-ai";
 
 /** The one label every revenue/order figure in MX16 analytics
  * carries, in API payloads, CSV exports and scheduled reports. */
+import { catalogText } from "../i18n/catalog/send-locale";
+
 export const ASSOCIATION_LABEL_BN =
   "সম্পর্ক (association) — প্রাপক কাস্টমারদের পাঠানোর পর ৭ দিনের অর্ডার; Broadcast-টি যে এই অর্ডারের কারণ, তার প্রমাণ নয়। Touchpoint/AttributionCredit-এর সঙ্গে Messaging Delivery-র কোনো সৎ join নেই, তাই Attribution দাবি করা হয় না।";
 
 export const ASSOCIATION_METHOD_BN =
   "প্রাপক কাস্টমারদের পাঠানোর পর ৭ দিনের অর্ডার (সম্পর্ক, কারণের প্রমাণ নয়)";
+
+/** MB4 (D-MB4-8): en companions of the association labels —
+ * payloads pick by locale via associationLabelFor(). */
+export const ASSOCIATION_LABEL_EN =
+  "Association — orders by recipient customers in the 7 days after the send; not proof that the broadcast caused those orders. There is no honest join between Messaging Delivery and Touchpoint/AttributionCredit, so no attribution is claimed.";
+
+export const ASSOCIATION_METHOD_EN =
+  "Orders by recipient customers in the 7 days after the send (association, not proof of causation)";
+
+export function associationLabelFor(locale: "bn" | "en"): string {
+  return locale === "en" ? ASSOCIATION_LABEL_EN : ASSOCIATION_LABEL_BN;
+}
+
+export function associationMethodFor(locale: "bn" | "en"): string {
+  return locale === "en" ? ASSOCIATION_METHOD_EN : ASSOCIATION_METHOD_BN;
+}
 
 // ---------------------------------------------------------------------------
 // Comparative analytics — funnel aggregation
@@ -123,15 +141,15 @@ export function buildAnalyticsCsv(input: {
     revenueAssociation: { orders: number; totalMinor: string } | null;
   }[];
   channels: ChannelFunnel[];
-}): string {
+}, locale: "bn" | "en" = "bn"): string {
   const esc = (v: unknown): string => {
     const s = v === null || v === undefined ? "" : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines: string[] = [];
-  lines.push(`# মেসেজিং তুলনামূলক Analytics (MX16) · সময়সীমা: ${input.range.from} থেকে ${input.range.to} (ঢাকা)`);
-  lines.push(`# আয়/অর্ডারের সব সংখ্যা: ${ASSOCIATION_LABEL_BN}`);
-  lines.push("# Broadcast অনুযায়ী");
+  lines.push(`# ${catalogText("messaging.analyticsCsvTitle", locale, { from: input.range.from, to: input.range.to })}`);
+  lines.push(`# ${catalogText("messaging.analyticsCsvAssociation", locale, { label: associationLabelFor(locale) })}`);
+  lines.push(`# ${catalogText("messaging.analyticsCsvByBroadcast", locale)}`);
   lines.push(["broadcastId", "name", "channel", "status", "sentAt", "audience", "sent", "failed", "skipped", "delivered", "read", "opened", "clickedRecipients", "totalClicks", "associatedOrders", "associatedRevenueMinor"].join(","));
   for (const b of input.broadcasts) {
     lines.push([
@@ -142,7 +160,7 @@ export function buildAnalyticsCsv(input: {
       b.revenueAssociation ? b.revenueAssociation.totalMinor : "",
     ].map(esc).join(","));
   }
-  lines.push("# Channel অনুযায়ী Funnel");
+  lines.push(`# ${catalogText("messaging.analyticsCsvByChannel", locale)}`);
   lines.push(["channel", "broadcasts", "audience", "sent", "failed", "skipped", "delivered", "read", "opened", "clickedRecipients", "totalClicks"].join(","));
   for (const c of input.channels) {
     lines.push([
@@ -179,6 +197,17 @@ export const AUTO_WINNER_RULE_TEXT_BN =
   `Auto-winner নিয়ম: প্রতি Variant-এ কমপক্ষে ${AUTO_WINNER_MIN_SAMPLE}টি সফল পাঠানো (sent) হলে তবেই সিদ্ধান্ত; ` +
   "দুই-অনুপাতের z-test (pooled, two-sided) — |z| ≥ 1.96 (p < 0.05, 95% confidence) হলেই কেবল জয়ী ঘোষণা হয়। " +
   "সমান হার বা threshold-এর নিচে কোনো সিদ্ধান্ত হয় না; সিদ্ধান্ত একবারই হয়। এটি AI নয় — একটি নির্দিষ্ট পরিসংখ্যান-নিয়ম।";
+
+/** MB4 (D-MB4-8): en companion + locale selector, same pattern
+ * as associationLabelFor above. */
+export const AUTO_WINNER_RULE_TEXT_EN =
+  `Auto-winner rule: a decision is made only when each variant has at least ${AUTO_WINNER_MIN_SAMPLE} successful sends (sent); ` +
+  "a two-proportion z-test (pooled, two-sided) — a winner is declared only at |z| ≥ 1.96 (p < 0.05, 95% confidence). " +
+  "Equal rates or anything below the threshold means no decision; the decision happens once only. This is not AI — it is a fixed statistical rule.";
+
+export function autoWinnerRuleTextFor(locale: "bn" | "en"): string {
+  return locale === "en" ? AUTO_WINNER_RULE_TEXT_EN : AUTO_WINNER_RULE_TEXT_BN;
+}
 
 /** Standard normal CDF via the Abramowitz–Stegun erf
  * approximation (error < 1.5e-7) — enough for the stated

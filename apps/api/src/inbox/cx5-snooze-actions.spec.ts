@@ -196,7 +196,7 @@ describe("CX5 (a) snoozeConversation validation + effects", () => {
     const { service, conversations } = setup();
     const foreign = conv({ organizationId: ORG_B });
     conversations.push(foreign);
-    await expect(service.snoozeConversation(ORG, "owner", foreign.id, { minutes: 60 })).rejects.toThrow(/not found/i);
+    await expect(service.snoozeConversation(ORG, "owner", foreign.id, { minutes: 60 })).rejects.toMatchObject({ code: "inbox.conversationNotFoundInThisOrganization" });
     expect(foreign.snoozedUntil ?? null).toBeNull();
   });
 });
@@ -335,8 +335,8 @@ describe("CX5 (e) take-over / back-to-ai", () => {
     const { service, conversations } = setup();
     const foreign = conv({ organizationId: ORG_B });
     conversations.push(foreign);
-    await expect(service.takeOverConversation(ORG, "owner", foreign.id)).rejects.toThrow(/not found/i);
-    await expect(service.backToAiConversation(ORG, "owner", foreign.id)).rejects.toThrow(/not found/i);
+    await expect(service.takeOverConversation(ORG, "owner", foreign.id)).rejects.toMatchObject({ code: "inbox.conversationNotFoundInThisOrganization" });
+    await expect(service.backToAiConversation(ORG, "owner", foreign.id)).rejects.toMatchObject({ code: "inbox.conversationNotFoundInThisOrganization" });
     expect(foreign.autoReplyPaused).toBe(false);
     expect(foreign.assignedUserId ?? null).toBeNull();
   });

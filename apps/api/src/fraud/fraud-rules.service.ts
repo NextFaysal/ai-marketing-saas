@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * GB3 (GC9): basic merchant fraud rules (FraudRule) + their
@@ -84,12 +85,12 @@ export function fraudRuleMatches(
  * safe to store as Json. */
 export function validateFraudRuleConditions(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new BadRequestException("শর্তগুলো একটি অবজেক্ট হতে হবে");
+    throw badRequest("fraud.theConditionsMustBeAnObject");
   }
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!(CONDITION_KEYS as readonly string[]).includes(key)) {
-      throw new BadRequestException(`অজানা শর্ত: ${key}`);
+      throw badRequest("fraud.unknownCondition", { key: key });
     }
     if (value === undefined || value === null) continue;
     if (key === "minTotalMinor") {
@@ -97,31 +98,31 @@ export function validateFraudRuleConditions(raw: unknown): Record<string, unknow
         ? String(value)
         : String(value);
       if (!/^\d+$/.test(s)) {
-        throw new BadRequestException("minTotalMinor সঠিক সংখ্যায় পাঠান (পয়সায়)");
+        throw badRequest("fraud.sendMintotalminorAsAProperNumber");
       }
       out.minTotalMinor = s;
     } else if (key === "isCod") {
-      if (typeof value !== "boolean") throw new BadRequestException("isCod boolean হতে হবে");
+      if (typeof value !== "boolean") throw badRequest("fraud.iscodMustBeBoolean");
       out.isCod = value;
     } else if (key === "districtIn") {
       if (!Array.isArray(value) || value.length > 64) {
-        throw new BadRequestException("districtIn সর্বোচ্চ ৬৪টি জেলার তালিকা হতে হবে");
+        throw badRequest("fraud.districtinMustBeAListOf");
       }
       const districts = value.map((d) => String(d ?? "").trim()).filter(Boolean);
       if (districts.some((d) => d.length > 80)) {
-        throw new BadRequestException("districtIn-এর প্রতিটি জেলার নাম সর্বোচ্চ ৮০ অক্ষরের হতে হবে");
+        throw badRequest("fraud.eachDistrictNameInDistrictinMust");
       }
       out.districtIn = districts;
     } else if (key === "phoneOpenOrdersGte") {
       const n = Number(value);
       if (!Number.isInteger(n) || n < 1 || n > 100) {
-        throw new BadRequestException("phoneOpenOrdersGte ১–১০০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("fraud.phoneopenordersgteMustBeAnIntegerBetween");
       }
       out.phoneOpenOrdersGte = n;
     } else if (key === "minRiskScore") {
       const n = Number(value);
       if (!Number.isInteger(n) || n < 0 || n > 100) {
-        throw new BadRequestException("minRiskScore ০–১০০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("fraud.minriskscoreMustBeAnIntegerBetween");
       }
       out.minRiskScore = n;
     }
@@ -132,7 +133,7 @@ export function validateFraudRuleConditions(raw: unknown): Record<string, unknow
 function validateName(raw: unknown): string {
   const name = String(raw ?? "").trim();
   if (name.length < 1 || name.length > 120) {
-    throw new BadRequestException("নিয়মের নাম ১–১২০ অক্ষরের হতে হবে");
+    throw badRequest("fraud.theRuleNameMustBe1");
   }
   return name;
 }
@@ -140,7 +141,7 @@ function validateName(raw: unknown): string {
 function validateAction(raw: unknown): string {
   const action = String(raw ?? "");
   if (!(FRAUD_RULE_ACTIONS as readonly string[]).includes(action)) {
-    throw new BadRequestException("action হতে হবে hold, tag অথবা block_checkout");
+    throw badRequest("fraud.actionMustBeHoldTagOr");
   }
   return action;
 }
@@ -149,7 +150,7 @@ function validateTagValue(action: string, raw: unknown): string | null {
   if (action !== "tag") return null;
   const tag = String(raw ?? "").trim();
   if (tag.length < 1 || tag.length > 30) {
-    throw new BadRequestException("tag অ্যাকশনের জন্য tagValue ১–৩০ অক্ষরের হতে হবে");
+    throw badRequest("fraud.forATagActionTagvalueMust");
   }
   return tag;
 }
@@ -225,7 +226,7 @@ export class FraudRulesService {
     const tagValue = validateTagValue(action, dto?.tagValue);
     const conditions = validateFraudRuleConditions(dto?.conditions ?? {});
     const table = this.table();
-    if (!table?.create) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!table?.create) throw badRequest("fraud.theFraudRuleFacilityIsNot");
     const row = await table.create({
       data: {
         organizationId: orgId,
@@ -249,7 +250,7 @@ export class FraudRulesService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id, organizationId: orgId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Fraud rule not found in this organization");
+    if (!row) throw notFound("fraud.fraudRuleNotFoundInThis");
     return row;
   }
 
@@ -258,7 +259,7 @@ export class FraudRulesService {
     const data: Record<string, unknown> = {};
     if (dto?.name !== undefined) data.name = validateName(dto.name);
     if (dto?.enabled !== undefined) {
-      if (typeof dto.enabled !== "boolean") throw new BadRequestException("enabled boolean হতে হবে");
+      if (typeof dto.enabled !== "boolean") throw badRequest("fraud.enabledMustBeBoolean");
       data.enabled = dto.enabled;
     }
     if (dto?.conditions !== undefined) data.conditions = validateFraudRuleConditions(dto.conditions);

@@ -131,9 +131,9 @@ describe("CA14 bulk operations", () => {
 
   it("whole-call validation: unknown action, zero percent, zero fixed and empty ids refuse before any item runs", async () => {
     const { svc } = setup();
-    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "explode" })).rejects.toThrow(/action must be/);
-    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "budget_percent", percent: 0 })).rejects.toThrow(/non-zero/);
-    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "budget_fixed", fixedMinor: "0" })).rejects.toThrow(/non-zero/);
+    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "explode" })).rejects.toMatchObject({ code: "campaigns.actionMustBePauseActivateBudget" });
+    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "budget_percent", percent: 0 })).rejects.toMatchObject({ code: "campaigns.percentMustBeANonZero" });
+    await expect(svc.bulkPlanAction("org", "u1", { planIds: ["plan-live"], action: "budget_fixed", fixedMinor: "0" })).rejects.toMatchObject({ code: "campaigns.fixedminorMustBeNonZero" });
     await expect(svc.bulkPlanAction("org", "u1", { planIds: [], action: "pause" })).rejects.toThrow(/planIds/);
   });
 });

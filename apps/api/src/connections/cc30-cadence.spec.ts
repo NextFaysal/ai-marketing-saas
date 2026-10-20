@@ -217,6 +217,6 @@ describe("CC30 cadence — setSyncInterval (ConnectionsService)", () => {
 
   it("404s for another org's integration", async () => {
     const { svc } = build();
-    await expect(svc.setSyncInterval("org-2", "u-owner", "int-woo", 60)).rejects.toThrow(/not found/i);
+    await expect(svc.setSyncInterval("org-2", "u-owner", "int-woo", 60)).rejects.toMatchObject({ code: "connections.integrationNotFound" });
   });
 });

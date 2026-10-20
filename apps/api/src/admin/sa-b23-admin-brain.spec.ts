@@ -245,7 +245,7 @@ describe("SA-B23 authorisation (SUPER only)", () => {
     const guard = new SuperAdminGuard(guardPrisma(), { getAllAndOverride: () => ["SUPER"] } as any);
     await expect(
       guard.canActivate(ctxFor({ user: { userId: "tenant-owner", tv: 0 }, headers: {}, method: "GET", url: "/admin/ai/orgs/org-a/brain" })),
-    ).rejects.toThrow(/Platform admin access required/);
+    ).rejects.toMatchObject({ code: "common.platformAdminRequired" });
   });
 
   it("a SUPPORT admin is refused on the SUPER tier", async () => {
@@ -305,7 +305,7 @@ describe("SA-B23 admin Brain view", () => {
 
   it("an unknown org is a 404 and writes no audit row", async () => {
     const w = buildWorld();
-    await expect(w.brain.viewBrain(ADMIN, "org-nope")).rejects.toThrow(/Organization not found/);
+    await expect(w.brain.viewBrain(ADMIN, "org-nope")).rejects.toMatchObject({ code: "admin.organizationNotFound" });
     expect(w.auditRows()).toHaveLength(0);
   });
 });
@@ -337,7 +337,7 @@ describe("SA-B23 fix: invalidate stored answer", () => {
 
   it("an answer id from another org is a 404 on this path and stays untouched", async () => {
     const w = buildWorld();
-    await expect(w.fixes.invalidateAnswer(ADMIN, ORG_A, "ans-b1", "কারণ")).rejects.toThrow(/Stored answer not found/);
+    await expect(w.fixes.invalidateAnswer(ADMIN, ORG_A, "ans-b1", "কারণ")).rejects.toMatchObject({ code: "admin.storedAnswerNotFound" });
     const rowB = await w.prisma.aiStoredAnswer.findFirst({ where: { id: "ans-b1", organizationId: ORG_B } });
     expect(rowB.status).toBe("active");
     expect(w.auditRows("admin.ai_brain_fix_answer_invalidate")).toHaveLength(0);
@@ -345,7 +345,7 @@ describe("SA-B23 fix: invalidate stored answer", () => {
 
   it("empty reason = 400 before any mutation or audit", async () => {
     const w = buildWorld();
-    await expect(w.fixes.invalidateAnswer(ADMIN, ORG_A, "ans-a1", "   ")).rejects.toThrow(/reason is required/i);
+    await expect(w.fixes.invalidateAnswer(ADMIN, ORG_A, "ans-a1", "   ")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForEvery" });
     const row = await w.prisma.aiStoredAnswer.findFirst({ where: { id: "ans-a1", organizationId: ORG_A } });
     expect(row.status).toBe("active");
     expect(w.auditRows()).toHaveLength(0);
@@ -397,7 +397,7 @@ describe("SA-B23 fix: learned-item review as admin", () => {
 
   it("empty reason = 400, the item stays suggested, no audit rows", async () => {
     const w = buildWorld();
-    await expect(w.fixes.reviewLearnedItem(ADMIN, ORG_A, "li-a1", "approve", "")).rejects.toThrow(/reason is required/i);
+    await expect(w.fixes.reviewLearnedItem(ADMIN, ORG_A, "li-a1", "approve", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForEvery" });
     const item = await w.prisma.learnedItem.findFirst({ where: { id: "li-a1", organizationId: ORG_A } });
     expect(item.status).toBe("suggested");
     expect(w.auditRows()).toHaveLength(0);
@@ -405,7 +405,7 @@ describe("SA-B23 fix: learned-item review as admin", () => {
 
   it("an invalid decision is a 400 before anything happens", async () => {
     const w = buildWorld();
-    await expect(w.fixes.reviewLearnedItem(ADMIN, ORG_A, "li-a1", "maybe", "কারণ")).rejects.toThrow(/decision must be/);
+    await expect(w.fixes.reviewLearnedItem(ADMIN, ORG_A, "li-a1", "maybe", "কারণ")).rejects.toMatchObject({ code: "admin.decisionMustBeApproveOrReject" });
     expect(w.auditRows()).toHaveLength(0);
   });
 });
@@ -431,8 +431,8 @@ describe("SA-B23 fix: forget customer memory by key", () => {
 
   it("an unknown key is a 404; an empty reason is a 400 with the row intact", async () => {
     const w = buildWorld();
-    await expect(w.fixes.forgetCustomerMemory(ADMIN, ORG_A, "messenger:999", "কারণ")).rejects.toThrow(/Customer memory not found/);
-    await expect(w.fixes.forgetCustomerMemory(ADMIN, ORG_A, "messenger:111", " ")).rejects.toThrow(/reason is required/i);
+    await expect(w.fixes.forgetCustomerMemory(ADMIN, ORG_A, "messenger:999", "কারণ")).rejects.toMatchObject({ code: "admin.customerMemoryNotFound" });
+    await expect(w.fixes.forgetCustomerMemory(ADMIN, ORG_A, "messenger:111", " ")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForEvery" });
     expect(await w.prisma.customerMemory.findFirst({ where: { organizationId: ORG_A, customerKey: "messenger:111" } })).not.toBeNull();
     expect(w.auditRows("admin.ai_brain_fix_memory_forget")).toHaveLength(0);
   });
@@ -470,7 +470,7 @@ describe("SA-B23 fix: answer-store toggle override", () => {
 
   it("empty reason = 400 and the switch does not move", async () => {
     const w = buildWorld();
-    await expect(w.fixes.setAnswerStoreEnabled(ADMIN, ORG_A, false, "")).rejects.toThrow(/reason is required/i);
+    await expect(w.fixes.setAnswerStoreEnabled(ADMIN, ORG_A, false, "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForEvery" });
     const profile = await w.prisma.businessProfile.findUnique({ where: { organizationId: ORG_A } });
     expect(profile.answerStoreEnabled).toBe(true);
     expect(w.auditRows()).toHaveLength(0);

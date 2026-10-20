@@ -1,8 +1,9 @@
-import { Body, Controller, Headers, HttpException, HttpStatus, Post } from "@nestjs/common";
+import { Body, Controller, Headers, HttpStatus, Post } from "@nestjs/common";
 import { AssistantApiService } from "./assistant-api.service";
 import { ChatService } from "./chat.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AssistantApiChatDto } from "./ai.dto";
+import { ApiException } from "../i18n/api-exception";
 
 /**
  * AP7 public Assistant API. Authenticated ONLY by an org-scoped
@@ -23,7 +24,7 @@ export class AssistantApiController {
   @Post("chat")
   async chatOnce(@Headers("x-api-key") apiKey: string | undefined, @Body() dto: AssistantApiChatDto) {
     const auth = await this.keys.authenticate(apiKey);
-    if (!auth) throw new HttpException("Invalid or revoked API key", HttpStatus.UNAUTHORIZED);
+    if (!auth) throw new ApiException("ai.invalidOrRevokedApiKey", undefined, HttpStatus.UNAUTHORIZED);
     const orgId = auth.organizationId;
 
     // The creator's current role governs restricted tools; a

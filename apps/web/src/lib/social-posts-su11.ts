@@ -8,6 +8,15 @@
  * social-post-filters / social-media-library.
  */
 
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { tr } from "./i18n/lookup";
+import { socialBn, socialEn } from "./i18n/social";
+
+const SOCIAL_DICTS = { bn: socialBn, en: socialEn };
+const L = (locale: UiLocale, key: string, params?: Record<string, string | number>) =>
+  tr(SOCIAL_DICTS, locale, key, params) ?? key;
+
+
 /** One page of the cursor-paginated post list (SU11 API). */
 export interface SocialPostPage<T> {
   items: T[];
@@ -55,13 +64,12 @@ export interface BulkPostsResponse {
 /** The notice line for a bulk run: counts first (Bengali digits),
  * then up to two verbatim per-item errors so the user sees WHY
  * the failures failed without opening anything else. */
-export function summarizeBulkPostResults(res: BulkPostsResponse, actionLabel: string): string {
-  const bn = (n: number) => n.toLocaleString("bn-BD");
-  let text = `${actionLabel}: ${bn(res.succeeded)}টি সফল, ${bn(res.failed)}টি ব্যর্থ।`;
+export function summarizeBulkPostResults(res: BulkPostsResponse, actionLabel: string, locale: UiLocale = "bn"): string {
+  let text = L(locale, "bulkResult", { action: actionLabel, ok: fmtNumber(locale, res.succeeded), failed: fmtNumber(locale, res.failed) });
   const errors = res.results.filter((r) => !r.ok && r.error).slice(0, 2);
   if (errors.length > 0) {
-    text += ` ব্যর্থতার কারণ: ${errors.map((r) => r.error).join(" · ")}`;
-    if (res.failed > errors.length) text += " · আরও আছে";
+    text += L(locale, "bulkFailReasons", { errors: errors.map((r) => r.error).join(" · ") });
+    if (res.failed > errors.length) text += L(locale, "bulkMore");
   }
   return text;
 }
@@ -80,28 +88,27 @@ export interface CsvImportResponse {
 }
 
 /** The notice line for a CSV import run (counts, Bengali digits). */
-export function summarizeCsvImport(res: CsvImportResponse): string {
-  const bn = (n: number) => n.toLocaleString("bn-BD");
-  return `CSV Import: ${bn(res.created)}টি Draft তৈরি হয়েছে, ${bn(res.failed)}টি সারি ব্যর্থ।`;
+export function summarizeCsvImport(res: CsvImportResponse, locale: UiLocale = "bn"): string {
+  return L(locale, "csvImportResult", { created: fmtNumber(locale, res.created), failed: fmtNumber(locale, res.failed) });
 }
 
 /** SU10 account-health label pill (GET accounts/health values). */
-export function healthPill(health: string | null | undefined): { label: string; cls: string } {
+export function healthPill(health: string | null | undefined, locale: UiLocale = "bn"): { label: string; cls: string } {
   switch (health) {
     case "ok":
-      return { label: "সুস্থ", cls: "bg-green-100 text-green-700" };
+      return { label: L(locale, "healthOk"), cls: "bg-green-100 text-green-700" };
     case "error":
-      return { label: "সমস্যা আছে", cls: "bg-red-100 text-red-700" };
+      return { label: L(locale, "healthProblem"), cls: "bg-red-100 text-red-700" };
     case "never_checked":
-      return { label: "কখনো যাচাই হয়নি", cls: "bg-slate-200 text-slate-600" };
+      return { label: L(locale, "healthNever"), cls: "bg-slate-200 text-slate-600" };
     default:
-      return { label: "অজানা", cls: "bg-slate-100 text-slate-500" };
+      return { label: L(locale, "healthUnknown"), cls: "bg-slate-100 text-slate-500" };
   }
 }
 
 /** SU9: the approval badge label for the two-step intermediate
  * state. The other states keep their SP7 labels in shared.tsx;
  * this helper exists so the wording is unit-pinned. */
-export function managerApprovedLabel(): string {
-  return "🧭 Manager ধাপে অনুমোদিত — চূড়ান্ত অনুমোদনের অপেক্ষায়";
+export function managerApprovedLabel(locale: UiLocale = "bn"): string {
+  return L(locale, "apprManagerApproved");
 }

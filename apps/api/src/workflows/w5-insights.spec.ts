@@ -125,7 +125,7 @@ describe("W5 insights", () => {
     expect(retried.status).toBe("completed");
     expect(retried.context._retryOf).toBe(failed.id);
     expect(tables.channelConversation.rows[0].assignedUserId).toBe("agent-9");
-    await expect(svc.retryRun("org", retried.id, "owner-1")).rejects.toThrow(/Only failed runs/);
+    await expect(svc.retryRun("org", retried.id, "owner-1")).rejects.toMatchObject({ code: "workflows.onlyFailedRunsCanBeRetried" });
   });
 
   it("stats count the last 30 days with an honest success rate", async () => {

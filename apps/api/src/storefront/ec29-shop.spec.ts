@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { PromotionsService } from "../commerce/promotions.service";
@@ -319,7 +320,7 @@ describe("EC29 shop — bundle quote + checkout", () => {
     await svc.patchCartBundle("shop-one", cartToken, { bundleId: "b-1", quantity: 1 } as any);
     await expect(
       svc.checkout("shop-one", { cartToken, ...CHECKOUT } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(integrations.upsertOrder).not.toHaveBeenCalled();
   });
 });

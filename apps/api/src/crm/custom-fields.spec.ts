@@ -45,17 +45,17 @@ describe("CustomFieldsService defs (CRM C4)", () => {
     const text = await fields.createDef("org-1", { entity: "lead", label: "Note Field", type: "text", options: ["x"] as any });
     expect(text.options).toBeNull();
     await expect(fields.createDef("org-1", { entity: "lead", label: "Empty Select", type: "select", options: [] }))
-      .rejects.toThrow("at least one option");
+      .rejects.toMatchObject({ code: "crm.aSelectFieldNeedsAtLeast" });
   });
 
   it("rejects duplicate keys — including against archived defs — and bad entity/type/key", async () => {
     const { fields } = svc();
     const def = await fields.createDef("org-1", { entity: "customer", label: "City", type: "text" });
     await fields.archiveDef("org-1", def.id);
-    await expect(fields.createDef("org-1", { entity: "customer", label: "City", type: "text" })).rejects.toThrow("already exists");
-    await expect(fields.createDef("org-1", { entity: "order" as any, label: "X", type: "text" })).rejects.toThrow("Invalid entity");
-    await expect(fields.createDef("org-1", { entity: "lead", label: "X", type: "boolean" as any })).rejects.toThrow("Invalid field type");
-    await expect(fields.createDef("org-1", { entity: "lead", key: "9bad", label: "X", type: "text" })).rejects.toThrow("Invalid field key");
+    await expect(fields.createDef("org-1", { entity: "customer", label: "City", type: "text" })).rejects.toMatchObject({ code: "crm.aFieldWithKeyAlreadyExists" });
+    await expect(fields.createDef("org-1", { entity: "order" as any, label: "X", type: "text" })).rejects.toMatchObject({ code: "crm.invalidEntityUseLeadCustomer" });
+    await expect(fields.createDef("org-1", { entity: "lead", label: "X", type: "boolean" as any })).rejects.toMatchObject({ code: "crm.invalidFieldTypeUse" });
+    await expect(fields.createDef("org-1", { entity: "lead", key: "9bad", label: "X", type: "text" })).rejects.toMatchObject({ code: "crm.invalidFieldKeyAKeyMust" });
     // Same key on the OTHER entity is fine.
     const other = await fields.createDef("org-1", { entity: "lead", label: "City", type: "text" });
     expect(other.key).toBe("city");
@@ -64,7 +64,7 @@ describe("CustomFieldsService defs (CRM C4)", () => {
   it("key is immutable after create; label/required/sortOrder/archive are editable", async () => {
     const { fields } = svc();
     const def = await fields.createDef("org-1", { entity: "lead", label: "Source Detail", type: "text" });
-    await expect(fields.updateDef("org-1", def.id, { key: "other_key" })).rejects.toThrow("cannot be changed");
+    await expect(fields.updateDef("org-1", def.id, { key: "other_key" })).rejects.toMatchObject({ code: "crm.fieldKeyCannotBeChangedStored" });
     const updated = await fields.updateDef("org-1", def.id, { label: "বিস্তারিত", required: true, sortOrder: 3 });
     expect(updated).toMatchObject({ label: "বিস্তারিত", required: true, sortOrder: 3, key: "source_detail" });
     const archived = await fields.updateDef("org-1", def.id, { archived: true });
@@ -78,7 +78,7 @@ describe("CustomFieldsService defs (CRM C4)", () => {
     const { fields } = svc();
     const def = await fields.createDef("org-1", { entity: "lead", label: "Secret", type: "text" });
     expect(await fields.listDefs("org-2")).toHaveLength(0);
-    await expect(fields.updateDef("org-2", def.id, { label: "Hacked" })).rejects.toThrow("not found");
+    await expect(fields.updateDef("org-2", def.id, { label: "Hacked" })).rejects.toMatchObject({ code: "crm.customFieldNotFoundInThis" });
   });
 });
 
@@ -90,16 +90,16 @@ describe("validateCustomFieldValue (CRM C4 matrix)", () => {
 
   it("text: trims, rejects non-strings and >500 chars", () => {
     expect(validateCustomFieldValue(text, "  hello  ")).toBe("hello");
-    expect(() => validateCustomFieldValue(text, 42)).toThrow(/must be text/);
-    expect(() => validateCustomFieldValue(text, "x".repeat(501))).toThrow(/too long/);
+    expect(() => validateCustomFieldValue(text, 42)).toThrow(expect.objectContaining({ code: "crm.customFieldMustBeText" }));
+    expect(() => validateCustomFieldValue(text, "x".repeat(501))).toThrow(expect.objectContaining({ code: "crm.customFieldIsTooLongMax" }));
   });
 
   it("number: accepts numbers and numeric strings, stores a number; rejects the rest", () => {
     expect(validateCustomFieldValue(num, 42)).toBe(42);
     expect(validateCustomFieldValue(num, " 1250.50 ")).toBe(1250.5);
-    expect(() => validateCustomFieldValue(num, "abc")).toThrow(/must be a number/);
-    expect(() => validateCustomFieldValue(num, true)).toThrow(/must be a number/);
-    expect(() => validateCustomFieldValue(num, NaN)).toThrow(/must be a number/);
+    expect(() => validateCustomFieldValue(num, "abc")).toThrow(expect.objectContaining({ code: "crm.customFieldMustBeANumber" }));
+    expect(() => validateCustomFieldValue(num, true)).toThrow(expect.objectContaining({ code: "crm.customFieldMustBeANumber" }));
+    expect(() => validateCustomFieldValue(num, NaN)).toThrow(expect.objectContaining({ code: "crm.customFieldMustBeANumber" }));
   });
 
   it("date: only real YYYY-MM-DD calendar dates", () => {
@@ -111,7 +111,7 @@ describe("validateCustomFieldValue (CRM C4 matrix)", () => {
 
   it("select: value must be one of the options", () => {
     expect(validateCustomFieldValue(sel, "ঢাকা")).toBe("ঢাকা");
-    expect(() => validateCustomFieldValue(sel, "চট্টগ্রাম")).toThrow(/must be one of/);
+    expect(() => validateCustomFieldValue(sel, "চট্টগ্রাম")).toThrow(expect.objectContaining({ code: "crm.customFieldMustBeOneOf" }));
   });
 });
 
@@ -135,19 +135,19 @@ describe("validateAndSanitize (CRM C4)", () => {
 
   it("unknown keys 400 — including keys of archived defs", async () => {
     const { fields } = await setup();
-    await expect(fields.validateAndSanitize("org-1", "lead", { nope: "x" }, {})).rejects.toThrow('Unknown custom field: "nope"');
-    await expect(fields.validateAndSanitize("org-1", "lead", { old_field: "x" }, {})).rejects.toThrow('Unknown custom field: "old_field"');
+    await expect(fields.validateAndSanitize("org-1", "lead", { nope: "x" }, {})).rejects.toMatchObject({ code: "crm.unknownCustomFieldFor" });
+    await expect(fields.validateAndSanitize("org-1", "lead", { old_field: "x" }, {})).rejects.toMatchObject({ code: "crm.unknownCustomFieldFor" });
   });
 
   it("type mismatch 400s naming the label", async () => {
     const { fields } = await setup();
-    await expect(fields.validateAndSanitize("org-1", "lead", { budget: "lots" }, {})).rejects.toThrow('"Budget" must be a number');
+    await expect(fields.validateAndSanitize("org-1", "lead", { budget: "lots" }, {})).rejects.toMatchObject({ code: "crm.customFieldMustBeANumber" });
   });
 
   it("required is enforced on create only", async () => {
     const { fields } = await setup();
-    await expect(fields.validateAndSanitize("org-1", "lead", {}, { forCreate: true })).rejects.toThrow('"District" is required');
-    await expect(fields.validateAndSanitize("org-1", "lead", { district: null }, { forCreate: true })).rejects.toThrow('"District" is required');
+    await expect(fields.validateAndSanitize("org-1", "lead", {}, { forCreate: true })).rejects.toMatchObject({ code: "crm.customFieldIsRequired" });
+    await expect(fields.validateAndSanitize("org-1", "lead", { district: null }, { forCreate: true })).rejects.toMatchObject({ code: "crm.customFieldIsRequired" });
     await expect(fields.validateAndSanitize("org-1", "lead", {}, { forCreate: false })).resolves.toEqual({});
     // Existing value satisfies required on create.
     await expect(fields.validateAndSanitize("org-1", "lead", {}, { forCreate: true, existing: { district: "খুলনা" } })).resolves.toEqual({});
@@ -155,7 +155,7 @@ describe("validateAndSanitize (CRM C4)", () => {
 
   it("another org's defs do not validate this org's values", async () => {
     const { fields } = await setup();
-    await expect(fields.validateAndSanitize("org-2", "lead", { district: "ঢাকা" }, {})).rejects.toThrow('Unknown custom field: "district"');
+    await expect(fields.validateAndSanitize("org-2", "lead", { district: "ঢাকা" }, {})).rejects.toMatchObject({ code: "crm.unknownCustomFieldFor" });
   });
 
   it("mergeValues applies overwrites and clears; fillGaps only fills", () => {

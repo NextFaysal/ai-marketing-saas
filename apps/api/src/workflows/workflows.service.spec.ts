@@ -101,6 +101,6 @@ describe("WorkflowsService engine", () => {
     await expect(workflows.create("org-1", "owner", { name: "x", trigger: "order_created", steps: [{ type: "send_email" }] }))
       .rejects.toThrow("templateId");
     await expect(workflows.create("org-1", "owner", { name: "x", trigger: "order_created", steps: [{ type: "send_email", templateId: "nope" }] }))
-      .rejects.toThrow("Template not found");
+      .rejects.toMatchObject({ code: "messaging.templateNotFound" });
   });
 });

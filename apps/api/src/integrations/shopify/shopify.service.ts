@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
@@ -16,6 +16,7 @@ import { ErasureService } from "../../customers/erasure.service";
 import { upsertAbandonedStoreCheckout } from "./shopify-checkouts";
 import { cadenceSkip } from "../sync-cadence";
 import { isOrderLimitBlocked } from "../../common/plan-limit-checks";
+import { badRequest, notFound } from "../../i18n/api-exception";
 
 const EC_CUSTOMERS_QUERY = `query ecCustomers($first: Int!, $after: String) { customers(first: $first, after: $after) { edges { node { id firstName lastName email phone defaultAddress { address1 address2 city zip country phone } } } pageInfo { hasNextPage endCursor } } }`;
 
@@ -51,14 +52,14 @@ export class ShopifyService {
 
   async connect(organizationId: string, actorId: string, dto: { storeId: string; accessToken: string; apiSecret: string }) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: dto.storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("integrations.storeNotFoundInThisOrganization");
     const secrets: ShopifySecrets = { accessToken: dto.accessToken, apiSecret: dto.apiSecret };
     // Verified against the real shop BEFORE anything is saved.
     let shop: { id: number; name: string; currency: string; domain: string };
     try {
       shop = await new ShopifyClient(store.url, secrets).testConnection();
     } catch (e) {
-      throw new BadRequestException(`Shopify connection failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("integrations.shopifyConnectionFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const existing = await (this.prisma as any).integration.findFirst({
       where: { organizationId, provider: "shopify", storeId: store.id },
@@ -94,9 +95,9 @@ export class ShopifyService {
    *  Token exchange and a GraphQL shop probe happen BEFORE anything
    *  is saved — a failure saves nothing and surfaces verbatim. */
   async connectClientCredentials(organizationId: string, actorId: string, dto: { storeId: string; clientId: string; clientSecret: string }) {
-    if (!dto.clientId || !dto.clientSecret) throw new BadRequestException("clientId এবং clientSecret দুটোই দিন");
+    if (!dto.clientId || !dto.clientSecret) throw badRequest("integrations.giveBothClientidAndClientsecret");
     const store = await (this.prisma as any).store.findFirst({ where: { id: dto.storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("integrations.storeNotFoundInThisOrganization");
     let exchanged: { accessToken: string; expiresIn: number | null; scope: string | null };
     try {
       exchanged = await exchangeShopifyClientCredentials(store.url, dto.clientId, dto.clientSecret);
@@ -162,7 +163,7 @@ export class ShopifyService {
    * beats silently using a dead token.
    */
   async refreshTokenIfNeeded(integration: any): Promise<ShopifyStoredSecrets> {
-    if (!integration.credential) throw new BadRequestException("Shopify credentials are missing; reconnect");
+    if (!integration.credential) throw badRequest("integrations.shopifyCredentialsAreMissingReconnect");
     const secrets = decryptJson<ShopifyStoredSecrets>(integration.credential.encryptedData);
     const authType = (secrets as any).authType ?? integration.authType;
     if (authType !== "client_credentials") return secrets;
@@ -172,9 +173,9 @@ export class ShopifyService {
       if (expiresAt.getTime() > Date.now() + 5 * 60 * 1000) return secrets;
     }
     if (!secrets.clientId || !secrets.clientSecret) {
-      throw new BadRequestException("Shopify client credentials are missing; reconnect with clientId/clientSecret");
+      throw badRequest("integrations.shopifyClientCredentialsAreMissingReconnect");
     }
-    if (!integration.store?.url) throw new BadRequestException("Shopify integration has no store");
+    if (!integration.store?.url) throw badRequest("integrations.shopifyIntegrationHasNoStore");
     let exchanged: { accessToken: string; expiresIn: number | null; scope: string | null };
     try {
       exchanged = await exchangeShopifyClientCredentials(integration.store.url, secrets.clientId, secrets.clientSecret);
@@ -238,7 +239,7 @@ export class ShopifyService {
   /** EC2: re-run Shopify webhook subscription ensure. */
   async repairWebhooks(organizationId: string, actorId: string, integrationId: string) {
     const integration = await this.integrations.getIntegration(organizationId, integrationId);
-    if (integration.provider !== "shopify") throw new BadRequestException("Webhook repair is only available for Shopify integrations");
+    if (integration.provider !== "shopify") throw badRequest("integrations.webhookRepairIsOnlyAvailableFor");
     const webhookRegistration = await this.attemptShopifyWebhookSubscriptions(integration, actorId);
     await this.audit.log({ organizationId, userId: actorId, action: "integration.repair_webhooks", entityType: "Integration", entityId: integration.id, metadata: { provider: "shopify", webhookRegistration } });
     return { integrationId: integration.id, webhookRegistration, webhookStatus: integration.webhookStatus };
@@ -253,7 +254,7 @@ export class ShopifyService {
    */
   async handleGdpr(topic: string, rawBody: string, hmac: string | undefined, webhookId?: string) {
     let payload: any;
-    try { payload = JSON.parse(rawBody); } catch { throw new BadRequestException("Invalid Shopify GDPR payload"); }
+    try { payload = JSON.parse(rawBody); } catch { throw badRequest("integrations.invalidShopifyGdprPayload"); }
     const shopDomain: string | undefined = payload?.shop_domain;
     let candidates: any[] = await (this.prisma as any).integration.findMany({
       where: { provider: "shopify" }, include: { credential: true, store: true }, take: 50,
@@ -282,7 +283,7 @@ export class ShopifyService {
       // stored apiSecret differs (env-configured app).
       if (process.env.SHOPIFY_APP_SECRET && verifyShopifyHmac(rawBody, hmac, process.env.SHOPIFY_APP_SECRET)) { verified = integration; break; }
     }
-    if (!verified) throw new BadRequestException("Invalid Shopify webhook signature");
+    if (!verified) throw badRequest("integrations.invalidShopifyWebhookSignature");
     return this.recordGdpr(verified, topic, payload, shopDomain, webhookId);
   }
 
@@ -343,7 +344,7 @@ export class ShopifyService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId, provider: "shopify" }, include: { store: true, credential: true },
     });
-    if (!integration) throw new NotFoundException("Shopify integration not found");
+    if (!integration) throw notFound("integrations.shopifyIntegrationNotFound");
     return integration;
   }
 
@@ -363,7 +364,7 @@ export class ShopifyService {
   }
 
   private async clientFor(integration: any): Promise<ShopifyClient> {
-    if (!integration.credential) throw new BadRequestException("Shopify credentials are missing; reconnect");
+    if (!integration.credential) throw badRequest("integrations.shopifyCredentialsAreMissingReconnect");
     const secrets = await this.refreshTokenIfNeeded(integration);
     return new ShopifyClient(integration.store.url, secrets);
   }
@@ -465,7 +466,7 @@ export class ShopifyService {
       const message = bulkError ? `${base} (bulk attempt failed first: ${bulkError})` : base;
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Shopify product sync failed: ${message}`);
+      throw badRequest("integrations.shopifyProductSyncFailed", { message: message });
     }
   }
 
@@ -529,7 +530,7 @@ export class ShopifyService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Shopify order sync failed: ${message}`);
+      throw badRequest("integrations.shopifyOrderSyncFailed", { message: message });
     }
   }
 
@@ -542,7 +543,7 @@ export class ShopifyService {
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     const errors: string[] = [];
     try {
-      if (!integration.storeId) throw new BadRequestException("Integration has no store");
+      if (!integration.storeId) throw badRequest("integrations.integrationHasNoStore");
       const client = await this.buildGraphQLClient(integration);
       let after: string | null = null;
       for (let page = 0; page < 20; page++) {
@@ -579,7 +580,7 @@ export class ShopifyService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Shopify customer sync failed: ${message}`);
+      throw badRequest("integrations.shopifyCustomerSyncFailed", { message: message });
     }
   }
 
@@ -587,10 +588,10 @@ export class ShopifyService {
     const integration = await (this.prisma as any).integration.findUnique({
       where: { id: integrationId }, include: { credential: true, store: true },
     });
-    if (!integration || integration.provider !== "shopify" || !integration.credential) throw new NotFoundException("Integration not found");
+    if (!integration || integration.provider !== "shopify" || !integration.credential) throw notFound("integrations.integrationNotFound");
     const secrets = decryptJson<ShopifySecrets>(integration.credential.encryptedData);
     if (!verifyShopifyHmac(rawBody, hmac, secrets.apiSecret)) {
-      throw new BadRequestException("Invalid Shopify webhook signature");
+      throw badRequest("integrations.invalidShopifyWebhookSignature");
     }
     // Dedupe on Shopify's webhook id (retries are expected).
     if (webhookId) {

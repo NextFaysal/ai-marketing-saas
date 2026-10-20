@@ -21,9 +21,9 @@ export type TranslationLocaleCode = (typeof TRANSLATION_LOCALES)[number]["code"]
 
 export interface TranslationView {
   id: string;
-  entityType: string; // product | storefront_string
+  entityType: string; // product | category | blog_post | storefront_string
   entityId: string;
-  field: string; // name | description | announcementText | returnPolicyText | deliveryPromiseText
+  field: string; // name | description | title (blog_post) | announcementText | returnPolicyText | deliveryPromiseText
   locale: string;
   text: string;
   status: string; // draft | approved
@@ -42,6 +42,17 @@ export interface CurrencyRateView {
 export const PRODUCT_TRANSLATION_FIELDS = [
   { field: "name", label: "পণ্যের নাম" },
   { field: "description", label: "পণ্যের বিবরণ" },
+] as const;
+
+/** MB5 (ML15): category fields — the product pair (name, description). */
+export const CATEGORY_TRANSLATION_FIELDS = [
+  { field: "name", label: "ক্যাটাগরির নাম" },
+  { field: "description", label: "ক্যাটাগরির বিবরণ" },
+] as const;
+
+/** MB5 (ML15): blog post — title ONLY (content is not translated). */
+export const BLOG_POST_TRANSLATION_FIELDS = [
+  { field: "title", label: "ব্লগ পোস্টের শিরোনাম" },
 ] as const;
 
 export const STOREFRONT_STRING_FIELDS = [
@@ -95,6 +106,30 @@ export function fetchProductTranslations(orgId: string, productId: string) {
 
 export function fetchStorefrontStringTranslations(orgId: string) {
   return apiFetch<{ items: TranslationView[] }>(`${base(orgId)}/storefront-string-translations`);
+}
+
+/** MB5 (ML15): category translations — the product wrappers' mirror. */
+export function fetchCategoryTranslations(orgId: string, categoryId: string) {
+  return apiFetch<{ items: TranslationView[] }>(`${base(orgId)}/categories/${categoryId}/translations`);
+}
+
+export function generateCategoryAiDraft(orgId: string, categoryId: string, locale: string) {
+  return apiFetch<{ mode: string; note: string; items: TranslationView[] }>(
+    `${base(orgId)}/categories/${categoryId}/translations/ai-draft`,
+    { method: "POST", body: JSON.stringify({ locale }) },
+  );
+}
+
+/** MB5 (ML15): blog-post title translations — the product wrappers' mirror. */
+export function fetchBlogPostTranslations(orgId: string, blogPostId: string) {
+  return apiFetch<{ items: TranslationView[] }>(`${base(orgId)}/blog-posts/${blogPostId}/translations`);
+}
+
+export function generateBlogPostAiDraft(orgId: string, blogPostId: string, locale: string) {
+  return apiFetch<{ mode: string; note: string; items: TranslationView[] }>(
+    `${base(orgId)}/blog-posts/${blogPostId}/translations/ai-draft`,
+    { method: "POST", body: JSON.stringify({ locale }) },
+  );
 }
 
 export function upsertTranslation(orgId: string, body: {

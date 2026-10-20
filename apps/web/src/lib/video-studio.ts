@@ -3,6 +3,7 @@
 // the page owns fetching and state — same pattern as
 // lib/live-commerce.ts / lib/pos-scan.ts.
 import { mediaSrc } from "./media-src";
+import type { UiLocale } from "@repo/contracts";
 
 /** VideoProject public view (video-studio.service serialize):
  * status queued|rendering|ready|failed; errorLabel is the API's
@@ -28,13 +29,13 @@ export interface VideoProjectView {
 }
 
 export const VIDEO_TEMPLATES = [
-  { value: "showcase", label: "শোকেস" },
-  { value: "offer", label: "অফার" },
+  { value: "showcase", label: "শোকেস", labelEn: "Showcase" },
+  { value: "offer", label: "অফার", labelEn: "Offer" },
 ] as const;
 
 export const VIDEO_LANGUAGES = [
-  { value: "bn", label: "বাংলা" },
-  { value: "en", label: "English" },
+  { value: "bn", label: "বাংলা", labelEn: "Bengali" },
+  { value: "en", label: "English", labelEn: "English" },
 ] as const;
 
 /** Honest provenance note: v1 renders templates locally with
@@ -42,21 +43,29 @@ export const VIDEO_LANGUAGES = [
  * page must never label it so. */
 export const VIDEO_HONESTY_NOTE =
   "ভিডিওগুলো সার্ভারে টেমপ্লেট দিয়ে স্থানীয়ভাবে (ffmpeg) রেন্ডার হয় — বাইরের AI ভিডিও সুবিধা এখনো যুক্ত হয়নি।";
+export const VIDEO_HONESTY_NOTE_EN =
+  "Videos are rendered locally on the server from templates (ffmpeg) — no external AI video service is connected yet.";
 
-export function templateLabel(template: string): string {
-  return VIDEO_TEMPLATES.find((t) => t.value === template)?.label ?? template;
+export function videoHonestyNote(locale: UiLocale = "bn"): string {
+  return locale === "en" ? VIDEO_HONESTY_NOTE_EN : VIDEO_HONESTY_NOTE;
 }
 
-export function projectStatusChip(status: string): { label: string; cls: string } {
+export function templateLabel(template: string, locale: UiLocale = "bn"): string {
+  const found = VIDEO_TEMPLATES.find((t) => t.value === template);
+  if (!found) return template;
+  return locale === "en" ? found.labelEn : found.label;
+}
+
+export function projectStatusChip(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
   switch (status) {
     case "ready":
-      return { label: "প্রস্তুত", cls: "bg-emerald-100 text-emerald-700" };
+      return { label: locale === "en" ? "Ready" : "প্রস্তুত", cls: "bg-emerald-100 text-emerald-700" };
     case "rendering":
-      return { label: "তৈরি হচ্ছে", cls: "bg-sky-100 text-sky-700" };
+      return { label: locale === "en" ? "Rendering" : "তৈরি হচ্ছে", cls: "bg-sky-100 text-sky-700" };
     case "failed":
-      return { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" };
+      return { label: locale === "en" ? "Failed" : "ব্যর্থ", cls: "bg-red-100 text-red-700" };
     default:
-      return { label: "অপেক্ষমাণ", cls: "bg-amber-100 text-amber-700" };
+      return { label: locale === "en" ? "Pending" : "অপেক্ষমাণ", cls: "bg-amber-100 text-amber-700" };
   }
 }
 

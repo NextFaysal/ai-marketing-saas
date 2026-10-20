@@ -1,5 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtDate } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
@@ -68,6 +70,7 @@ function StatCard({ href, title, children }: { href: string; title: string; chil
 }
 
 export default function CommerceHubPage() {
+  const { dict, t, locale } = useLocale();
   const [hub, setHub] = useState<HubSummary | null>(null);
   const [analytics, setAnalytics] = useState<StoresAnalytics | null>(null);
   const [deadStock, setDeadStock] = useState<DeadStockItem[]>([]);
@@ -80,18 +83,18 @@ export default function CommerceHubPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); setLoading(false); return; }
+    if (!orgId) { setError(dict.commerce.noOrganizationSelected); setLoading(false); return; }
     setLoading(true);
     const failures: string[] = [];
     const grab = async <T,>(label: string, p: Promise<T>): Promise<T | null> => {
-      try { return await p; } catch (e) { failures.push(`${label}: ${e instanceof Error ? e.message : "লোড ব্যর্থ"}`); return null; }
+      try { return await p; } catch (e) { failures.push(`${label}: ${e instanceof Error ? e.message : dict.commerce.loadingFailed}`); return null; }
     };
     const [h, a, d, s, ints] = await Promise.all([
       grab("Hub summary", apiFetch<HubSummary>(`/organizations/${orgId}/commerce/hub-summary`)),
-      grab("স্টোর অ্যানালিটিক্স", apiFetch<StoresAnalytics>(`/organizations/${orgId}/commerce/analytics/stores?days=30`)),
+      grab(dict.commerce.storeAnalytics, apiFetch<StoresAnalytics>(`/organizations/${orgId}/commerce/analytics/stores?days=30`)),
       grab("Dead stock", apiFetch<{ items: DeadStockItem[] }>(`/organizations/${orgId}/commerce/analytics/dead-stock?days=90&limit=10`)),
-      grab("স্টোর তালিকা", apiFetch<Store[]>(`/organizations/${orgId}/stores`)),
-      grab("ইন্টিগ্রেশন তালিকা", apiFetch<Integration[]>(`/organizations/${orgId}/integrations`)),
+      grab(dict.commerce.storeList, apiFetch<Store[]>(`/organizations/${orgId}/stores`)),
+      grab(dict.commerce.integrationList, apiFetch<Integration[]>(`/organizations/${orgId}/integrations`)),
     ]);
     if (h) setHub(h);
     if (a) setAnalytics(a);
@@ -129,70 +132,66 @@ export default function CommerceHubPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="page-title">Commerce Hub — সব স্টোর এক নজরে</h1>
+        <h1 className="page-title">{dict.commerce.commerceHubAllStoresAt}</h1>
         <p className="text-sm text-slate-500">
-          আজকের বিক্রি, Sync অবস্থা, ফুলফিলমেন্ট বাকি, কম স্টক আর abandoned মূল্য — সব সংখ্যা সরাসরি
-          Commerce Analytics থেকে আসে। লাভ শুধু তখনই দেখানো হয় যখন COGS coverage ১০০% — অসম্পূর্ণ হলে
-          সংখ্যা বানিয়ে দেখানো হয় না।
-        </p>
+          {dict.commerce.todaySSalesSyncStatus}</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Link href="/dashboard/commerce/sync" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.sync className="mr-1 inline h-4 w-4 -translate-y-px" /> Sync Center</Link>
-          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.discounts className="mr-1 inline h-4 w-4 -translate-y-px" /> Discounts / কুপন</Link>
-          <Link href="/dashboard/commerce/promotions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.promotions className="mr-1 inline h-4 w-4 -translate-y-px" /> প্রমোশন</Link>
-          <Link href="/dashboard/commerce/bundles" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.bundles className="mr-1 inline h-4 w-4 -translate-y-px" /> বান্ডল</Link>
-          <Link href="/dashboard/commerce/feeds" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.feeds className="mr-1 inline h-4 w-4 -translate-y-px" /> প্রোডাক্ট ফিড</Link>
+          <Link href="/dashboard/commerce/discounts" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.discounts className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.discountsCoupons2}</Link>
+          <Link href="/dashboard/commerce/promotions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.promotions className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.promotions}</Link>
+          <Link href="/dashboard/commerce/bundles" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.bundles className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.bundle}</Link>
+          <Link href="/dashboard/commerce/feeds" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.feeds className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.productFeeds}</Link>
           <Link href="/dashboard/commerce/abandoned" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.abandoned className="mr-1 inline h-4 w-4 -translate-y-px" /> Abandoned Carts</Link>
-          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.storefront className="mr-1 inline h-4 w-4 -translate-y-px" /> Storefront / দোকান</Link>
-          <Link href="/dashboard/commerce/landings" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.landings className="mr-1 inline h-4 w-4 -translate-y-px" /> ল্যান্ডিং পেজ</Link>
-          <Link href="/dashboard/commerce/reviews" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reviews className="mr-1 inline h-4 w-4 -translate-y-px" /> রিভিউ মডারেশন</Link>
-          <Link href="/dashboard/commerce/questions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.questions className="mr-1 inline h-4 w-4 -translate-y-px" /> পণ্য প্রশ্নোত্তর</Link>
-          <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.purchasing className="mr-1 inline h-4 w-4 -translate-y-px" /> ক্রয় / Purchasing</Link>
-          <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.warehouse className="mr-1 inline h-4 w-4 -translate-y-px" /> গুদাম / Warehouse</Link>
-          <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.accounting className="mr-1 inline h-4 w-4 -translate-y-px" /> কর ও হিসাব / Accounting</Link>
-          <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reports className="mr-1 inline h-4 w-4 -translate-y-px" /> রিপোর্ট / Reports</Link>
-          <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.finance className="mr-1 inline h-4 w-4 -translate-y-px" /> ফাইন্যান্স / Finance</Link>
-          <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reconciliation className="mr-1 inline h-4 w-4 -translate-y-px" /> COD মিলকরণ</Link>
-          <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.inventoryIntelligence className="mr-1 inline h-4 w-4 -translate-y-px" /> ইনভেন্টরি বুদ্ধিমত্তা</Link>
-          <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.subscriptions className="mr-1 inline h-4 w-4 -translate-y-px" /> সাবস্ক্রিপশন / Subscriptions</Link>
-          <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.installments className="mr-1 inline h-4 w-4 -translate-y-px" /> কিস্তি / Installments</Link>
-          <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.affiliates className="mr-1 inline h-4 w-4 -translate-y-px" /> অ্যাফিলিয়েট</Link>
-          <Link href="/dashboard/commerce/loyalty" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.loyalty className="mr-1 inline h-4 w-4 -translate-y-px" /> লয়্যালটি পয়েন্ট</Link>
-          <Link href="/dashboard/commerce/gift-cards" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.giftCards className="mr-1 inline h-4 w-4 -translate-y-px" /> গিফট কার্ড</Link>
-          <Link href="/dashboard/commerce/quotes" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.quotes className="mr-1 inline h-4 w-4 -translate-y-px" /> কোট / Quotes</Link>
+          <Link href="/dashboard/commerce/storefront" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.storefront className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.storefrontShop2}</Link>
+          <Link href="/dashboard/commerce/landings" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.landings className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.landingPage}</Link>
+          <Link href="/dashboard/commerce/reviews" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reviews className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.reviewModeration}</Link>
+          <Link href="/dashboard/commerce/questions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.questions className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.productQA}</Link>
+          <Link href="/dashboard/commerce/purchasing" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.purchasing className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.purchasing}</Link>
+          <Link href="/dashboard/commerce/warehouse" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.warehouse className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.warehouse2}</Link>
+          <Link href="/dashboard/commerce/accounting" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.accounting className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.taxAccounting2}</Link>
+          <Link href="/dashboard/commerce/reports" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reports className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.reports}</Link>
+          <Link href="/dashboard/commerce/finance" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.finance className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.finance}</Link>
+          <Link href="/dashboard/commerce/reconciliation" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.reconciliation className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.cODReconciliation}</Link>
+          <Link href="/dashboard/commerce/inventory-intelligence" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.inventoryIntelligence className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.inventoryIntelligence2}</Link>
+          <Link href="/dashboard/commerce/subscriptions" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.subscriptions className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.subscriptions}</Link>
+          <Link href="/dashboard/commerce/installments" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.installments className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.installments2}</Link>
+          <Link href="/dashboard/commerce/affiliates" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.affiliates className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.affiliates}</Link>
+          <Link href="/dashboard/commerce/loyalty" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.loyalty className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.loyaltyPoints2}</Link>
+          <Link href="/dashboard/commerce/gift-cards" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.giftCards className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.giftCard}</Link>
+          <Link href="/dashboard/commerce/quotes" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.quotes className="mr-1 inline h-4 w-4 -translate-y-px" /> {dict.commerce.quotes}</Link>
           <Link href="/dashboard/integrations" className="rounded-lg border bg-white px-3 py-1.5 text-sm font-semibold"><COMMERCE_ICONS.integrations className="mr-1 inline h-4 w-4 -translate-y-px" /> Integrations</Link>
         </div>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {loading ? <p className="text-sm text-slate-500">লোড হচ্ছে…</p> : null}
+      {loading ? <p className="text-sm text-slate-500">{dict.common.loading}</p> : null}
 
       {hub && !hub.hasCommerceData ? (
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
-          এখনো কোনো স্টোর বা Listing নেই — <Link href="/dashboard/integrations" className="font-semibold underline">Integrations পেজ</Link> থেকে প্রথম স্টোরটি কানেক্ট করুন।
-        </p>
+          {dict.commerce.noStoresOrListingsYet}<Link href="/dashboard/integrations" className="font-semibold underline">{dict.commerce.integrationsPage}</Link> {dict.commerce.connectTheFirstStoreFrom}</p>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard href="/dashboard/orders" title="আজকের বিক্রি (ঢাকা সময়)">
+        <StatCard href="/dashboard/orders" title={dict.commerce.todaySSalesDhakaTime}>
           {hub ? (
             <>
               <div className="text-3xl font-bold">{formatMinorTaka(hub.today.revenueMinor)}</div>
-              <div className="mt-1 text-sm text-slate-500">মোট {hub.today.orders}টি অর্ডার আজ</div>
+              <div className="mt-1 text-sm text-slate-500">{dict.commerce.total}{hub.today.orders}{dict.commerce.ordersToday}</div>
               {hub.today.byStore.length > 0 ? (
                 <ul className="mt-3 space-y-1 border-t pt-2 text-sm">
                   {hub.today.byStore.map((g) => (
                     <li key={g.storeId ?? "native"} className="flex items-center justify-between gap-2">
                       <span className="text-slate-600">{g.storeName}</span>
-                      <span className="font-medium">{formatMinorTaka(g.revenueMinor)} · {g.orders}টি</span>
+                      <span className="font-medium">{formatMinorTaka(g.revenueMinor)} · {g.orders}{dict.commerce.text1ou8}</span>
                     </li>
                   ))}
                 </ul>
-              ) : <p className="mt-2 text-sm text-slate-500">আজ এখনো কোনো অর্ডার আসেনি।</p>}
+              ) : <p className="mt-2 text-sm text-slate-500">{dict.commerce.noOrdersYetToday}</p>}
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/sync" title="Sync অবস্থা">
+        <StatCard href="/dashboard/commerce/sync" title={dict.commerce.syncStatus}>
           {hub ? (
             <>
               <div className="grid grid-cols-4 gap-2 text-center">
@@ -202,100 +201,88 @@ export default function CommerceHubPage() {
                 <div className="rounded-lg bg-red-50 p-2"><div className="text-xl font-bold text-red-700">{hub.sync.dead}</div><div className="text-[11px] text-slate-500">Dead</div></div>
               </div>
               <ul className="mt-3 space-y-1 text-sm text-slate-600">
-                <li>খোলা Conflict: <span className="font-semibold">{hub.sync.openConflicts}টি</span></li>
-                <li>শেষ ২৪ ঘণ্টায় ব্যর্থ Sync: <span className="font-semibold">{hub.sync.failedSyncs24h}টি</span></li>
-                <li>স্টক মিলছে না (diverged): <span className="font-semibold">{hub.stockDivergedCount}টি Listing</span></li>
+                <li>{dict.commerce.openConflicts}<span className="font-semibold">{hub.sync.openConflicts}{dict.commerce.text1ou8}</span></li>
+                <li>{dict.commerce.failedSyncsInTheLast}<span className="font-semibold">{hub.sync.failedSyncs24h}{dict.commerce.text1ou8}</span></li>
+                <li>{dict.commerce.stockDiverged}<span className="font-semibold">{hub.stockDivergedCount}{dict.commerce.listings}</span></li>
               </ul>
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
         </StatCard>
 
-        <StatCard href="/dashboard/orders" title="Unfulfilled অর্ডার">
+        <StatCard href="/dashboard/orders" title={dict.commerce.unfulfilledOrders}>
           {hub ? (
             <>
-              <div className="text-3xl font-bold">{hub.unfulfilledOrders}টি</div>
+              <div className="text-3xl font-bold">{hub.unfulfilledOrders}{dict.commerce.text1ou8}</div>
               <p className="mt-1 text-sm text-slate-500">
-                pending / processing / on-hold অবস্থায় আছে।
-                {hub.unfulfilledOlderThan48h > 0
-                  ? <span className="text-red-600"> এর মধ্যে {hub.unfulfilledOlderThan48h}টি ৪৮ ঘণ্টার বেশি পুরনো!</span>
-                  : " কোনোটিই ৪৮ ঘণ্টার বেশি পুরনো নয়।"}
+                {dict.commerce.areInPendingProcessingOn}{hub.unfulfilledOlderThan48h > 0
+                  ? <span className="text-red-600"> {dict.commerce.ofThem}{hub.unfulfilledOlderThan48h}{dict.commerce.areMoreThan48Hours}</span>
+                  : dict.commerce.noneAreMoreThan48}
               </p>
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
         </StatCard>
 
-        <StatCard href="/dashboard/products" title="Low Stock সতর্কতা">
+        <StatCard href="/dashboard/products" title={dict.commerce.lowStockAlerts}>
           {hub ? (
             <>
-              <div className="text-3xl font-bold">{hub.lowStockCount}টি</div>
-              <p className="mt-1 text-sm text-slate-500">পণ্যের স্টক threshold-এর নিচে বা সমান (ডিফল্ট threshold ৫)।</p>
+              <div className="text-3xl font-bold">{hub.lowStockCount}{dict.commerce.text1ou8}</div>
+              <p className="mt-1 text-sm text-slate-500">{dict.commerce.productsAtOrBelowThe}</p>
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/abandoned" title="Abandoned কার্টের মূল্য">
+        <StatCard href="/dashboard/commerce/abandoned" title={dict.commerce.abandonedCartValue}>
           {hub ? (
             <>
               <div className="text-3xl font-bold">{formatMinorTaka(hub.abandoned.totalValueMinor)}</div>
               <p className="mt-1 text-sm text-slate-500">
-                খোলা (recovered নয়) কার্ট {hub.abandoned.openCount}টি
-                {hub.abandoned.unknownValueCount > 0
-                  ? ` · ${hub.abandoned.unknownValueCount}টির মূল্য জানা নেই, সেগুলো এই মোটে নেই`
+                {dict.commerce.openNotRecoveredCarts}{hub.abandoned.openCount}{dict.commerce.text1ou8}{hub.abandoned.unknownValueCount > 0
+                  ? t("commerce.haveUnknownValueNotIncluded", { unknownValueCount: hub.abandoned.unknownValueCount })
                   : ""}।
               </p>
               {Object.keys(hub.abandoned.bySource).length > 0 ? (
                 <p className="mt-1 text-xs text-slate-500">
-                  উৎস: {Object.entries(hub.abandoned.bySource).map(([s, n]) => `${s} ${n}টি`).join(" · ")}
+                  {dict.commerce.source2}{Object.entries(hub.abandoned.bySource).map(([s, n]) => t("commerce.text1x3jaz3", { s: s, n: n })).join(" · ")}
                 </p>
               ) : null}
             </>
           ) : <p className="text-sm text-slate-500">—</p>}
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/landings" title="ল্যান্ডিং পেজ">
+        <StatCard href="/dashboard/commerce/landings" title={dict.commerce.landingPage}>
           <p className="text-sm text-slate-500">
-            এক পণ্যের ফানেল পেজ তৈরি করুন — সেকশন সাজানো, A/B ভ্যারিয়েন্ট, পোস্ট-অর্ডার আপসেল আর
-            ভিউ→অর্ডার কনভার্সন পরিসংখ্যানসহ।
-          </p>
+            {dict.commerce.createAFunnelPageFor}</p>
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/loyalty" title="লয়্যালটি পয়েন্ট ও রেফারেল পুরস্কার">
+        <StatCard href="/dashboard/commerce/loyalty" title={dict.commerce.loyaltyPointsReferralRewards}>
           <p className="text-sm text-slate-500">
-            কেনাকাটায় পয়েন্ট অর্জন, চেকআউটে ছাড় হিসেবে পয়েন্ট খরচ, আর রেফারেল পুরস্কারের
-            (পয়েন্ট/কুপন) নিয়ম — সব এখান থেকে ঠিক করুন।
-          </p>
+            {dict.commerce.earningPointsOnShoppingSpending}</p>
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/gift-cards" title="গিফট কার্ড">
+        <StatCard href="/dashboard/commerce/gift-cards" title={dict.commerce.giftCard}>
           <p className="text-sm text-slate-500">
-            গিফট কার্ডের দায় (liability), ম্যানুয়াল ইস্যু, কার্ডের তালিকা ও লেজার, বাতিল ও
-            ব্যালেন্স সংশোধন — সব এখান থেকে করুন।
-          </p>
+            {dict.commerce.giftCardLiabilityManualIssue2}</p>
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/bundles" title="বান্ডল অফার">
+        <StatCard href="/dashboard/commerce/bundles" title={dict.commerce.bundleOffers}>
           <p className="text-sm text-slate-500">
-            ২–১০টি পণ্যের কম্বো প্যাক একটি বান্ডল দামে — দোকানের হোম পেজের বান্ডল স্ট্রিপ থেকে
-            ক্রেতা এক ক্লিকে কার্টে যোগ করতে পারে।
-          </p>
+            {dict.commerce.comboPacksOf210}</p>
         </StatCard>
 
-        <StatCard href="/dashboard/commerce/reviews" title="রিভিউ মডারেশন">
+        <StatCard href="/dashboard/commerce/reviews" title={dict.commerce.reviewModeration}>
           <p className="text-sm text-slate-500">
-            নিজের দোকানের ডেলিভারি-পরবর্তী রিভিউ আর WooCommerce/Shopify থেকে টানা রিভিউ এক জায়গায় —
-            লুকান/দেখান ও নিজের দোকানের রিভিউতে উত্তর দিন।
-          </p>
+            {dict.commerce.postDeliveryReviewsOfYour}</p>
         </StatCard>
 
         <div className="card p-5">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">প্রতি স্টোরের স্বাস্থ্য (Live Health)</div>
-            <Link href="/dashboard/integrations" className="text-slate-400" aria-label="Integrations পেজ খুলুন">→</Link>
+            <div className="font-semibold">{dict.commerce.perStoreHealthLiveHealth}</div>
+            <Link href="/dashboard/integrations" className="text-slate-400" aria-label={dict.commerce.openTheIntegrationsPage}>→</Link>
           </div>
           {!healthChecked ? (
-            <p className="mt-3 text-sm text-slate-500">Health যাচাই চলছে…</p>
+            <p className="mt-3 text-sm text-slate-500">{dict.commerce.healthCheckRunning}</p>
           ) : stores.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">কোনো স্টোর নেই।</p>
+            <p className="mt-3 text-sm text-slate-500">{dict.commerce.noStores}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {stores.map((s) => {
@@ -309,19 +296,19 @@ export default function CommerceHubPage() {
                     {overall ? (
                       <span className={`rounded px-2 py-0.5 text-xs font-semibold ${healthBadge(overall)}`}>{overall}</span>
                     ) : (
-                      <span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">যাচাই হয়নি</span>
+                      <span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">{dict.commerce.notChecked}</span>
                     )}
                   </li>
                 );
               })}
             </ul>
           )}
-          <p className="mt-2 text-xs text-slate-500">ব্যাজটি পেজ লোডের সময় চালানো আসল Health check-এর সবচেয়ে খারাপ ফল — যাচাই ব্যর্থ হলে অনুমান করা হয় না।</p>
+          <p className="mt-2 text-xs text-slate-500">{dict.commerce.theBadgeIsTheWorst}</p>
         </div>
       </div>
 
       <div className="card p-5">
-        <div className="font-semibold">স্টোর অনুযায়ী রেভিনিউ ও লাভ — শেষ {analytics?.days ?? 30} দিন</div>
+        <div className="font-semibold">{dict.commerce.revenueProfitByStoreLast}{analytics?.days ?? 30} {dict.commerce.days}</div>
         {analytics ? (
           <ResponsiveTable
             className="mt-3"
@@ -330,12 +317,12 @@ export default function CommerceHubPage() {
                 <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">স্টোর</th>
-                  <th className="py-2 pr-3">অর্ডার</th>
-                  <th className="py-2 pr-3">রেভিনিউ</th>
-                  <th className="py-2 pr-3">Refund (মোট)</th>
+                  <th className="py-2 pr-3">{dict.commerce.store}</th>
+                  <th className="py-2 pr-3">{dict.commerce.order}</th>
+                  <th className="py-2 pr-3">{dict.commerce.revenue2}</th>
+                  <th className="py-2 pr-3">{dict.commerce.refundTotal}</th>
                   <th className="py-2 pr-3">COGS</th>
-                  <th className="py-2">লাভ</th>
+                  <th className="py-2">{dict.commerce.profit}</th>
                 </tr>
               </thead>
               <tbody>
@@ -345,7 +332,7 @@ export default function CommerceHubPage() {
                       <span className="font-medium">{r.storeName}</span>
                       <span className="block text-xs text-slate-500">{r.platform}</span>
                     </td>
-                    <td className="py-2 pr-3">{r.ordersCount}টি <span className="text-xs text-slate-500">(রেভিনিউ {r.revenueOrders}টি)</span></td>
+                    <td className="py-2 pr-3">{r.ordersCount}{dict.commerce.text1ou8}<span className="text-xs text-slate-500">{dict.commerce.revenue3}{r.revenueOrders}{dict.commerce.text1ge21}</span></td>
                     <td className="py-2 pr-3 font-medium">{formatMinorTaka(r.revenueMinor)}</td>
                     <td className="py-2 pr-3">{formatMinorTaka(r.totalRefundedMinor)}</td>
                     <td className="py-2 pr-3">{formatMinorTaka(r.cogsMinor)}</td>
@@ -353,22 +340,22 @@ export default function CommerceHubPage() {
                       {r.profitMinor !== null ? (
                         <span className="font-semibold">{formatMinorTaka(r.profitMinor)}</span>
                       ) : r.cogsCoveragePercent !== null ? (
-                        <span className="text-amber-700">COGS অসম্পূর্ণ (coverage {r.cogsCoveragePercent}%)</span>
+                        <span className="text-amber-700">{dict.commerce.cOGSIncompleteCoverage}{r.cogsCoveragePercent}%)</span>
                       ) : (
-                        <span className="text-slate-500">রেভিনিউ অর্ডার নেই — লাভ প্রযোজ্য নয়</span>
+                        <span className="text-slate-500">{dict.commerce.noRevenueOrdersProfitNot}</span>
                       )}
                     </td>
                   </tr>
                 ))}
                 <tr className="bg-slate-50 font-semibold">
-                  <td className="py-2 pr-3">মোট</td>
-                  <td className="py-2 pr-3">{analytics.totals.ordersCount}টি <span className="text-xs font-normal text-slate-500">(রেভিনিউ {analytics.totals.revenueOrders}টি)</span></td>
+                  <td className="py-2 pr-3">{dict.commerce.total}</td>
+                  <td className="py-2 pr-3">{analytics.totals.ordersCount}{dict.commerce.text1ou8}<span className="text-xs font-normal text-slate-500">{dict.commerce.revenue3}{analytics.totals.revenueOrders}{dict.commerce.text1ge21}</span></td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.revenueMinor)}</td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.totalRefundedMinor)}</td>
                   <td className="py-2 pr-3">{formatMinorTaka(analytics.totals.cogsMinor)}</td>
                   <td className="py-2">
                     {analytics.totals.profitMinor !== null ? formatMinorTaka(analytics.totals.profitMinor)
-                      : analytics.totals.cogsCoveragePercent !== null ? `COGS অসম্পূর্ণ (coverage ${analytics.totals.cogsCoveragePercent}%)`
+                      : analytics.totals.cogsCoveragePercent !== null ? t("commerce.cOGSIncompleteCoverage2", { cogsCoveragePercent: analytics.totals.cogsCoveragePercent })
                       : "—"}
                   </td>
                 </tr>
@@ -389,11 +376,11 @@ export default function CommerceHubPage() {
                     </div>
                     <dl className="mt-2 space-y-1.5 text-sm">
                       <div className="flex gap-2">
-                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
-                        <dd>{r.ordersCount}টি <span className="text-xs text-slate-500">(রেভিনিউ {r.revenueOrders}টি)</span></dd>
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.order}</dt>
+                        <dd>{r.ordersCount}{dict.commerce.text1ou8}<span className="text-xs text-slate-500">{dict.commerce.revenue3}{r.revenueOrders}{dict.commerce.text1ge21}</span></dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">Refund (মোট)</dt>
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.refundTotal}</dt>
                         <dd>{formatMinorTaka(r.totalRefundedMinor)}</dd>
                       </div>
                       <div className="flex gap-2">
@@ -401,14 +388,14 @@ export default function CommerceHubPage() {
                         <dd>{formatMinorTaka(r.cogsMinor)}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">লাভ</dt>
+                        <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.profit}</dt>
                         <dd>
                           {r.profitMinor !== null ? (
                             <span className="font-semibold">{formatMinorTaka(r.profitMinor)}</span>
                           ) : r.cogsCoveragePercent !== null ? (
-                            <span className="text-amber-700">COGS অসম্পূর্ণ (coverage {r.cogsCoveragePercent}%)</span>
+                            <span className="text-amber-700">{dict.commerce.cOGSIncompleteCoverage}{r.cogsCoveragePercent}%)</span>
                           ) : (
-                            <span className="text-slate-500">রেভিনিউ অর্ডার নেই — লাভ প্রযোজ্য নয়</span>
+                            <span className="text-slate-500">{dict.commerce.noRevenueOrdersProfitNot}</span>
                           )}
                         </dd>
                       </div>
@@ -417,16 +404,16 @@ export default function CommerceHubPage() {
                 ))}
                 <div className="rounded-lg border bg-slate-50 p-3 font-semibold">
                   <div className="flex items-start justify-between gap-2">
-                    <span>মোট</span>
+                    <span>{dict.commerce.total}</span>
                     <span>{formatMinorTaka(analytics.totals.revenueMinor)}</span>
                   </div>
                   <dl className="mt-2 space-y-1.5 text-sm">
                     <div className="flex gap-2">
-                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">অর্ডার</dt>
-                      <dd>{analytics.totals.ordersCount}টি <span className="text-xs font-normal text-slate-500">(রেভিনিউ {analytics.totals.revenueOrders}টি)</span></dd>
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.order}</dt>
+                      <dd>{analytics.totals.ordersCount}{dict.commerce.text1ou8}<span className="text-xs font-normal text-slate-500">{dict.commerce.revenue3}{analytics.totals.revenueOrders}{dict.commerce.text1ge21}</span></dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">Refund (মোট)</dt>
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.refundTotal}</dt>
                       <dd>{formatMinorTaka(analytics.totals.totalRefundedMinor)}</dd>
                     </div>
                     <div className="flex gap-2">
@@ -434,10 +421,10 @@ export default function CommerceHubPage() {
                       <dd>{formatMinorTaka(analytics.totals.cogsMinor)}</dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">লাভ</dt>
+                      <dt className="w-24 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.profit}</dt>
                       <dd>
                         {analytics.totals.profitMinor !== null ? formatMinorTaka(analytics.totals.profitMinor)
-                          : analytics.totals.cogsCoveragePercent !== null ? `COGS অসম্পূর্ণ (coverage ${analytics.totals.cogsCoveragePercent}%)`
+                          : analytics.totals.cogsCoveragePercent !== null ? t("commerce.cOGSIncompleteCoverage2", { cogsCoveragePercent: analytics.totals.cogsCoveragePercent })
                           : "—"}
                       </dd>
                     </div>
@@ -446,18 +433,16 @@ export default function CommerceHubPage() {
               </>
             }
           />
-        ) : <p className="mt-2 text-sm text-slate-500">{loading ? "লোড হচ্ছে…" : "তথ্য পাওয়া যায়নি।"}</p>}
-        <p className="mt-2 text-xs text-slate-500">রেভিনিউ = cancelled/refunded/failed বাদে অর্ডারের মোট (effective date = placedAt ?? createdAt, ঢাকা দিন)। লাভ = রেভিনিউ − refund − COGS, শুধু ১০০% COGS coverage-এ।</p>
+        ) : <p className="mt-2 text-sm text-slate-500">{loading ? dict.common.loading : dict.commerce.noInformationFound}</p>}
+        <p className="mt-2 text-xs text-slate-500">{dict.commerce.revenueOrderTotalExcludingCancelled}</p>
       </div>
 
       <div className="card p-5">
-        <div className="font-semibold">Dead Stock — শেষ ৯০ দিনে বিক্রি হয়নি</div>
+        <div className="font-semibold">{dict.commerce.deadStockNotSoldIn}</div>
         <p className="mt-1 text-xs text-slate-500">
-          স্টকে থাকা পণ্য যেগুলোর শেষ ৯০ দিনে কোনো বিক্রি নেই। এটি একটি <span className="font-semibold">সংকেত, প্রমাণ নয়</span> —
-          পণ্যটি সিজনাল বা সাময়িক বন্ধও হতে পারে; সিদ্ধান্তের আগে যাচাই করুন।
-        </p>
+          {dict.commerce.productsInStockWithNo}<span className="font-semibold">{dict.commerce.aSignalNotProof}</span> {dict.commerce.theProductMayAlsoBe}</p>
         {deadStock.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">{loading ? "লোড হচ্ছে…" : "এই সংজ্ঞায় কোনো Dead Stock পণ্য নেই।"}</p>
+          <p className="mt-3 text-sm text-slate-500">{loading ? dict.common.loading : dict.commerce.noDeadStockProductsBy}</p>
         ) : (
           <ResponsiveTable
             className="mt-3"
@@ -466,10 +451,10 @@ export default function CommerceHubPage() {
                 <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-slate-500">
-                  <th className="py-2 pr-3">পণ্য</th>
-                  <th className="py-2 pr-3">স্টক</th>
-                  <th className="py-2 pr-3">আটকে থাকা মূল্য</th>
-                  <th className="py-2">শেষ বিক্রি</th>
+                  <th className="py-2 pr-3">{dict.commerce.product}</th>
+                  <th className="py-2 pr-3">{dict.commerce.stock}</th>
+                  <th className="py-2 pr-3">{dict.commerce.stuckValue}</th>
+                  <th className="py-2">{dict.commerce.lastSold}</th>
                 </tr>
               </thead>
               <tbody>
@@ -479,12 +464,12 @@ export default function CommerceHubPage() {
                       <span className="font-medium">{p.name}</span>
                       {p.sku ? <span className="block text-xs text-slate-500">SKU: {p.sku}</span> : null}
                     </td>
-                    <td className="py-2 pr-3">{p.stockQuantity}টি</td>
+                    <td className="py-2 pr-3">{p.stockQuantity}{dict.commerce.text1ou8}</td>
                     <td className="py-2 pr-3 font-medium">{formatMinorTaka(p.stockValueMinor)}</td>
                     <td className="py-2 text-slate-600">
                       {p.lastSaleAt
-                        ? <>{new Date(p.lastSaleAt).toLocaleDateString()} <span className="text-xs text-slate-500">({p.daysSinceLastSale} দিন আগে)</span></>
-                        : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}
+                        ? <>{fmtDate(locale, new Date(p.lastSaleAt))} <span className="text-xs text-slate-500">({p.daysSinceLastSale} {dict.commerce.daysAgo}</span></>
+                        : <span className="text-amber-700">{dict.commerce.neverSold}</span>}
                     </td>
                   </tr>
                 ))}
@@ -503,15 +488,15 @@ export default function CommerceHubPage() {
                 </div>
                 <dl className="mt-2 space-y-1.5 text-sm">
                   <div className="flex gap-2">
-                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">স্টক</dt>
-                    <dd>{p.stockQuantity}টি</dd>
+                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.stock}</dt>
+                    <dd>{p.stockQuantity}{dict.commerce.text1ou8}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">শেষ বিক্রি</dt>
+                    <dt className="w-28 shrink-0 text-xs font-semibold text-slate-500">{dict.commerce.lastSold}</dt>
                     <dd className="text-slate-600">
                       {p.lastSaleAt
-                        ? <>{new Date(p.lastSaleAt).toLocaleDateString()} <span className="text-xs text-slate-500">({p.daysSinceLastSale} দিন আগে)</span></>
-                        : <span className="text-amber-700">কখনো বিক্রি হয়নি</span>}
+                        ? <>{fmtDate(locale, new Date(p.lastSaleAt))} <span className="text-xs text-slate-500">({p.daysSinceLastSale} {dict.commerce.daysAgo}</span></>
+                        : <span className="text-amber-700">{dict.commerce.neverSold}</span>}
                     </dd>
                   </div>
                 </dl>
@@ -520,7 +505,7 @@ export default function CommerceHubPage() {
           />
         )}
         <div className="mt-3">
-          <Link href="/dashboard/products" className="text-sm font-semibold text-blue-700">সব পণ্য দেখুন →</Link>
+          <Link href="/dashboard/products" className="text-sm font-semibold text-blue-700">{dict.commerce.viewAllProducts}</Link>
         </div>
       </div>
     </div>

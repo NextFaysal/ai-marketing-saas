@@ -126,6 +126,6 @@ describe("EC5 OrderPushService + S2 hooks", () => {
 
   it("a foreign order id is a 404", async () => {
     const { orderPush } = setup("co-manage", false);
-    await expect(orderPush.pushState("org-2", "o1")).rejects.toThrow("not found");
+    await expect(orderPush.pushState("org-2", "o1")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg", status: 404 });
   });
 });

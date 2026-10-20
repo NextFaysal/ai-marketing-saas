@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CampaignsService } from "./campaigns.service";
@@ -6,6 +6,7 @@ import { AudiencesService } from "../audiences/audiences.service";
 import { leaderClaim } from "../common/leader-claim";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { parseSeriesRule, seriesOccurrenceDate, SeriesValidationError } from "./series-dates";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -84,7 +85,7 @@ export class CampaignFrontierService implements OnModuleInit {
 
   private async getExperimentOrThrow(organizationId: string, experimentId: string) {
     const row = await (this.prisma as any).campaignExperiment?.findFirst({ where: { id: experimentId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Experiment not found in this organization");
+    if (!row) throw notFound("campaigns.experimentNotFoundInThisOrganization");
     return row;
   }
 
@@ -103,53 +104,53 @@ export class CampaignFrontierService implements OnModuleInit {
     splitA?: number; metricEvent?: string;
     startTime?: string; endTime?: string; durationDays?: number;
   }) {
-    if (!dto.planAId || !dto.planBId) throw new BadRequestException("planAId and planBId are required");
-    if (dto.planAId === dto.planBId) throw new BadRequestException("An experiment needs TWO different variant plans");
+    if (!dto.planAId || !dto.planBId) throw badRequest("campaigns.planaidAndPlanbidAreRequired");
+    if (dto.planAId === dto.planBId) throw badRequest("campaigns.anExperimentNeedsTwoDifferentVariant");
     const planA: any = await this.campaigns.getPlan(organizationId, dto.planAId);
     const planB: any = await this.campaigns.getPlan(organizationId, dto.planBId);
     if (!planA.abGroupId || !planB.abGroupId || planA.abGroupId !== planB.abGroupId) {
-      throw new BadRequestException("Both plans must be variants of the SAME A/B group — create the variant first (A/B Variant), then start the experiment");
+      throw badRequest("campaigns.bothPlansMustBeVariantsOf");
     }
     if (planA.adAccountId !== planB.adAccountId) {
-      throw new BadRequestException("Both variant plans must run on the same ad account — a Meta study lives inside one business/account");
+      throw badRequest("campaigns.bothVariantPlansMustRunOn");
     }
     for (const [label, p] of [["A", planA], ["B", planB]] as const) {
       if (!p.externalCampaignId) {
-        throw new BadRequestException(`Variant ${label} ("${p.name}") is not published yet — a Meta study tests live campaigns. Publish it through the normal approval flow first (it stays PAUSED); the experiment itself never publishes anything`);
+        throw badRequest("campaigns.variantIsNotPublishedYetA", { label: label, pName: p.name });
       }
     }
     const splitA = dto.splitA === undefined ? 50 : dto.splitA;
     if (!Number.isInteger(splitA) || splitA < 10 || splitA > 90) {
-      throw new BadRequestException("splitA must be an integer between 10 and 90 (Meta cells need at least 10% each; the two cells sum to 100)");
+      throw badRequest("campaigns.splitaMustBeAnIntegerBetween");
     }
     // The success metric: the CN3 conversion event + pixel
     // of plan A's ad sets (the documented CONVERSIONS
     // objective shape carries adspixels + event_names).
     const pixelSet = (planA.adSets ?? []).find((s: any) => s.pixelId);
     if (!pixelSet) {
-      throw new BadRequestException("Variant A's ad sets carry no pixel — a CONVERSIONS study objective needs the plans' pixel and conversion event (CN3). Set a pixel + conversion event on the variant ad sets first");
+      throw badRequest("campaigns.variantASAdSetsCarry");
     }
     const metricEvent = String(dto.metricEvent ?? pixelSet.conversionEvent ?? "PURCHASE").trim().toUpperCase();
     if (!/^[A-Z][A-Z0-9_]{0,49}$/.test(metricEvent)) {
-      throw new BadRequestException(`metricEvent "${metricEvent}" is not a valid Meta event name`);
+      throw badRequest("campaigns.metriceventIsNotAValidMeta", { metricEvent: metricEvent });
     }
     const now = Date.now();
     const start = dto.startTime ? new Date(dto.startTime) : new Date(now + 10 * 60 * 1000);
-    if (Number.isNaN(start.getTime())) throw new BadRequestException("startTime is not a valid date/time");
+    if (Number.isNaN(start.getTime())) throw badRequest("campaigns.starttimeIsNotAValidDate");
     const durationDays = dto.durationDays === undefined ? 7 : dto.durationDays;
     if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 30) {
-      throw new BadRequestException("durationDays must be an integer between 1 and 30");
+      throw badRequest("campaigns.durationdaysMustBeAnIntegerBetween");
     }
     const end = dto.endTime ? new Date(dto.endTime) : new Date(start.getTime() + durationDays * DAY_MS);
-    if (Number.isNaN(end.getTime())) throw new BadRequestException("endTime is not a valid date/time");
-    if (end.getTime() <= start.getTime()) throw new BadRequestException("endTime must be after startTime");
+    if (Number.isNaN(end.getTime())) throw badRequest("campaigns.endtimeIsNotAValidDate");
+    if (end.getTime() <= start.getTime()) throw badRequest("campaigns.endtimeMustBeAfterStarttime");
 
     const { client, account } = await this.campaigns.metaClientForPlan(organizationId, planA.id);
     const businessId = await client.getAdAccountBusinessId(String(account.externalId)).catch((e) => {
-      throw new BadRequestException(`Meta থেকে এই Ad Account-এর Business পড়া যায়নি: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("campaigns.theBusinessOfThisAdAccount", { p1: e instanceof Error ? e.message : "unknown error" });
     });
     if (!businessId) {
-      throw new BadRequestException("Meta এই Ad Account-এর কোনো Business ফেরত দেয়নি — Ad Study Business Node-এ তৈরি হয়, তাই এই Account থেকে Experiment তৈরি করা যাচ্ছে না");
+      throw badRequest("campaigns.metaReturnedNoBusinessForThis");
     }
     const name = (dto.name ?? `${planA.name} বনাম ${planB.name}`).slice(0, 120);
     const cells = [
@@ -172,7 +173,7 @@ export class CampaignFrontierService implements OnModuleInit {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Meta refused the experiment";
       await this.audit.log({ organizationId, userId: actorId, action: "campaign.experiment_create_failed", entityType: "CampaignPlan", entityId: planA.id, metadata: { planBId: planB.id, error: message.slice(0, 300) } }).catch(() => undefined);
-      throw new BadRequestException(`Meta Experiment তৈরি করতে অস্বীকার করেছে: ${message}`);
+      throw badRequest("campaigns.metaRefusedToCreateTheExperiment", { message: message });
     }
     const row = await (this.prisma as any).campaignExperiment.create({
       data: {
@@ -214,13 +215,13 @@ export class CampaignFrontierService implements OnModuleInit {
    * significance claim and never a winner of our own. */
   async refreshExperiment(organizationId: string, actorId: string, experimentId: string) {
     const row = await this.getExperimentOrThrow(organizationId, experimentId);
-    if (!row.metaStudyId) throw new BadRequestException("This experiment has no Meta study id — nothing to read back");
+    if (!row.metaStudyId) throw badRequest("campaigns.thisExperimentHasNoMetaStudy");
     const { client } = await this.campaigns.metaClientForPlan(organizationId, row.planAId);
     let readback: { study: unknown; cells: unknown[] };
     try {
       readback = await client.getAdStudy(String(row.metaStudyId));
     } catch (e) {
-      throw new BadRequestException(`Meta থেকে Study Read-back পাওয়া যায়নি: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("campaigns.noStudyReadBackWasReturned", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const updated = await (this.prisma as any).campaignExperiment.update({
       where: { id: row.id }, data: { lastReadback: readback as any, lastReadbackAt: new Date() },
@@ -333,10 +334,10 @@ export class CampaignFrontierService implements OnModuleInit {
     retargeting?: { dailyBudget: string } | null;
     retention?: { dailyBudget: string; catalogRecordId?: string; productSetId?: string } | null;
   }) {
-    if (!dto?.name?.trim()) throw new BadRequestException("name is required");
-    if (!dto.primaryText?.trim()) throw new BadRequestException("primaryText is required — the starter ads carry the owner's own copy, nothing is invented");
-    if (!dto.linkUrl?.trim()) throw new BadRequestException("linkUrl is required for the starter ads");
-    if (!dto.prospecting) throw new BadRequestException("prospecting layer config is required — it carries the market (countries) every layer shares");
+    if (!dto?.name?.trim()) throw badRequest("campaigns.nameIsRequired");
+    if (!dto.primaryText?.trim()) throw badRequest("campaigns.primarytextIsRequiredTheStarterAds");
+    if (!dto.linkUrl?.trim()) throw badRequest("campaigns.linkurlIsRequiredForTheStarter");
+    if (!dto.prospecting) throw badRequest("campaigns.prospectingLayerConfigIsRequiredIt");
     const objective = dto.objective ?? "OUTCOME_SALES";
     const goal = this.goalForObjective(objective, dto.optimizationGoal);
     const plan: any = await this.campaigns.createPlan(organizationId, actorId, {
@@ -519,18 +520,18 @@ export class CampaignFrontierService implements OnModuleInit {
   async seriesAction(organizationId: string, actorId: string, seriesId: string, action: string) {
     const p = this.prisma as any;
     const row = await p.campaignPlanSeries?.findFirst({ where: { id: seriesId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Series not found in this organization");
+    if (!row) throw notFound("campaigns.seriesNotFoundInThisOrganization");
     let status: string | null = null;
     if (action === "pause") {
-      if (row.status === "ended") throw new BadRequestException("An ended series cannot be paused");
+      if (row.status === "ended") throw badRequest("campaigns.anEndedSeriesCannotBePaused");
       status = "paused";
     } else if (action === "resume") {
-      if (row.status === "ended") throw new BadRequestException("An ended series cannot be resumed — create a new series instead");
+      if (row.status === "ended") throw badRequest("campaigns.anEndedSeriesCannotBeResumed");
       status = "active";
     } else if (action === "end") {
       status = "ended";
     } else {
-      throw new BadRequestException(`action must be pause, resume or end (got "${action}")`);
+      throw badRequest("campaigns.actionMustBePauseResumeOr", { action: action });
     }
     const updated = await p.campaignPlanSeries.update({ where: { id: row.id }, data: { status } });
     await this.audit.log({ organizationId, userId: actorId, action: `campaign.series_${action}`, entityType: "CampaignPlanSeries", entityId: row.id, metadata: { from: row.status, to: status } }).catch(() => undefined);

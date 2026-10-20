@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { RetentionService } from "./retention.service";
 import { ShopAccountService } from "./shop-account.service";
 import { StorefrontService } from "./storefront.service";
@@ -164,7 +165,7 @@ describe("EC28 back-in-stock subscriptions", () => {
     const { retention } = makeWorld();
     await expect(
       retention.subscribeStockAlert("shop-one", { productId: "p-foreign", phone: "01711111111" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("re-subscribe is idempotent (one pending row, existing:true)", async () => {
@@ -297,8 +298,8 @@ describe("EC28 customer self-service RMA", () => {
     seedOrder(prisma);
     const wrongPhone = await retention.createCustomerReturn("shop-one", { phone: "01799999999", orderNumber: "1001", type: "return", reason: "পণ্যটি নষ্ট" }).catch((e) => e);
     const unknownOrder = await retention.createCustomerReturn("shop-one", { phone: "01711111111", orderNumber: "9999", type: "return", reason: "পণ্যটি নষ্ট" }).catch((e) => e);
-    expect(wrongPhone).toBeInstanceOf(NotFoundException);
-    expect(unknownOrder).toBeInstanceOf(NotFoundException);
+    expect(wrongPhone).toBeInstanceOf(ApiException);
+    expect(unknownOrder).toBeInstanceOf(ApiException);
     expect(wrongPhone.message).toBe(NOT_FOUND_MSG);
     expect(unknownOrder.message).toBe(NOT_FOUND_MSG);
   });
@@ -389,7 +390,7 @@ describe("EC28 product Q&A", () => {
     const { retention, auditCalls } = makeWorld();
     await expect(
       retention.askQuestion("shop-one", "foreign-product", { customerName: "করিম", question: "প্রশ্ন আছে কি?" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
 
     const asked: any = await retention.askQuestion("shop-one", "drop-product", {
       customerName: "করিম", question: "ডেলিভারি কত দিনে পাবো?",
@@ -404,7 +405,7 @@ describe("EC28 product Q&A", () => {
     expect(actions).toContain("product_question.hidden");
 
     // Foreign-org question id is a 404 for staff too.
-    await expect(retention.staffAnswerQuestion("org-2", "staff-9", asked.id, "উত্তর")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(retention.staffAnswerQuestion("org-2", "staff-9", asked.id, "উত্তর")).rejects.toBeInstanceOf(ApiException);
     expect(BadRequestException).toBeDefined();
   });
 });

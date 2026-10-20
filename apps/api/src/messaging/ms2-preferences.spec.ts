@@ -290,8 +290,8 @@ describe("MS2 inbound keywords (WhatsApp only)", () => {
 describe("MS2 settings + import", () => {
   it("settings validation rejects a bad cap and accepts the boundaries", async () => {
     const { svc } = build();
-    await expect(svc.updateMessagingSetting("org-1", "owner", { frequencyCapPerDay: 21 })).rejects.toThrow(/between 0 and 20/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { frequencyCapPerDay: 2.5 })).rejects.toThrow(/between 0 and 20/);
+    await expect(svc.updateMessagingSetting("org-1", "owner", { frequencyCapPerDay: 21 })).rejects.toMatchObject({ code: "messaging.frequencyCapPerDayMustBeAnIntegerBetween" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { frequencyCapPerDay: 2.5 })).rejects.toMatchObject({ code: "messaging.frequencyCapPerDayMustBeAnIntegerBetween" });
     await expect(svc.updateMessagingSetting("org-1", "owner", { whatsappOptInRequired: "yes" as any })).rejects.toThrow(/boolean/);
     const at20 = await svc.updateMessagingSetting("org-1", "owner", { frequencyCapPerDay: 20 });
     expect(at20.frequencyCapPerDay).toBe(20);
@@ -318,6 +318,6 @@ describe("MS2 settings + import", () => {
     expect(out.errors[0].address).toBe("not-an-email");
     expect(tables.messagePreference.rows).toHaveLength(2);
     expect(tables.messagePreference.rows.every((r: any) => r.source === "import" && r.status === "opted_out")).toBe(true);
-    await expect(svc.importPreferences("org-1", "owner", { channel: "email", addresses: Array(1001).fill("a@b.com") })).rejects.toThrow(/capped at 1000/);
+    await expect(svc.importPreferences("org-1", "owner", { channel: "email", addresses: Array(1001).fill("a@b.com") })).rejects.toMatchObject({ code: "messaging.importIsCappedAt1000Addresses" });
   });
 });

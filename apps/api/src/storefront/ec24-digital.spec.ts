@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 
 // AB5 (AX9): the reveal mints signed download tokens (JWT_SECRET
@@ -159,9 +160,13 @@ describe("EC24b digital access reveal", () => {
     const svc = new StorefrontService(prisma);
     const trackErr = await svc.trackOrder("shop-one", { phone: "01999999999", orderNumber: "ORD-1" }).catch((e) => e);
     const revealErr = await svc.digitalAccess("shop-one", { phone: "01999999999", orderNumber: "ORD-1" }).catch((e) => e);
-    expect(trackErr).toBeInstanceOf(NotFoundException);
-    expect(revealErr).toBeInstanceOf(NotFoundException);
+    expect(trackErr).toBeInstanceOf(ApiException);
+    expect(revealErr).toBeInstanceOf(ApiException);
     expect(revealErr.message).toBe(trackErr.message);
-    expect(revealErr).not.toBeInstanceOf(BadRequestException);
+    // Base pinned NotFoundException (not BadRequest): in the MB4
+    // catalog world both are ApiExceptions — the distinction that
+    // matters is the 404 status, not a 400.
+    expect(trackErr.getStatus()).toBe(404);
+    expect(revealErr.getStatus()).toBe(404);
   });
 });

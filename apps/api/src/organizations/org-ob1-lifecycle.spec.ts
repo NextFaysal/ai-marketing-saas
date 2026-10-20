@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -110,17 +111,17 @@ describe("ORG1 — ownership transfer", () => {
 
   it("non-owner actor is refused (403)", async () => {
     const { svc } = setup();
-    await expect(svc.transferOwnership("org-1", "admin-1", "agent-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.transferOwnership("org-1", "admin-1", "agent-1")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("target who is not a member fails", async () => {
     const { svc } = setup();
-    await expect(svc.transferOwnership("org-1", "owner-1", "ghost-1")).rejects.toThrow(/not a member/);
+    await expect(svc.transferOwnership("org-1", "owner-1", "ghost-1")).rejects.toMatchObject({ code: "connections.userNotOrgMember", status: 404 });
   });
 
   it("target who is not an ADMIN fails with a clear message", async () => {
     const { svc } = setup();
-    await expect(svc.transferOwnership("org-1", "owner-1", "agent-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.transferOwnership("org-1", "owner-1", "agent-1")).rejects.toBeInstanceOf(ApiException);
     await expect(svc.transferOwnership("org-1", "owner-1", "agent-1")).rejects.toThrow(/ADMIN/);
   });
 
@@ -131,12 +132,12 @@ describe("ORG1 — ownership transfer", () => {
 
   it("transferring to yourself fails", async () => {
     const { svc } = setup();
-    await expect(svc.transferOwnership("org-1", "owner-1", "owner-1")).rejects.toThrow(/already the owner/);
+    await expect(svc.transferOwnership("org-1", "owner-1", "owner-1")).rejects.toMatchObject({ code: "organizations.alreadyOrgOwner", status: 400 });
   });
 
   it("the ordinary role endpoint still refuses to assign OWNER (rule unchanged)", async () => {
     const { svc } = setup();
-    await expect(svc.updateMemberRole("org-1", "owner-1", "admin-1", "OWNER")).rejects.toThrow(/never assignable/);
+    await expect(svc.updateMemberRole("org-1", "owner-1", "admin-1", "OWNER")).rejects.toMatchObject({ code: "organizations.roleNotAssignable", status: 400 });
   });
 });
 
@@ -154,8 +155,8 @@ describe("ORG2 — self-leave", () => {
 
   it("the OWNER cannot leave — told to transfer first", async () => {
     const { svc, memberships } = setup();
-    await expect(svc.leaveOrganization("org-1", "owner-1")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.leaveOrganization("org-1", "owner-1")).rejects.toThrow(/transfer ownership/i);
+    await expect(svc.leaveOrganization("org-1", "owner-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.leaveOrganization("org-1", "owner-1")).rejects.toMatchObject({ code: "organizations.ownerCannotLeave", status: 400 });
     // owner membership untouched
     expect(memberships.some((m) => m.userId === "owner-1" && m.role === "OWNER")).toBe(true);
   });
@@ -172,7 +173,7 @@ describe("ORG2 — self-leave", () => {
 
   it("a non-member cannot leave", async () => {
     const { svc } = setup();
-    await expect(svc.leaveOrganization("org-1", "ghost-1")).rejects.toThrow(/not a member/);
+    await expect(svc.leaveOrganization("org-1", "ghost-1")).rejects.toMatchObject({ code: "connections.userNotOrgMember", status: 404 });
   });
 });
 
@@ -198,8 +199,8 @@ describe("ORG3 — archive / restore (service level)", () => {
 
   it("non-owner archive is refused (403)", async () => {
     const { svc, org } = setup();
-    await expect(svc.archiveOrganization("org-1", "admin-1")).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.restoreOrganization("org-1", "admin-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.archiveOrganization("org-1", "admin-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.restoreOrganization("org-1", "admin-1")).rejects.toBeInstanceOf(ApiException);
     expect(org.archivedAt).toBeNull();
   });
 });

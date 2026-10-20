@@ -11,6 +11,8 @@ import {
   type ConnectionAccount, type ConnectionsOverview, type TenantAppConfigView, type OwnAppGuides,
 } from "@/lib/connections";
 import dynamic from "next/dynamic";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 import { AccountInsights } from "@/components/connect/account-insights";
 import { MessagingConnectPanel } from "@/components/connect/messaging-connect-panel";
 import { SenderConnectPanel } from "@/components/connect/sender-connect-panel";
@@ -33,7 +35,7 @@ const HealthAnalyticsPanel = dynamic(() => import("@/components/connect/health-a
 const DeliverabilityPanel = dynamic(() => import("@/components/connect/usage-insights-panel").then((m) => m.DeliverabilityPanel), { ssr: false });
 const UsageInsightsPanel = dynamic(() => import("@/components/connect/usage-insights-panel").then((m) => m.UsageInsightsPanel), { ssr: false });
 const GoogleLinkedInPanel = dynamic(() => import("@/components/connect/google-linkedin-panel").then((m) => m.GoogleLinkedInPanel), { ssr: false });
-import { MARKETPLACE_NOTES, googleKindLabel } from "@/lib/connections";
+import { marketplaceNotes, googleKindLabel } from "@/lib/connections";
 
 /**
  * CC1 — Connect Center: সব অ্যাকাউন্ট এক জায়গায়।
@@ -60,11 +62,11 @@ const CATEGORY_ICONS: Record<string, string> = {
   analytics: "📊",
 };
 
-const CATEGORY_NOTES: Record<string, string> = {
-  ai_platform_managed: "আপনার নিজের LLM key সেট করা হয়নি — AI চলছে প্ল্যাটফর্মের কনফিগার করা LLM দিয়ে। নিজের key দিতে নিচের AI সেকশনটি ব্যবহার করুন।",
-  ai_not_configured: "প্ল্যাটফর্মের LLM-ও কনফিগার করা নেই — নিজের key দিতে নিচের AI সেকশনটি ব্যবহার করুন, না হলে AI ফিচার চলবে না।",
-  payment_manual_not_configured: "কোনো পেমেন্ট তথ্য দেওয়া হয়নি। নিচের পেমেন্ট সেকশনে নিজের অনলাইন গেটওয়ে যোগ করতে পারেন, অথবা Settings-এ ম্যানুয়াল বিকাশ/নগদ নম্বর দিতে পারেন।",
-  no_accounts: "এই ক্যাটাগরিতে এখনো কিছু কানেক্ট করা হয়নি।",
+const CATEGORY_NOTE_KEYS: Record<string, string> = {
+  ai_platform_managed: "pgNoteAiManaged",
+  ai_not_configured: "pgNoteAiNotConfigured",
+  payment_manual_not_configured: "pgNotePaymentManual",
+  no_accounts: "pgNoteNoAccounts",
 };
 
 function AccountCard({ account, busy, onDefault, onDisconnect, onChanged }: {
@@ -74,10 +76,12 @@ function AccountCard({ account, busy, onDefault, onDisconnect, onChanged }: {
   onDisconnect: (a: ConnectionAccount) => void;
   onChanged: () => void;
 }) {
-  const health = healthMeta(account.health);
-  const appSource = appSourceMeta(account);
-  const lastSync = formatWhen(account.lastSyncAt);
-  const expires = formatWhen(account.tokenExpiresAt);
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
+  const health = healthMeta(account.health, locale);
+  const appSource = appSourceMeta(account, locale);
+  const lastSync = formatWhen(account.lastSyncAt, locale);
+  const expires = formatWhen(account.tokenExpiresAt, locale);
   const canAct = account.source === "integration";
   // CC17: label/group inline editor (OWNER/ADMIN-only on the API;
   // a refusal surfaces as the server's own message).
@@ -100,7 +104,7 @@ function AccountCard({ account, busy, onDefault, onDisconnect, onChanged }: {
       });
       onChanged();
     } catch (e) {
-      setHealError(e instanceof Error ? e.message : "Auto-heal সেটিং বদলানো যায়নি");
+      setHealError(e instanceof Error ? e.message : D.pgHealFailed);
     } finally { setHealBusy(false); }
   }
   async function saveMeta() {
@@ -115,7 +119,7 @@ function AccountCard({ account, busy, onDefault, onDisconnect, onChanged }: {
       setEditingMeta(false);
       onChanged();
     } catch (e) {
-      setMetaError(e instanceof Error ? e.message : "লেবেল/গ্রুপ সেভ হয়নি");
+      setMetaError(e instanceof Error ? e.message : D.pgMetaSaveFailed);
     } finally { setMetaBusy(false); }
   }
   return (
@@ -128,75 +132,75 @@ function AccountCard({ account, busy, onDefault, onDisconnect, onChanged }: {
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          {account.isDefault ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">⭐ ডিফল্ট</span> : null}
+          {account.isDefault ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{D.crDefault}</span> : null}
           {account.groupName ? <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[11px] font-semibold text-teal-700">📁 {account.groupName}</span> : null}
-          {account.syncPaused ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">⏸ Sync বিরতি</span> : null}
-          {account.autoHealEnabled === false ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">🛠 Auto-heal বন্ধ</span> : null}
-          {account.syncDisabled ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Sync বন্ধ (AD5)</span> : null}
+          {account.syncPaused ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{D.pgSyncPausedChip}</span> : null}
+          {account.autoHealEnabled === false ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{D.pgAutoHealOffChip}</span> : null}
+          {account.syncDisabled ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{D.pgSyncDisabledChip}</span> : null}
           {appSource ? <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${appSource.cls}`}>{appSource.label}</span> : null}
           {(() => { const wa = whatsappHealth(account); return wa?.qualityRating ? (
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${qualityMeta(wa.qualityRating).cls}`}>{qualityMeta(wa.qualityRating).label}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${qualityMeta(wa.qualityRating, locale).cls}`}>{qualityMeta(wa.qualityRating, locale).label}</span>
           ) : null; })()}
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${health.cls}`}>{health.label}</span>
         </div>
       </div>
       <div className="mt-2 space-y-1 text-xs text-slate-500">
-        <div>অবস্থা: <span className="font-medium text-slate-700">{account.status}</span></div>
-        {lastSync ? <div>সর্বশেষ sync: {lastSync}</div> : null}
-        {expires ? <div className={account.expiringSoon ? "font-medium text-amber-600" : undefined}>টোকেনের মেয়াদ: {expires}{account.expiringSoon ? " (শীঘ্রই শেষ হচ্ছে)" : ""}</div> : null}
-        {account.ownAppConfigMissing ? <div className="rounded-lg bg-amber-50 px-2 py-1 font-medium text-amber-700">⚠️ এই কানেকশনটি নিজের অ্যাপ দিয়ে করা, কিন্তু সেই অ্যাপের কনফিগ সরানো হয়েছে — কানেকশনের টোকেন আছেই, তবে যাচাই/টোকেন রিফ্রেশের জন্য নিচে নিজের অ্যাপ আবার কনফিগার করুন।</div> : null}
+        <div>{D.pgStatusLabel}<span className="font-medium text-slate-700">{account.status}</span></div>
+        {lastSync ? <div>{D.pgLastSync}{lastSync}</div> : null}
+        {expires ? <div className={account.expiringSoon ? "font-medium text-amber-600" : undefined}>{D.pgTokenExpiry}{expires}{account.expiringSoon ? D.pgExpiringSoon : ""}</div> : null}
+        {account.ownAppConfigMissing ? <div className="rounded-lg bg-amber-50 px-2 py-1 font-medium text-amber-700">{D.pgOwnAppMissing}</div> : null}
         {account.lastError ? <div className="rounded-lg bg-red-50 px-2 py-1 font-medium text-red-600">⚠️ {account.lastError}</div> : null}
         {account.lastCheck ? (
           <div>
-            সর্বশেষ live পরীক্ষা:{" "}
-            <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(account.lastCheck.overall).cls}`}>{overallMeta(account.lastCheck.overall).label}</span>{" "}
-            <span className="text-slate-400">{formatWhen(account.lastCheck.at)} · {account.lastCheck.trigger === "sweep" ? "স্বয়ংক্রিয়" : "ম্যানুয়াল"}</span>
+            {D.pgLastCheck}
+            <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(account.lastCheck.overall, locale).cls}`}>{overallMeta(account.lastCheck.overall, locale).label}</span>{" "}
+            <span className="text-slate-400">{formatWhen(account.lastCheck.at, locale)} · {account.lastCheck.trigger === "sweep" ? D.pgAuto : D.aiManual}</span>
           </div>
         ) : null}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link href={account.deepLink} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">ম্যানেজ করুন</Link>
+        <Link href={account.deepLink} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">{D.pgManage}</Link>
         {canAct && !account.isDefault ? (
           <button type="button" disabled={busy === account.id} onClick={() => onDefault(account)} className="rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
-            {busy === account.id ? "হচ্ছে..." : "ডিফল্ট করুন"}
+            {busy === account.id ? D.pwWorking : D.pgMakeDefault}
           </button>
         ) : null}
         {canAct && account.status !== "DISCONNECTED" ? (
           <button type="button" disabled={busy === account.id} onClick={() => onDisconnect(account)} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50">
-            ডিসকানেক্ট
+            {D.pgDisconnect}
           </button>
         ) : null}
         {canEditAccountMeta(account) ? (
           <button type="button" onClick={() => { setLabelDraft(account.label ?? ""); setGroupDraft(account.groupName ?? ""); setMetaError(""); setEditingMeta((v) => !v); }} className="rounded-lg bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-100">
-            🏷️ লেবেল/গ্রুপ
+            {D.pgMetaBtn}
           </button>
         ) : null}
         {canAct ? (
-          <button type="button" disabled={healBusy} onClick={() => void toggleAutoHeal()} title="মনিটরিং sweep ভাঙা commerce webhook নিজে থেকে আবার রেজিস্টার করার আর মেয়াদ শেষের পথে থাকা Meta টোকেন (WhatsApp/Messenger/Instagram/Page) নিজে থেকে রিফ্রেশ করার চেষ্টা করে — এটি বন্ধ রাখলে শুধু সতর্কবার্তা যাবে, মেরামত হবে না" className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-            {healBusy ? "হচ্ছে..." : account.autoHealEnabled === false ? "🛠 Auto-heal চালু করুন" : "🛠 Auto-heal বন্ধ করুন"}
+          <button type="button" disabled={healBusy} onClick={() => void toggleAutoHeal()} title={D.pgHealTitle} className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+            {healBusy ? D.pwWorking : account.autoHealEnabled === false ? D.pgHealOn : D.pgHealOffBtn}
           </button>
         ) : null}
         {account.syncDisabled ? (
           <Link href={account.deepLink} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">
-            Sync বন্ধ আছে — বিজ্ঞাপন পেজে চালু করুন
+            {D.pgSyncDisabledLink}
           </Link>
         ) : null}
       </div>
       {healError ? <p className="mt-2 text-xs font-medium text-red-600">{healError}</p> : null}
       {editingMeta ? (
         <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-100">
-          <label className="block text-xs font-medium text-slate-600">লেবেল (কার্ডে এই নামটাই বড় করে দেখাবে; খালি রাখলে আসল নাম)
-            <input value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)} maxLength={120} placeholder="যেমন: মূল দোকান" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+          <label className="block text-xs font-medium text-slate-600">{D.pgLabelField}
+            <input value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)} maxLength={120} placeholder={D.pgLabelPh} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
           </label>
-          <label className="block text-xs font-medium text-slate-600">গ্রুপ (ব্র্যান্ড/শাখা অনুযায়ী ভাগ করতে; খালি = গ্রুপ ছাড়া)
-            <input value={groupDraft} onChange={(e) => setGroupDraft(e.target.value)} maxLength={120} placeholder="যেমন: ঢাকা ব্রাঞ্চ" list="cc-group-names" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
+          <label className="block text-xs font-medium text-slate-600">{D.pgGroupField}
+            <input value={groupDraft} onChange={(e) => setGroupDraft(e.target.value)} maxLength={120} placeholder={D.pgGroupPh} list="cc-group-names" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-400" />
           </label>
           {metaError ? <p className="text-xs font-medium text-red-600">{metaError}</p> : null}
           <div className="flex gap-2">
             <button type="button" disabled={metaBusy} onClick={() => void saveMeta()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-              {metaBusy ? "সেভ হচ্ছে…" : "সেভ করুন"}
+              {metaBusy ? D.pgSaving : D.pgSavePlain}
             </button>
-            <button type="button" onClick={() => setEditingMeta(false)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">বন্ধ করুন</button>
+            <button type="button" onClick={() => setEditingMeta(false)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">{dict.common.close}</button>
           </div>
         </div>
       ) : null}
@@ -233,9 +237,11 @@ function OwnAppCard({ anchorId, icon, title, idLabel, secretLabel, config, note,
    * button must not promise a verification that never happens. */
   verifyBeforeSave?: boolean;
 }) {
+  const { dict, locale } = useLocale();
+  const D = dict.connections;
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
-  const verifiedAt = formatWhen(config?.lastVerifiedAt);
+  const verifiedAt = formatWhen(config?.lastVerifiedAt, locale);
   const saving = busy === anchorId;
   return (
     <div id={anchorId} className="card scroll-mt-24 space-y-3 p-4">
@@ -243,22 +249,22 @@ function OwnAppCard({ anchorId, icon, title, idLabel, secretLabel, config, note,
         <div className="font-semibold text-slate-800">{icon} {title}</div>
         {config ? (
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${config.status === "verified" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
-            {appConfigStatusLabel(config)}
+            {appConfigStatusLabel(config, locale)}
           </span>
         ) : (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">কনফিগার করা হয়নি</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{D.gwNotConfigured}</span>
         )}
       </div>
       {config ? (
         <div className="space-y-1 text-xs text-slate-500">
           <div>{idLabel}: <span className="font-medium text-slate-700">{config.appId}</span></div>
-          {verifiedAt ? <div>সর্বশেষ যাচাই: {verifiedAt}</div> : null}
+          {verifiedAt ? <div>{D.gwLastVerified}{verifiedAt}</div> : null}
         </div>
       ) : null}
       <p className="text-xs leading-relaxed text-slate-500">{note}</p>
       {config?.redirectUris?.length ? (
         <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <div className="font-semibold">আপনার নিজের অ্যাপে এই Redirect URI-গুলো নিবন্ধন করুন (না করলে কানেক্ট সম্পূর্ণ হবে না):</div>
+          <div className="font-semibold">{D.pgRedirectTitle}</div>
           <ul className="mt-1 list-inside list-disc break-all">
             {config.redirectUris.map((u) => <li key={u}>{u}</li>)}
           </ul>
@@ -276,11 +282,11 @@ function OwnAppCard({ anchorId, icon, title, idLabel, secretLabel, config, note,
         </label>
         <div className="flex flex-wrap gap-2">
           <button type="submit" disabled={saving} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? "সেভ হচ্ছে..." : verifyBeforeSave ? (config ? "যাচাই করে আবার সেভ করুন" : "যাচাই করে সেভ করুন") : (config ? "আবার সেভ করুন" : "সেভ করুন")}
+            {saving ? D.pgSavingDots : verifyBeforeSave ? (config ? D.pgResaveVerify : D.pgSaveVerify) : (config ? D.pgResave : D.pgSavePlain)}
           </button>
           {config ? (
             <button type="button" disabled={saving} onClick={onDelete} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50">
-              কনফিগ সরান
+              {D.pgRemoveConfig}
             </button>
           ) : null}
         </div>
@@ -290,6 +296,8 @@ function OwnAppCard({ anchorId, icon, title, idLabel, secretLabel, config, note,
 }
 
 export default function ConnectionsPage() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
   const [overview, setOverview] = useState<ConnectionsOverview | null>(null);
   const [appConfigs, setAppConfigs] = useState<TenantAppConfigView[]>([]);
   // CC28: the redirect-URI guides for own Google/LinkedIn apps
@@ -308,13 +316,13 @@ export default function ConnectionsPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(D.cmNoOrg); return; }
     try {
       const data = await apiFetch<ConnectionsOverview>(`organizations/${orgId}/connections/overview`);
       setOverview(data);
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কানেকশনের তালিকা লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.pgLoadFailed);
     }
     // CC3: own-app configs (ids + status only; a failure here must
     // not take the whole overview down with it).
@@ -357,39 +365,37 @@ export default function ConnectionsPage() {
       // a ROTATION — the API flags it; existing connections keep
       // working, no reconnect is needed, and the copy says so.
       setNotice(saved.rotated
-        ? "Meta App Secret রোটেট হয়েছে — নতুন Secret-টি যাচাই হয়ে সেভ হয়েছে। আগের কানেকশনগুলো আবার কানেক্ট করার দরকার নেই; তাদের টোকেন আগের মতোই চলবে।"
+        ? D.pgRotated
         : platform === "meta"
-          ? "আপনার Meta অ্যাপটি Meta-র কাছে যাচাই হয়ে সেভ হয়েছে — এখন নিচের 'নিজের অ্যাপ দিয়ে' কানেক্ট করা যাবে।"
+          ? D.pgSavedMeta
           : platform === "tiktok"
-            ? "আপনার TikTok অ্যাপটি সেভ হয়েছে (কনফিগার করা) — আসল যাচাই হবে প্রথম কানেক্টের সময়, TikTok-এর টোকেন বিনিময়ে।"
+            ? D.pgSavedTiktok
             : platform === "google"
-              ? "আপনার Google অ্যাপটি সেভ হয়েছে (কনফিগার করা) — নিচে দেওয়া Redirect URI-গুলো আপনার Google Cloud Console-এ নিবন্ধন করেছেন কিনা নিশ্চিত করুন; আসল যাচাই হবে প্রথম কানেক্টে।"
-              : "আপনার LinkedIn অ্যাপটি সেভ হয়েছে (কনফিগার করা) — নিচে দেওয়া Callback URL-টি আপনার LinkedIn অ্যাপে নিবন্ধন করেছেন কিনা নিশ্চিত করুন; আসল যাচাই হবে প্রথম কানেক্টে।");
+              ? D.pgSavedGoogle
+              : D.pgSavedLinkedin);
       setAppConfigs((prev) => [...prev.filter((c) => c.platform !== platform), saved]);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অ্যাপ কনফিগ সেভ হয়নি");
+      setError(e instanceof Error ? e.message : D.pgAppSaveFailed);
     } finally { setBusy(""); }
   }, [load]);
 
   const deleteAppConfig = useCallback(async (platform: OwnAppPlatform) => {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (!window.confirm("নিজের অ্যাপের কনফিগ সরাবেন? এই অ্যাপ দিয়ে করা কানেকশনগুলোর টোকেন থাকবে, তবে যাচাই/টোকেন রিফ্রেশের জন্য অ্যাপটি আবার লাগবে।")) return;
+    if (!window.confirm(D.pgConfirmRemoveApp)) return;
     // CC23: TOTP step-up — চালু থাকলে কোড বাধ্যতামূলক (সার্ভার
     // যাচাই করে); না থাকলে খালি রেখে এগোনো যাবে, তবে সার্ভার
     // stepUpUnavailable জানিয়ে দেবে।
-    const code = window.prompt("Two-Factor (TOTP) চালু থাকলে Authenticator অ্যাপের ৬-সংখ্যার কোডটি দিন। চালু না থাকলে খালি রেখে OK করুন:");
+    const code = window.prompt(D.pgPromptTotp);
     if (code === null) return;
     setBusy(OWN_APP_ANCHORS[platform]);
     try {
       const res = await apiFetch<{ stepUpUnavailable?: boolean }>(`organizations/${orgId}/connections/app-configs/${platform}${code.trim() ? `?totpCode=${encodeURIComponent(code.trim())}` : ""}`, { method: "DELETE" });
-      setNotice(res?.stepUpUnavailable
-        ? "নিজের অ্যাপের কনফিগ সরানো হয়েছে। (আপনার Two-Factor চালু নেই — সংবেদনশীল কাজে অতিরিক্ত সুরক্ষার জন্য Settings থেকে Two-Factor চালু করুন।)"
-        : "নিজের অ্যাপের কনফিগ সরানো হয়েছে।");
+      setNotice(res?.stepUpUnavailable ? `${D.pgRemovedApp}${D.gwStepUpSuffix}` : D.pgRemovedApp);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কনফিগ সরানো যায়নি");
+      setError(e instanceof Error ? e.message : D.pgRemoveAppFailed);
     } finally { setBusy(""); }
   }, [load]);
 
@@ -403,7 +409,7 @@ export default function ConnectionsPage() {
       const res = await apiFetch<{ url: string }>(`organizations/${orgId}/social/accounts/tiktok/connect-url${source === "own" ? "?appSource=own" : ""}`);
       window.location.href = res.url;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "TikTok কানেক্ট শুরু হয়নি");
+      setError(e instanceof Error ? e.message : D.pgTiktokFailed);
       setBusy("");
     }
   }, []);
@@ -418,7 +424,7 @@ export default function ConnectionsPage() {
       const res = await apiFetch<{ url: string }>(`organizations/${orgId}/social/accounts/threads/connect-url${source === "own" ? "?appSource=own" : ""}`);
       window.location.href = res.url;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Threads কানেক্ট শুরু হয়নি");
+      setError(e instanceof Error ? e.message : D.pgThreadsFailed);
       setBusy("");
     }
   }, []);
@@ -434,7 +440,7 @@ export default function ConnectionsPage() {
     const keys = ["google_connected", "google_error", "google_pick", "google_kind", "linkedin_connected", "linkedin_error", "linkedin_pick"];
     if (!keys.some((k) => params.has(k))) return;
     if (params.get("google_connected")) {
-      setNotice(`${googleKindLabel(params.get("google_connected")!)} কানেক্ট হয়েছে।`);
+      setNotice(t("connections.pgGoogleConnected", { label: googleKindLabel(params.get("google_connected")!) }));
       void load();
     }
     if (params.get("google_error")) setError(params.get("google_error")!);
@@ -442,7 +448,7 @@ export default function ConnectionsPage() {
       setGooglePick({ kind: params.get("google_kind") ?? "ga4", state: params.get("google_pick")! });
     }
     if (params.get("linkedin_connected")) {
-      setNotice("LinkedIn Page কানেক্ট হয়েছে।");
+      setNotice(D.pgLinkedinConnected);
       void load();
     }
     if (params.get("linkedin_error")) setError(params.get("linkedin_error")!);
@@ -456,19 +462,19 @@ export default function ConnectionsPage() {
   const act = useCallback(async (account: ConnectionAccount, kind: "default" | "disconnect") => {
     const orgId = getOrganizationId();
     if (!orgId) return;
-    if (kind === "disconnect" && !window.confirm(`"${account.displayName}" ডিসকানেক্ট করবেন? শুধু এই অ্যাকাউন্টটিই বিচ্ছিন্ন হবে — একই প্রোভাইডারের অন্য অ্যাকাউন্ট অক্ষত থাকবে।`)) return;
+    if (kind === "disconnect" && !window.confirm(t("connections.pgConfirmDisconnect", { name: account.displayName }))) return;
     setBusy(account.id);
     try {
       if (kind === "default") {
         await apiFetch(`organizations/${orgId}/connections/${account.id}/default`, { method: "PATCH" });
-        setNotice(`"${account.displayName}" এখন এই ক্যাটাগরির ডিফল্ট কানেকশন।`);
+        setNotice(t("connections.pgNowDefault", { name: account.displayName }));
       } else {
         await apiFetch(`organizations/${orgId}/connections/${account.id}/disconnect`, { method: "POST" });
-        setNotice(`"${account.displayName}" ডিসকানেক্ট হয়েছে।`);
+        setNotice(t("connections.pgDisconnected", { name: account.displayName }));
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "কাজটি সম্পন্ন হয়নি");
+      setError(e instanceof Error ? e.message : D.gwActionFailed);
     } finally {
       setBusy("");
     }
@@ -492,11 +498,8 @@ export default function ConnectionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-900">🔗 কানেক্ট সেন্টার</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          আপনার সব অ্যাকাউন্ট এক জায়গায় — Facebook Page, WhatsApp (একাধিক নম্বরও চলবে), বিজ্ঞাপন অ্যাকাউন্ট, WooCommerce/Shopify স্টোর,
-          কুরিয়ার আর পেমেন্ট। প্রতিটি অ্যাকাউন্টের আসল অবস্থা এখানে দেখা যাবে; অবস্থা সেভ করা তথ্য থেকে দেখানো হয়, অনুমান করে নয়।
-        </p>
+        <h1 className="text-xl font-bold text-slate-900">{D.pgTitle}</h1>
+        <p className="mt-1 text-sm text-slate-500">{D.pgIntro}</p>
       </div>
 
       {error ? <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{error}</div> : null}
@@ -518,16 +521,16 @@ export default function ConnectionsPage() {
 
       {overview ? (
         <div className="card flex flex-wrap items-center gap-x-6 gap-y-2 p-4 text-sm">
-          <span>মোট অ্যাকাউন্ট: <b>{overview.summary.totalAccounts}</b></span>
-          <span>কানেক্টেড: <b className="text-green-700">{overview.summary.connectedAccounts}</b></span>
-          <span>সমস্যা আছে: <b className="text-red-600">{overview.summary.errorAccounts}</b></span>
+          <span>{D.pgSummaryTotal}<b>{fmtNumber(locale, overview.summary.totalAccounts)}</b></span>
+          <span>{D.pgSummaryConnected}<b className="text-green-700">{fmtNumber(locale, overview.summary.connectedAccounts)}</b></span>
+          <span>{D.pgSummaryErrors}<b className="text-red-600">{fmtNumber(locale, overview.summary.errorAccounts)}</b></span>
           {(overview.summary.unreadAlerts ?? 0) > 0 ? (
-            <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">🔔 {overview.summary.unreadAlerts}টি অপঠিত অ্যালার্ট</span>
+            <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">{t("connections.pgUnreadAlerts", { count: fmtNumber(locale, overview.summary.unreadAlerts ?? 0) })}</span>
           ) : null}
           <span className="flex flex-wrap gap-1.5">
             {overview.categories.map((c) => (
               <span key={c.key} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                {CATEGORY_ICONS[c.key] ?? "🧩"} {c.label}: {c.connectedCount}/{c.totalCount}
+                {CATEGORY_ICONS[c.key] ?? "🧩"} {c.label}: {fmtNumber(locale, c.connectedCount)}/{fmtNumber(locale, c.totalCount)}
               </span>
             ))}
           </span>
@@ -548,20 +551,20 @@ export default function ConnectionsPage() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="অ্যাকাউন্ট খুঁজুন — নাম, প্রোভাইডার বা অ্যাকাউন্ট আইডি লিখুন…"
+          placeholder={D.pgSearchPh}
           className="min-w-56 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-400"
         />
         <select
-          aria-label="গ্রুপ অনুযায়ী ছাঁকুন"
+          aria-label={D.pgAriaGroupFilter}
           value={groupFilter}
           onChange={(e) => setGroupFilter(e.target.value)}
           className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600 outline-none focus:border-indigo-400"
         >
-          <option value="">📁 সব গ্রুপ</option>
+          <option value="">{D.pgAllGroups}</option>
           {groupNames.map((name) => (
             <option key={name} value={name}>📁 {name}</option>
           ))}
-          <option value={UNGROUPED_FILTER}>গ্রুপ ছাড়া</option>
+          <option value={UNGROUPED_FILTER}>{D.pgUngroupedOpt}</option>
         </select>
         <datalist id="cc-group-names">
           {groupNames.map((name) => <option key={name} value={name} />)}
@@ -570,108 +573,104 @@ export default function ConnectionsPage() {
 
       <section className="space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">🛠️ নিজের অ্যাপ — অথবা আমাদের অ্যাপ</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            প্রতিটি কানেকশন দুইভাবে করা যায়: আমাদের (প্ল্যাটফর্মের) অ্যাপ দিয়ে — কিছু সেট করা ছাড়াই — অথবা আপনার নিজের
-            Developer অ্যাপ দিয়ে। নিজের অ্যাপ ব্যবহার করতে চাইলে আগে এখানে কনফিগার করুন; কোন কানেকশন কোন অ্যাপে হয়েছে
-            তা প্রতিটি অ্যাকাউন্ট কার্ডে ব্যাজে দেখা যাবে।
-          </p>
+          <h2 className="font-semibold text-slate-800">{D.pgOwnAppTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgOwnAppIntro}</p>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           <OwnAppCard
             anchorId="own-meta-form"
             icon="🔷"
-            title="নিজের Meta অ্যাপ (Facebook)"
+            title={D.pgOwnMetaTitle}
             idLabel="Meta App ID"
             secretLabel="Meta App Secret"
             config={metaAppConfig}
             busy={busy}
-            note="Meta-তে নিজের App তৈরি করে App ID ও App Secret দিন। সেভ করার আগে আসল Graph API দিয়ে যাচাই করা হয় — যাচাই ব্যর্থ হলে কিছুই সেভ হয় না এবং Meta-র নিজের ত্রুটির বার্তা দেখায়। App Secret বদলালে (রোটেশন) আগের কানেকশনগুলো আবার কানেক্ট করতে হবে না — একই App ID দিয়ে নতুন Secret সেভ করলেই টোকেনগুলো আগের মতো চলবে।"
+            note={D.pgOwnMetaNote}
             onSave={(appId, appSecret) => void saveAppConfig("meta", appId, appSecret)}
             onDelete={() => void deleteAppConfig("meta")}
           />
           <OwnAppCard
             anchorId="own-tiktok-form"
             icon="🎵"
-            title="নিজের TikTok অ্যাপ"
+            title={D.pgOwnTiktokTitle}
             idLabel="TikTok Client Key"
             secretLabel="TikTok Client Secret"
             config={tiktokAppConfig}
             busy={busy}
             verifyBeforeSave={false}
-            note={`TikTok-এ নিজের App তৈরি করে Client Key ও Client Secret দিন, আর অ্যাপে Redirect URI হিসেবে এই ঠিকানাটি নিবন্ধন করুন: ${publicApiBase()}/social/oauth/tiktok/callback । TikTok কোনো আগাম credential-যাচাইয়ের সুযোগ দেয় না (টোকেন পেতে ব্যবহারকারীর অনুমোদন লাগে), তাই এটি সেভ হয় "কনফিগার করা" হিসেবে — আসল যাচাই হবে প্রথম কানেক্টে।`}
+            note={t("connections.pgOwnTiktokNote", { url: `${publicApiBase()}/social/oauth/tiktok/callback` })}
             onSave={(appId, appSecret) => void saveAppConfig("tiktok", appId, appSecret)}
             onDelete={() => void deleteAppConfig("tiktok")}
           />
           <OwnAppCard
             anchorId="own-google-form"
             icon="🔍"
-            title="নিজের Google অ্যাপ"
+            title={D.pgOwnGoogleTitle}
             idLabel="Google Client ID"
             secretLabel="Google Client Secret"
             config={googleAppConfig}
             busy={busy}
             verifyBeforeSave={false}
-            note={`Google Cloud Console-এ নিজের OAuth Client তৈরি করে Client ID (শেষে .apps.googleusercontent.com থাকবে) ও Client Secret দিন। Google কোনো আগাম credential-যাচাই দেয় না, তাই এটি সেভ হয় "কনফিগার করা" হিসেবে — আসল যাচাই হবে প্রথম কানেক্টে। কানেক্টের আগে এই Redirect URI-গুলো আপনার Google Cloud Console-এ নিবন্ধন করা বাধ্যতামূলক — না করলে Google কানেক্ট প্রত্যাখ্যান করবে:${googleRedirectUris.length ? ` ${googleRedirectUris.join(" · ")}` : " (লোড হয়নি — পেজটি আবার লোড করুন)"}`}
+            note={t("connections.pgOwnGoogleNote", { uris: googleRedirectUris.length ? ` ${googleRedirectUris.join(" · ")}` : D.pgUrisNotLoaded })}
             onSave={(appId, appSecret) => void saveAppConfig("google", appId, appSecret)}
             onDelete={() => void deleteAppConfig("google")}
           />
           <OwnAppCard
             anchorId="own-linkedin-form"
             icon="💼"
-            title="নিজের LinkedIn অ্যাপ"
+            title={D.pgOwnLinkedinTitle}
             idLabel="LinkedIn Client ID"
             secretLabel="LinkedIn Client Secret"
             config={linkedinAppConfig}
             busy={busy}
             verifyBeforeSave={false}
-            note={`LinkedIn Developer Portal-এ নিজের App তৈরি করে Client ID ও Client Secret দিন, আর অ্যাপের Auth সেটিংসে এই Callback URL-টি নিবন্ধন করুন:${linkedinRedirectUris.length ? ` ${linkedinRedirectUris.join(" · ")}` : " (লোড হয়নি — পেজটি আবার লোড করুন)"} LinkedIn-ও কোনো আগাম credential-যাচাই দেয় না, তাই এটি সেভ হয় "কনফিগার করা" হিসেবে — আসল যাচাই হবে প্রথম কানেক্টে।`}
+            note={t("connections.pgOwnLinkedinNote", { uris: linkedinRedirectUris.length ? ` ${linkedinRedirectUris.join(" · ")}` : D.pgUrisNotLoaded })}
             onSave={(appId, appSecret) => void saveAppConfig("linkedin", appId, appSecret)}
             onDelete={() => void deleteAppConfig("linkedin")}
           />
           <OwnAppCard
             anchorId="own-threads-form"
             icon="🧵"
-            title="নিজের Threads অ্যাপ"
+            title={D.pgOwnThreadsTitle}
             idLabel="Threads App ID"
             secretLabel="Threads App Secret"
             config={threadsAppConfig}
             busy={busy}
             verifyBeforeSave={false}
-            note={`Meta for Developers-এ নিজের অ্যাপে Threads use case যোগ করে Threads App ID ও App Secret দিন, আর অ্যাপের Threads সেটিংসে এই Callback URL-টি নিবন্ধন করুন:${threadsRedirectUris.length ? ` ${threadsRedirectUris.join(" · ")}` : " (লোড হয়নি — পেজটি আবার লোড করুন)"} Threads-ও কোনো আগাম credential-যাচাই দেয় না, তাই এটি সেভ হয় "কনফিগার করা" হিসেবে — আসল যাচাই হবে প্রথম কানেক্টে। সৎ সীমা: প্রোডাকশন পাবলিশিংয়ের জন্য অ্যাপটিতে Meta App Review (Advanced Access) লাগতে পারে।`}
+            note={t("connections.pgOwnThreadsNote", { uris: threadsRedirectUris.length ? ` ${threadsRedirectUris.join(" · ")}` : D.pgUrisNotLoaded })}
             onSave={(appId, appSecret) => void saveAppConfig("threads", appId, appSecret)}
             onDelete={() => void deleteAppConfig("threads")}
           />
         </div>
         <div className="card flex flex-wrap items-center gap-2 p-4">
-          <span className="text-sm font-semibold text-slate-700">অ্যাপ বেছে কানেক্ট করুন:</span>
-          <a href="#cc-forms-messaging" className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">💬 WhatsApp/Messenger/Instagram — আমাদের অ্যাপ দিয়ে (নিচের ফর্মে)</a>
+          <span className="text-sm font-semibold text-slate-700">{D.pgPickAppLabel}</span>
+          <a href="#cc-forms-messaging" className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">{D.pgMsgPlatform}</a>
           {metaAppConfig ? (
-            <a href="/dashboard/connections?appSource=own#cc-forms-messaging" className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200">💬 WhatsApp/Messenger/Instagram — নিজের অ্যাপ দিয়ে (নিচের ফর্মে)</a>
+            <a href="/dashboard/connections?appSource=own#cc-forms-messaging" className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200">{D.pgMsgOwn}</a>
           ) : (
-            <a href="#own-meta-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">💬 নিজের Meta অ্যাপ দিয়ে — আগে অ্যাপ কনফিগার করুন ↑</a>
+            <a href="#own-meta-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">{D.pgMsgOwnConfigure}</a>
           )}
-          <button type="button" disabled={busy === "tiktok-platform"} onClick={() => void tiktokConnect("platform")} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">🎵 TikTok — আমাদের অ্যাপ দিয়ে</button>
+          <button type="button" disabled={busy === "tiktok-platform"} onClick={() => void tiktokConnect("platform")} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">{D.pgTiktokPlatform}</button>
           {tiktokAppConfig ? (
-            <button type="button" disabled={busy === "tiktok-own"} onClick={() => void tiktokConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">🎵 TikTok — নিজের অ্যাপ দিয়ে</button>
+            <button type="button" disabled={busy === "tiktok-own"} onClick={() => void tiktokConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">{D.pgTiktokOwn}</button>
           ) : (
-            <a href="#own-tiktok-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">🎵 নিজের TikTok অ্যাপ দিয়ে — আগে অ্যাপ কনফিগার করুন ↑</a>
+            <a href="#own-tiktok-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">{D.pgTiktokConfigure}</a>
           )}
-          <button type="button" disabled={busy === "threads-platform"} onClick={() => void threadsConnect("platform")} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">🧵 Threads — আমাদের অ্যাপ দিয়ে</button>
+          <button type="button" disabled={busy === "threads-platform"} onClick={() => void threadsConnect("platform")} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50">{D.pgThreadsPlatform}</button>
           {threadsAppConfig ? (
-            <button type="button" disabled={busy === "threads-own"} onClick={() => void threadsConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">🧵 Threads — নিজের অ্যাপ দিয়ে</button>
+            <button type="button" disabled={busy === "threads-own"} onClick={() => void threadsConnect("own")} className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-200 disabled:opacity-50">{D.pgThreadsOwn}</button>
           ) : (
-            <a href="#own-threads-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">🧵 নিজের Threads অ্যাপ দিয়ে — আগে অ্যাপ কনফিগার করুন ↑</a>
+            <a href="#own-threads-form" className="rounded-lg bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100">{D.pgThreadsConfigure}</a>
           )}
         </div>
       </section>
 
       <GoogleLinkedInPanel />
 
-      {!overview && !error ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : null}
+      {!overview && !error ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : null}
 
       {overview && visible.length === 0 ? (
-        <EmptyState title="কিছু পাওয়া যায়নি" description="এই খোঁজে কোনো অ্যাকাউন্ট মিলছে না — খোঁজ বদলে আবার চেষ্টা করুন।" />
+        <EmptyState title={D.pgEmptyTitle} description={D.pgEmptyDesc} />
       ) : null}
 
       {visible.map((category) => (
@@ -679,20 +678,20 @@ export default function ConnectionsPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold text-slate-800">
               {CATEGORY_ICONS[category.key] ?? "🧩"} {category.label}
-              <span className="ml-2 text-xs font-medium text-slate-400">{categoryStatusLabel(category)}</span>
+              <span className="ml-2 text-xs font-medium text-slate-400">{categoryStatusLabel(category, locale)}</span>
             </h2>
             {["commerce", "courier", "messaging", "senders", "ai", "payment"].includes(category.key) ? (
               <a href={`#cc-forms-${category.key}`} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
-                এখানেই কানেক্ট করুন ↓
+                {D.pgConnectHere}
               </a>
             ) : (
               <Link href={category.deepLink} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
-                {category.totalCount === 0 ? "কানেক্ট করুন" : "ম্যানেজ করুন"}
+                {category.totalCount === 0 ? D.pgConnect : D.pgManage}
               </Link>
             )}
           </div>
-          {category.note && CATEGORY_NOTES[category.note] ? (
-            <p className="rounded-xl bg-slate-50 px-3.5 py-2.5 text-[13px] text-slate-500 ring-1 ring-inset ring-slate-100">{CATEGORY_NOTES[category.note]}</p>
+          {category.note && CATEGORY_NOTE_KEYS[category.note] ? (
+            <p className="rounded-xl bg-slate-50 px-3.5 py-2.5 text-[13px] text-slate-500 ring-1 ring-inset ring-slate-100">{D[CATEGORY_NOTE_KEYS[category.note] as keyof typeof D]}</p>
           ) : null}
           {category.accounts.length > 0 ? (
             <div className="space-y-4">
@@ -700,7 +699,7 @@ export default function ConnectionsPage() {
                 <div key={group.groupName ?? "__ungrouped"} className="space-y-2">
                   {groupNames.length > 0 ? (
                     <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                      {group.groupName ? `📁 ${group.groupName}` : "গ্রুপ ছাড়া"}
+                      {group.groupName ? `📁 ${group.groupName}` : D.pgUngroupedOpt}
                     </h3>
                   ) : null}
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -724,24 +723,21 @@ export default function ConnectionsPage() {
 
       {overview ? <MemberAccessPanel /> : null}
 
-      <section className="space-y-3" aria-label="মার্কেটপ্লেস">
+      <section className="space-y-3" aria-label={D.pgMarketAria}>
         <div>
-          <h2 className="font-semibold text-slate-800">🏪 মার্কেটপ্লেস</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            দুটি মার্কেটপ্লেস নিয়ে গবেষণার (EC14) সিদ্ধান্ত এখানে সৎভাবে লেখা আছে — যেখানে আসল API পথ নেই,
-            সেখানে ভুয়া কানেক্ট বাটন বসানো হয়নি।
-          </p>
+          <h2 className="font-semibold text-slate-800">{D.pgMarketTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgMarketIntro}</p>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
-          {MARKETPLACE_NOTES.map((note) => (
+          {marketplaceNotes(locale).map((note) => (
             <div key={note.provider} className="card space-y-2 p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-800">{note.icon} {note.name}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">সিদ্ধান্ত: কানেক্ট নেই (NO-BUILD)</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{D.pgMarketDecision}</span>
               </div>
               <p className="text-[13px] font-medium text-slate-600">{note.summary}</p>
               <p className="text-[13px] text-slate-500">{note.reason}</p>
-              <p className="text-[13px] text-slate-500"><b>কবে বদলাবে:</b> {note.revisit}</p>
+              <p className="text-[13px] text-slate-500"><b>{D.pgRevisitLabel}</b> {note.revisit}</p>
             </div>
           ))}
         </div>
@@ -749,48 +745,48 @@ export default function ConnectionsPage() {
 
       <section id="cc-forms-messaging" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">💬 মেসেজিং চ্যানেল কানেক্ট করুন</h2>
-          <p className="mt-1 text-sm text-slate-500">WhatsApp / Messenger / Instagram, Telegram বট ও Email মেইলবক্স — Inbox-এর একই ফ্লো, একই যাচাই, এখন এই পেজ থেকেই। কানেক্ট হলে উপরের তালিকায় অবস্থা হালনাগাদ হবে।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecMessagingTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecMessagingIntro}</p>
         </div>
         <MessagingConnectPanel onChanged={() => void load()} />
       </section>
 
       <section id="cc-forms-commerce" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">🛒 স্টোর কানেক্ট করুন — WooCommerce / Shopify</h2>
-          <p className="mt-1 text-sm text-slate-500">Integrations পেজের হুবহু একই কম্পোনেন্ট ও একই API — স্টোর যোগ, যাচাই করে কানেক্ট, Sync, Health যাচাই সব এখান থেকেই করা যাবে।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecCommerceTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecCommerceIntro}</p>
         </div>
         <CommerceConnectPanel onChanged={() => void load()} />
       </section>
 
       <section id="cc-forms-courier" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">🚚 কুরিয়ার কানেক্ট করুন</h2>
-          <p className="mt-1 text-sm text-slate-500">Steadfast / Pathao / RedX / eCourier — সবগুলো একসাথে যুক্ত থাকতে পারে। প্রতিটির যাচাই হয় তার আসল API দিয়ে; ডিফল্ট কুরিয়ারও এখান থেকেই বেছে নেওয়া যায়।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecCourierTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecCourierIntro}</p>
         </div>
         <CourierConnectPanel onChanged={() => void load()} />
       </section>
 
       <section id="cc-forms-senders" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">✉️ প্রেরক কানেক্ট করুন — নিজের SMTP / SMS</h2>
-          <p className="mt-1 text-sm text-slate-500">Messaging পেজের একই MS4 ফ্লো, একই যাচাই — এখন এই পেজ থেকেই। নিজের প্রেরক বসালে Broadcast আপনার অ্যাকাউন্ট দিয়েই যাবে।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecSendersTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecSendersIntro}</p>
         </div>
         <SenderConnectPanel onChanged={() => void load()} />
       </section>
 
       <section id="cc-forms-ai" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">🤖 AI / LLM — নিজের key অথবা প্ল্যাটফর্মের</h2>
-          <p className="mt-1 text-sm text-slate-500">নিজের key বসালে এই সংস্থার AI সেই key দিয়েই চলবে (খরচ আপনার provider অ্যাকাউন্টে); না বসালে প্ল্যাটফর্মের LLM, আগের মতোই।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecAiTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecAiIntro}</p>
         </div>
         <LlmConfigPanel onChanged={() => void load()} />
       </section>
 
       <section id="cc-forms-payment" className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">💳 পেমেন্ট — নিজের গেটওয়ে</h2>
-          <p className="mt-1 text-sm text-slate-500">টাকা সরাসরি আপনার নিজের merchant অ্যাকাউন্টে যাবে — প্ল্যাটফর্ম এই টাকা ধরে রাখে না। পেমেন্ট সফল ধরা হয় শুধু গেটওয়ের সার্ভার-যাচাইয়ের পরেই; ব্রাউজার ফিরে আসা কখনো প্রমাণ নয়।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecPaymentTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecPaymentIntro}</p>
         </div>
         <PaymentGatewayPanel onChanged={() => void load()} />
         <PaymentHistoryPanel />
@@ -802,8 +798,8 @@ export default function ConnectionsPage() {
 
       <section className="scroll-mt-24 space-y-3">
         <div>
-          <h2 className="font-semibold text-slate-800">🧾 পেমেন্ট চেষ্টা — সব অর্ডারের অনলাইন পেমেন্ট</h2>
-          <p className="mt-1 text-sm text-slate-500">প্রতিটি পেমেন্ট চেষ্টার আসল অবস্থা, ব্যর্থতার কারণ ও ফি/নেট এখানে দেখা যাবে। অপেক্ষমাণ অর্ডারের পেমেন্ট লিংক এখান থেকেই আবার পাঠানো যায় — পাঠানোর ফলাফল হুবহু API যা বলে তাই দেখানো হয়।</p>
+          <h2 className="font-semibold text-slate-800">{D.pgSecAttemptsTitle}</h2>
+          <p className="mt-1 text-sm text-slate-500">{D.pgSecAttemptsIntro}</p>
         </div>
         <PaymentAttemptsPanel />
       </section>

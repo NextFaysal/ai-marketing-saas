@@ -4,18 +4,22 @@ import React, { useState } from "react";
 import Link from "next/link";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { patchCartLine, notifyCartUpdated } from "@/lib/storefront-cart";
+import { fmtMoneyMinor } from "@repo/contracts";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 
-export function formatSportsPrice(minor: number | string | null | undefined): string {
-  if (minor == null) return "৳০";
+export function formatSportsPrice(minor: number | string | null | undefined, locale: string = "bn"): string {
+  const loc: "bn" | "en" = locale === "en" ? "en" : "bn";
+  if (minor == null) return fmtMoneyMinor(loc, 0);
   const num = typeof minor === "string" ? parseInt(minor, 10) : minor;
-  if (isNaN(num)) return "৳০";
-  return `৳${Math.round(num / 100).toLocaleString("bn-BD")}`;
+  if (isNaN(num)) return fmtMoneyMinor(loc, 0);
+  return fmtMoneyMinor(loc, Math.round(num / 100) * 100);
 }
 
 /**
  * 4 Core Sports & Fitness Pillars
  */
-export function SportsTrustBar() {
+export function SportsTrustBar({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4 py-4">
       <div className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-3.5 shadow-xs">
@@ -23,8 +27,8 @@ export function SportsTrustBar() {
           🏆
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-bold text-slate-900">১০০% অরিজিনাল গিয়ার</p>
-          <p className="text-[11px] text-slate-500 truncate">বিশ্বখ্যাত ও অথেনটিক ব্র্যান্ড</p>
+          <p className="text-xs font-bold text-slate-900">{t.themeSports.trust1Title}</p>
+          <p className="text-[11px] text-slate-500 truncate">{t.themeSports.trust1Desc}</p>
         </div>
       </div>
       <div className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-3.5 shadow-xs">
@@ -32,8 +36,8 @@ export function SportsTrustBar() {
           🛠️
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-bold text-slate-900">ফ্রি হোম অ্যাসেম্বলি</p>
-          <p className="text-[11px] text-slate-500 truncate">দক্ষ টেকনিশিয়ান দ্বারা ফিটিং</p>
+          <p className="text-xs font-bold text-slate-900">{t.themeSports.trust2Title}</p>
+          <p className="text-[11px] text-slate-500 truncate">{t.themeSports.trust2Desc}</p>
         </div>
       </div>
       <div className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-3.5 shadow-xs">
@@ -41,8 +45,8 @@ export function SportsTrustBar() {
           🚚
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-bold text-slate-900">হেভি ফ্রেইট ডেলিভারি</p>
-          <p className="text-[11px] text-slate-500 truncate">সারা দেশে সুরক্ষিত হোম ডেলিভারি</p>
+          <p className="text-xs font-bold text-slate-900">{t.themeSports.trust3Title}</p>
+          <p className="text-[11px] text-slate-500 truncate">{t.themeSports.trust3Desc}</p>
         </div>
       </div>
       <div className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-3.5 shadow-xs">
@@ -50,8 +54,8 @@ export function SportsTrustBar() {
           🛡️
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-bold text-slate-900">১০ বছর ফ্রেম গ্যারান্টি</p>
-          <p className="text-[11px] text-slate-500 truncate">ইন্ডাস্ট্রিয়াল গ্রেড হেভি স্টিল</p>
+          <p className="text-xs font-bold text-slate-900">{t.themeSports.trust4Title}</p>
+          <p className="text-[11px] text-slate-500 truncate">{t.themeSports.trust4Desc}</p>
         </div>
       </div>
     </div>
@@ -65,11 +69,14 @@ export function SportsAssemblyModal({
   open,
   onClose,
   productName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [city, setCity] = useState("ঢাকা (Dhaka Metro)");
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
@@ -93,26 +100,26 @@ export function SportsAssemblyModal({
             🛠️
           </span>
           <div>
-            <h3 className="text-lg font-black text-slate-900">ফ্রি হোম জিম অ্যাসেম্বলি ও টেকনিশিয়ান</h3>
-            <p className="text-xs text-slate-500">বিশেষজ্ঞ মেকানিক দ্বারা নিরাপদ ফিটিং ও ক্যালিব্রেশন</p>
+            <h3 className="text-lg font-black text-slate-900">{t.themeSports.assemblyTitle}</h3>
+            <p className="text-xs text-slate-500">{t.themeSports.assemblySub}</p>
           </div>
         </div>
 
         <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/60 p-3.5">
           <p className="text-xs font-semibold text-sky-950">
-            নির্বাচিত পণ্য: <span className="font-bold">{productName}</span>
+            {t.themeSports.selectedProduct}<span className="font-bold">{productName}</span>
           </p>
           <p className="mt-1 text-[11px] text-sky-800">
-            ইকুইপমেন্ট ডেলিভারির ২৪-৪৮ ঘণ্টার মধ্যে আমাদের সার্টিফাইড টেকনিশিয়ান আপনার ঠিকানায় গিয়ে আনবক্সিং, লেভেলিং ও স্ক্রু-টাইটেনিং সম্পূর্ণ করে দেবেন।
+            {t.themeSports.assemblyBody}
           </p>
         </div>
 
         {booked ? (
           <div className="mt-6 rounded-2xl bg-emerald-50 border border-emerald-200 p-6 text-center">
             <span className="text-4xl">🎉</span>
-            <p className="mt-2 text-base font-bold text-emerald-900">অ্যাসেম্বলি সার্ভিস রিকোয়েস্ট গৃহীত হয়েছে!</p>
+            <p className="mt-2 text-base font-bold text-emerald-900">{t.themeSports.assemblyDoneTitle}</p>
             <p className="mt-1 text-xs text-emerald-700">
-              আমাদের স্পোর্টস কোঅর্ডিনেটর খুব শীঘ্রই <strong>{phone || "আপনার নম্বরে"}</strong> কল করে শিডিউল কনফার্ম করবেন।
+              {t.themeSports.assemblyDonePrefix}<strong>{phone || t.themeSports.yourNumber}</strong>{t.themeSports.assemblyDoneMid}
             </p>
             <button
               type="button"
@@ -122,7 +129,7 @@ export function SportsAssemblyModal({
               }}
               className="mt-4 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-bold text-white hover:bg-emerald-700"
             >
-              ঠিক আছে
+              {t.themeSports.okButton}
             </button>
           </div>
         ) : (
@@ -134,7 +141,7 @@ export function SportsAssemblyModal({
             className="mt-4 space-y-3"
           >
             <div>
-              <label className="block text-xs font-bold text-slate-700">আপনার শহর / অঞ্চল</label>
+              <label className="block text-xs font-bold text-slate-700">{t.themeSports.cityLabel}</label>
               <select
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
@@ -150,19 +157,19 @@ export function SportsAssemblyModal({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700">বিস্তারিত ঠিকানা (বাসা/ফ্লোর/রোড)</label>
+              <label className="block text-xs font-bold text-slate-700">{t.themeSports.addressLabel}</label>
               <textarea
                 required
                 rows={2}
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="যেমন: ফ্ল্যাট ৪/বি, হাউজ ১২, রোড ৭, ধানমন্ডি, ঢাকা"
+                placeholder={t.themeSports.addressPlaceholder}
                 className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs text-slate-800 focus:border-sky-500 focus:outline-hidden"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700">মোবাইল নম্বর</label>
+              <label className="block text-xs font-bold text-slate-700">{t.themeSports.phoneLabel}</label>
               <input
                 required
                 type="tel"
@@ -176,11 +183,11 @@ export function SportsAssemblyModal({
             <div className="space-y-1.5 pt-1 text-[11px] text-slate-500">
               <div className="flex items-center gap-2">
                 <span>✓</span>
-                <span>কোনো হিডেন চার্জ নেই — ১০০% ফ্রি হোম ইন্সটলেশন</span>
+                <span>{t.themeSports.noHiddenCharge}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span>✓</span>
-                <span>লোড-বেয়ারিং টেস্ট ও সেফটি ট্রায়াল নিশ্চিতকরণ</span>
+                <span>{t.themeSports.loadTest}</span>
               </div>
             </div>
 
@@ -188,7 +195,7 @@ export function SportsAssemblyModal({
               type="submit"
               className="mt-2 w-full rounded-xl bg-sky-600 py-3 text-xs font-bold text-white shadow-md hover:bg-sky-700"
             >
-              হোম ফিটিং শিডিউল বুক করুন (ফ্রি)
+              {t.themeSports.bookFitting}
             </button>
           </form>
         )}
@@ -203,10 +210,13 @@ export function SportsAssemblyModal({
 export function SportsWeightSelector({
   selectedWeight,
   onChangeWeight,
+  locale = "bn",
 }: {
   selectedWeight: string;
   onChangeWeight: (w: string) => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const options = [
     { id: "2.5kg", label: "২.৫ কেজি (জোড়া)", desc: "ওয়ার্মআপ ও টোনিং" },
     { id: "5kg", label: "৫ কেজি (জোড়া)", desc: "বিগিনার আর্মস ও শোল্ডার" },
@@ -218,7 +228,7 @@ export function SportsWeightSelector({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-bold text-slate-800">ওজন / ক্যাপাসিটি সিলেক্টর:</span>
+        <span className="font-bold text-slate-800">{t.themeSports.weightLabel}</span>
         <span className="font-semibold text-sky-600">{selectedWeight}</span>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -248,7 +258,8 @@ export function SportsWeightSelector({
 /**
  * Heavy-duty Gym Equipment Specifications Table
  */
-export function SportsEquipmentSpecs() {
+export function SportsEquipmentSpecs({ locale = "bn" }: { locale?: ShopLocale | string } = {}) {
+  const t = shopT(locale);
   const specs = [
     { label: "ফ্রেম ম্যাটেরিয়াল", value: "১৪-গেজ হেভি ডিউটি ইন্ডাস্ট্রিয়াল স্টিল (মরিচারোধী পাউডার কোটেড)" },
     { label: "সর্বোচ্চ ইউজার ওয়েট", value: "১৫০ কেজি (হেভি কমার্শিয়াল টেস্টেড ৩৫০ কেজি পর্যন্ত)" },
@@ -261,7 +272,7 @@ export function SportsEquipmentSpecs() {
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
       <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-900">
         <span>🏋️</span>
-        <span>ইকুইপমেন্ট টেকনিক্যাল স্পেসিফিকেশন</span>
+        <span>{t.themeSports.specsHeading}</span>
       </h4>
       <div className="mt-3 divide-y divide-slate-100 text-xs">
         {specs.map((s, idx) => (
@@ -281,10 +292,13 @@ export function SportsEquipmentSpecs() {
 export function SportsWorkoutBundle({
   orgSlug,
   mainProduct,
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: { id: string; name: string; priceMinor: string };
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -316,8 +330,8 @@ export function SportsWorkoutBundle({
             ⚡
           </span>
           <div>
-            <h3 className="text-sm font-black text-slate-900">আলটিমেট ওয়ার্কআউট স্টার্টার কম্বো বান্ডল</h3>
-            <p className="text-[11px] text-slate-500">একসাথে নিলে পাচ্ছেন ৳৫০০ নগদ ছাড় ও ফ্রি হোম ডেলিভারি</p>
+            <h3 className="text-sm font-black text-slate-900">{t.themeSports.comboTitle}</h3>
+            <p className="text-[11px] text-slate-500">{t.themeSports.comboSubPrefix}{formatSportsPrice(50000, locale)}{t.themeSports.comboSubSuffix}</p>
           </div>
         </div>
         <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
@@ -351,7 +365,7 @@ export function SportsWorkoutBundle({
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-slate-900 p-4 text-white">
         <div>
-          <p className="text-[11px] text-slate-400">কম্বো অফার মূল্য (৩টি আইটেম একসাথে):</p>
+          <p className="text-[11px] text-slate-400">{t.themeSports.comboPriceLabel}</p>
           <div className="flex items-baseline gap-2">
             <span className="text-xl font-black text-white">{formatSportsPrice(bundleTotal)}</span>
             <span className="text-xs text-slate-400 line-through">
@@ -365,7 +379,7 @@ export function SportsWorkoutBundle({
           disabled={loading}
           className="rounded-xl bg-sky-500 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-sky-400 disabled:opacity-50"
         >
-          {loading ? "যোগ হচ্ছে..." : added ? "✓ কম্বো কার্টে যোগ হয়েছে" : "সম্পূর্ণ কম্বো কার্টে যোগ করুন"}
+          {loading ? t.themeSports.adding : added ? t.themeSports.comboAdded : t.themeSports.comboAdd}
         </button>
       </div>
     </div>
@@ -384,6 +398,7 @@ export function SportsProductCard({
   product: ShopProduct;
   locale?: string;
 }) {
+  const t = shopT(locale);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState(false);
 
@@ -429,11 +444,11 @@ export function SportsProductCard({
           {/* Badges */}
           <div className="absolute left-2.5 top-2.5 flex flex-col gap-1.5">
             <span className="rounded-lg bg-slate-900/90 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white backdrop-blur-xs">
-              ১০০% অরিজিনাল
+              {t.themeSports.originalBadge}
             </span>
             {hasDiscount ? (
               <span className="rounded-lg bg-sky-600 px-2 py-0.5 text-[10px] font-black text-white">
-                অফার ছাড়
+                {t.themeSports.offerOff}
               </span>
             ) : null}
           </div>
@@ -448,7 +463,7 @@ export function SportsProductCard({
         <div className="p-3.5">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold text-sky-700">
             <span>🛡️</span>
-            <span>১০ বছর ফ্রেম গ্যারান্টি</span>
+            <span>{t.themeSports.frameGuarantee}</span>
           </div>
           <h3 className="mt-1 line-clamp-2 text-xs font-bold text-slate-900 group-hover:text-sky-600 transition-colors">
             {product.name}
@@ -474,7 +489,7 @@ export function SportsProductCard({
           disabled={loading || product.isGiftCard}
           className="w-full rounded-xl bg-slate-900 py-2.5 text-xs font-bold text-white shadow-xs transition-all hover:bg-sky-600 active:scale-98 disabled:opacity-50"
         >
-          {loading ? "যোগ হচ্ছে..." : added ? "✓ কার্টে যোগ হয়েছে" : "কার্টে যোগ করুন"}
+          {loading ? t.themeSports.adding : added ? t.themeSports.addedToCart : t.themeSports.addToCart}
         </button>
       </div>
     </div>
@@ -493,6 +508,7 @@ export function SportsThemeHome({
   orgSlug: string;
   locale?: string;
 }) {
+  const t = shopT(locale);
   const [assemblyOpen, setAssemblyOpen] = useState(false);
   const products: ShopProduct[] = home.products ?? [];
   const primaryColor = home.organization.primaryColor || "#0284c7";
@@ -514,41 +530,41 @@ export function SportsThemeHome({
         <div className="relative z-10 px-6 py-12 sm:px-12 sm:py-16 lg:py-20 max-w-3xl space-y-4">
           <div className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-500/10 px-3.5 py-1 text-xs font-black uppercase tracking-wider text-sky-300">
             <span>⚡</span>
-            <span>ব্রেক ইওর লিমিটস — ১০০% প্রফেশনাল স্পোর্টস গিয়ার</span>
+            <span>{t.themeSports.heroBadge}</span>
           </div>
           <h1 className="text-3xl font-black italic tracking-tight text-white sm:text-5xl lg:text-6xl">
             BUILD YOUR <span className="text-sky-400 underline decoration-sky-500/50">DREAM BODY</span> AT HOME
           </h1>
           <p className="text-sm font-medium text-slate-300 sm:text-base max-w-xl">
-            বিশ্বমানের ট্রেডমিল, ডাম্বেল, রেজিস্ট্যান্স ব্যান্ড ও অল-ইন-ওয়ান হোম জিম সেট। সারা দেশে দ্রুত ডেলিভারি ও ফ্রি ইন্সটলেশন।
+            {t.themeSports.heroDesc}
           </p>
           <div className="flex flex-wrap items-center gap-3 pt-3">
             <a
               href="#products-section"
               className="rounded-xl bg-sky-500 px-6 py-3 text-xs font-black uppercase tracking-wider text-white shadow-lg hover:bg-sky-400 transition-transform active:scale-95"
             >
-              গিয়ার এক্সপ্লোর করুন
+              {t.themeSports.heroCta}
             </a>
             <button
               type="button"
               onClick={() => setAssemblyOpen(true)}
               className="rounded-xl border border-sky-400/40 bg-white/10 px-6 py-3 text-xs font-bold text-white backdrop-blur-xs hover:bg-white/20"
             >
-              🛠️ ফ্রি হোম অ্যাসেম্বলি বুক করুন
+              {t.themeSports.heroAssembly}
             </button>
           </div>
         </div>
       </div>
 
       {/* Trust Pillars */}
-      <SportsTrustBar />
+      <SportsTrustBar locale={locale} />
 
       {/* Sports Categories Matrix */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-black text-slate-900">স্পোর্টস ও ট্রেনিং ক্যাটাগরি</h2>
-            <p className="text-xs text-slate-500">আপনার ফিটনেস গোল অনুযায়ী সেরা অরিজিনাল গিয়ার বেছে নিন</p>
+            <h2 className="text-lg font-black text-slate-900">{t.themeSports.categoriesHeading}</h2>
+            <p className="text-xs text-slate-500">{t.themeSports.categoriesSub}</p>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -574,13 +590,13 @@ export function SportsThemeHome({
         <div className="space-y-2 max-w-xl">
           <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-0.5 text-xs font-black">
             <span>🛠️</span>
-            <span>সারাদেশে সার্টিফাইড টেকনিশিয়ান নেটওয়ার্ক</span>
+            <span>{t.themeSports.techBanner}</span>
           </div>
           <h3 className="text-xl sm:text-2xl font-black">
-            হোম জিম ইকুইপমেন্ট ইন্সটলেশন নিয়ে চিন্তিত?
+            {t.themeSports.techTitle}
           </h3>
           <p className="text-xs sm:text-sm text-sky-100">
-            ট্রেডমিল, ক্রস ট্রেইনার কিংবা মাল্টি-জিম ইকুইপমেন্ট — ডেলিভারির পর আমাদের দক্ষ টেকনিশিয়ান আপনার বাসায় গিয়ে সম্পূর্ণ ফ্রি সেটআপ ও লোড ক্যালিব্রেশন করে দেবেন।
+            {t.themeSports.techBody}
           </p>
         </div>
         <button
@@ -588,7 +604,7 @@ export function SportsThemeHome({
           onClick={() => setAssemblyOpen(true)}
           className="rounded-2xl bg-white px-6 py-3.5 text-xs font-black uppercase tracking-wider text-sky-900 shadow-xl hover:bg-sky-50 transition-transform active:scale-95"
         >
-          ইন্সটলেশন শিডিউল করুন →
+          {t.themeSports.techCta}
         </button>
       </div>
 
@@ -596,15 +612,15 @@ export function SportsThemeHome({
       <div id="products-section" className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-black text-slate-900">সেরা স্পোর্টস ও জিম ইকুইপমেন্ট</h2>
-            <p className="text-xs text-slate-500">প্রফেশনাল অ্যাথলেটদের ফার্স্ট চয়েস অরিজিনাল গিয়ার</p>
+            <h2 className="text-xl font-black text-slate-900">{t.themeSports.collectionHeading}</h2>
+            <p className="text-xs text-slate-500">{t.themeSports.collectionSub}</p>
           </div>
         </div>
 
         {products.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center">
             <p className="text-4xl">🏋️</p>
-            <p className="mt-2 text-sm font-semibold text-slate-600">কোনো স্পোর্টস প্রোডাক্ট পাওয়া যায়নি।</p>
+            <p className="mt-2 text-sm font-semibold text-slate-600">{t.themeSports.noProducts}</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:gap-5 md:grid-cols-3 lg:grid-cols-4">
@@ -615,10 +631,10 @@ export function SportsThemeHome({
         )}
       </div>
 
-      <SportsAssemblyModal
+      <SportsAssemblyModal locale={locale}
         open={assemblyOpen}
         onClose={() => setAssemblyOpen(false)}
-        productName="হোম জিম ও ট্রেনিং ইকুইপমেন্ট"
+        productName={t.themeSports.assemblyProductName}
       />
     </div>
   );

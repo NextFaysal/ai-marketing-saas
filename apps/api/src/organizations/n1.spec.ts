@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -102,8 +103,8 @@ describe("M34 tenant billing", () => {
 
   it("plan change request writes an admin note + audit and refuses the current plan", async () => {
     const { svc, p, auditEntries } = makeService();
-    await expect(svc.requestPlanChange("org-1", "u-owner", { requestedPlan: "GROWTH" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.requestPlanChange("org-1", "u-owner", { requestedPlan: "PRO" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.requestPlanChange("org-1", "u-owner", { requestedPlan: "GROWTH" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.requestPlanChange("org-1", "u-owner", { requestedPlan: "PRO" })).rejects.toBeInstanceOf(ApiException);
     const out = await svc.requestPlanChange("org-1", "u-owner", { requestedPlan: "AGENCY", note: "growing" });
     expect(out.ok).toBe(true);
     expect(p.adminNote.rows[0].body).toContain("GROWTH -> AGENCY");
@@ -128,10 +129,10 @@ describe("M34 email invitations", () => {
 
   it("refuses OWNER role, duplicates and existing members", async () => {
     const { svc } = makeService();
-    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "a@b.com", role: "OWNER" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "a@b.com", role: "OWNER" })).rejects.toBeInstanceOf(ApiException);
     await svc.createEmailInvitation("org-1", "u-owner", { email: "dup@x.com", role: "VIEWER" });
-    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "dup@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(ConflictException);
-    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "owner@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "dup@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "owner@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("counts pending invitations toward the seat limit (FREE plan = 2 seats)", async () => {
@@ -139,7 +140,7 @@ describe("M34 email invitations", () => {
     // Move the org to FREE (2 seats): 1 active member already.
     p.subscription.rows[0].plan = "FREE";
     await svc.createEmailInvitation("org-1", "u-owner", { email: "one@x.com", role: "VIEWER" });
-    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "two@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createEmailInvitation("org-1", "u-owner", { email: "two@x.com", role: "VIEWER" })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("accepts only for the invited email, creates the membership, and cannot be reused", async () => {
@@ -149,13 +150,13 @@ describe("M34 email invitations", () => {
     const view = await svc.getInvitationForUser({ userId: "u-new", email: "new@x.com" } as any, raw);
     expect(view.emailMatchesAccount).toBe(true);
     expect(view.organizationName).toBe("Demo Shop");
-    await expect(svc.acceptInvitation({ userId: "u-owner", email: "owner@x.com" } as any, raw)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.acceptInvitation({ userId: "u-owner", email: "owner@x.com" } as any, raw)).rejects.toBeInstanceOf(ApiException);
     const accepted = await svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, raw);
     expect(accepted.alreadyMember).toBe(false);
     const membership = p.membership.rows.find((m: any) => m.userId === "u-new");
     expect(membership?.role).toBe("ANALYST");
     expect(p.memberInvitation.rows[0].status).toBe("accepted");
-    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, raw)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, raw)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("REGRESSION (live-found): an invitation can be accepted on the 2-seat FREE plan — it must not count against itself", async () => {
@@ -175,12 +176,12 @@ describe("M34 email invitations", () => {
     p.memberInvitation.rows[0].expiresAt = new Date(Date.now() - 3600_000);
     const view = await svc.getInvitationForUser({ userId: "u-new", email: "new@x.com" } as any, rawOld);
     expect(view.status).toBe("expired");
-    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, rawOld)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, rawOld)).rejects.toBeInstanceOf(ApiException);
     const resent = await svc.resendInvitation("org-1", "u-owner", p.memberInvitation.rows[0].id);
     const rawNew = resent.inviteUrl.split("token=")[1];
     expect(rawNew).not.toBe(rawOld);
-    await expect(svc.getInvitationForUser({ userId: "u-new", email: "new@x.com" } as any, rawOld)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getInvitationForUser({ userId: "u-new", email: "new@x.com" } as any, rawOld)).rejects.toBeInstanceOf(ApiException);
     await svc.revokeInvitation("org-1", "u-owner", p.memberInvitation.rows[0].id);
-    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, rawNew)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.acceptInvitation({ userId: "u-new", email: "new@x.com" } as any, rawNew)).rejects.toBeInstanceOf(ApiException);
   });
 });

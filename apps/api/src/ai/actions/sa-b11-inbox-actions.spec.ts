@@ -189,7 +189,7 @@ describe("SA-B11 Item 1 — inbox executors through the real staff paths", () =>
     expect(res.proposal.preview).toContain("সদস্য নন"); // the human was warned at propose time
     const done: any = await s.engine.approve(ORG, OWNER, res.proposal.id);
     expect(done.status).toBe("failed");
-    expect(done.error).toContain("not a member of this organization");
+    expect(done.error).toContain("এই organization-এর সদস্য নন");
     expect(s.conversations[0].assignedUserId).toBeNull(); // the assignment never happened
     expect(s.aiActions.some((r) => r.args?.phase === "failed" && r.status === "error")).toBe(true);
   });
@@ -250,9 +250,9 @@ describe("SA-B11 Item 1 — inbox executors through the real staff paths", () =>
   it("cross-org: another org's conversation is not found by the builders", async () => {
     const s = setup();
     await expect(s.engine.propose(ORG, "assign_conversation", { conversationId: "conv-b", assignedUserId: AGENT }, { proposedBy: "ai", actorUserId: null }))
-      .rejects.toThrow(/not found/i);
+      .rejects.toMatchObject({ code: "ai.conversationNotFoundInThisOrganization" });
     await expect(s.engine.propose(ORG, "block_sender", { conversationId: "conv-b" }, { proposedBy: "ai", actorUserId: null }))
-      .rejects.toThrow(/not found/i);
+      .rejects.toMatchObject({ code: "ai.conversationNotFoundInThisOrganization" });
     expect(s.proposals).toHaveLength(0);
   });
 });

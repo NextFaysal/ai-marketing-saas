@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { parseMoneyToMinor } from "@repo/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -10,6 +10,7 @@ import { CommerceService } from "../commerce/commerce.service";
 import { DiscountsService } from "../commerce/discounts.service";
 import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { PROPOSAL_TOOL_ROLES } from "./planner";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 export const PROPOSAL_TYPES = ["pause_campaign", "pause_ad_set", "resume_campaign", "resume_ad_set", "create_broadcast_draft", "create_followup_task", "create_quick_reply", "propose_price_change", "propose_stock_adjust", "propose_listing_publish", "propose_listing_unpublish", "propose_create_discount", "propose_product_copy"] as const;
 export type ProposalType = (typeof PROPOSAL_TYPES)[number];
@@ -97,14 +98,14 @@ export class ProposalsService {
   // ---------- validation + preview (shared by API + chat paths) ----------
   private async build(orgId: string, dto: ProposalInput): Promise<{ type: ProposalType; title: string; preview: string; payload: any }> {
     if (!PROPOSAL_TYPES.includes(dto.type as ProposalType)) {
-      throw new BadRequestException(`type must be one of: ${PROPOSAL_TYPES.join(", ")}`);
+      throw badRequest("ai.typeMustBeOneOf", { p1: PROPOSAL_TYPES.join(", ") });
     }
     if (dto.type === "pause_campaign") {
-      if (!dto.planId) throw new BadRequestException("planId is required for pause_campaign");
+      if (!dto.planId) throw badRequest("ai.planidIsRequiredForPauseCampaign");
       const plan = await this.p().campaignPlan.findFirst({ where: { id: dto.planId, organizationId: orgId } });
-      if (!plan) throw new NotFoundException("Campaign plan not found in this organization");
+      if (!plan) throw notFound("ai.campaignPlanNotFoundInThis");
       if (plan.status !== "published" || !plan.externalCampaignId) {
-        throw new BadRequestException("শুধুমাত্র published ক্যাম্পেইনই pause করা যায় — এই প্ল্যানটি এখনো Meta-তে published নয়।");
+        throw badRequest("ai.onlyAPublishedCampaignCanBe");
       }
       return {
         type: "pause_campaign",
@@ -114,13 +115,13 @@ export class ProposalsService {
       };
     }
     if (dto.type === "pause_ad_set") {
-      if (!dto.adSetId) throw new BadRequestException("adSetId is required for pause_ad_set");
+      if (!dto.adSetId) throw badRequest("ai.adsetidIsRequiredForPauseAd");
       const adSet = await this.p().campaignAdSet.findFirst({ where: { id: dto.adSetId } });
-      if (!adSet) throw new NotFoundException("Ad set not found");
+      if (!adSet) throw notFound("ai.adSetNotFound");
       const plan = await this.p().campaignPlan.findFirst({ where: { id: adSet.planId, organizationId: orgId } });
-      if (!plan) throw new NotFoundException("Ad set not found in this organization");
-      if (plan.status !== "published") throw new BadRequestException("শুধুমাত্র published প্ল্যানের ad set pause করা যায়।");
-      if (!adSet.externalAdSetId) throw new BadRequestException("এই ad set-এর কোনো Meta ad set ID নেই — pause করার মতো কিছু নেই।");
+      if (!plan) throw notFound("ai.adSetNotFoundInThis");
+      if (plan.status !== "published") throw badRequest("ai.onlyAPublishedPlanSAd");
+      if (!adSet.externalAdSetId) throw badRequest("ai.thisAdSetHasNoMeta");
       return {
         type: "pause_ad_set",
         title: `Ad Set Pause: ${adSet.name ?? adSet.id}`,
@@ -129,14 +130,14 @@ export class ProposalsService {
       };
     }
     if (dto.type === "resume_campaign") {
-      if (!dto.planId) throw new BadRequestException("planId is required for resume_campaign");
+      if (!dto.planId) throw badRequest("ai.planidIsRequiredForResumeCampaign");
       const plan = await this.p().campaignPlan.findFirst({ where: { id: dto.planId, organizationId: orgId } });
-      if (!plan) throw new NotFoundException("Campaign plan not found in this organization");
+      if (!plan) throw notFound("ai.campaignPlanNotFoundInThis");
       if (plan.status !== "published" || !plan.externalCampaignId) {
-        throw new BadRequestException("শুধুমাত্র published ক্যাম্পেইনই resume করা যায় — এই প্ল্যানটি এখনো Meta-তে published নয়।");
+        throw badRequest("ai.onlyAPublishedCampaignCanBe2");
       }
       if (plan.metaStatus !== "PAUSED") {
-        throw new BadRequestException(`এই ক্যাম্পেইনটি এখন PAUSED নয় (বর্তমান Meta status: ${plan.metaStatus ?? "অজানা"}) — resume করার কিছু নেই।`);
+        throw badRequest("ai.thisCampaignIsNotPausedNow", { p1: plan.metaStatus ?? "অজানা" });
       }
       return {
         type: "resume_campaign",
@@ -146,13 +147,13 @@ export class ProposalsService {
       };
     }
     if (dto.type === "resume_ad_set") {
-      if (!dto.adSetId) throw new BadRequestException("adSetId is required for resume_ad_set");
+      if (!dto.adSetId) throw badRequest("ai.adsetidIsRequiredForResumeAd");
       const adSet = await this.p().campaignAdSet.findFirst({ where: { id: dto.adSetId } });
-      if (!adSet) throw new NotFoundException("Ad set not found");
+      if (!adSet) throw notFound("ai.adSetNotFound");
       const plan = await this.p().campaignPlan.findFirst({ where: { id: adSet.planId, organizationId: orgId } });
-      if (!plan) throw new NotFoundException("Ad set not found in this organization");
-      if (plan.status !== "published") throw new BadRequestException("শুধুমাত্র published প্ল্যানের ad set resume করা যায়।");
-      if (!adSet.externalAdSetId) throw new BadRequestException("এই ad set-এর কোনো Meta ad set ID নেই — resume করার মতো কিছু নেই।");
+      if (!plan) throw notFound("ai.adSetNotFoundInThis");
+      if (plan.status !== "published") throw badRequest("ai.onlyAPublishedPlanSAd2");
+      if (!adSet.externalAdSetId) throw badRequest("ai.thisAdSetHasNoMeta2");
       return {
         type: "resume_ad_set",
         title: `Ad Set Resume: ${adSet.name ?? adSet.id}`,
@@ -161,11 +162,11 @@ export class ProposalsService {
       };
     }
     if (dto.type === "create_followup_task") {
-      if (!dto.leadId) throw new BadRequestException("leadId is required for create_followup_task");
+      if (!dto.leadId) throw badRequest("ai.leadidIsRequiredForCreateFollowup");
       const lead = await this.p().lead.findFirst({ where: { id: dto.leadId, organizationId: orgId, mergedIntoId: null } });
-      if (!lead) throw new NotFoundException("Lead not found in this organization");
+      if (!lead) throw notFound("ai.leadNotFoundInThisOrganization");
       const due = dto.dueAt ? new Date(dto.dueAt) : null;
-      if (!due || Number.isNaN(due.getTime())) throw new BadRequestException("একটি বৈধ dueAt (ISO date) দরকার");
+      if (!due || Number.isNaN(due.getTime())) throw badRequest("ai.aValidDueatIsoDateIs");
       const dueStr = due.toISOString().slice(0, 10);
       return {
         type: "create_followup_task",
@@ -177,8 +178,8 @@ export class ProposalsService {
     if (dto.type === "create_quick_reply") {
       const title = dto.title?.trim() ?? "";
       const content = dto.content?.trim() ?? "";
-      if (!title) throw new BadRequestException("Quick reply-এর একটি title দরকার");
-      if (!content) throw new BadRequestException("Quick reply-এর content দরকার");
+      if (!title) throw badRequest("ai.quickReplyNeedsATitle");
+      if (!content) throw badRequest("ai.quickReplyContentIsNeeded");
       return {
         type: "create_quick_reply",
         title: `Quick Reply: ${title.slice(0, 80)}`,
@@ -187,13 +188,13 @@ export class ProposalsService {
       };
     }
     if (dto.type === "propose_price_change") {
-      if (!dto.productId) throw new BadRequestException("productId is required for propose_price_change");
+      if (!dto.productId) throw badRequest("ai.productidIsRequiredForProposePrice");
       const product = await this.p().product.findFirst({ where: { id: dto.productId, organizationId: orgId } });
-      if (!product) throw new NotFoundException("Product not found in this organization");
-      if (!dto.newPrice || !String(dto.newPrice).trim()) throw new BadRequestException("newPrice is required for propose_price_change");
+      if (!product) throw notFound("ai.productNotFoundInThisOrganization");
+      if (!dto.newPrice || !String(dto.newPrice).trim()) throw badRequest("ai.newpriceIsRequiredForProposePrice");
       let parsed: bigint;
-      try { parsed = parseMoneyToMinor(dto.newPrice); } catch { throw new BadRequestException(`Invalid newPrice: ${dto.newPrice}`); }
-      if (parsed <= 0n) throw new BadRequestException("newPrice অবশ্যই 0-এর বেশি হতে হবে");
+      try { parsed = parseMoneyToMinor(dto.newPrice); } catch { throw badRequest("ai.invalidNewprice", { dtoNewPrice: dto.newPrice }); }
+      if (parsed <= 0n) throw badRequest("ai.newpriceMustBeMoreThan0");
       const currentMinor = toBigIntOrZero(product.priceMinor);
       return {
         type: "propose_price_change",
@@ -203,26 +204,26 @@ export class ProposalsService {
       };
     }
     if (dto.type === "propose_stock_adjust") {
-      if (!dto.productId) throw new BadRequestException("productId is required for propose_stock_adjust");
+      if (!dto.productId) throw badRequest("ai.productidIsRequiredForProposeStock");
       const product = await this.p().product.findFirst({ where: { id: dto.productId, organizationId: orgId } });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("ai.productNotFoundInThisOrganization");
       const hasNew = dto.newQuantity !== undefined && dto.newQuantity !== null;
       const hasDelta = dto.delta !== undefined && dto.delta !== null;
-      if (hasNew === hasDelta) throw new BadRequestException("newQuantity অথবা delta — ঠিক একটি দিতে হবে (দুটোই বা কোনোটিই নয়)");
+      if (hasNew === hasDelta) throw badRequest("ai.newquantityOrDeltaExactlyOneMust");
       if (product.stockQuantity === null || product.stockQuantity === undefined) {
-        throw new BadRequestException("এই পণ্যের স্টক ট্র্যাক করা হচ্ছে না — আগে পণ্যের স্টক সংখ্যা বসান");
+        throw badRequest("ai.thisProductSStockIsNot");
       }
       const currentQuantity = Number(product.stockQuantity);
       let resultingQuantity: number;
       let mode: "set" | "delta";
       const extra: Record<string, unknown> = {};
       if (hasNew) {
-        if (!Number.isInteger(dto.newQuantity) || (dto.newQuantity as number) < 0) throw new BadRequestException("newQuantity অবশ্যই 0 বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+        if (!Number.isInteger(dto.newQuantity) || (dto.newQuantity as number) < 0) throw badRequest("ai.newquantityMustBeAnIntegerOf");
         mode = "set"; resultingQuantity = dto.newQuantity as number; extra.setTo = dto.newQuantity;
       } else {
-        if (!Number.isInteger(dto.delta) || dto.delta === 0) throw new BadRequestException("delta অবশ্যই 0 ছাড়া অন্য পূর্ণসংখ্যা হতে হবে");
+        if (!Number.isInteger(dto.delta) || dto.delta === 0) throw badRequest("ai.deltaMustBeANonZero");
         mode = "delta"; resultingQuantity = currentQuantity + (dto.delta as number); extra.delta = dto.delta;
-        if (resultingQuantity < 0) throw new BadRequestException("delta প্রয়োগ করলে স্টক ঋণাত্মক হয়ে যাবে");
+        if (resultingQuantity < 0) throw badRequest("ai.applyingDeltaWouldMakeTheStock");
       }
       return {
         type: "propose_stock_adjust",
@@ -233,15 +234,15 @@ export class ProposalsService {
     }
     if (dto.type === "propose_listing_publish" || dto.type === "propose_listing_unpublish") {
       const isPublish = dto.type === "propose_listing_publish";
-      if (!dto.listingId) throw new BadRequestException(`listingId is required for ${dto.type}`);
+      if (!dto.listingId) throw badRequest("ai.listingidIsRequiredFor", { dtoType: dto.type });
       const listing = await this.p().storeListing.findFirst({ where: { id: dto.listingId, organizationId: orgId } });
-      if (!listing) throw new NotFoundException("Listing not found in this organization");
+      if (!listing) throw notFound("ai.listingNotFoundInThisOrganization");
       const store = await this.p().store.findFirst({ where: { id: listing.storeId, organizationId: orgId } }).catch(() => null);
       const product = await this.p().product.findFirst({ where: { id: listing.productId, organizationId: orgId } }).catch(() => null);
       const storeName = store?.name ?? listing.storeId;
       const productName = product?.name ?? listing.productId;
-      if (isPublish && listing.publishState === "published") throw new BadRequestException("এই লিস্টিংটি ইতিমধ্যে published আছে");
-      if (!isPublish && listing.publishState !== "published") throw new BadRequestException("এই লিস্টিংটি published নয় — unpublish করার কিছু নেই");
+      if (isPublish && listing.publishState === "published") throw badRequest("ai.thisListingIsAlreadyPublished");
+      if (!isPublish && listing.publishState !== "published") throw badRequest("ai.thisListingIsNotPublishedThere");
       return {
         type: isPublish ? "propose_listing_publish" : "propose_listing_unpublish",
         title: isPublish ? `লিস্টিং Publish: ${productName}` : `লিস্টিং Unpublish: ${productName}`,
@@ -251,26 +252,26 @@ export class ProposalsService {
     }
     if (dto.type === "propose_create_discount") {
       const code = String(dto.discountCode ?? "").trim().toUpperCase();
-      if (!code) throw new BadRequestException("discountCode is required for propose_create_discount");
+      if (!code) throw badRequest("ai.discountcodeIsRequiredForProposeCreate");
       const kind = dto.discountKind ?? "";
-      if (!["percent", "fixed", "free_shipping"].includes(kind)) throw new BadRequestException("discountKind must be percent, fixed or free_shipping");
+      if (!["percent", "fixed", "free_shipping"].includes(kind)) throw badRequest("ai.discountkindMustBePercentFixedOr");
       let value: number;
       if (kind === "free_shipping") value = 0;
       else if (kind === "percent") {
-        if (!Number.isInteger(dto.discountValue) || (dto.discountValue as number) < 1 || (dto.discountValue as number) > 90) throw new BadRequestException("শতাংশ ডিসকাউন্টের মান 1 থেকে 90-এর মধ্যে হতে হবে");
+        if (!Number.isInteger(dto.discountValue) || (dto.discountValue as number) < 1 || (dto.discountValue as number) > 90) throw badRequest("ai.theValueOfAPercentageDiscount");
         value = dto.discountValue as number;
       } else {
-        if (!Number.isInteger(dto.discountValue) || (dto.discountValue as number) < 1) throw new BadRequestException("নির্দিষ্ট পরিমাণ ডিসকাউন্টের মান কমপক্ষে 1 হতে হবে");
+        if (!Number.isInteger(dto.discountValue) || (dto.discountValue as number) < 1) throw badRequest("ai.theValueOfAFixedAmount");
         value = dto.discountValue as number;
       }
       if (dto.discountMinOrderMinor !== undefined && dto.discountMinOrderMinor !== null && !/^\d+$/.test(String(dto.discountMinOrderMinor))) {
-        throw new BadRequestException("discountMinOrderMinor must be an integer minor-unit string");
+        throw badRequest("ai.discountminorderminorMustBeAnIntegerMinor");
       }
       if (dto.discountUsageLimit !== undefined && dto.discountUsageLimit !== null && (!Number.isInteger(dto.discountUsageLimit) || (dto.discountUsageLimit as number) < 1)) {
-        throw new BadRequestException("discountUsageLimit অবশ্যই ধনাত্মক পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("ai.discountusagelimitMustBeAPositiveInteger");
       }
       const existing = this.p().storeDiscount?.findFirst ? await this.p().storeDiscount.findFirst({ where: { organizationId: orgId, code } }) : null;
-      if (existing) throw new BadRequestException("এই কোডে ইতিমধ্যে একটি ডিসকাউন্ট আছে");
+      if (existing) throw badRequest("ai.aDiscountAlreadyExistsWithThis");
       const discount = { code, kind, value, minOrderMinor: dto.discountMinOrderMinor ?? null, usageLimit: dto.discountUsageLimit ?? null };
       return {
         type: "propose_create_discount",
@@ -280,12 +281,12 @@ export class ProposalsService {
       };
     }
     if (dto.type === "propose_product_copy") {
-      if (!dto.productId) throw new BadRequestException("productId is required for propose_product_copy");
+      if (!dto.productId) throw badRequest("ai.productidIsRequiredForProposeProduct");
       const product = await this.p().product.findFirst({ where: { id: dto.productId, organizationId: orgId } });
-      if (!product) throw new NotFoundException("Product not found in this organization");
-      if (!this.llmFactory) throw new BadRequestException("LLM সেবা এই context-এ পাওয়া যাচ্ছে না — কপি তৈরি করা যাবে না।");
+      if (!product) throw notFound("ai.productNotFoundInThisOrganization");
+      if (!this.llmFactory) throw badRequest("ai.theLlmServiceIsNotAvailable");
       const provider: any = await providerForOrg(this.llmFactory, orgId);
-      if (!provider?.isRealLlm) throw new BadRequestException("কোনো আসল LLM কনফিগার করা নেই — dev-template দিয়ে বানানো (মিথ্যা) কপি তৈরি করা হবে না। LLM সেটিংসে আসল provider যোগ করুন।");
+      if (!provider?.isRealLlm) throw badRequest("ai.noRealLlmIsConfiguredFalse");
       let variants: any[] = Array.isArray(product.variants) ? product.variants : [];
       if (!variants.length && this.p().productVariant?.findMany) {
         variants = await this.p().productVariant.findMany({ where: { productId: product.id } }).catch(() => []);
@@ -315,10 +316,10 @@ export class ProposalsService {
         const raw = String(result?.text ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
         parsedCopy = JSON.parse(raw);
       } catch {
-        throw new BadRequestException("LLM থেকে পাওয়া কপি JSON হিসেবে পড়া যায়নি — কিছুই সংরক্ষণ করা হয়নি।");
+        throw badRequest("ai.theCopyFromTheLlmCould");
       }
       const description = typeof parsedCopy?.description === "string" ? parsedCopy.description.trim().slice(0, 5000) : "";
-      if (!description) throw new BadRequestException("LLM কোনো বৈধ description দেয়নি — কিছুই সংরক্ষণ করা হয়নি।");
+      if (!description) throw badRequest("ai.theLlmGaveNoValidDescription");
       const copy = {
         description,
         seoTitle: typeof parsedCopy?.seoTitle === "string" ? parsedCopy.seoTitle.slice(0, 200) : "",
@@ -333,17 +334,17 @@ export class ProposalsService {
     }
     // create_broadcast_draft
     const channel = dto.channel ?? "";
-    if (!["email", "sms", "whatsapp"].includes(channel)) throw new BadRequestException("channel must be email, sms or whatsapp");
-    if (!dto.name?.trim()) throw new BadRequestException("Broadcast draft-এর একটি নাম দরকার");
+    if (!["email", "sms", "whatsapp"].includes(channel)) throw badRequest("ai.channelMustBeEmailSmsOr");
+    if (!dto.name?.trim()) throw badRequest("ai.aBroadcastDraftNeedsAName");
     const audienceType = dto.audienceType ?? "customers";
-    if (!["customers", "leads_stage", "segment"].includes(audienceType)) throw new BadRequestException("audienceType must be customers, leads_stage or segment");
+    if (!["customers", "leads_stage", "segment"].includes(audienceType)) throw badRequest("ai.audiencetypeMustBeCustomersLeadsStage");
     if (channel === "whatsapp") {
-      if (!dto.whatsappTemplateId) throw new BadRequestException("WhatsApp draft-এর জন্য একটি registered template দরকার (whatsappTemplateId)");
+      if (!dto.whatsappTemplateId) throw badRequest("ai.aRegisteredTemplateIsNeededFor");
       const tpl = await this.p().whatsAppTemplate.findFirst({ where: { id: dto.whatsappTemplateId, organizationId: orgId } });
-      if (!tpl) throw new NotFoundException("WhatsApp template not found in this organization");
+      if (!tpl) throw notFound("ai.whatsappTemplateNotFoundInThis");
     } else {
-      if (!dto.body?.trim()) throw new BadRequestException("Broadcast body is required");
-      if (channel === "email" && !dto.subject?.trim()) throw new BadRequestException("Email broadcasts need a subject");
+      if (!dto.body?.trim()) throw badRequest("ai.broadcastBodyIsRequired");
+      if (channel === "email" && !dto.subject?.trim()) throw badRequest("ai.emailBroadcastsNeedASubject");
     }
     const broadcast = {
       name: dto.name.trim().slice(0, 160), channel,
@@ -422,7 +423,7 @@ export class ProposalsService {
 
   private async getOrThrow(orgId: string, proposalId: string) {
     const row = await this.p().aIActionProposal.findFirst({ where: { id: proposalId, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Proposal not found");
+    if (!row) throw notFound("ai.proposalNotFound");
     return row;
   }
 
@@ -436,14 +437,14 @@ export class ProposalsService {
     // EC11: service-level role floor for commerce proposal types.
     const requiredRoles = PROPOSAL_TOOL_ROLES[row.type];
     if (requiredRoles && actorRole !== undefined && !requiredRoles.includes(actorRole)) {
-      throw new ForbiddenException("এই commerce প্রস্তাব অনুমোদনের অনুমতি আপনার ভূমিকায় নেই");
+      throw forbidden("ai.yourRoleDoesNotHavePermission");
     }
-    if (row.status !== "proposed") throw new BadRequestException(`This proposal was already decided (status: ${row.status})`);
+    if (row.status !== "proposed") throw badRequest("ai.thisProposalWasAlreadyDecidedStatus", { rowStatus: row.status });
     const claim = await this.p().aIActionProposal.updateMany({
       where: { id: proposalId, organizationId: orgId, status: "proposed" },
       data: { status: "approved", decidedById: actorId, decidedAt: new Date() },
     });
-    if (!claim?.count) throw new BadRequestException("This proposal was already decided");
+    if (!claim?.count) throw badRequest("ai.thisProposalWasAlreadyDecided");
     await this.audit.log({ organizationId: orgId, userId: actorId, action: "ai.proposal_approved", entityType: "AIActionProposal", entityId: proposalId, metadata: { type: row.type, ...(autonomous ? { autonomous: true } : {}) } });
     try {
       const rawResult = await this.execute(orgId, actorId, row);
@@ -581,12 +582,12 @@ export class ProposalsService {
 
   async reject(orgId: string, actorId: string, proposalId: string) {
     const row = await this.getOrThrow(orgId, proposalId);
-    if (row.status !== "proposed") throw new BadRequestException(`This proposal was already decided (status: ${row.status})`);
+    if (row.status !== "proposed") throw badRequest("ai.thisProposalWasAlreadyDecidedStatus", { rowStatus: row.status });
     const claim = await this.p().aIActionProposal.updateMany({
       where: { id: proposalId, organizationId: orgId, status: "proposed" },
       data: { status: "rejected", decidedById: actorId, decidedAt: new Date() },
     });
-    if (!claim?.count) throw new BadRequestException("This proposal was already decided");
+    if (!claim?.count) throw badRequest("ai.thisProposalWasAlreadyDecided");
     await this.audit.log({ organizationId: orgId, userId: actorId, action: "ai.proposal_rejected", entityType: "AIActionProposal", entityId: proposalId, metadata: { type: row.type } });
     return this.getOrThrow(orgId, proposalId);
   }

@@ -2,6 +2,16 @@
  * Courier Performance, District Delivery SLA & RTO Financial Analytics Engine
  * Covers Bangladesh's major courier networks: Steadfast, Pathao, RedX, eCourier.
  */
+import { fmtNumber } from "@repo/contracts";
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
+
 
 export type CourierProvider = "steadfast" | "pathao" | "redx" | "ecourier";
 
@@ -63,7 +73,7 @@ export interface RtoLossReport {
 export const COURIER_PROVIDERS: Record<CourierProvider, CourierProviderStats> = {
   pathao: {
     provider: "pathao",
-    nameBangla: "পাঠাও কুরিয়ার",
+    nameBangla: ordersBn.pathaoCourier,
     logo: "🔴",
     overallSuccessRate: 91.5,
     avgSlaDaysDhaka: 1.1,
@@ -77,7 +87,7 @@ export const COURIER_PROVIDERS: Record<CourierProvider, CourierProviderStats> = 
   },
   steadfast: {
     provider: "steadfast",
-    nameBangla: "স্টিডফাস্ট কুরিয়ার",
+    nameBangla: ordersBn.steadfastCourier,
     logo: "🟢",
     overallSuccessRate: 89.8,
     avgSlaDaysDhaka: 1.3,
@@ -91,7 +101,7 @@ export const COURIER_PROVIDERS: Record<CourierProvider, CourierProviderStats> = 
   },
   redx: {
     provider: "redx",
-    nameBangla: "রেডেক্স লজিস্টিকস",
+    nameBangla: ordersBn.redXLogistics,
     logo: "🔴",
     overallSuccessRate: 85.2,
     avgSlaDaysDhaka: 1.4,
@@ -105,7 +115,7 @@ export const COURIER_PROVIDERS: Record<CourierProvider, CourierProviderStats> = 
   },
   ecourier: {
     provider: "ecourier",
-    nameBangla: "ই-কুরিয়ার",
+    nameBangla: ordersBn.eCourier,
     logo: "🔵",
     overallSuccessRate: 86.0,
     avgSlaDaysDhaka: 1.5,
@@ -123,7 +133,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Dhaka",
     zone: "dhaka_metro",
-    zoneNameBangla: "ঢাকা মেট্রো",
+    zoneNameBangla: ordersBn.dhakaMetro,
     bestCourier: "pathao",
     avgDeliveryHours: 24,
     deliverySuccessRate: 94.2,
@@ -133,7 +143,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Gazipur",
     zone: "dhaka_suburb",
-    zoneNameBangla: "ঢাকা উপশহর",
+    zoneNameBangla: ordersBn.dhakaSuburb,
     bestCourier: "steadfast",
     avgDeliveryHours: 36,
     deliverySuccessRate: 90.5,
@@ -143,7 +153,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Chittagong",
     zone: "divisional_city",
-    zoneNameBangla: "বিভাগীয় প্রধান শহর",
+    zoneNameBangla: ordersBn.divisionalHeadCities,
     bestCourier: "steadfast",
     avgDeliveryHours: 42,
     deliverySuccessRate: 91.8,
@@ -153,7 +163,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Sylhet",
     zone: "divisional_city",
-    zoneNameBangla: "বিভাগীয় প্রধান শহর",
+    zoneNameBangla: ordersBn.divisionalHeadCities,
     bestCourier: "pathao",
     avgDeliveryHours: 44,
     deliverySuccessRate: 89.4,
@@ -163,7 +173,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Rajshahi",
     zone: "divisional_city",
-    zoneNameBangla: "বিভাগীয় প্রধান শহর",
+    zoneNameBangla: ordersBn.divisionalHeadCities,
     bestCourier: "steadfast",
     avgDeliveryHours: 46,
     deliverySuccessRate: 90.1,
@@ -173,7 +183,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Khulna",
     zone: "divisional_city",
-    zoneNameBangla: "বিভাগীয় প্রধান শহর",
+    zoneNameBangla: ordersBn.divisionalHeadCities,
     bestCourier: "steadfast",
     avgDeliveryHours: 45,
     deliverySuccessRate: 88.7,
@@ -183,7 +193,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Cox's Bazar",
     zone: "remote_district",
-    zoneNameBangla: "উপকূলীয় ও দূরবর্তী জেলা",
+    zoneNameBangla: ordersBn.coastalDistantDistricts,
     bestCourier: "steadfast",
     avgDeliveryHours: 64,
     deliverySuccessRate: 84.1,
@@ -193,7 +203,7 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
   {
     district: "Bandarban",
     zone: "remote_district",
-    zoneNameBangla: "পার্বত্য ও প্রত্যন্ত অঞ্চল",
+    zoneNameBangla: ordersBn.hillyRemoteAreas,
     bestCourier: "steadfast",
     avgDeliveryHours: 72,
     deliverySuccessRate: 81.5,
@@ -205,66 +215,67 @@ export const POPULAR_DISTRICTS_DATA: DistrictSlaMetric[] = [
 /**
  * Classifies district into standard logistics zone
  */
-export function identifyDistrictZone(districtOrAddress: string): { zone: DistrictZone; nameBangla: string } {
+export function identifyDistrictZone(districtOrAddress: string, locale: LibLocale = "bn"): { zone: DistrictZone; nameBangla: string } {
+  const d = D(locale);
   const text = (districtOrAddress || "").toLowerCase().trim();
 
   const isMetro =
     text.includes("dhaka") ||
-    text.includes("ঢাকা") ||
+    text.includes(ordersBn.dhaka) ||
     text.includes("mirpur") ||
-    text.includes("মিরপুর") ||
+    text.includes(ordersBn.mirpur) ||
     text.includes("dhanmondi") ||
-    text.includes("ধানমন্ডি") ||
+    text.includes(ordersBn.dhanmondi) ||
     text.includes("uttara") ||
-    text.includes("উত্তরা") ||
+    text.includes(ordersBn.uttara) ||
     text.includes("gulshan") ||
-    text.includes("গুলশান") ||
+    text.includes(ordersBn.gulshan) ||
     text.includes("banani") ||
-    text.includes("বনানী") ||
+    text.includes(ordersBn.banani) ||
     text.includes("mohammadpur") ||
-    text.includes("মোহাম্মদপুর");
+    text.includes(ordersBn.mohammadpur);
 
   if (isMetro) {
-    return { zone: "dhaka_metro", nameBangla: "ঢাকা মেট্রোপলিটন" };
+    return { zone: "dhaka_metro", nameBangla: d.dhakaMetropolitan };
   }
 
   const isSuburb =
     text.includes("gazipur") ||
-    text.includes("গাজীপুর") ||
+    text.includes(ordersBn.gazipur) ||
     text.includes("narayanganj") ||
-    text.includes("নারায়ণগঞ্জ") ||
+    text.includes(ordersBn.narayanganj) ||
     text.includes("savar") ||
-    text.includes("সাভার") ||
+    text.includes(ordersBn.savar) ||
     text.includes("keraniganj") ||
-    text.includes("কেরানীগঞ্জ");
+    text.includes(ordersBn.keraniganj);
 
   if (isSuburb) {
-    return { zone: "dhaka_suburb", nameBangla: "ঢাকা উপশহর ও সাব-আরবান" };
+    return { zone: "dhaka_suburb", nameBangla: d.dhakaSuburbSubUrban };
   }
 
   const isRemote =
     text.includes("bandarban") ||
-    text.includes("বান্দরবান") ||
+    text.includes(ordersBn.bandarban) ||
     text.includes("rangamati") ||
-    text.includes("রাঙ্গামাটি") ||
+    text.includes(ordersBn.rangamati) ||
     text.includes("khagrachhari") ||
-    text.includes("খাগড়াছড়ি") ||
+    text.includes(ordersBn.khagrachhari) ||
     text.includes("cox") ||
-    text.includes("কক্সবাজার") ||
+    text.includes(ordersBn.coxSBazar) ||
     text.includes("teknaf") ||
-    text.includes("টেকনাফ") ||
+    text.includes(ordersBn.teknaf) ||
     text.includes("sunamganj") ||
-    text.includes("সুনামগঞ্জ") ||
+    text.includes(ordersBn.sunamganj) ||
     text.includes("bhola") ||
-    text.includes("ভোলা") ||
+    text.includes(ordersBn.bhola) ||
     text.includes("char") ||
-    text.includes("চর");
+    text.includes(ordersBn.char);
 
   if (isRemote) {
-    return { zone: "remote_district", nameBangla: "পার্বত্য ও প্রত্যন্ত উপকূলীয় জেলা" };
+    return { zone: "remote_district", nameBangla: d.hillyRemoteCoastalDistricts };
   }
 
-  return { zone: "divisional_city", nameBangla: "বিভাগীয় ও জেলা শহর" };
+  return { zone: "divisional_city", nameBangla: d.divisionalDistrictCities };
 }
 
 /**
@@ -274,52 +285,53 @@ export function recommendBestCourier(
   districtOrAddress: string,
   weightGrams = 500,
   codAmountTaka = 1500,
-  priority: "speed" | "cost" | "safety" = "speed"
+  priority: "speed" | "cost" | "safety" = "speed",
+  locale: LibLocale = "bn",
 ): CourierRecommendation {
-  const { zone, nameBangla } = identifyDistrictZone(districtOrAddress);
+  const { zone, nameBangla } = identifyDistrictZone(districtOrAddress, locale);
 
   if (zone === "dhaka_metro") {
     return {
       recommendedProvider: "pathao",
-      providerNameBangla: "পাঠাও কুরিয়ার",
+      providerNameBangla: D(locale).pathaoCourier,
       zone,
       zoneNameBangla: nameBangla,
-      estimatedDeliveryDays: "১ দিন (২৪ ঘণ্টার মধ্যে)",
+      estimatedDeliveryDays: D(locale).text1g5kaem,
       estimatedCostTaka: 60 + (weightGrams > 1000 ? Math.ceil((weightGrams - 1000) / 1000) * 15 : 0),
       successRateExpected: 94.5,
-      reasonBangla: "ঢাকা মেট্রোতে পাঠাওয়ের সেইম-ডে ও নেক্সট-ডে পিকআপ নেটওয়ার্ক দ্রুততম এবং ডেলিভারি সাকসেস ৯৪.৫%",
+      reasonBangla: D(locale).inDhakaMetroPathaoS,
       alternativeProvider: "steadfast",
-      alternativeReasonBangla: "স্টিডফাস্টের রিটার্ন রেট কম এবং কালেকশন অটো-রিকনসিল্ড",
+      alternativeReasonBangla: D(locale).steadfastSReturnRateIs,
     };
   }
 
   if (zone === "dhaka_suburb") {
     return {
       recommendedProvider: "steadfast",
-      providerNameBangla: "স্টিডফাস্ট কুরিয়ার",
+      providerNameBangla: D(locale).steadfastCourier,
       zone,
       zoneNameBangla: nameBangla,
-      estimatedDeliveryDays: "১-২ দিন (২৪-৩৬ ঘণ্টা)",
+      estimatedDeliveryDays: D(locale).textaw2pxv,
       estimatedCostTaka: 100,
       successRateExpected: 90.5,
-      reasonBangla: "সাভার ও গাজীপুর হাব এলাকায় স্টিডফাস্টের সরাসরি পয়েন্ট থাকায় আরটিও কম হয়",
+      reasonBangla: D(locale).inTheSavarGazipurHub,
       alternativeProvider: "pathao",
-      alternativeReasonBangla: "পাঠাও নিয়মিত এক্সপ্রেস সার্ভিস দেয়",
+      alternativeReasonBangla: D(locale).pathaoProvidesRegularExpressService,
     };
   }
 
   if (zone === "remote_district") {
     return {
       recommendedProvider: "steadfast",
-      providerNameBangla: "স্টিডফাস্ট কুরিয়ার",
+      providerNameBangla: D(locale).steadfastCourier,
       zone,
       zoneNameBangla: nameBangla,
-      estimatedDeliveryDays: "৩-৪ দিন (৭২ ঘণ্টা)",
+      estimatedDeliveryDays: D(locale).text1ssz8b4,
       estimatedCostTaka: 130,
       successRateExpected: 83.0,
-      reasonBangla: "পার্বত্য ও উপকূলীয় উপজেলায় স্টিডফাস্টের নিজস্ব সাব-এজেন্ট নেটওয়ার্ক রিটার্ন ঝুঁকি কমায়",
+      reasonBangla: D(locale).inHillyCoastalUpazilasSteadfast,
       alternativeProvider: "redx",
-      alternativeReasonBangla: "রেডেক্সের পোস্টাল কাভারেজ বিস্তৃত",
+      alternativeReasonBangla: D(locale).redXSPostalCoverageIs,
     };
   }
 
@@ -327,29 +339,29 @@ export function recommendBestCourier(
   if (priority === "cost") {
     return {
       recommendedProvider: "steadfast",
-      providerNameBangla: "স্টিডফাস্ট কুরিয়ার",
+      providerNameBangla: D(locale).steadfastCourier,
       zone,
       zoneNameBangla: nameBangla,
-      estimatedDeliveryDays: "২ দিন (৪৮ ঘণ্টা)",
+      estimatedDeliveryDays: D(locale).text18rapd1,
       estimatedCostTaka: 115,
       successRateExpected: 90.0,
-      reasonBangla: "ঢাকার বাইরে স্টিডফাস্ট সবচেয়ে সাশ্রয়ী এবং ক্যাশ অন ডেলিভারি (COD) পেমেন্ট দ্রুত দেয়",
+      reasonBangla: D(locale).outsideDhakaSteadfastIsThe,
       alternativeProvider: "pathao",
-      alternativeReasonBangla: "পাঠাও দ্রুততর কিন্তু চার্জ কিছুটা বেশি হতে পারে",
+      alternativeReasonBangla: D(locale).pathaoIsFasterButThe,
     };
   }
 
   return {
     recommendedProvider: "steadfast",
-    providerNameBangla: "স্টিডফাস্ট কুরিয়ার",
+    providerNameBangla: D(locale).steadfastCourier,
     zone,
     zoneNameBangla: nameBangla,
-    estimatedDeliveryDays: "২-৩ দিন",
+    estimatedDeliveryDays: D(locale).text1qj7g9f,
     estimatedCostTaka: 115,
     successRateExpected: 90.2,
-    reasonBangla: "বিভাগীয় শহরে স্টিডফাস্টের সফল ডেলিভারি রেট ৯০% এবং পার্সেল হ্যান্ডলিং নির্ভুল",
+    reasonBangla: D(locale).inDivisionalCitiesSteadfastS,
     alternativeProvider: "pathao",
-    alternativeReasonBangla: "পাঠাও বড় বিভাগীয় শহরে দ্রুততম ট্র্যাকিং দেয়",
+    alternativeReasonBangla: D(locale).pathaoGivesTheFastestTracking,
   };
 }
 
@@ -362,7 +374,9 @@ export function calculateRtoLoss(params: {
   outboundShippingTaka?: number;
   returnFeeTaka?: number;
   packagingLossTaka?: number;
+  locale?: LibLocale;
 }): RtoLossReport {
+  const locale = params.locale ?? "bn";
   const total = Math.max(1, params.totalShipments || 1);
   const rtoPct = Math.min(100, Math.max(0, params.returnRatePct || 0));
 
@@ -381,11 +395,11 @@ export function calculateRtoLoss(params: {
   const lossPerSuccessfulOrderTaka = deliveredOrdersCount > 0 ? Math.round(totalNetLossTaka / deliveredOrdersCount) : 0;
   const savingsWithAdvanceChargeTaka = Math.round(returnedOrdersCount * (outboundShippingTaka + returnFeeTaka) * 0.75);
 
-  let recommendationBangla = "আপনার আরটিও রেট নিয়ন্ত্রিত রয়েছে।";
+  let recommendationBangla = D(locale).yourRTORateIsUnder;
   if (rtoPct >= 15) {
-    recommendationBangla = `⚠️ আরটিও রেট (${rtoPct}%) অতিরিক্ত উচ্চ! ঢাকার বাইরের অর্ডারে ৳১০০-১৫০ অগ্রিম ডেলিভারি চার্জ গ্রহণ করলে মাসে প্রায় ৳${savingsWithAdvanceChargeTaka.toLocaleString("en-IN")} সাশ্রয় হবে।`;
+    recommendationBangla = interpolate(D(locale).rTORateIsExcessivelyHigh, { rtoPct: rtoPct, savingsWithAdvanceChargeTaka: fmtNumber(locale, savingsWithAdvanceChargeTaka) });
   } else if (rtoPct >= 10) {
-    recommendationBangla = `মাঝারি আরটিও (${rtoPct}%)। সন্দেহজনক কাস্টমারদের জন্য ফোন ভেরিফিকেশন এবং এডভান্স রিকোয়েস্ট চালু করুন।`;
+    recommendationBangla = interpolate(D(locale).mediumRTOTurnOnPhone, { rtoPct: rtoPct });
   }
 
   return {
@@ -401,4 +415,26 @@ export function calculateRtoLoss(params: {
     savingsWithAdvanceChargeTaka,
     recommendationBangla,
   };
+}
+
+/** ML5 i18n: locale-aware copies of the provider/district data —
+ * the bn constants stay the default for existing consumers. The
+ * reverse lookup maps each bn display string back to its dict key. */
+const BN_KEY_BY_VALUE: Record<string, string> = Object.fromEntries(
+  Object.entries(ordersBn).map(([k, v]) => [v, k]),
+);
+function localizeValue(locale: LibLocale, bnText: string): string {
+  const key = BN_KEY_BY_VALUE[bnText];
+  if (!key) return bnText;
+  return (D(locale) as Record<string, string>)[key] ?? bnText;
+}
+export function courierProviders(locale: LibLocale = "bn"): Record<CourierProvider, CourierProviderStats> {
+  if (locale === "bn") return COURIER_PROVIDERS;
+  return Object.fromEntries(
+    Object.entries(COURIER_PROVIDERS).map(([k, v]) => [k, { ...v, nameBangla: localizeValue(locale, v.nameBangla) }]),
+  ) as Record<CourierProvider, CourierProviderStats>;
+}
+export function popularDistricts(locale: LibLocale = "bn"): DistrictSlaMetric[] {
+  if (locale === "bn") return POPULAR_DISTRICTS_DATA;
+  return POPULAR_DISTRICTS_DATA.map((d) => ({ ...d, zoneNameBangla: localizeValue(locale, d.zoneNameBangla) }));
 }

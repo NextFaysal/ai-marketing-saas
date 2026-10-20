@@ -174,13 +174,13 @@ describe("IN3 sanitizeMacroSteps (strict)", () => {
     ]);
   });
   it("rejects empty / unknown / malformed steps instead of dropping them", () => {
-    expect(() => sanitizeMacroSteps([])).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps([{ type: "explode" }])).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps([{ type: "reply" }])).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps([{ type: "snooze", minutes: 2 }])).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps([{ type: "pipeline", stage: "shipped" }])).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps(Array.from({ length: 11 }, () => ({ type: "close" })))).toThrow(BadRequestException);
-    expect(() => sanitizeMacroSteps("nope")).toThrow(BadRequestException);
+    expect(() => sanitizeMacroSteps([])).toThrow(expect.objectContaining({ code: "inbox.aMacroMustHaveAtLeast" }));
+    expect(() => sanitizeMacroSteps([{ type: "explode" }])).toThrow(expect.objectContaining({ code: "inbox.unknownMacroStepStepsCanBe" }));
+    expect(() => sanitizeMacroSteps([{ type: "reply" }])).toThrow(expect.objectContaining({ code: "inbox.forTheReplyStepChooseA" }));
+    expect(() => sanitizeMacroSteps([{ type: "snooze", minutes: 2 }])).toThrow(expect.objectContaining({ code: "inbox.theSnoozeStepMustBeBetween" }));
+    expect(() => sanitizeMacroSteps([{ type: "pipeline", stage: "shipped" }])).toThrow(expect.objectContaining({ code: "inbox.thePipelineStepSStageIs" }));
+    expect(() => sanitizeMacroSteps(Array.from({ length: 11 }, () => ({ type: "close" })))).toThrow(expect.objectContaining({ code: "inbox.aMacroCanHaveAtMost" }));
+    expect(() => sanitizeMacroSteps("nope")).toThrow(expect.objectContaining({ code: "inbox.aMacroMustHaveAtLeast" }));
   });
 });
 
@@ -201,7 +201,7 @@ describe("IN3 macro CRUD + visibility", () => {
     const { svc, db } = setup();
     const created = await svc.createMacro(ORG, "agent-1", { name: "অর্ডার ফলোআপ", steps: [{ type: "tag", tag: "followup" }], shared: false });
     expect(created.steps).toEqual([{ type: "tag", tag: "followup" }]);
-    await expect(svc.createMacro(ORG, "agent-1", { name: "খারাপ", steps: [{ type: "nope" }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createMacro(ORG, "agent-1", { name: "খারাপ", steps: [{ type: "nope" }] })).rejects.toMatchObject({ code: "inbox.unknownMacroStepStepsCanBe" });
     expect((db.inboxMacro as any).findMany).toBeDefined();
     const rows = await svc.listMacros(ORG, "agent-1");
     expect(rows).toHaveLength(1);
@@ -214,14 +214,14 @@ describe("IN3 macro CRUD + visibility", () => {
     const theirs = await svc.listMacros(ORG, "agent-2");
     expect(mine.map((m: any) => m.id)).toEqual(expect.arrayContaining([priv.id, shared.id]));
     expect(theirs.map((m: any) => m.id)).toEqual([shared.id]);
-    await expect(svc.updateMacro(ORG, "agent-2", shared.id, { name: "হাইজ্যাক" })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.deleteMacro(ORG, "agent-2", shared.id)).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.runMacro(ORG, "agent-2", priv.id, "c-web")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateMacro(ORG, "agent-2", shared.id, { name: "হাইজ্যাক" })).rejects.toMatchObject({ code: "inbox.onlyTheMacroSOwnerCan" });
+    await expect(svc.deleteMacro(ORG, "agent-2", shared.id)).rejects.toMatchObject({ code: "inbox.onlyTheMacroSOwnerCan2" });
+    await expect(svc.runMacro(ORG, "agent-2", priv.id, "c-web")).rejects.toMatchObject({ code: "inbox.macroNotFoundInThisOrganization" });
   });
   it("enforces the 50-per-user cap", async () => {
     const { svc } = setup();
     for (let i = 0; i < 50; i++) await svc.createMacro(ORG, "agent-1", { name: `m${i}`, steps: [{ type: "close" }] });
-    await expect(svc.createMacro(ORG, "agent-1", { name: "একটি বেশি", steps: [{ type: "close" }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createMacro(ORG, "agent-1", { name: "একটি বেশি", steps: [{ type: "close" }] })).rejects.toMatchObject({ code: "inbox.yourMacroLimit50IsFull" });
   });
 });
 
@@ -296,7 +296,7 @@ describe("IN3 runMacro", () => {
     const result = await svc.runMacro(ORG, "agent-1", macro.id, "c-wa-open");
     expect(result.success).toBe(false);
     expect(result.steps[0].ok).toBe(false);
-    expect(result.steps[0].error).toContain("NOT sent");
+    expect(result.steps[0].error).toContain("পাঠানো হয়নি");
     const rows = await (db.channelMessage as any).findMany({ where: { conversationId: "c-wa-open" } });
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("failed");
@@ -340,16 +340,16 @@ describe("IN3c bulkReplyConversations", () => {
 
   it("requires exactly one of quickReplyId / templateId and caps at 25", async () => {
     const { svc } = setup();
-    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"] })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"], quickReplyId: "qr-1", templateId: "tpl-1" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: Array.from({ length: 26 }, (_, i) => `c-${i}`), quickReplyId: "qr-1" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"], quickReplyId: "qr-nope" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"] })).rejects.toMatchObject({ code: "inbox.forABulkReplyChooseExactly" });
+    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"], quickReplyId: "qr-1", templateId: "tpl-1" })).rejects.toMatchObject({ code: "inbox.forABulkReplyChooseExactly" });
+    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: Array.from({ length: 26 }, (_, i) => `c-${i}`), quickReplyId: "qr-1" })).rejects.toMatchObject({ code: "inbox.bulkRepliesCanBeSentTo" });
+    await expect(svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"], quickReplyId: "qr-nope" })).rejects.toMatchObject({ code: "inbox.quickReplyNotFoundInThis" });
   });
 
   it("template bulk to a non-WhatsApp conversation fails per-item (WhatsApp-only), never a fake success", async () => {
     const { svc } = setup();
     const r = await svc.bulkReplyConversations(ORG, "agent-1", { ids: ["c-web"], templateId: "tpl-1" });
     expect(r.succeeded).toBe(0);
-    expect(r.results[0].error).toContain("WhatsApp-only");
+    expect(r.results[0].error).toContain("শুধু WhatsApp-এর জন্য");
   });
 });

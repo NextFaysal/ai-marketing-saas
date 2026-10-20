@@ -133,7 +133,7 @@ describe("Phase L - offline conversions", () => {
     const svc2 = new OfflineConversionsService(prisma2 as any, audit);
     await svc2.saveSetting("org-1", "u", "tiktok", { adAccountId: "tacc-1", pixelCode: "PX1" });
     (global as any).fetch = async () => ({ ok: true, status: 200, json: async () => ({ code: 40001, message: "invalid ttclid" }) }) as any;
-    await expect(svc2.uploadForOrder("org-1", "ord-1", "tiktok")).rejects.toThrow(/did NOT confirm/);
+    await expect(svc2.uploadForOrder("org-1", "ord-1", "tiktok")).rejects.toMatchObject({ code: "offlineConversions.uploadDidNotConfirm" });
     expect(prisma2.offlineConversionLog.rows[0].status).toBe("failed");
     (global as any).fetch = async () => ({ ok: true, status: 200, json: async () => ({ code: 0, message: "OK" }) }) as any;
     const sent: any = await svc2.uploadForOrder("org-1", "ord-1", "tiktok");
@@ -174,7 +174,7 @@ describe("Phase L - agency portfolio", () => {
     ]);
     expect(out.totals.monthOrders).toBe(2);
     expect(out.totals.platformConversions).toBe(6);
-    await expect(svc.sendWeeklyDigest("u-1")).rejects.toThrow(/not configured/);
+    await expect(svc.sendWeeklyDigest("u-1")).rejects.toMatchObject({ code: "portfolio.emailIsNotConfiguredInThis" });
   });
 
   it("OU1: excludes non-ACTIVE memberships and never mixes currencies in totals", async () => {

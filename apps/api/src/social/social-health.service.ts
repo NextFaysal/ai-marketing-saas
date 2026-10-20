@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MAX_PUBLISH_ATTEMPTS, SocialPublishService } from "./social-publish.service";
@@ -6,6 +6,7 @@ import { SocialOAuthService } from "./social-oauth.service";
 import { MetaSocialPublisher, isTokenDeadError } from "./meta-publisher";
 import { TelegramClient } from "./telegram.client";
 import { ThreadsClient } from "./threads.client";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SU10 — Account Health + Failure Center (API only).
@@ -100,7 +101,7 @@ export class SocialHealthService {
     const account = await prisma.socialAccount.findFirst({
       where: { id: accountId, organizationId },
     });
-    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (!account) throw notFound("social.socialAccountNotFoundInThis");
 
     const healthCheckedAt = new Date();
     // Stamp FIRST: every attempt counts as a check, including
@@ -271,11 +272,9 @@ export class SocialHealthService {
   async retryPost(organizationId: string, actorId: string, postId: string) {
     const prisma = this.prisma as any;
     const post = await prisma.socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
     if (post.status !== "failed") {
-      throw new BadRequestException(
-        `শুধু Failed পোস্টই আবার চেষ্টা (retry) করা যায় — এই পোস্টটি এখন "${post.status}" অবস্থায় আছে।`,
-      );
+      throw badRequest("social.onlyFailedPostsCanBeRetried", { postStatus: post.status });
     }
     const previousAttempts = typeof post.attempts === "number" ? post.attempts : 0;
     const exhausted = previousAttempts >= MAX_PUBLISH_ATTEMPTS;

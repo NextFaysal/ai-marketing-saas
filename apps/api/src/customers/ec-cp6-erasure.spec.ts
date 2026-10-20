@@ -137,7 +137,7 @@ describe("CP6 ErasureService.eraseCustomer", () => {
 
   it("foreign-org customer 404s (service + shared erasure)", async () => {
     const { customers, erasure } = setup();
-    await expect(customers.eraseCustomer("org-1", "u1", "c-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(erasure.eraseCustomer("org-1", "u1", "nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(customers.eraseCustomer("org-1", "u1", "c-foreign")).rejects.toMatchObject({ code: "customers.customerNotFoundInThisOrganization" });
+    await expect(erasure.eraseCustomer("org-1", "u1", "nope")).rejects.toMatchObject({ code: "customers.customerNotFoundInThisOrganization" });
   });
 });

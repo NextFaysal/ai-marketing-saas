@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TenantGatewayClient, type TenantBkashCreds, type TenantSslCreds } from "./tenant-gateway.client";
 import { TenantPaymentsService } from "./tenant-payments.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC24 (Connect Center Next) — gateway refunds for online-paid
@@ -63,9 +64,9 @@ export const MANUAL_REFUND_TRACKING_LABEL = "provider dashboard-এ হাতে
 
 function parsePositiveMinor(value: unknown, field = "amountMinor"): bigint {
   const raw = typeof value === "bigint" ? value.toString() : String(value ?? "").trim();
-  if (!/^\d+$/.test(raw)) throw new BadRequestException(`${field} অবশ্যই minor unit-এ ধনাত্মক পূর্ণসংখ্যা হতে হবে।`);
+  if (!/^\d+$/.test(raw)) throw badRequest("connections.fieldPositiveMinor", { field: field });
   const amount = BigInt(raw);
-  if (amount <= 0n) throw new BadRequestException("Refund-এর পরিমাণ শূন্যের বেশি হতে হবে।");
+  if (amount <= 0n) throw badRequest("connections.refundAmountPositive");
   return amount;
 }
 
@@ -147,13 +148,13 @@ export class PaymentRefundsService {
       const paid = BigInt(txn.amountMinor);
       const remaining = paid - committed;
       if (remaining <= 0n) {
-        throw new BadRequestException("এই পেমেন্টের সম্পূর্ণ পরিমাণ ইতিমধ্যে refund হয়ে গেছে বা প্রক্রিয়াধীন আছে — আর refund করা যাবে না।");
+        throw badRequest("connections.paymentFullyRefunded");
       }
       const amount = opts.amountRaw === undefined || opts.amountRaw === null || String(opts.amountRaw).trim() === ""
         ? remaining
         : parsePositiveMinor(opts.amountRaw);
       if (amount > remaining) {
-        throw new BadRequestException(`Refund-এর পরিমাণ অবশিষ্ট ফেরতযোগ্য পরিমাণের (${remaining.toString()} minor) বেশি হতে পারবে না।`);
+        throw badRequest("connections.refundExceedsRemaining", { remaining: remaining.toString() });
       }
       return client.paymentRefund.create({
         data: {
@@ -172,19 +173,19 @@ export class PaymentRefundsService {
     const txn = await p.tenantPaymentTransaction.findFirst({
       where: { id: transactionId, organizationId },
     }).catch(() => null);
-    if (!txn) throw new NotFoundException("Transaction not found");
+    if (!txn) throw notFound("connections.transactionNotFound");
     const provider = String(txn.provider ?? "");
     if (provider === "nagad") {
-      throw new BadRequestException("Nagad-এর কোনো refund API এই সিস্টেমে সংযুক্ত নয় — Nagad পেমেন্টের refund গেটওয়ে দিয়ে শুরু করা যাবে না। Nagad মার্চেন্ট প্যানেল থেকে refund করে Refund Center-এর ম্যানুয়াল পথে রেকর্ড রাখুন — প্ল্যাটফর্ম সেটি ট্র্যাক করবে।");
+      throw badRequest("connections.nagadRefundManualOnly");
     }
     if (provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("এই প্রোভাইডারের কোনো refund API সংযুক্ত নেই — শুধু sslcommerz ও bkash পেমেন্টের refund গেটওয়ে API দিয়ে শুরু করা যায়। এই প্রোভাইডারের refund প্রোভাইডার dashboard থেকে করে Refund Center-এর ম্যানুয়াল পথে রেকর্ড রাখুন।");
+      throw badRequest("connections.providerRefundManualOnly");
     }
     if (txn.status !== "verified_paid") {
-      throw new BadRequestException("শুধু যাচাইকৃতভাবে সম্পন্ন (verified_paid) পেমেন্টই refund করা যায় — এই লেনদেনের অবস্থা তা নয়।");
+      throw badRequest("connections.refundNeedsVerifiedPaid");
     }
     if (txn.environment === "sandbox") {
-      throw new BadRequestException("Sandbox টেস্ট লেনদেনে কোনো আসল টাকা আসেনি — refund করার কিছু নেই।");
+      throw badRequest("connections.sandboxRefundNothing");
     }
     const reason = dto?.reason !== undefined && dto?.reason !== null ? String(dto.reason).trim().slice(0, 200) || null : null;
 
@@ -197,18 +198,18 @@ export class PaymentRefundsService {
     if (provider === "sslcommerz") {
       bankTranId = txn.ipnPayload?.validation?.bank_tran_id ?? txn.ipnPayload?.ipn?.bank_tran_id ?? null;
       if (!bankTranId) {
-        throw new BadRequestException("এই লেনদেনের রেকর্ডে SSLCommerz bank_tran_id নেই — gateway refund শুরু করা যাবে না।");
+        throw badRequest("connections.sslRefundNoBankTranId");
       }
     } else {
       bkashTrxId = txn.ipnPayload?.executeOrQuery?.trxID ?? null;
       if (!txn.providerTxnId || !bkashTrxId) {
-        throw new BadRequestException("এই লেনদেনের রেকর্ডে bKash paymentID/trxID নেই — gateway refund শুরু করা যাবে না।");
+        throw badRequest("connections.bkashRefundNoPaymentId");
       }
     }
 
     const creds = await this.tenantPayments.resolveCredsForTransaction(txn);
     if (!creds) {
-      throw new BadRequestException("এই লেনদেনের গেটওয়ে credential এখন পাওয়া যাচ্ছে না — refund শুরু করা যাবে না।");
+      throw badRequest("connections.refundCredentialUnavailable");
     }
 
     // Cap check + row creation in ONE transaction: the
@@ -250,7 +251,7 @@ export class PaymentRefundsService {
         entityType: "PaymentRefund", entityId: row.id,
         metadata: { provider, transactionId: txn.id, amountMinor: String(row.amountMinor), error: message },
       }).catch(() => undefined);
-      throw new BadRequestException(`গেটওয়ে refund গ্রহণ করেনি: ${message}`);
+      throw badRequest("connections.gatewayRefundRejected", { message: message });
     }
 
     if (!gatewayRef) {
@@ -263,7 +264,7 @@ export class PaymentRefundsService {
         metadata: { provider, transactionId: txn.id, amountMinor: String(row.amountMinor) },
       }).catch(() => undefined);
       const why = raw?.errorReason ?? raw?.statusMessage ?? raw?.status ?? "unknown error";
-      throw new BadRequestException(`গেটওয়ে refund গ্রহণ করেনি: ${String(why)}`);
+      throw badRequest("connections.gatewayRefundRejected", { message: String(why) });
     }
 
     const updated = await p.paymentRefund.update({
@@ -288,7 +289,7 @@ export class PaymentRefundsService {
   async refreshRefund(organizationId: string, actorId: string, refundId: string) {
     const p: any = this.prisma as any;
     const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Refund not found");
+    if (!row) throw notFound("connections.refundNotFound");
     if (row.status === "refunded" || row.status === "failed") return this.refundView(row);
     // OU5: a manual (Refund Center) row has NO gateway to ask —
     // its gatewayRefundRef is a provider-dashboard reference,
@@ -299,10 +300,10 @@ export class PaymentRefundsService {
     if (!row.gatewayRefundRef) return this.refundView(row);
 
     const txn = await p.tenantPaymentTransaction.findFirst({ where: { id: row.tenantPaymentTransactionId } }).catch(() => null);
-    if (!txn) throw new NotFoundException("Transaction not found");
+    if (!txn) throw notFound("connections.transactionNotFound");
     const creds = await this.tenantPayments.resolveCredsForTransaction(txn);
     if (!creds) {
-      throw new BadRequestException("এই লেনদেনের গেটওয়ে credential এখন পাওয়া যাচ্ছে না — refund-এর অবস্থা যাচাই করা যাচ্ছে না। কিছুই পরিবর্তন হয়নি।");
+      throw badRequest("connections.refundStatusCredentialUnavailable");
     }
 
     let raw: any = null;
@@ -453,16 +454,16 @@ export class PaymentRefundsService {
     const txn = await p.tenantPaymentTransaction.findFirst({
       where: { id: transactionId, organizationId },
     }).catch(() => null);
-    if (!txn) throw new NotFoundException("Transaction not found");
+    if (!txn) throw notFound("connections.transactionNotFound");
     const provider = String(txn.provider ?? "");
     if (!(MANUAL_REFUND_PROVIDERS as readonly string[]).includes(provider) && provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("এই প্রোভাইডারের পেমেন্টের জন্য ম্যানুয়াল refund ট্র্যাকিং প্রযোজ্য নয়।");
+      throw badRequest("connections.manualRefundTrackingNotApplicable");
     }
     if (txn.status !== "verified_paid") {
-      throw new BadRequestException("শুধু যাচাইকৃতভাবে সম্পন্ন (verified_paid) পেমেন্টেরই refund ট্র্যাক করা যায় — এই লেনদেনের অবস্থা তা নয়।");
+      throw badRequest("connections.refundTrackingNeedsVerifiedPaid");
     }
     if (txn.environment === "sandbox") {
-      throw new BadRequestException("Sandbox টেস্ট লেনদেনে কোনো আসল টাকা আসেনি — refund করার কিছু নেই।");
+      throw badRequest("connections.sandboxRefundNothing");
     }
     const reason = dto?.reason !== undefined && dto?.reason !== null ? String(dto.reason).trim().slice(0, 200) || null : null;
     const row = await this.createRefundRowWithinCap(organizationId, actorId, txn, {
@@ -480,19 +481,19 @@ export class PaymentRefundsService {
   async recordManualRefundAction(organizationId: string, actorId: string, refundId: string, dto: { providerRef?: string; proofNote?: string } = {}) {
     const p: any = this.prisma as any;
     const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Refund not found");
+    if (!row) throw notFound("connections.refundNotFound");
     if (!isManualRefundRow(row)) {
-      throw new BadRequestException("এটি ম্যানুয়াল (Refund Center) রিফান্ড নয় — গেটওয়ে রিফান্ডের অবস্থা Refresh দিয়ে আসে।");
+      throw badRequest("connections.notManualRefundRefresh");
     }
     if (row.status === "refunded") {
-      throw new BadRequestException("এই রিফান্ডটি ইতিমধ্যে সম্পূর্ণ হিসেবে রেকর্ড হয়েছে — আবার রেকর্ড করা যাবে না।");
+      throw badRequest("connections.refundAlreadyRecordedComplete");
     }
     if (row.status !== "initiated") {
-      throw new BadRequestException("Provider dashboard-এর কাজটি ইতিমধ্যে রেকর্ড করা হয়েছে — এখন শুধু সম্পূর্ণ করা বাকি।");
+      throw badRequest("connections.providerActionAlreadyRecorded");
     }
     const providerRef = String(dto?.providerRef ?? "").trim().slice(0, 200);
     if (!providerRef) {
-      throw new BadRequestException("Provider dashboard-এর refund reference/transaction ID আবশ্যক — রেফারেন্স ছাড়া ম্যানুয়াল refund রেকর্ড করা যাবে না।");
+      throw badRequest("connections.manualRefundReferenceRequired");
     }
     const proofNote = dto?.proofNote !== undefined && dto?.proofNote !== null ? String(dto.proofNote).trim().slice(0, 500) || null : null;
     const raw = { ...(row.gatewayStatusRaw as any), proofNote, recordedById: actorId, recordedAt: new Date().toISOString() };
@@ -510,18 +511,18 @@ export class PaymentRefundsService {
   async completeManualRefund(organizationId: string, actorId: string, refundId: string) {
     const p: any = this.prisma as any;
     const row = await p.paymentRefund.findFirst({ where: { id: refundId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Refund not found");
+    if (!row) throw notFound("connections.refundNotFound");
     if (!isManualRefundRow(row)) {
-      throw new BadRequestException("এটি ম্যানুয়াল (Refund Center) রিফান্ড নয় — গেটওয়ে রিফান্ড শুধু গেটওয়ের যাচাইয়েই সম্পূর্ণ হয়।");
+      throw badRequest("connections.notManualRefundGatewayCompletes");
     }
     // Idempotent: a completed manual refund returns as stored —
     // applyVerifiedRefund's exactly-once claim is never re-run.
     if (row.status === "refunded") return this.refundView(row);
     if (row.status === "failed") {
-      throw new BadRequestException("এই রিফান্ডটি ব্যর্থ হিসেবে চিহ্নিত — সম্পূর্ণ করা যাবে না।");
+      throw badRequest("connections.refundMarkedFailed");
     }
     if (row.status !== "processing" || !row.gatewayRefundRef) {
-      throw new BadRequestException("আগে provider dashboard-এ করা refund-এর reference রেকর্ড করুন — তারপরই সম্পূর্ণ করা যাবে।");
+      throw badRequest("connections.recordRefundReferenceFirst");
     }
     const raw = { ...(row.gatewayStatusRaw as any), completedById: actorId, completedAt: new Date().toISOString() };
     return this.applyVerifiedRefund(row, raw, actorId);

@@ -2,6 +2,9 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 /**
  * Milestone 38 (Admin Phase A2): view-as landing. The admin
@@ -16,13 +19,13 @@ function ViewAsInner() {
   useEffect(() => {
     const token = params.get("token");
     const org = params.get("org");
-    if (!token || !org) { setError("লিংকটি অসম্পূর্ণ — Admin Console থেকে আবার View-As শুরু করুন।"); return; }
+    if (!token || !org) { setError(t.viewAs.incompleteLink); return; }
     try {
       const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-      if (!payload?.viewAs) { setError("এটি কোনো View-As টোকেন নয়।"); return; }
-      if (payload.viewAs.orgId !== org) { setError("টোকেনের Organization মিলছে না।"); return; }
-      if (payload.exp && payload.exp * 1000 < Date.now()) { setError("View-As লিংকটির মেয়াদ শেষ — Admin Console থেকে নতুন করে শুরু করুন।"); return; }
-    } catch { setError("টোকেন পড়া যায়নি।"); return; }
+      if (!payload?.viewAs) { setError(t.viewAs.notViewAsToken); return; }
+      if (payload.viewAs.orgId !== org) { setError(t.viewAs.orgMismatch); return; }
+      if (payload.exp && payload.exp * 1000 < Date.now()) { setError(t.viewAs.expired); return; }
+    } catch { setError(t.viewAs.unreadable); return; }
     localStorage.setItem("accessToken", token);
     localStorage.setItem("organizationId", org);
     window.history.replaceState({}, "", "/view-as");
@@ -35,14 +38,15 @@ function ViewAsInner() {
         {error ? (
           <>
             <div className="text-3xl">⚠️</div>
-            <h1 className="mt-2 text-lg font-bold text-slate-900">View-As শুরু করা যাচ্ছে না</h1>
+            <h1 className="mt-2 text-lg font-bold text-slate-900">{t.viewAs.cannotStartTitle}</h1>
             <p className="mt-2 text-sm text-slate-600">{error}</p>
           </>
         ) : (
           <>
             <div className="text-3xl">👁</div>
-            <h1 className="mt-2 text-lg font-bold text-slate-900">View-As সেশন শুরু হচ্ছে…</h1>
-            <p className="mt-2 text-sm text-slate-600">Tenant ওয়ার্কস্পেসে নিয়ে যাওয়া হচ্ছে।</p>
+            <h1 className="mt-2 text-lg font-bold text-slate-900">{t.viewAs.startingTitle}</h1>
+            <p className="mt-2 text-sm text-slate-600">{t.viewAs.startingText}</p>
+
           </>
         )}
       </div>

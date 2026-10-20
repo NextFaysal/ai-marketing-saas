@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { TRANSIT_STATUSES, dhakaTodayString } from "./order-queues";
 import { toCsv } from "../imports/csv";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * ON7 — Profit & COD board (read-only).
@@ -191,7 +192,7 @@ export class OrderProfitService {
 
   async getOrderProfit(orgId: string, orderId: string) {
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId: orgId } });
-    if (!order) throw new NotFoundException("এই সংগঠনে অর্ডার পাওয়া যায়নি।");
+    if (!order) throw notFound("orders.orderNotFoundInOrg");
     const lines = await this.linesForOrder(order);
     const placedAt = this.effectiveDate(order);
     const costed = await this.costForLines(orgId, lines, placedAt);
@@ -294,18 +295,18 @@ export class OrderProfitService {
         f = t;
       }
     }
-    const bad = () => new BadRequestException("তারিখ সঠিক নয় — from ও to দুটোই YYYY-MM-DD আকারে দিন");
+    const bad = () => badRequest("orders.profitDateFormatInvalid");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) throw bad();
     const start = new Date(`${f}T00:00:00+06:00`);
     const end = new Date(`${t}T23:59:59.999+06:00`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) throw bad();
     if (dhakaDateString(start) !== f || dhakaDateString(end) !== t) throw bad();
-    if (start > end) throw new BadRequestException("শুরুর তারিখ শেষের তারিখের পরে হতে পারে না");
+    if (start > end) throw badRequest("orders.startDateAfterEndDate");
     const days = Math.round(
       (Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1, Number(t.slice(8, 10))) -
         Date.UTC(Number(f.slice(0, 4)), Number(f.slice(5, 7)) - 1, Number(f.slice(8, 10)))) / DAY_MS,
     ) + 1;
-    if (days > 366) throw new BadRequestException("সর্বোচ্চ ৩৬৬ দিনের রিপোর্ট একবারে নেওয়া যাবে");
+    if (days > 366) throw badRequest("orders.reportRangeTooLong");
     return { from: f, to: t, start, end };
   }
 

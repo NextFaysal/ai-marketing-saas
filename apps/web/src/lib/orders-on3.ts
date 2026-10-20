@@ -13,6 +13,15 @@
  * removed draft line simply isn't sent, and every line that must
  * survive (gift lines included) must stay in the draft.
  */
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
+
 
 export interface DraftLine {
   orderItemId?: string;
@@ -96,12 +105,12 @@ export const SURGERY_STATUSES = ["pending", "on-hold", "processing"] as const;
 /** Why surgery is (not) offered for an order. WooCommerce /
  * Shopify orders are refused client-side with a note (their
  * lines are owned by the store); the server would refuse too. */
-export function surgeryAvailability(order: { status: string; source?: string | null }): { allowed: boolean; note?: string } {
+export function surgeryAvailability(order: { status: string; source?: string | null }, locale: LibLocale = "bn"): { allowed: boolean; note?: string } {
   if (order.source === "woocommerce" || order.source === "shopify") {
-    return { allowed: false, note: "স্টোরের অর্ডারের আইটেম এখান থেকে সম্পাদনা করা যায় না" };
+    return { allowed: false, note: D(locale).storeOrderItemsCannotBe };
   }
   if (!SURGERY_STATUSES.includes(order.status as (typeof SURGERY_STATUSES)[number])) {
-    return { allowed: false, note: "এই অবস্থার অর্ডারে আইটেম সম্পাদনা করা যায় না" };
+    return { allowed: false, note: D(locale).itemsCannotBeEditedFor };
   }
   return { allowed: true };
 }
@@ -123,7 +132,7 @@ export interface OrderItemLike {
  * edited / removed / moved as a whole); every other line —
  * gift lines included — becomes its own draft so omission
  * semantics can never drop a line by accident. */
-export function draftsFromOrderItems(items: OrderItemLike[]): DraftLine[] {
+export function draftsFromOrderItems(items: OrderItemLike[], locale: LibLocale = "bn"): DraftLine[] {
   const drafts: DraftLine[] = [];
   const bundleAt = new Map<string, number>();
   for (const it of items) {
@@ -140,7 +149,7 @@ export function draftsFromOrderItems(items: OrderItemLike[]): DraftLine[] {
       }
       bundleAt.set(it.bundleId, drafts.length);
       drafts.push({
-        name: it.bundleName ?? "বান্ডল",
+        name: it.bundleName ?? D(locale).bundle2,
         quantity: it.quantity,
         unitPriceMinor: it.priceMinor ?? it.unitPriceMinor ?? "0",
         isGift: false,
@@ -175,17 +184,17 @@ const isNonNegativeIntString = (v: string) => /^\d+$/.test(v.trim());
  * and every editable price is a non-negative integer minor
  * string. Gift lines skip the price check (their price is
  * locked at 0 and never sent). */
-export function validateDraft(drafts: DraftLine[]): string[] {
+export function validateDraft(drafts: DraftLine[], locale: LibLocale = "bn"): string[] {
   const errors: string[] = [];
   if (!drafts.some((d) => !d.isGift)) {
-    errors.push("কমপক্ষে একটি (উপহার নয়) আইটেম থাকতে হবে — সব আইটেম সরিয়ে অর্ডার সংরক্ষণ করা যাবে না।");
+    errors.push(D(locale).thereMustBeAtLeast);
   }
   for (const d of drafts) {
     if (!Number.isInteger(d.quantity) || d.quantity < 1) {
-      errors.push(`"${d.name}"-এর পরিমাণ কমপক্ষে ১ হতে হবে (পূর্ণ সংখ্যা)।`);
+      errors.push(interpolate(D(locale).theQuantityOfMustBe, { name: d.name }));
     }
     if (d.kind === "line" && !d.isGift && !isNonNegativeIntString(d.unitPriceMinor)) {
-      errors.push(`"${d.name}"-এর দাম ঠিকভাবে লিখুন (টাকায়, যেমন: 250 বা 250.50)।`);
+      errors.push(interpolate(D(locale).enterThePriceOfCorrectly, { name: d.name }));
     }
   }
   return errors;
@@ -249,44 +258,44 @@ const isPositiveMinor = (v?: string | null) => {
  * delivery, tax, total. Discount rows whose amount is 0 and
  * which carry no state note are omitted — EXCEPT a dropped /
  * pinned coupon, which must be said out loud even at 0. */
-export function surgeryMoneySummary(preview: PreviewResult): SurgeryMoneyRow[] {
+export function surgeryMoneySummary(preview: PreviewResult, locale: LibLocale = "bn"): SurgeryMoneyRow[] {
   const rows: SurgeryMoneyRow[] = [
-    { key: "subtotal", label: "সাবটোটাল", amountMinor: preview.subtotalMinor },
+    { key: "subtotal", label: D(locale).subtotal, amountMinor: preview.subtotalMinor },
   ];
   (preview.promotionsApplied ?? []).forEach((p, i) => {
-    rows.push({ key: `promo-${i}`, label: `প্রমোশন: ${p.name}`, amountMinor: p.amountMinor, negative: true });
+    rows.push({ key: `promo-${i}`, label: interpolate(D(locale).promotion2, { name: p.name }), amountMinor: p.amountMinor, negative: true });
   });
   const couponNote = preview.couponDropped
-    ? "কুপন বাতিল হয়েছে"
+    ? D(locale).couponCancelled2
     : isPositiveMinor(preview.couponPinnedMinor)
-      ? "কুপন যাচাই ছাড়া রাখা হয়েছে"
+      ? D(locale).couponKeptWithoutVerification
       : undefined;
   if (!isZeroMinor(preview.couponMinor) || couponNote) {
     // A pinned coupon's amount IS the pinned figure — show it
     // even if the plain couponMinor comes back 0.
     const amount = isPositiveMinor(preview.couponPinnedMinor) ? preview.couponPinnedMinor : preview.couponMinor;
     rows.push({
-      key: "coupon", label: "কুপন ছাড়", amountMinor: amount,
+      key: "coupon", label: D(locale).couponDiscount, amountMinor: amount,
       negative: !isZeroMinor(amount),
       ...(couponNote ? { note: couponNote } : {}),
     });
   }
   if (!isZeroMinor(preview.referralDiscountMinor) || preview.referralDropped) {
     rows.push({
-      key: "referral", label: "রেফারেল ছাড়", amountMinor: preview.referralDiscountMinor,
+      key: "referral", label: D(locale).referralDiscount, amountMinor: preview.referralDiscountMinor,
       negative: !isZeroMinor(preview.referralDiscountMinor),
-      ...(preview.referralDropped ? { note: "রেফারেল ছাড় বাতিল হয়েছে" } : {}),
+      ...(preview.referralDropped ? { note: D(locale).referralDiscountCancelled2 } : {}),
     });
   }
   // No breakdown rows at all but a discount exists: show the
   // plain total discount rather than hiding money.
   if (rows.length === 1 && !isZeroMinor(preview.discountMinor)) {
-    rows.push({ key: "discount", label: "ছাড়", amountMinor: preview.discountMinor, negative: true });
+    rows.push({ key: "discount", label: D(locale).discount, amountMinor: preview.discountMinor, negative: true });
   }
-  rows.push({ key: "shipping", label: "ডেলিভারি চার্জ", amountMinor: preview.shippingMinor });
+  rows.push({ key: "shipping", label: D(locale).deliveryCharge, amountMinor: preview.shippingMinor });
   if (!isZeroMinor(preview.taxMinor)) {
-    rows.push({ key: "tax", label: "কর / VAT", amountMinor: preview.taxMinor });
+    rows.push({ key: "tax", label: D(locale).taxVAT, amountMinor: preview.taxMinor });
   }
-  rows.push({ key: "total", label: "মোট", amountMinor: preview.totalMinor, isTotal: true });
+  rows.push({ key: "total", label: D(locale).total, amountMinor: preview.totalMinor, isTotal: true });
   return rows;
 }

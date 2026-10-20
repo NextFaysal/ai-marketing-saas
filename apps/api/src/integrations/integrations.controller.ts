@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { IntegrationsService } from "./integrations.service";
 import { CreateStoreDto, ConnectWooDto, ConnectShopifyDto, StartWcAuthDto } from "./integrations.dto";
 import { WooAuthService } from "./woo-auth.service";
@@ -7,6 +7,7 @@ import { StoreHealthService } from "./commerce/health.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest } from "../i18n/api-exception";
 
 const WRITE_ROLES = ["OWNER", "ADMIN"];
 
@@ -64,17 +65,17 @@ export class IntegrationsController {
       };
     }
     if (integration.provider === "woocommerce") return this.integrations.rotateWooWebhookSecret(orgId, user.userId, id);
-    throw new BadRequestException("Webhook secret rotation is only available for WooCommerce/Shopify integrations");
+    throw badRequest("integrations.webhookSecretRotationIsOnlyAvailable2");
   }
 
   @Post("integrations/shopify/connect") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   connectShopify(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: ConnectShopifyDto) {
     if (dto.clientId || dto.clientSecret) {
-      if (!dto.clientId || !dto.clientSecret) throw new BadRequestException("clientId এবং clientSecret দুটোই দিন");
+      if (!dto.clientId || !dto.clientSecret) throw badRequest("integrations.giveBothClientidAndClientsecret");
       return this.shopify.connectClientCredentials(orgId, user.userId, dto as any);
     }
     if (!dto.accessToken || !dto.apiSecret) {
-      throw new BadRequestException("accessToken/apiSecret অথবা clientId/clientSecret দিন");
+      throw badRequest("integrations.giveAccesstokenApisecretOrClientidClientsecret");
     }
     return this.shopify.connect(orgId, user.userId, dto as { storeId: string; accessToken: string; apiSecret: string });
   }
@@ -84,7 +85,7 @@ export class IntegrationsController {
     const integration = await this.integrations.getIntegration(orgId, id);
     if (integration.provider === "shopify") return this.shopify.repairWebhooks(orgId, user.userId, id);
     if (integration.provider === "woocommerce") return this.integrations.repairWooWebhooks(orgId, user.userId, id);
-    throw new BadRequestException("Webhook repair is only available for WooCommerce/Shopify integrations");
+    throw badRequest("integrations.webhookRepairIsOnlyAvailableFor3");
   }
 
   @Get("integrations/:integrationId/health")
@@ -97,7 +98,7 @@ export class IntegrationsController {
    * quietly-but-logged inside the services). */
   private assertSyncNotPaused(integration: any) {
     if (integration?.syncPaused === true) {
-      throw new BadRequestException("এই কানেকশনের Sync বিরতি (pause) দেওয়া আছে — আগে Connect Center থেকে Sync চালু করুন, তারপর আবার চেষ্টা করুন।");
+      throw badRequest("integrations.thisConnectionSSyncIsPaused");
     }
   }
 

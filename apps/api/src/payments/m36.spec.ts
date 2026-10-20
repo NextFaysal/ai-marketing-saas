@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ApiException } from "../i18n";
 import { BadRequestException } from "@nestjs/common";
 import { PaymentsService, verifyIpnSignature } from "./payments.service";
 import { setPlatformConfigSnapshot } from "../common/platform-config";
@@ -70,17 +71,17 @@ describe("M36 SSLCommerz checkout", () => {
   it("surfaces the gateway's refusal and marks the checkout failed; FREE and unknown plans refuse before any call", async () => {
     const { svc, p } = makeService();
     stubFetch(() => ({ status: "FAILED", failed_reason: "Store ID is not valid" }));
-    await expect(svc.createCheckout("org-1", ACTOR, "STARTER", "01712345678")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createCheckout("org-1", ACTOR, "STARTER", "01712345678")).rejects.toBeInstanceOf(ApiException);
     expect(p.planCheckout.rows[0].status).toBe("failed");
-    await expect(svc.createCheckout("org-1", ACTOR, "FREE", "01712345678")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createCheckout("org-1", ACTOR, "MEGA", "01712345678")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createCheckout("org-1", ACTOR, "FREE", "01712345678")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createCheckout("org-1", ACTOR, "MEGA", "01712345678")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("refuses honestly when the gateway is not configured", async () => {
     const { svc } = makeService();
     setPlatformConfigSnapshot({ llm: null, metaApp: null, smtp: null, sms: null, sslcommerz: null, loadedAt: Date.now() });
     delete process.env.SSLCOMMERZ_STORE_ID; delete process.env.SSLCOMMERZ_STORE_PASS;
-    await expect(svc.createCheckout("org-1", ACTOR, "GROWTH", "01712345678")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createCheckout("org-1", ACTOR, "GROWTH", "01712345678")).rejects.toBeInstanceOf(ApiException);
   });
 });
 

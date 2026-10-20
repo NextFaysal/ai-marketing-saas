@@ -7,6 +7,7 @@ import { SmsProvider } from "../messaging/sms.provider";
 import { normalizeBdPhone as normalizeOn11 } from "../orders/phone-utils";
 import { normalizeBdPhone as normalizeGatewayPhone } from "../messaging/sms.provider";
 import { platformSetting } from "../common/platform-settings";
+import { badRequest, normalizeApiLocale, notFound, renderMessage, tooManyRequests } from "../i18n";
 
 /**
  * GC21 (GB9) — Merchant Trust: account verification.
@@ -34,7 +35,6 @@ const PHONE_OTP_TTL_MS = 5 * 60 * 1000;
 const PHONE_OTP_MAX_ATTEMPTS = 5;
 const PHONE_RESEND_COOLDOWN_MS = 60 * 1000;
 const PHONE_HOURLY_CAP = 3;
-const OTP_FAILURE_MESSAGE = "কোডটি সঠিক নয় অথবা মেয়াদ শেষ হয়ে গেছে";
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -92,7 +92,7 @@ export class VerificationService {
 
   private async loadUser(userId: string) {
     const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw notFound("auth.userNotFound");
     return user;
   }
 
@@ -131,12 +131,19 @@ export class VerificationService {
       return { sent: false, reason: "email_not_configured" };
     }
     const link = `${webBase()}/verify-email?token=${token}`;
+    // ML11 slice (MB4): platform auth email renders from the
+    // message catalog in the recipient's locale — the user's
+    // preferredLocale when set, else bn (pre-login rule).
+    // (Keys live in catalog/auth.ts until the coordinator moves
+    // them into the shared notifications catalog.)
+    const locale = normalizeApiLocale((user as any).preferredLocale);
+    const greeting = renderMessage(locale, "auth.emailVerifyGreeting", { name: user.name ?? "" });
     try {
       await this.email.send({
         to: user.email,
-        subject: "আপনার ইমেইল যাচাই করুন — Qosprey",
-        text: `আসসালামু আলাইকুম ${user.name ?? ""},\n\nআপনার Qosprey অ্যাকাউন্টের ইমেইল যাচাই করতে নিচের লিংকে ক্লিক করুন (লিংকটি ২৪ ঘণ্টা বৈধ):\n${link}\n\nআপনি রেজিস্ট্রেশন না করে থাকলে এই ইমেইল উপেক্ষা করুন।`,
-        html: `<p>আসসালামু আলাইকুম ${user.name ?? ""},</p><p>আপনার Qosprey অ্যাকাউন্টের ইমেইল যাচাই করতে নিচের বোতামে ক্লিক করুন (লিংকটি ২৪ ঘণ্টা বৈধ):</p><p><a href="${link}">ইমেইল যাচাই করুন</a></p><p>আপনি রেজিস্ট্রেশন না করে থাকলে এই ইমেইল উপেক্ষা করুন।</p>`,
+        subject: renderMessage(locale, "auth.emailVerifySubject"),
+        text: `${greeting}\n\n${renderMessage(locale, "auth.emailVerifyBody")}\n${link}\n\n${renderMessage(locale, "auth.emailVerifyIgnore")}`,
+        html: `<p>${greeting}</p><p>${renderMessage(locale, "auth.emailVerifyBodyHtml")}</p><p><a href="${link}">${renderMessage(locale, "auth.emailVerifyButton")}</a></p><p>${renderMessage(locale, "auth.emailVerifyIgnore")}</p>`,
       });
     } catch {
       return { sent: false, reason: "provider_error" };
@@ -152,20 +159,20 @@ export class VerificationService {
    */
   async verifyEmail(tokenRaw: string) {
     const token = String(tokenRaw ?? "").trim();
-    if (!token) throw new BadRequestException("যাচাইকরণ লিংকটি সঠিক নয়");
+    if (!token) throw badRequest("auth.verificationLinkInvalid");
     const row = await this.t()?.findFirst?.({ where: { tokenHash: sha256Hex(token), kind: "email" } }).catch(() => null);
-    if (!row) throw new BadRequestException("যাচাইকরণ লিংকটি অবৈধ বা মেয়াদ শেষ হয়ে গেছে");
+    if (!row) throw badRequest("auth.verificationLinkInvalidOrExpired");
     const user = await (this.prisma as any).user.findUnique({ where: { id: row.userId } });
-    if (!user) throw new BadRequestException("যাচাইকরণ লিংকটি অবৈধ বা মেয়াদ শেষ হয়ে গেছে");
+    if (!user) throw badRequest("auth.verificationLinkInvalidOrExpired");
     if (user.emailVerifiedAt) {
       if (!row.usedAt) {
         await this.t().update({ where: { id: row.id }, data: { usedAt: new Date() } }).catch(() => undefined);
       }
       return { verified: true, alreadyVerified: true };
     }
-    if (row.usedAt) throw new BadRequestException("এই লিংকটি ইতিমধ্যে ব্যবহার হয়ে গেছে — নতুন লিংকের জন্য আবার পাঠান");
+    if (row.usedAt) throw badRequest("auth.verificationLinkAlreadyUsed");
     if (new Date(row.expiresAt).getTime() <= Date.now()) {
-      throw new BadRequestException("যাচাইকরণ লিংকটির মেয়াদ শেষ হয়ে গেছে — নতুন লিংকের জন্য আবার পাঠান");
+      throw badRequest("auth.verificationLinkExpired");
     }
     const now = new Date();
     await (this.prisma as any).user.update({ where: { id: user.id }, data: { emailVerifiedAt: now } });
@@ -185,7 +192,7 @@ export class VerificationService {
   async setPhone(userId: string, phoneRaw: string) {
     const user = await this.loadUser(userId);
     const canonical = normalizeOn11(phoneRaw);
-    if (!canonical) throw new BadRequestException("সঠিক বাংলাদেশি মোবাইল নম্বর দিন (01 দিয়ে শুরু ১১ ডিজিট)");
+    if (!canonical) throw badRequest("auth.bdMobileNumberInvalid");
     const changed = (user.phone ?? null) !== canonical;
     const data: Record<string, unknown> = { phone: canonical };
     if (changed) data.phoneVerifiedAt = null;
@@ -204,7 +211,7 @@ export class VerificationService {
    */
   async requestPhoneOtp(userId: string): Promise<{ sent: boolean; reason?: string; expiresInSeconds?: number }> {
     const user = await this.loadUser(userId);
-    if (!user.phone) throw new BadRequestException("আগে আপনার মোবাইল নম্বরটি দিন");
+    if (!user.phone) throw badRequest("auth.mobileNumberRequiredFirst");
     if (user.phoneVerifiedAt) return { sent: false, reason: "already_verified" };
     if (!this.sms || (typeof this.sms.isConfigured === "function" && !this.sms.isConfigured())) {
       return { sent: false, reason: "sms_not_configured" };
@@ -217,11 +224,11 @@ export class VerificationService {
     }).catch(() => [])) ?? [];
     const withinHour = recent.filter((r) => now.getTime() - new Date(r.createdAt).getTime() < 60 * 60 * 1000);
     if (withinHour.length >= PHONE_HOURLY_CAP) {
-      throw new HttpException("অনেকবার কোড চাওয়া হয়েছে — কিছুক্ষণ পর আবার চেষ্টা করুন", 429);
+      throw tooManyRequests("auth.codeRequestedTooOften");
     }
     const latest = recent[0];
     if (latest && now.getTime() - new Date(latest.createdAt).getTime() < PHONE_RESEND_COOLDOWN_MS) {
-      throw new HttpException("কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন", 429);
+      throw tooManyRequests("auth.waitAndRetry");
     }
     await this.invalidateOpenTokens(userId, "phone");
     const code = String(randomInt(0, 1000000)).padStart(6, "0");
@@ -235,7 +242,7 @@ export class VerificationService {
     try {
       await this.sms.send({
         to,
-        text: `আপনার Qosprey যাচাইকরণ কোড: ${code} (৫ মিনিট মেয়াদ)`,
+        text: renderMessage(normalizeApiLocale((user as any).preferredLocale), "auth.phoneOtpSmsText", { code }),
         reference: `user-otp-${row.id}`,
       });
     } catch {
@@ -254,7 +261,7 @@ export class VerificationService {
    * the code. The code is never logged or echoed back.
    */
   async verifyPhoneOtp(userId: string, codeRaw: string) {
-    const fail = (): never => { throw new BadRequestException(OTP_FAILURE_MESSAGE); };
+    const fail = (): never => { throw badRequest("auth.otpCodeFailed"); };
     const open: any[] = (await this.t()?.findMany?.({
       where: { userId, kind: "phone", usedAt: null }, orderBy: { createdAt: "desc" },
     }).catch(() => [])) ?? [];

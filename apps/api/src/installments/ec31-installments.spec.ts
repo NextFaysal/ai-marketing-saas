@@ -231,9 +231,9 @@ describe("EC31 createPlan — split, dates, refusals", () => {
   it("foreign or missing order is a 404; count/interval out of range is a 400", async () => {
     const fx = setup();
     const dto = { installmentCount: 2, intervalDays: 15, startDate: "2026-11-01" };
-    await expect(fx.svc.createPlan("org-2", "staff-1", "o1", dto)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(fx.svc.createPlan("org-1", "staff-1", "missing", dto)).rejects.toThrow("Order not found in this organization");
-    await expect(fx.svc.createPlan("org-1", "staff-1", "o1", { ...dto, installmentCount: 1 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(fx.svc.createPlan("org-2", "staff-1", "o1", dto)).rejects.toMatchObject({ code: "installments.orderNotFoundInThisOrganization" });
+    await expect(fx.svc.createPlan("org-1", "staff-1", "missing", dto)).rejects.toMatchObject({ code: "installments.orderNotFoundInThisOrganization" });
+    await expect(fx.svc.createPlan("org-1", "staff-1", "o1", { ...dto, installmentCount: 1 })).rejects.toMatchObject({ code: "installments.theNumberOfInstallmentsMustBe" });
     await expect(fx.svc.createPlan("org-1", "staff-1", "o1", { ...dto, installmentCount: 25 })).rejects.toThrow("২ থেকে ২৪");
     await expect(fx.svc.createPlan("org-1", "staff-1", "o1", { ...dto, intervalDays: 0 })).rejects.toThrow("১ থেকে ৯০");
     await expect(fx.svc.createPlan("org-1", "staff-1", "o1", { ...dto, startDate: "not-a-date" })).rejects.toThrow("শুরুর তারিখ");
@@ -326,7 +326,7 @@ describe("EC31 collect — EC19 coherence", () => {
     ).rejects.toThrow("সক্রিয় নয়");
     await expect(
       fx.svc.collect("org-1", "staff-1", "no-such-item", { amountMinor: "100", method: "cash" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "installments.theInstallmentItemWasNotFound" });
   });
 
   it("a duplicate approved transaction reference is refused org-wide (EC19 guard)", async () => {
@@ -339,7 +339,7 @@ describe("EC31 collect — EC19 coherence", () => {
       fx.svc.collect("org-1", "staff-1", plan.items[1].id, {
         amountMinor: "5000", method: "bkash", reference: "TRX-DUP",
       }),
-    ).rejects.toThrow("This transaction reference has already been recorded as a verified payment");
+    ).rejects.toMatchObject({ code: "installments.thisTransactionReferenceHasAlreadyBeen" });
     expect(fx.pvRows.filter((r) => r.source === "installment")).toHaveLength(1);
   });
 
@@ -378,7 +378,7 @@ describe("EC31 due worklist", () => {
     const overdueList: any = await fx.svc.dueWorklist("org-1", "overdue");
     expect(overdueList.items).toHaveLength(1);
     expect(overdueList.items[0]).toMatchObject({ orderId: "o2", seq: 1, daysOverdue: 3 });
-    await expect(fx.svc.dueWorklist("org-1", "next-week")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(fx.svc.dueWorklist("org-1", "next-week")).rejects.toMatchObject({ code: "installments.bucketMustBeTodayOrOverdue" });
   });
 });
 

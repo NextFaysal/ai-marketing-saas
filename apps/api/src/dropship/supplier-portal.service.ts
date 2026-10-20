@@ -1,13 +1,11 @@
 import {
-  BadRequestException,
-  ForbiddenException,
   Injectable,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF12 (FB4) — Supplier portal.
@@ -76,7 +74,7 @@ export class SupplierPortalService {
 
   private async supplierOr404(orgId: string, supplierId: string) {
     const row = await this.t("supplier").findFirst({ where: { id: supplierId, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Supplier not found in this organization");
+    if (!row) throw notFound("dropship.supplierNotFoundInThisOrganization");
     return row;
   }
 
@@ -85,7 +83,7 @@ export class SupplierPortalService {
   async issueLink(orgId: string, actorId: string, supplierId: string) {
     const supplier = await this.supplierOr404(orgId, supplierId);
     if (!supplier.active) {
-      throw new BadRequestException("এই সরবরাহকারী সক্রিয় নন — আগে সরবরাহকারী সক্রিয় করুন");
+      throw badRequest("dropship.thisSupplierIsNotActiveActivate");
     }
     const raw = newSupplierPortalToken();
     const expiresAt = new Date(Date.now() + NF12_PORTAL_LINK_TTL_MS);
@@ -120,7 +118,7 @@ export class SupplierPortalService {
     const supplier = await this.supplierOr404(orgId, supplierId);
     const table = this.t("supplierPortalLink");
     const existing = await table.findFirst({ where: { organizationId: orgId, supplierId: supplier.id } });
-    if (!existing) throw new NotFoundException("এই সরবরাহকারীর কোনো পোর্টাল লিংক নেই");
+    if (!existing) throw notFound("dropship.thisSupplierHasNoPortalLink");
     await table.update({ where: { id: existing.id }, data: { revokedAt: new Date() } });
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: "supplier.portal_link_revoked",
@@ -146,20 +144,20 @@ export class SupplierPortalService {
    * (no row, nothing leaks); revoked/expired → Bengali 403. */
   private async resolveLink(token: string) {
     const raw = String(token ?? "").trim();
-    if (!raw) throw new NotFoundException("পোর্টাল লিংকটি পাওয়া যায়নি");
+    if (!raw) throw notFound("dropship.thePortalLinkWasNotFound");
     const link = await this.t("supplierPortalLink").findFirst({
       where: { tokenHash: hashSupplierPortalToken(raw) },
     });
-    if (!link) throw new NotFoundException("পোর্টাল লিংকটি পাওয়া যায়নি");
-    if (link.revokedAt) throw new ForbiddenException("এই পোর্টাল লিংকটি বাতিল করা হয়েছে — দোকানের সাথে যোগাযোগ করুন");
+    if (!link) throw notFound("dropship.thePortalLinkWasNotFound");
+    if (link.revokedAt) throw forbidden("dropship.thisPortalLinkHasBeenRevoked");
     if (new Date(link.expiresAt).getTime() <= Date.now()) {
-      throw new ForbiddenException("এই পোর্টাল লিংকটির মেয়াদ শেষ হয়ে গেছে — দোকানের সাথে যোগাযোগ করুন");
+      throw forbidden("dropship.thisPortalLinkHasExpiredContact");
     }
     const supplier = await this.t("supplier").findFirst({
       where: { id: link.supplierId, organizationId: link.organizationId },
     });
     if (!supplier || !supplier.active) {
-      throw new ForbiddenException("এই সরবরাহকারী অ্যাকাউন্টটি সক্রিয় নয়");
+      throw forbidden("dropship.thisSupplierAccountIsNotActive");
     }
     return { link, supplier };
   }
@@ -233,7 +231,7 @@ export class SupplierPortalService {
     const po = await this.t("purchaseOrder").findFirst({
       where: { id: poId, organizationId: link.organizationId, supplierId: link.supplierId },
     });
-    if (!po) throw new NotFoundException("ক্রয় অর্ডারটি পাওয়া যায়নি");
+    if (!po) throw notFound("dropship.thePurchaseOrderWasNotFound");
     return po;
   }
 
@@ -243,7 +241,7 @@ export class SupplierPortalService {
     const { link } = await this.resolveLink(token);
     const po = await this.portalPoOr404(link, poId);
     if (po.status === "cancelled" || po.status === "received") {
-      throw new BadRequestException(`এই অবস্থায় (${po.status}) ক্রয় অর্ডার নিশ্চিত করা যাবে না`);
+      throw badRequest("dropship.aPurchaseOrderCannotBeConfirmed", { poStatus: po.status });
     }
     const data: Record<string, any> = {};
     if (po.status === "draft") data.status = "ordered";
@@ -262,10 +260,10 @@ export class SupplierPortalService {
     const { link } = await this.resolveLink(token);
     const po = await this.portalPoOr404(link, poId);
     if (!["ordered", "partially_received"].includes(po.status)) {
-      throw new BadRequestException("শুধুমাত্র নিশ্চিত (ordered) ক্রয় অর্ডারই পাঠানো হয়েছে বলে চিহ্নিত করা যাবে — আগে নিশ্চিত করুন");
+      throw badRequest("dropship.onlyAConfirmedOrderedPurchaseOrder");
     }
     if (po.supplierShippedAt) {
-      throw new BadRequestException("এই ক্রয় অর্ডারটি ইতিমধ্যে পাঠানো হয়েছে বলে চিহ্নিত করা আছে");
+      throw badRequest("dropship.thisPurchaseOrderIsAlreadyMarked");
     }
     const note = typeof dto.note === "string" ? dto.note.slice(0, 500) : null;
     await this.t("purchaseOrder").update({
@@ -286,13 +284,13 @@ export class SupplierPortalService {
       else if (Number.isInteger(dto.leadTimeDays) && (dto.leadTimeDays as number) >= 0 && (dto.leadTimeDays as number) <= 365) {
         data.leadTimeDays = dto.leadTimeDays;
       } else {
-        throw new BadRequestException("লিড টাইম (দিন) অবশ্যই ০–৩৬৫-এর মধ্যে একটি পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("dropship.theLeadTimeDaysMustBe");
       }
     }
     if (dto.leadTimeNote !== undefined) {
       data.leadTimeNote = dto.leadTimeNote === null ? null : String(dto.leadTimeNote).slice(0, 500);
     }
-    if (!Object.keys(data).length) throw new BadRequestException("কিছুই পাঠানো হয়নি");
+    if (!Object.keys(data).length) throw badRequest("dropship.nothingWasSent");
     const updated = await this.t("supplier").update({ where: { id: supplier.id }, data });
     return {
       supplier: {

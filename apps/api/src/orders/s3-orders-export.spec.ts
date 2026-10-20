@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
 
@@ -168,15 +169,15 @@ describe("S3 OrdersService.exportCsv", () => {
 
   it("rejects invalid from dates with BadRequestException", async () => {
     const { svc } = setup([baseOrder()]);
-    await expect(svc.exportCsv("org-1", { from: "2026-13-40" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.exportCsv("org-1", { from: "abc" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.exportCsv("org-1", { to: "2026-02-30" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.exportCsv("org-1", { from: "2026-13-40" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.exportCsv("org-1", { from: "abc" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.exportCsv("org-1", { to: "2026-02-30" })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects from after to with BadRequestException", async () => {
     const { svc } = setup([baseOrder()]);
     await expect(svc.exportCsv("org-1", { from: "2026-10-06", to: "2026-10-05" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("cross-org: another org's orders never appear, even with no filters", async () => {

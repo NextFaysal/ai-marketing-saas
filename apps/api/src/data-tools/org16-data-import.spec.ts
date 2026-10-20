@@ -327,12 +327,12 @@ describe("ORG16 bundle import — round-trip through the real export builder", (
 
     // Job read: own org sees it, the source org does not.
     await expect(svc.getImport("org-b", job.id)).resolves.toMatchObject({ id: job.id, status: "completed" });
-    await expect(svc.getImport("org-a", job.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getImport("org-a", job.id)).rejects.toMatchObject({ code: "dataTools.importNotFound" });
 
     // The org is no longer empty: a second restore is refused
     // BEFORE any job row is created.
     await expect(svc.createImport("org-b", "user-owner-b", "again.json", bundleJson))
-      .rejects.toBeInstanceOf(ConflictException);
+      .rejects.toMatchObject({ code: "dataTools.targetOrganizationIsNotEmptyBundle" });
     expect(db.dataImport.rows).toHaveLength(1);
     const report2 = await svc.validateImport("org-b", bundleJson);
     expect(report2.valid).toBe(false);
@@ -374,7 +374,7 @@ describe("ORG16 bundle validation — rejections", () => {
     const report = await svc.validateImport("org-b", "this is not json");
     expect(report.valid).toBe(false);
     expect(report.errors.length).toBeGreaterThan(0);
-    await expect(svc.createImport("org-b", "u", "x.json", "not json")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createImport("org-b", "u", "x.json", "not json")).rejects.toMatchObject({ code: "dataTools.bundlejsonIsNotValidJson" });
     expect(checkBundle({ hello: 1 }).ok).toBe(false);
     expect(checkBundle(null).ok).toBe(false);
     expect(checkBundle([1, 2, 3]).ok).toBe(false);
@@ -458,7 +458,7 @@ describe("ORG16 bundle validation — rejections", () => {
     expect(report.valid).toBe(false);
     expect(report.targetEmpty).toBe(false);
     expect(report.errors).toContain("target_org_not_empty");
-    await expect(svc.createImport("org-b", "u", "x.json", bundleJson)).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.createImport("org-b", "u", "x.json", bundleJson)).rejects.toMatchObject({ code: "dataTools.targetOrganizationIsNotEmptyBundle" });
     expect(db.dataImport.rows).toHaveLength(0);
   });
 
@@ -501,8 +501,8 @@ describe("ORG16 route wiring — OWNER-only", () => {
       }),
     }) as any;
     const proto = DataExportsController.prototype as any;
-    expect(() => guard.canActivate(ctxFor(proto.createImport, "ADMIN"))).toThrow(ForbiddenException);
-    expect(() => guard.canActivate(ctxFor(proto.validateImport, "ANALYST"))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(ctxFor(proto.createImport, "ADMIN"))).toThrow(expect.objectContaining({ code: "common.insufficientRole" }));
+    expect(() => guard.canActivate(ctxFor(proto.validateImport, "ANALYST"))).toThrow(expect.objectContaining({ code: "common.insufficientRole" }));
     expect(guard.canActivate(ctxFor(proto.createImport, "OWNER"))).toBe(true);
     expect(guard.canActivate(ctxFor(proto.getImport, "OWNER"))).toBe(true);
   });

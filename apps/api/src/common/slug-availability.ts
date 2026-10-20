@@ -33,6 +33,11 @@ export interface SlugAvailability {
   available: boolean;
   reason: SlugAvailabilityReason;
   message: string;
+  /** ML10: catalog code (+ params) for the refusal, so API error
+   * paths render in the request locale; `message` keeps the bn
+   * text for the onboarding picker payload. */
+  code?: string;
+  params?: Record<string, unknown>;
 }
 
 export const SLUG_AVAILABILITY_MESSAGES: Record<Exclude<SlugAvailabilityReason, "cooldown">, string> = {
@@ -60,7 +65,10 @@ export async function slugAvailability(prisma: any, rawSlug: unknown): Promise<S
   const extras = await reservedSlugExtras(prisma);
   const local = checkSlugLocally(slug, extras);
   if (!local.ok) {
-    return { slug, available: false, reason: local.reason, message: SLUG_AVAILABILITY_MESSAGES[local.reason] };
+    return {
+      slug, available: false, reason: local.reason, message: SLUG_AVAILABILITY_MESSAGES[local.reason],
+      code: local.reason === "reserved" ? "common.slugReserved" : "common.slugInvalidFormat",
+    };
   }
   const taken = await prisma.organization.findUnique({ where: { slug } });
   if (taken) {
@@ -73,7 +81,11 @@ export async function slugAvailability(prisma: any, rawSlug: unknown): Promise<S
   // simply means "no tombstones".
   const tombstone = (await prisma.slugTombstone?.findUnique?.({ where: { slug } }).catch(() => null)) ?? null;
   if (tombstone && !tombstone.releasedAt && new Date(tombstone.expiresAt).getTime() > Date.now()) {
-    return { slug, available: false, reason: "cooldown", message: slugCooldownMessage(new Date(tombstone.expiresAt)) };
+    return {
+      slug, available: false, reason: "cooldown", message: slugCooldownMessage(new Date(tombstone.expiresAt)),
+      code: "common.slugCooldown",
+      params: { date: new Date(tombstone.expiresAt).toLocaleDateString("bn-BD") },
+    };
   }
   return { slug, available: true, reason: "ok", message: SLUG_AVAILABILITY_MESSAGES.ok };
 }

@@ -4,7 +4,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { EmptyState } from "@repo/ui";
 import dynamic from "next/dynamic";
-import { StepFields, DYNAMIC_VARIABLES } from "@/components/step-fields";
+import { StepFields, dynamicVariablesForLocale } from "@/components/step-fields";
 
 const WorkflowCanvas = dynamic(() => import("@/components/workflow-canvas"), {
   ssr: false,
@@ -30,7 +30,69 @@ import {
   type StepDraftLike,
   type WorkflowDefinition,
 } from "@/lib/workflow-graph";
-import { WORKFLOW_BLUEPRINTS_CATALOG, type WorkflowBlueprint } from "@/lib/workflow-blueprints";
+import { WORKFLOW_BLUEPRINTS_CATALOG, bpText, type WorkflowBlueprint } from "@/lib/workflow-blueprints";
+import { useLocale } from "@/lib/i18n/provider";
+import { workflowsBn, workflowsEn } from "@/lib/i18n/workflows";
+import { sharedBn, sharedEn } from "@/lib/i18n/shared";
+import { fmtNumber, fmtDate } from "@repo/contracts";
+import type { UiLocale } from "@repo/contracts";
+
+const WD = (locale?: string) => (locale === "en" ? workflowsEn : workflowsBn);
+type WfKey = keyof typeof workflowsBn;
+const wt = (locale: string | undefined, key: WfKey, params?: Record<string, string | number>): string => {
+  let out: string = WD(locale)[key];
+  if (params) for (const [k, v] of Object.entries(params)) out = out.split(`{${k}}`).join(String(v));
+  return out;
+};
+const TRIG_LABEL_KEY: Record<string, WfKey> = {
+  order_created: "trigOrderCreated", order_delivered: "trigOrderDelivered", order_cod_confirmed: "trigCodConfirmed",
+  order_status_changed: "trigOrderStatus", order_refunded: "trigOrderRefunded", cart_abandoned: "trigCartAbandoned",
+  shipment_status_changed: "trigShipmentStatus", shipment_delivered: "trigShipmentDelivered", shipment_returned: "trigShipmentReturned",
+  lead_created: "trigLeadCreated", lead_stage_changed: "trigLeadStage", inbox_message_received: "trigInboxMessage",
+  inbox_unanswered: "trigInboxUnanswered", conversation_assigned: "trigConvAssigned", conversation_closed: "trigConvClosed",
+  schedule: "trigSchedule",
+};
+const TRIG_CAT_KEY: Record<string, WfKey> = { "ই-কমার্স": "catEcommerce", "শিপমেন্ট": "catShipment", "ইনবক্স": "catInbox", "শিডিউল": "catSchedule" };
+function triggersFor(locale: string): typeof TRIGGERS {
+  return TRIGGERS.map((tr) => ({
+    ...tr,
+    label: TRIG_LABEL_KEY[tr.value] ? wt(locale, TRIG_LABEL_KEY[tr.value]) : tr.label,
+    category: TRIG_CAT_KEY[tr.category] ? wt(locale, TRIG_CAT_KEY[tr.category]) : tr.category,
+  }));
+}
+const FIELD_LABEL_KEY: Record<string, WfKey> = {
+  "": "fieldPick", stage: "fieldLeadStage", status: "fieldOrderStatus", total: "fieldOrderTotal", source: "fieldSource", fromStatus: "fieldPrevStatus", toStatus: "fieldNewStatus",
+  refundAmount: "fieldRefundAmount", cumulativeRefunded: "fieldTotalRefund", shipmentStatus: "fieldParcelNewStatus",
+  previousStatus: "fieldParcelPrevStatus", cartValue: "fieldCartTotal", itemsCount: "fieldCartItems",
+  scheduleTime: "fieldScheduleTime", scheduleDays: "fieldScheduleDay", intent: "fieldIntent",
+  contactName: "fieldContactName", contactPhone: "fieldContactPhone",
+};
+function conditionFieldsFor(locale: string): typeof CONDITION_FIELDS {
+  return CONDITION_FIELDS.map((f) => (FIELD_LABEL_KEY[f.value] ? { ...f, label: wt(locale, FIELD_LABEL_KEY[f.value]) } : f));
+}
+const OP_LABEL_KEY: Record<string, WfKey> = { gte: "opGte", gt: "opGt", eq: "opEq", neq: "opNeq", lt: "opLt", lte: "opLte", contains: "opContains" };
+function conditionOperatorsFor(locale: string): typeof CONDITION_OPERATORS {
+  return CONDITION_OPERATORS.map((o) => (OP_LABEL_KEY[o.value] ? { ...o, label: wt(locale, OP_LABEL_KEY[o.value]) } : o));
+}
+const SUGGESTION_LABEL_KEY: Record<string, WfKey> = {
+  "অর্ডার ৳১,০০০+": "qcOrder1000", "ভিআইপি অর্ডার ৳৫,০০০+": "qcVipOrder", "ওয়েবসাইট অর্ডার": "qcWebsiteOrder",
+  "কার্ট ভ্যালু ৳৫০০+": "qcCart500", "পণ্য সংখ্যা ২ বা বেশি": "qcItems2", "অভিযোগ (complaint)": "qcComplaint",
+  "ক্রয় অনুসন্ধান (order)": "qcOrderIntent", "Facebook লিড": "qcFbLead", "Website লিড": "qcWebLead",
+  "Qualified স্টেজ": "qcQualified", "Won (সফল) স্টেজ": "qcWon", "Lost (ব্যর্থ) স্টেজ": "qcLost",
+  "নতুন স্টেজ Processing": "qcProcessing", "নতুন স্টেজ Cancelled": "qcCancelled", "রিফান্ড ৳৫০০ বা বেশি": "qcRefund500",
+  "রিটার্ন কনফার্মড": "qcReturnConfirmed",
+};
+function suggestionsFor(locale: string, trigger: string) {
+  const list = TRIGGER_SUGGESTIONS[trigger] ?? [];
+  return list.map((sg) => (SUGGESTION_LABEL_KEY[sg.label] ? { ...sg, label: wt(locale, SUGGESTION_LABEL_KEY[sg.label]) } : sg));
+}
+const STEP_LABEL_KEY: Record<string, keyof typeof sharedBn> = {
+  send_email: "stepSendEmail", send_sms: "stepSendSms", send_inbox_message: "stepSendInboxMessage", wait: "stepWait",
+  condition: "stepCondition", branch: "stepBranch", change_lead_stage: "stepChangeLeadStage", add_tag: "stepAddTag",
+  notify_team: "stepNotifyTeam", notify_channel: "stepNotifyChannel", ai_generate: "stepAiGenerate",
+  add_lead_activity: "stepAddLeadActivity", add_conversation_note: "stepAddConversationNote",
+  assign_conversation: "stepAssignConversation", create_follow_up: "stepCreateFollowUp", http_webhook: "stepHttpWebhook",
+};
 
 interface Template {
   id: string;
@@ -154,46 +216,57 @@ const TRIGGER_SUGGESTIONS: Record<string, { label: string; field: string; op: st
 // 105+ Rich business blueprints catalog for any merchant problem
 const BUSINESS_BLUEPRINTS = WORKFLOW_BLUEPRINTS_CATALOG;
 
-function getStepMeta(type: string): { label: string; icon: string; badgeCls: string } {
+function getStepMeta(type: string, locale: UiLocale = "bn"): { label: string; icon: string; badgeCls: string } {
+  const key = STEP_LABEL_KEY[type];
+  if (key) {
+    const base = getStepMetaBase(type);
+    return { ...base, label: (locale === "en" ? sharedEn : sharedBn)[key] };
+  }
+  return getStepMetaBase(type);
+}
+
+function getStepMetaBase(type: string): { label: string; icon: string; badgeCls: string } {
   switch (type) {
     case "send_email":
-      return { label: "Email পাঠান", icon: "✉️", badgeCls: "bg-sky-50 text-sky-700 border-sky-200" };
+      return { label: sharedBn.stepSendEmail, icon: "✉️", badgeCls: "bg-sky-50 text-sky-700 border-sky-200" };
     case "send_sms":
-      return { label: "SMS পাঠান", icon: "📱", badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+      return { label: sharedBn.stepSendSms, icon: "📱", badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
     case "add_lead_activity":
-      return { label: "Lead Note", icon: "📝", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepAddLeadActivity, icon: "📝", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "add_conversation_note":
-      return { label: "Internal Note", icon: "🔒", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
+      return { label: sharedBn.stepAddConversationNote, icon: "🔒", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
     case "send_inbox_message":
-      return { label: "Inbox বার্তা", icon: "💬", badgeCls: "bg-teal-50 text-teal-700 border-teal-200" };
+      return { label: sharedBn.stepSendInboxMessage, icon: "💬", badgeCls: "bg-teal-50 text-teal-700 border-teal-200" };
     case "wait":
-      return { label: "অপেক্ষা (Wait)", icon: "⏱️", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
+      return { label: sharedBn.stepWait, icon: "⏱️", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
     case "condition":
-      return { label: "শর্ত যাচাই", icon: "🔍", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
+      return { label: sharedBn.stepCondition, icon: "🔍", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
     case "branch":
-      return { label: "শাখা (Branch)", icon: "🔀", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
+      return { label: sharedBn.stepBranch, icon: "🔀", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
     case "assign_conversation":
-      return { label: "Assign", icon: "👤", badgeCls: "bg-blue-50 text-blue-700 border-blue-200" };
+      return { label: sharedBn.stepAssignConversation, icon: "👤", badgeCls: "bg-blue-50 text-blue-700 border-blue-200" };
     case "change_lead_stage":
-      return { label: "Stage বদলান", icon: "🏷️", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepChangeLeadStage, icon: "🏷️", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "add_tag":
-      return { label: "Tag যোগ", icon: "🏷️", badgeCls: "bg-slate-100 text-slate-700 border-slate-300" };
+      return { label: sharedBn.stepAddTag, icon: "🏷️", badgeCls: "bg-slate-100 text-slate-700 border-slate-300" };
     case "notify_team":
-      return { label: "টিমকে জানান", icon: "👥", badgeCls: "bg-orange-50 text-orange-700 border-orange-200" };
+      return { label: sharedBn.stepNotifyTeam, icon: "👥", badgeCls: "bg-orange-50 text-orange-700 border-orange-200" };
     case "create_follow_up":
-      return { label: "Follow-up", icon: "📅", badgeCls: "bg-rose-50 text-rose-700 border-rose-200" };
+      return { label: sharedBn.stepCreateFollowUp, icon: "📅", badgeCls: "bg-rose-50 text-rose-700 border-rose-200" };
     case "http_webhook":
-      return { label: "Webhook", icon: "🌐", badgeCls: "bg-cyan-50 text-cyan-700 border-cyan-200" };
+      return { label: sharedBn.stepHttpWebhook, icon: "🌐", badgeCls: "bg-cyan-50 text-cyan-700 border-cyan-200" };
     case "notify_channel":
-      return { label: "চ্যানেল অ্যালার্ট", icon: "📢", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepNotifyChannel, icon: "📢", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "ai_generate":
-      return { label: "AI অ্যাকশন", icon: "🤖", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
+      return { label: sharedBn.stepAiGenerate, icon: "🤖", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
     default:
       return { label: type, icon: "⚡", badgeCls: "bg-slate-100 text-slate-700 border-slate-200" };
   }
 }
 
 export default function WorkflowsPage() {
+  const { t, locale } = useLocale();
+  const TRIGGERS_L = triggersFor(locale);
   const [activeTab, setActiveTab] = useState<TabKey>("workflows");
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -329,7 +402,7 @@ export default function WorkflowsPage() {
       );
       setTrace(out);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dry-run সম্পন্ন হয়নি");
+      setError(e instanceof Error ? e.message : t("workflows.dryRunFailed"));
     } finally {
       setIsDryRunning(false);
     }
@@ -338,7 +411,7 @@ export default function WorkflowsPage() {
   async function runManual() {
     const orgId = getOrganizationId();
     if (!orgId || !testPanel) return;
-    if (!window.confirm("এটি লাইভ Run — ধাপগুলো সত্যিই কার্যকর হবে (মেসেজ যাবে, Stage বদলাবে)। নিশ্চিতভাবে চালাতে চান?")) return;
+    if (!window.confirm(t("workflows.liveRunConfirm"))) return;
     setError("");
     setIsManualRunning(true);
     try {
@@ -346,13 +419,13 @@ export default function WorkflowsPage() {
         method: "POST",
         body: JSON.stringify({ context: testContext() }),
       });
-      setNotice(`Manual Run সম্পন্ন: ${run.status}`);
+      setNotice(t("workflows.manualRunDone", { status: run.status }));
       setTestPanel(null);
       setTrace(null);
       await load();
       setActiveTab("runs");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Run সম্পন্ন হয়নি");
+      setError(e instanceof Error ? e.message : t("workflows.runFailed"));
     } finally {
       setIsManualRunning(false);
     }
@@ -367,10 +440,10 @@ export default function WorkflowsPage() {
         method: "POST",
         body: JSON.stringify({}),
       });
-      setNotice(`Retry সম্পন্ন: ${run.status}`);
+      setNotice(t("workflows.retryDone", { status: run.status }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Retry হয়নি");
+      setError(e instanceof Error ? e.message : t("workflows.retryFailed"));
     }
   }
 
@@ -382,10 +455,10 @@ export default function WorkflowsPage() {
         method: "PATCH",
         body: JSON.stringify({ enabled: !w.enabled }),
       });
-      setNotice(`"${w.name}" সফলভাবে ${!w.enabled ? "চালু" : "বন্ধ"} করা হয়েছে।`);
+      setNotice(t("workflows.wfToggled", { name: w.name, state: !w.enabled ? t("workflows.stateOn2") : t("workflows.stateOff2") }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "স্ট্যাটাস পরিবর্তন ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("workflows.statusChangeFailed"));
     }
   }
 
@@ -419,7 +492,7 @@ export default function WorkflowsPage() {
             ...governance,
           }),
         });
-        setNotice(`Workflow "${form.name}" আপডেট করা হয়েছে। চলমান Run গুলো আগের ধাপেই চলবে (Snapshot)।`);
+        setNotice(t("workflows.wfUpdated", { name: form.name }));
       } else {
         await apiFetch(`/organizations/${orgId}/workflows`, {
           method: "POST",
@@ -431,7 +504,7 @@ export default function WorkflowsPage() {
             ...governance,
           }),
         });
-        setNotice(`Workflow "${form.name}" তৈরি ও সক্রিয় করা হয়েছে।`);
+        setNotice(t("workflows.wfCreated", { name: form.name }));
       }
       resetForm();
       await load();
@@ -460,7 +533,7 @@ export default function WorkflowsPage() {
         newStep = { type: "send_email", templateId: "", text: "" };
         break;
       case "send_inbox_message":
-        newStep = { type: "send_inbox_message", templateId: "", text: "আসসালামু আলাইকুম {{contactName}}..." };
+        newStep = { type: "send_inbox_message", templateId: "", text: t("workflows.tplGreeting") };
         break;
       case "wait":
         newStep = { type: "wait", templateId: "", text: "", minutes: 60 };
@@ -476,16 +549,16 @@ export default function WorkflowsPage() {
           type: "ai_generate",
           templateId: "",
           text: "",
-          prompt: "গ্রাহকের জন্য একটি ব্যক্তিগত বার্তা লিখুন...",
+          prompt: t("workflows.tplPersonalMsg"),
           action: "add_conversation_note",
           outputField: "aiResult",
         };
         break;
       case "notify_channel":
-        newStep = { type: "notify_channel", templateId: "", url: "", title: "🚨 সতর্কতা", text: "অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে।" };
+        newStep = { type: "notify_channel", templateId: "", url: "", title: t("workflows.tplAlertTitle"), text: t("workflows.tplOrderDone") };
         break;
       case "notify_team":
-        newStep = { type: "notify_team", templateId: "", role: "OWNER", title: "টিম অ্যালার্ট", text: "{{contactName}} এর অর্ডার দেখুন।" };
+        newStep = { type: "notify_team", templateId: "", role: "OWNER", title: t("workflows.tplTeamAlert"), text: t("workflows.tplOrderLook") };
         break;
       case "assign_conversation":
         newStep = { type: "assign_conversation", templateId: "", text: "", userId: "" };
@@ -497,7 +570,7 @@ export default function WorkflowsPage() {
         newStep = { type: "add_tag", templateId: "", text: "", target: "lead", tag: "vip" };
         break;
       case "create_follow_up":
-        newStep = { type: "create_follow_up", templateId: "", days: 3, text: "{{contactName}} এর ফলো-আপ" };
+        newStep = { type: "create_follow_up", templateId: "", days: 3, text: t("workflows.tplFollowUp") };
         break;
       case "http_webhook":
         newStep = { type: "http_webhook", templateId: "", text: "", url: "", secret: "" };
@@ -516,7 +589,7 @@ export default function WorkflowsPage() {
     a.download = `${name.replace(/\s+/g, "_")}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setNotice(`"${name}" এর JSON ডাউনলোড হয়েছে!`);
+    setNotice(t("workflows.jsonDownloaded", { name }));
   }
 
   function exportWorkflow(w: Workflow) {
@@ -533,7 +606,7 @@ export default function WorkflowsPage() {
       navigator.clipboard
         .writeText(jsonStr)
         .then(() => {
-          setNotice(`"${w.name}" এর JSON ক্লিপবোর্ডে কপি করা হয়েছে!`);
+          setNotice(t("workflows.jsonCopied", { name: w.name }));
         })
         .catch(() => {
           downloadJson(w.name, jsonStr);
@@ -545,7 +618,7 @@ export default function WorkflowsPage() {
 
   function exportAllWorkflows() {
     if (workflows.length === 0) {
-      setError("এক্সপোর্ট করার মতো কোনো Workflow নেই");
+      setError(t("workflows.noWfToExport"));
       return;
     }
     const data = workflows.map((w) => ({
@@ -565,11 +638,11 @@ export default function WorkflowsPage() {
     try {
       const parsed = JSON.parse(importText);
       if (!parsed.name || !parsed.trigger || !Array.isArray(parsed.steps)) {
-        throw new Error("JSON এ 'name', 'trigger' এবং 'steps' থাকা আবশ্যক");
+        throw new Error(t("workflows.jsonRequired"));
       }
       setEditingId(null);
       setForm({
-        name: `${parsed.name} (ইমপোর্টেড)`,
+        name: `${parsed.name} ${t("workflows.importedSuffix")}`,
         trigger: parsed.trigger,
         cooldown: parsed.cooldownMinutes ? String(parsed.cooldownMinutes) : "",
         cap: parsed.dailyRunCap != null ? String(parsed.dailyRunCap) : "",
@@ -586,11 +659,11 @@ export default function WorkflowsPage() {
       setSteps(parsed.steps.map((s: any) => stepToDraft(s)));
       setImportOpen(false);
       setImportText("");
-      setNotice("Workflow JSON সফলভাবে লোড হয়েছে! নিচের ফর্মে যাচাই করে সংরক্ষণ করুন।");
+      setNotice(t("workflows.jsonLoaded"));
       setEditorView("form");
       setActiveTab("builder");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "অবৈধ JSON");
+      setError(e instanceof Error ? e.message : t("workflows.invalidJson"));
     }
   }
 
@@ -624,11 +697,11 @@ export default function WorkflowsPage() {
         method: "POST",
         body: JSON.stringify({}),
       });
-      setNotice(`Preset "${name}" ইনস্টল হয়েছে — ড্রাফট হিসেবে বন্ধ অবস্থায় আছে, যাচাই করে চালু করুন।`);
+      setNotice(t("workflows.presetInstalled", { name }));
       await load();
       setActiveTab("workflows");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ইনস্টল হয়নি");
+      setError(e instanceof Error ? e.message : t("workflows.installFailed"));
     }
   }
 
@@ -641,17 +714,17 @@ export default function WorkflowsPage() {
         method: "POST",
         body: JSON.stringify({}),
       });
-      setNotice(`"${w.name}" এর নতুন ক্লোন তৈরি হয়েছে (নিরাপত্তার জন্য বন্ধ অবস্থায় আছে)।`);
+      setNotice(t("workflows.cloned", { name: w.name }));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ক্লোন হয়নি");
+      setError(e instanceof Error ? e.message : t("workflows.cloneFailed"));
     }
   }
 
   function loadBlueprint(bp: (typeof BUSINESS_BLUEPRINTS)[0]) {
     setEditingId(null);
     setForm({
-      name: bp.name,
+      name: bpText(bp, "name", locale),
       trigger: bp.trigger,
       cooldown: "",
       cap: "",
@@ -666,23 +739,23 @@ export default function WorkflowsPage() {
     setSteps(bp.steps.map((s) => stepToDraft(s as unknown as RawStep)));
     setEditorView("form");
     setActiveTab("builder");
-    setNotice(`"${bp.name}" ব্লুপ্রিন্ট সফলভাবে বিল্ডারে লোড হয়েছে! পর্যালোচনা করে সংরক্ষণ করুন।`);
+    setNotice(t("workflows.bpLoadedBuilder", { name: bpText(bp, "name", locale) }));
   }
 
   function openBlueprintInCanvas(bp: WorkflowBlueprint) {
     setCanvasDef({
-      name: bp.name,
+      name: bpText(bp, "name", locale),
       trigger: bp.trigger,
       conditions: bp.conditions,
       steps: bp.steps as RawStep[],
     });
     setCanvasScope(`bp-${bp.key}`);
     setCanvasWorkflowId(undefined);
-    setCanvasNote(`রেডিমেড ব্লুপ্রিন্ট "${bp.name}" ক্যানভাসে লোড করা হয়েছে — আপনার পছন্দমত নোড ড্র্যাগ/ড্রপ ও এডিট করুন।`);
+    setCanvasNote(t("workflows.bpLoadedCanvas", { name: bpText(bp, "name", locale) }));
     setCanvasEpoch((n) => n + 1);
     setEditorView("canvas");
     setActiveTab("builder");
-    setNotice(`"${bp.name}" ব্লুপ্রিন্ট ক্যানভাসে লোড হয়েছে!`);
+    setNotice(t("workflows.bpLoadedCanvas2", { name: bpText(bp, "name", locale) }));
   }
 
   function openInCanvas(w: Workflow) {
@@ -694,7 +767,7 @@ export default function WorkflowsPage() {
     });
     setCanvasScope(`wf-${w.id}`);
     setCanvasWorkflowId(w.id);
-    setCanvasNote(`আপনি বিদ্যমান Workflow "${w.name}" ক্যানভাসে সম্পাদনা করছেন — সেভ করলে এখানেই আপডেট হবে।`);
+    setCanvasNote(t("workflows.editingExisting", { name: w.name }));
     setCanvasEpoch((n) => n + 1);
     setEditorView("canvas");
     setActiveTab("builder");
@@ -714,7 +787,7 @@ export default function WorkflowsPage() {
             <div>
               <h1 className="page-title text-2xl font-bold tracking-tight text-slate-900">Workflows & Automations</h1>
               <p className="page-sub text-xs text-slate-500 sm:text-sm">
-                ই-কমার্স, লিড ও কাস্টমার সাপোর্টের জন্য সুপার-ডাইনামিক অটোমেশন ও স্মার্ট রুলস ইঞ্জিন।
+                {t("workflows.pageIntro")}
               </p>
             </div>
           </div>
@@ -726,14 +799,14 @@ export default function WorkflowsPage() {
             className="btn-secondary btn-sm"
             onClick={() => {
               load();
-              setNotice("ডাটা রিফ্রেশ করা হয়েছে");
+              setNotice(t("workflows.dataRefreshed"));
             }}
-            title="রিফ্রেশ"
+            title={t("workflows.refresh")}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            <span className="hidden sm:inline">রিফ্রেশ</span>
+            <span className="hidden sm:inline">{t("workflows.refresh")}</span>
           </button>
 
           <button
@@ -744,19 +817,19 @@ export default function WorkflowsPage() {
             <svg className="h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
-            <span>JSON ইমপোর্ট</span>
+            <span>{t("workflows.jsonImport")}</span>
           </button>
 
           <button
             type="button"
             className="btn-secondary btn-sm"
             onClick={exportAllWorkflows}
-            title="সবগুলো Workflow ব্যাকআপ ডাউনলোড করুন"
+            title={t("workflows.backupAllTitle")}
           >
             <svg className="h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            <span>সম্পূর্ণ ব্যাকআপ</span>
+            <span>{t("workflows.fullBackup")}</span>
           </button>
 
           <button
@@ -771,7 +844,7 @@ export default function WorkflowsPage() {
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
-            <span>নতুন Workflow</span>
+            <span>{t("workflows.newWorkflow")}</span>
           </button>
         </div>
       </div>
@@ -805,42 +878,42 @@ export default function WorkflowsPage() {
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">মোট ওয়ার্কফ্লো</span>
+            <span className="stat-label">{t("workflows.statTotalWf")}</span>
             <div className="stat-icon stat-icon-brand text-sm font-bold">⚡</div>
           </div>
           <div className="stat-value">{workflows.length}</div>
           <div className="stat-hint flex items-center gap-1.5">
             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-emerald-700 font-semibold">{activeWorkflowsCount} সক্রিয়</span>
-            <span>· {workflows.length - activeWorkflowsCount} ড্রাফট</span>
+            <span className="text-emerald-700 font-semibold">{fmtNumber(locale, activeWorkflowsCount)} {t("workflows.statActiveSuffix")}</span>
+            <span>· {fmtNumber(locale, workflows.length - activeWorkflowsCount)} {t("workflows.statDraftSuffix")}</span>
           </div>
         </div>
 
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">৩০ দিনের অটো-রান</span>
+            <span className="stat-label">{t("workflows.statRuns30d")}</span>
             <div className="stat-icon stat-icon-green text-sm">🚀</div>
           </div>
           <div className="stat-value">{totalRuns30d.toLocaleString()}</div>
-          <div className="stat-hint">স্বয়ংক্রিয় নির্বাহ ও প্রতিক্রিয়া</div>
+          <div className="stat-hint">{t("workflows.statRuns30dSub")}</div>
         </div>
 
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">গড় সাফল্যের হার</span>
+            <span className="stat-label">{t("workflows.statSuccessRate")}</span>
             <div className="stat-icon stat-icon-sky text-sm">📈</div>
           </div>
-          <div className="stat-value">{avgSuccessRate !== null ? `${avgSuccessRate}%` : "১০০%"}</div>
-          <div className="stat-hint">ত্রুটিহীন নির্বাহের হার</div>
+          <div className="stat-value">{avgSuccessRate !== null ? `${fmtNumber(locale, avgSuccessRate)}%` : fmtNumber(locale, 100) + "%"}</div>
+          <div className="stat-hint">{t("workflows.statSuccessSub")}</div>
         </div>
 
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">ট্রিগার ইভেন্ট সাপোর্ট</span>
+            <span className="stat-label">{t("workflows.statTriggerSupport")}</span>
             <div className="stat-icon stat-icon-amber text-sm">🎯</div>
           </div>
-          <div className="stat-value">{TRIGGERS.length}টি</div>
-          <div className="stat-hint">অর্ডার, কার্ট, লিড ও চ্যাট</div>
+          <div className="stat-value">{fmtNumber(locale, TRIGGERS.length)}{t("workflows.countSuffixTi")}</div>
+          <div className="stat-hint">{t("workflows.statTriggerSub")}</div>
         </div>
       </div>
 
@@ -855,7 +928,7 @@ export default function WorkflowsPage() {
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
           }`}
         >
-          <span>⚡ ওয়ার্কফ্লো তালিকা</span>
+          <span>{t("workflows.tabList")}</span>
           <span className="badge badge-brand">{workflows.length}</span>
         </button>
 
@@ -868,11 +941,11 @@ export default function WorkflowsPage() {
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
           }`}
         >
-          <span>🛠️ অটোমেশন বিল্ডার</span>
+          <span>{t("workflows.tabBuilder")}</span>
           {editingId ? (
-            <span className="badge badge-amber">এডিট চলছে</span>
+            <span className="badge badge-amber">{t("workflows.tabEditing")}</span>
           ) : (
-            <span className="badge badge-slate">নতুন</span>
+            <span className="badge badge-slate">{t("workflows.tabNew")}</span>
           )}
         </button>
 
@@ -885,7 +958,7 @@ export default function WorkflowsPage() {
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
           }`}
         >
-          <span>📚 বিজনেস ব্লুপ্রিন্ট ও টেমপ্লেট</span>
+          <span>{t("workflows.tabBlueprints")}</span>
           <span className="badge badge-green">{BUSINESS_BLUEPRINTS.length + presets.length}</span>
         </button>
 
@@ -898,7 +971,7 @@ export default function WorkflowsPage() {
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
           }`}
         >
-          <span>📊 রান হিস্ট্রি ও লগ</span>
+          <span>{t("workflows.tabRuns")}</span>
           <span className="badge badge-slate">{runs.length}</span>
         </button>
       </div>
@@ -914,7 +987,7 @@ export default function WorkflowsPage() {
               <div className="relative flex-1">
                 <input
                   type="text"
-                  placeholder="নাম দিয়ে খুঁজুন (যেমন: বড় Order, ফলো-আপ, রিকভারি)..."
+                  placeholder={t("workflows.searchPlaceholder")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="input pl-9"
@@ -935,7 +1008,7 @@ export default function WorkflowsPage() {
                   value={filterTrigger}
                   onChange={(e) => setFilterTrigger(e.target.value)}
                 >
-                  <option value="">সব ট্রিগার</option>
+                  <option value="">{t("workflows.allTriggers")}</option>
                   {TRIGGERS.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.icon} {t.label}
@@ -951,7 +1024,7 @@ export default function WorkflowsPage() {
                       filterStatus === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    সব ({workflows.length})
+                    {t("workflows.filterAll")} ({fmtNumber(locale, workflows.length)})
                   </button>
                   <button
                     type="button"
@@ -960,7 +1033,7 @@ export default function WorkflowsPage() {
                       filterStatus === "active" ? "bg-white text-emerald-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    সক্রিয় ({activeWorkflowsCount})
+                    {t("workflows.filterActive")} ({fmtNumber(locale, activeWorkflowsCount)})
                   </button>
                   <button
                     type="button"
@@ -969,7 +1042,7 @@ export default function WorkflowsPage() {
                       filterStatus === "inactive" ? "bg-white text-slate-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    নিষ্ক্রিয় ({workflows.length - activeWorkflowsCount})
+                    {t("workflows.filterInactive")} ({fmtNumber(locale, workflows.length - activeWorkflowsCount)})
                   </button>
                 </div>
               </div>
@@ -980,11 +1053,11 @@ export default function WorkflowsPage() {
           {filteredWorkflows.length === 0 ? (
             <div className="card p-8">
               <EmptyState
-                title={workflows.length === 0 ? "কোনো Workflow নেই" : "কোনো ফলাফল পাওয়া যায়নি"}
+                title={workflows.length === 0 ? t("workflows.noWf") : t("workflows.noResults")}
                 description={
                   workflows.length === 0
-                    ? "উপরে 'নতুন Workflow' বাটনে ক্লিক করে অথবা 'বিজনেস ব্লুপ্রিন্ট' থেকে ১-ক্লিকে প্রথম অটোমেশন তৈরি করুন।"
-                    : "অনুসন্ধানের শর্ত অনুযায়ী কোনো Workflow মেলেনি। ফিল্টার রিসেট করুন।"
+                    ? t("workflows.noWfHint")
+                    : t("workflows.noResultsHint")
                 }
               />
             </div>
@@ -995,7 +1068,7 @@ export default function WorkflowsPage() {
                   value: w.trigger,
                   label: w.trigger,
                   icon: "⚡",
-                  category: "ইভেন্ট",
+                  category: t("workflows.colEvent"),
                 };
                 const st = stats.find((s) => s.workflowId === w.id);
 
@@ -1015,9 +1088,9 @@ export default function WorkflowsPage() {
                             </span>
                             <span className="badge badge-slate">{tr.category}</span>
                             {w.enabled ? (
-                              <span className="badge badge-green">🟢 সক্রিয়</span>
+                              <span className="badge badge-green">{t("workflows.badgeActive")}</span>
                             ) : (
-                              <span className="badge badge-slate">⚪ নিষ্ক্রিয়</span>
+                              <span className="badge badge-slate">{t("workflows.badgeInactive")}</span>
                             )}
                           </div>
 
@@ -1027,7 +1100,7 @@ export default function WorkflowsPage() {
                         {/* Status Toggle Switch */}
                         <div className="flex items-center gap-3 self-end sm:self-auto">
                           <span className="text-xs font-medium text-slate-500">
-                            {w.enabled ? "সক্রিয়" : "বন্ধ"}
+                            {w.enabled ? t("workflows.toggleActive") : t("workflows.toggleOff")}
                           </span>
                           <button
                             type="button"
@@ -1050,7 +1123,7 @@ export default function WorkflowsPage() {
                       {/* Middle: Visual Pipeline Path Preview */}
                       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
                         <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          পাইপলাইন ফ্লো
+                          {t("workflows.pipelineFlow")}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 text-xs">
                           {/* Trigger pill */}
@@ -1068,7 +1141,7 @@ export default function WorkflowsPage() {
                                 <span>
                                   {w.conditions.length === 1
                                     ? `${w.conditions[0].field} ${w.conditions[0].op} ${String(w.conditions[0].value)}`
-                                    : `${w.conditions.length}টি শর্ত`}
+                                    : t("workflows.conditionsSuffix", { count: fmtNumber(locale, w.conditions.length) })}
                                 </span>
                               </div>
                             </>
@@ -1076,7 +1149,7 @@ export default function WorkflowsPage() {
 
                           {/* Steps preview */}
                           {w.steps.map((stStep, idx) => {
-                            const meta = getStepMeta(stStep.type);
+                            const meta = getStepMeta(stStep.type, locale);
                             return (
                               <React.Fragment key={idx}>
                                 <span className="text-slate-400 font-bold">➔</span>
@@ -1097,26 +1170,26 @@ export default function WorkflowsPage() {
                         <div className="flex flex-wrap items-center gap-3">
                           {st ? (
                             <span className="flex items-center gap-1 font-medium text-slate-700">
-                              📊 ৩০ দিনে {st.runs30d} রান ·{" "}
+                              {t("workflows.runs30dLine", { count: fmtNumber(locale, st.runs30d) })} ·{" "}
                               <span className={st.successRate !== null && st.successRate >= 90 ? "text-emerald-600 font-semibold" : ""}>
-                                {st.successRate !== null ? `${st.successRate}% সাফল্য` : "সাফল্যের হার নেই"}
+                                {st.successRate !== null ? t("workflows.successRateSuffix", { pct: fmtNumber(locale, st.successRate) }) : t("workflows.noSuccessRate")}
                               </span>
                               {st.lastRunAt && (
                                 <span className="text-slate-400">
-                                  · শেষ রান: {new Date(st.lastRunAt).toLocaleDateString()}
+                                  · {t("workflows.lastRunSuffix")} {fmtDate(locale, st.lastRunAt)}
                                 </span>
                               )}
                             </span>
                           ) : (
-                            <span>📊 ৩০ দিনে কোনো রান নেই</span>
+                            <span>{t("workflows.noRuns30d")}</span>
                           )}
 
                           {w.cooldownMinutes ? (
-                            <span className="badge badge-slate">⏱️ ব্যবধান: {w.cooldownMinutes} মি.</span>
+                            <span className="badge badge-slate">{t("workflows.cooldownLine", { min: fmtNumber(locale, w.cooldownMinutes) })}</span>
                           ) : null}
 
                           {w.dailyRunCap != null ? (
-                            <span className="badge badge-slate">🎯 দৈনিক সীমা: {w.dailyRunCap}</span>
+                            <span className="badge badge-slate">{t("workflows.dailyCapLine", { cap: fmtNumber(locale, w.dailyRunCap) })}</span>
                           ) : null}
                         </div>
 
@@ -1129,45 +1202,45 @@ export default function WorkflowsPage() {
                               setTestPanel({ workflowId: w.id, name: w.name });
                               setTrace(null);
                             }}
-                            title="টেস্ট ও Dry-run"
+                            title={t("workflows.testTitle")}
                           >
-                            🧪 টেস্ট / চালান
+                            {t("workflows.testBtn")}
                           </button>
 
                           <button
                             type="button"
                             className="btn-secondary btn-sm"
                             onClick={() => loadForEdit(w)}
-                            title="ফর্মে সম্পাদনা করুন"
+                            title={t("workflows.editFormTitle")}
                           >
-                            ✏️ এডিট
+                            {t("workflows.editBtn")}
                           </button>
 
                           <button
                             type="button"
                             className="btn-secondary btn-sm"
                             onClick={() => openInCanvas(w)}
-                            title="ভিজ্যুয়াল ক্যানভাসে খুলুন"
+                            title={t("workflows.canvasTitle")}
                           >
-                            🎨 ক্যানভাস
+                            {t("workflows.canvasBtn")}
                           </button>
 
                           <button
                             type="button"
                             className="btn-secondary btn-sm"
                             onClick={() => exportWorkflow(w)}
-                            title="JSON হিসেবে এক্সপোর্ট বা কপি করুন"
+                            title={t("workflows.exportTitle")}
                           >
-                            📋 এক্সপোর্ট
+                            {t("workflows.exportBtn")}
                           </button>
 
                           <button
                             type="button"
                             className="btn-secondary btn-sm"
                             onClick={() => cloneWorkflow(w)}
-                            title="অনুরূপ আরেকটি কপি বানান"
+                            title={t("workflows.cloneTitle")}
                           >
-                            📑 ক্লোন
+                            {t("workflows.cloneBtn")}
                           </button>
                         </div>
                       </div>
@@ -1190,12 +1263,12 @@ export default function WorkflowsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">
-                  {editingId ? "✏️ বিদ্যমান Workflow সম্পাদনা" : "🛠️ নতুন Workflow বিল্ডার"}
+                  {editingId ? t("workflows.builderEditTitle") : t("workflows.builderNewTitle")}
                 </h2>
                 <p className="text-xs text-slate-500">
                   {editingId
-                    ? "সতর্কতা: আপডেট সেভ করলে ইতিমধ্যে শুরু হওয়া রানগুলো আগের স্ন্যাপশটেই শেষ হবে।"
-                    : "ইভেন্ট নির্ধারণ করুন, শর্ত সেট করুন এবং ক্রমান্বয়ে পদক্ষেপগুলো সাজান।"}
+                    ? t("workflows.builderSnapshotWarn")
+                    : t("workflows.builderIntro")}
                 </p>
               </div>
 
@@ -1209,7 +1282,7 @@ export default function WorkflowsPage() {
                     }`}
                     onClick={() => setEditorView("form")}
                   >
-                    📝 সাধারণ ফর্ম
+                    {t("workflows.formTab")}
                   </button>
                   <button
                     type="button"
@@ -1218,7 +1291,7 @@ export default function WorkflowsPage() {
                     }`}
                     onClick={() => setEditorView("canvas")}
                   >
-                    🎨 ভিজ্যুয়াল ক্যানভাস
+                    {t("workflows.canvasTab")}
                   </button>
                 </div>
 
@@ -1228,7 +1301,7 @@ export default function WorkflowsPage() {
                     className="btn-secondary btn-sm text-red-600 hover:bg-red-50"
                     onClick={() => resetForm()}
                   >
-                    ✕ বাতিল
+                    {t("workflows.cancelBtn")}
                   </button>
                 )}
               </div>
@@ -1236,8 +1309,8 @@ export default function WorkflowsPage() {
 
             {/* Smart Dynamic Variables Quick Guide */}
             <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="font-semibold text-slate-600">⚡ ব্যবহারযোগ্য স্মার্ট ভ্যারিয়েবল:</span>
-              {DYNAMIC_VARIABLES.slice(0, 7).map((v) => (
+              <span className="font-semibold text-slate-600">{t("workflows.smartVarsLabel")}</span>
+              {dynamicVariablesForLocale(locale).slice(0, 7).map((v) => (
                 <span
                   key={v.tag}
                   className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700 border border-slate-200"
@@ -1246,7 +1319,7 @@ export default function WorkflowsPage() {
                   {v.tag}
                 </span>
               ))}
-              <span className="text-[11px] text-slate-400">ইত্যাদি (মেসেজ বক্সে ক্লিক করে সরাসরি বসানো যায়)</span>
+              <span className="text-[11px] text-slate-400">{t("workflows.smartVarsNote")}</span>
             </div>
           </div>
 
@@ -1257,28 +1330,28 @@ export default function WorkflowsPage() {
               <div className="card p-5 space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-50 text-xs font-bold text-brand-700">
-                    ১
+                    {fmtNumber(locale, 1)}
                   </span>
-                  <h3 className="font-bold text-slate-900">মৌলিক তথ্য ও ইভেন্ট ট্রিগার</h3>
+                  <h3 className="font-bold text-slate-900">{t("workflows.sec1Title")}</h3>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Workflow এর নাম *
+                      {t("workflows.wfNameLabel")}
                     </label>
                     <input
                       className={inputCls}
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
                       required
-                      placeholder="যেমন: বড় অর্ডারে বিশেষ ধন্যবাদ ও SMS"
+                      placeholder={t("workflows.wfNamePlaceholder")}
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      ইভেন্ট ট্রিগার *
+                      {t("workflows.triggerLabel")}
                     </label>
                     <select
                       className={inputCls}
@@ -1300,12 +1373,12 @@ export default function WorkflowsPage() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
                     <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-xs font-bold text-amber-700">
-                      ২
+                      {fmtNumber(locale, 2)}
                     </span>
                     <div>
-                      <h3 className="font-bold text-slate-900">ট্রিগার শর্তসমূহ (Multi-Conditions Filter)</h3>
+                      <h3 className="font-bold text-slate-900">{t("workflows.sec2Title")}</h3>
                       <p className="text-xs text-slate-500">
-                        নির্ধারিত শর্তগুলো সত্য হলেই কেবল এই ফ্লো চলবে (AND শর্ত যুক্তি)।
+                        {t("workflows.sec2Sub")}
                       </p>
                     </div>
                   </div>
@@ -1315,18 +1388,18 @@ export default function WorkflowsPage() {
                     className="btn-secondary btn-sm self-start sm:self-auto"
                     onClick={() => setFormConditions([...formConditions, { field: "total", op: "gte", value: "1000" }])}
                   >
-                    + কাস্টম শর্ত যোগ করুন
+                    {t("workflows.addCondition")}
                   </button>
                 </div>
 
                 {/* Contextual Quick Condition Suggestions based on selected trigger */}
-                {TRIGGER_SUGGESTIONS[form.trigger] && TRIGGER_SUGGESTIONS[form.trigger].length > 0 && (
+                {suggestionsFor(locale, form.trigger).length > 0 && (
                   <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-3">
                     <div className="text-xs font-semibold text-amber-900 mb-1.5">
-                      💡 নির্বাচিত ট্রিগারের জন্য দ্রুত প্রস্তাবিত শর্ত (১-ক্লিকে যোগ করুন):
+                      {t("workflows.quickCondLabel")}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {TRIGGER_SUGGESTIONS[form.trigger].map((sug, sIdx) => (
+                      {suggestionsFor(locale, form.trigger).map((sug, sIdx) => (
                         <button
                           key={sIdx}
                           type="button"
@@ -1347,7 +1420,7 @@ export default function WorkflowsPage() {
 
                 {formConditions.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-center text-xs text-slate-500">
-                    কোনো শর্ত যোগ করা হয়নি — নির্বাচিত ট্রিগার ঘটলেই এই Workflow সরাসরি কার্যকর হবে।
+                    {t("workflows.noConditions")}
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1357,7 +1430,7 @@ export default function WorkflowsPage() {
                         className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 shadow-sm"
                       >
                         <div className="min-w-[180px] flex-1">
-                          <label className="block text-xs font-semibold text-slate-600">ফিল্ড (Field)</label>
+                          <label className="block text-xs font-semibold text-slate-600">{t("workflows.condField")}</label>
                           <select
                             className={inputCls}
                             value={cond.field}
@@ -1367,7 +1440,7 @@ export default function WorkflowsPage() {
                               setFormConditions(next);
                             }}
                           >
-                            {CONDITION_FIELDS.map((f) => (
+                            {conditionFieldsFor(locale).map((f) => (
                               <option key={f.value} value={f.value}>
                                 {f.label}
                               </option>
@@ -1376,7 +1449,7 @@ export default function WorkflowsPage() {
                         </div>
 
                         <div className="w-36">
-                          <label className="block text-xs font-semibold text-slate-600">অপারেটর (Operator)</label>
+                          <label className="block text-xs font-semibold text-slate-600">{t("workflows.condOperator")}</label>
                           <select
                             className={inputCls}
                             value={cond.op}
@@ -1386,7 +1459,7 @@ export default function WorkflowsPage() {
                               setFormConditions(next);
                             }}
                           >
-                            {CONDITION_OPERATORS.map((op) => (
+                            {conditionOperatorsFor(locale).map((op) => (
                               <option key={op.value} value={op.value}>
                                 {op.label}
                               </option>
@@ -1395,11 +1468,11 @@ export default function WorkflowsPage() {
                         </div>
 
                         <div className="min-w-[160px] flex-1">
-                          <label className="block text-xs font-semibold text-slate-600">তুলনা মান (Value)</label>
+                          <label className="block text-xs font-semibold text-slate-600">{t("workflows.condValue")}</label>
                           <input
                             className={inputCls}
                             value={cond.value}
-                            placeholder="1000 বা qualified বা complaint"
+                            placeholder={t("workflows.condValuePlaceholder")}
                             onChange={(e) => {
                               const next = [...formConditions];
                               next[idx].value = e.target.value;
@@ -1412,9 +1485,9 @@ export default function WorkflowsPage() {
                           type="button"
                           className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
                           onClick={() => setFormConditions(formConditions.filter((_, i) => i !== idx))}
-                          title="শর্ত মুছুন"
+                          title={t("workflows.condDeleteTitle")}
                         >
-                          মুছুন
+                          {t("workflows.deleteShort")}
                         </button>
                       </div>
                     ))}
@@ -1427,12 +1500,12 @@ export default function WorkflowsPage() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
                     <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-xs font-bold text-emerald-700">
-                      ৩
+                      {fmtNumber(locale, 3)}
                     </span>
                     <div>
-                      <h3 className="font-bold text-slate-900">অটোমেশন পদক্ষেপসমূহ (Steps Pipeline)</h3>
+                      <h3 className="font-bold text-slate-900">{t("workflows.sec3Title")}</h3>
                       <p className="text-xs text-slate-500">
-                        ক্রমান্বয়ে এক্সিকিউট হওয়া ধাপগুলো সাজান। প্রতিটি ধাপে ডাইনামিক ভ্যারিয়েবল ব্যবহার করতে পারেন।
+                        {t("workflows.sec3Sub")}
                       </p>
                     </div>
                   </div>
@@ -1440,7 +1513,7 @@ export default function WorkflowsPage() {
 
                 <div className="space-y-4">
                   {steps.map((s, i) => {
-                    const meta = getStepMeta(s.type);
+                    const meta = getStepMeta(s.type, locale);
                     return (
                       <div
                         key={i}
@@ -1468,7 +1541,7 @@ export default function WorkflowsPage() {
                                   copy.splice(i - 1, 0, item);
                                   setSteps(copy);
                                 }}
-                                title="উপরে তুলুন"
+                                title={t("workflows.moveUp")}
                               >
                                 ↑
                               </button>
@@ -1484,7 +1557,7 @@ export default function WorkflowsPage() {
                                   copy.splice(i + 1, 0, item);
                                   setSteps(copy);
                                 }}
-                                title="নিচে নামান"
+                                title={t("workflows.moveDown")}
                               >
                                 ↓
                               </button>
@@ -1495,9 +1568,9 @@ export default function WorkflowsPage() {
                                 type="button"
                                 className="rounded-lg border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                                 onClick={() => setSteps(steps.filter((_, j) => j !== i))}
-                                title="ধাপটি মুছুন"
+                                title={t("workflows.stepDeleteTitle")}
                               >
-                                ধাপ মুছুন
+                                {t("workflows.stepDelete")}
                               </button>
                             )}
                           </div>
@@ -1520,7 +1593,7 @@ export default function WorkflowsPage() {
                 {/* Categorized Quick Action Palette */}
                 <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4">
                   <div className="text-xs font-bold text-slate-700 mb-2">
-                    + পরবর্তী পদক্ষেপ যোগ করুন (যেটি প্রয়োজন ক্লিক করুন):
+                    {t("workflows.addStepLabel")}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -1542,42 +1615,42 @@ export default function WorkflowsPage() {
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("send_inbox_message")}
                     >
-                      💬 Inbox বার্তা
+                      {t("workflows.addInboxMsg")}
                     </button>
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("wait")}
                     >
-                      ⏱️ অপেক্ষা (Wait)
+                      {t("workflows.addWait")}
                     </button>
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("branch")}
                     >
-                      🔀 শাখা (Branch)
+                      {t("workflows.addBranch")}
                     </button>
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("ai_generate")}
                     >
-                      🤖 AI অ্যাকশন
+                      {t("workflows.addAi")}
                     </button>
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("notify_channel")}
                     >
-                      📢 চ্যানেল অ্যালার্ট
+                      {t("workflows.addChannelAlert")}
                     </button>
                     <button
                       type="button"
                       className="btn-secondary btn-sm"
                       onClick={() => addStepByType("notify_team")}
                     >
-                      👥 টিমকে জানান
+                      {t("workflows.addNotifyTeam")}
                     </button>
                     <button
                       type="button"
@@ -1615,12 +1688,12 @@ export default function WorkflowsPage() {
               <div className="card p-5 space-y-4">
                 <div className="flex items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-xs font-bold text-sky-700">
-                    ৪
+                    {fmtNumber(locale, 4)}
                   </span>
                   <div>
-                    <h3 className="font-bold text-slate-900">গভর্ন্যান্স ও অটো-রান সীমা (Governance & Safety)</h3>
+                    <h3 className="font-bold text-slate-900">{t("workflows.sec4Title")}</h3>
                     <p className="text-xs text-slate-500">
-                      গ্রাহকের কাছে অতিরিক্ত বা অপ্রয়োজনীয় মেসেজ যাওয়া রোধ করতে সীমা নির্ধারণ করুন।
+                      {t("workflows.sec4Sub")}
                     </p>
                   </div>
                 </div>
@@ -1628,7 +1701,7 @@ export default function WorkflowsPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Cooldown ব্যবধান (মিনিটে, ঐচ্ছিক)
+                      {t("workflows.cooldownLabel")}
                     </label>
                     <input
                       className={inputCls}
@@ -1637,16 +1710,16 @@ export default function WorkflowsPage() {
                       max={10080}
                       value={form.cooldown}
                       onChange={(e) => setForm({ ...form, cooldown: e.target.value })}
-                      placeholder="0 = কোনো ব্যবধান নেই"
+                      placeholder={t("workflows.cooldownZero")}
                     />
                     <span className="mt-1 block text-xs text-slate-400">
-                      একই গ্রাহক বা লিডের জন্য পরপর রান হওয়ার মধ্যবর্তী ন্যূনতম সময়।
+                      {t("workflows.cooldownNote")}
                     </span>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      দৈনিক সর্বোচ্চ রান সীমা (ঐচ্ছিক)
+                      {t("workflows.dailyCapLabel")}
                     </label>
                     <input
                       className={inputCls}
@@ -1655,10 +1728,10 @@ export default function WorkflowsPage() {
                       max={10000}
                       value={form.cap}
                       onChange={(e) => setForm({ ...form, cap: e.target.value })}
-                      placeholder="খালি = সীমাহীন"
+                      placeholder={t("workflows.dailyCapEmpty")}
                     />
                     <span className="mt-1 block text-xs text-slate-400">
-                      ২৪ ঘণ্টায় মোট সর্বোচ্চ রান। সীমা পেরোলে অতিরিক্ত রানগুলো Skipped হবে।
+                      {t("workflows.dailyCapNote")}
                     </span>
                   </div>
                 </div>
@@ -1674,7 +1747,7 @@ export default function WorkflowsPage() {
                     setActiveTab("workflows");
                   }}
                 >
-                  বাতিল করুন
+                  {t("workflows.cancelPlain")}
                 </button>
 
                 <button
@@ -1682,7 +1755,7 @@ export default function WorkflowsPage() {
                   className="btn-primary"
                   disabled={busy !== ""}
                 >
-                  {busy ? "সংরক্ষণ হচ্ছে..." : editingId ? "আপডেট সংরক্ষণ করুন" : "Workflow তৈরি ও সক্রিয় করুন"}
+                  {busy ? t("workflows.saving") : editingId ? t("workflows.saveUpdate") : t("workflows.createActivate")}
                 </button>
               </div>
             </form>
@@ -1717,7 +1790,7 @@ export default function WorkflowsPage() {
       {/* ============================================================== */}
       {activeTab === "presets" && (
         <WorkflowPresetsTab
-          triggers={TRIGGERS}
+          triggers={TRIGGERS_L}
           presets={presets}
           loadBlueprint={loadBlueprint}
           openBlueprintInCanvas={openBlueprintInCanvas}
@@ -1734,8 +1807,8 @@ export default function WorkflowsPage() {
           <div className="card p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h3 className="font-bold text-slate-900">সাম্প্রতিক Workflow Runs</h3>
-                <p className="text-xs text-slate-500">লাইভ এক্সিকিউশন স্টেটাস ও প্রতিটি ধাপের বিস্তারিত লগ</p>
+                <h3 className="font-bold text-slate-900">{t("workflows.runsTitle")}</h3>
+                <p className="text-xs text-slate-500">{t("workflows.runsSub")}</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -1744,7 +1817,7 @@ export default function WorkflowsPage() {
                   value={runFilter.workflowId}
                   onChange={(e) => setRunFilter({ ...runFilter, workflowId: e.target.value })}
                 >
-                  <option value="">সব Workflow</option>
+                  <option value="">{t("workflows.allWorkflows")}</option>
                   {workflows.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
@@ -1757,11 +1830,11 @@ export default function WorkflowsPage() {
                   value={runFilter.status}
                   onChange={(e) => setRunFilter({ ...runFilter, status: e.target.value })}
                 >
-                  <option value="">সব Status</option>
-                  <option value="completed">completed (সফল)</option>
-                  <option value="failed">failed (ব্যর্থ)</option>
-                  <option value="waiting">waiting (অপেক্ষমাণ)</option>
-                  <option value="skipped">skipped (স্কিপড)</option>
+                  <option value="">{t("workflows.allStatus")}</option>
+                  <option value="completed">{t("workflows.runCompleted")}</option>
+                  <option value="failed">{t("workflows.runFailedOpt")}</option>
+                  <option value="waiting">{t("workflows.runWaitingOpt")}</option>
+                  <option value="skipped">{t("workflows.runSkippedOpt")}</option>
                 </select>
               </div>
             </div>
@@ -1771,19 +1844,19 @@ export default function WorkflowsPage() {
           {runs.length > 0 && (
             <div className="card p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-semibold text-slate-700">রানের সামগ্রিক স্বাস্থ্য ও পারফরম্যান্স অনুপাত:</span>
+                <span className="font-semibold text-slate-700">{t("workflows.runHealthLabel")}</span>
                 <div className="flex flex-wrap gap-2">
                   <span className="badge badge-green">
-                    ✓ সম্পন্ন: {runStats.completed} ({runStats.total ? Math.round((runStats.completed / runStats.total) * 100) : 0}%)
+                    {t("workflows.runCompletedShort")} {fmtNumber(locale, runStats.completed)} ({fmtNumber(locale, runStats.total ? Math.round((runStats.completed / runStats.total) * 100) : 0)}%)
                   </span>
                   <span className="badge badge-red">
-                    ✗ ব্যর্থ: {runStats.failed}
+                    {t("workflows.runFailedShort")} {fmtNumber(locale, runStats.failed)}
                   </span>
                   <span className="badge badge-amber">
-                    ⏱️ অপেক্ষমাণ: {runStats.waiting}
+                    {t("workflows.runWaitingShort")} {fmtNumber(locale, runStats.waiting)}
                   </span>
                   <span className="badge badge-slate">
-                    ⊘ স্কিপড: {runStats.skipped}
+                    {t("workflows.runSkippedShort")} {fmtNumber(locale, runStats.skipped)}
                   </span>
                 </div>
               </div>
@@ -1816,8 +1889,8 @@ export default function WorkflowsPage() {
           {runs.length === 0 ? (
             <div className="card p-8">
               <EmptyState
-                title="এখনো কোনো Run রেকর্ড নেই"
-                description="যখন কোনো ইভেন্ট ঘটবে অথবা আপনি ম্যানুয়াল টেস্ট করবেন, তখন এখানে রানের ফলাফল দৃশ্যমান হবে।"
+                title={t("workflows.noRuns")}
+                description={t("workflows.noRunsHint")}
               />
             </div>
           ) : (
@@ -1834,16 +1907,16 @@ export default function WorkflowsPage() {
                 let statusLabel = r.status;
                 if (r.status === "completed") {
                   statusBadgeCls = "badge-green";
-                  statusLabel = "completed (সফল)";
+                  statusLabel = t("workflows.runCompleted");
                 } else if (r.status === "waiting") {
                   statusBadgeCls = "badge-amber";
-                  statusLabel = "waiting (অপেক্ষমাণ)";
+                  statusLabel = t("workflows.runWaitingOpt");
                 } else if (r.status === "failed") {
                   statusBadgeCls = "badge-red";
-                  statusLabel = "failed (ব্যর্থ)";
+                  statusLabel = t("workflows.runFailedOpt");
                 } else if (r.status === "skipped") {
                   statusBadgeCls = "badge-slate";
-                  statusLabel = "skipped (স্কিপড)";
+                  statusLabel = t("workflows.runSkippedOpt");
                 }
 
                 return (
@@ -1871,7 +1944,7 @@ export default function WorkflowsPage() {
                             className="btn-secondary btn-sm text-xs font-semibold"
                             onClick={() => retryRun(r.id)}
                           >
-                            ↻ আবার চেষ্টা
+                            {t("workflows.retryBtn")}
                           </button>
                         )}
 
@@ -1881,7 +1954,7 @@ export default function WorkflowsPage() {
                             className="rounded-lg border px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
                             onClick={() => setExpandedRunId(isExpanded ? null : r.id)}
                           >
-                            {isExpanded ? "লগ লুকান ▲" : `লগ দেখুন (${r.stepsLog.length} ধাপ) ▼`}
+                            {isExpanded ? t("workflows.logHide") : t("workflows.logShow", { count: fmtNumber(locale, r.stepsLog.length) })}
                           </button>
                         )}
                       </div>
@@ -1890,14 +1963,14 @@ export default function WorkflowsPage() {
                     {/* Error Banner */}
                     {r.error && (
                       <div className="mt-2.5 rounded-lg bg-red-50 p-2.5 text-xs text-red-700">
-                        <b>ত্রুটি:</b> {r.error}
+                        <b>{t("workflows.errorLabel")}</b> {r.error}
                       </div>
                     )}
 
                     {/* Step Execution Logs */}
                     {isExpanded && r.stepsLog && (
                       <div className="mt-3 space-y-1.5 rounded-xl border border-slate-100 bg-slate-50/70 p-3 text-xs">
-                        <div className="font-semibold text-slate-700">এক্সিকিউশন ধাপসমূহ:</div>
+                        <div className="font-semibold text-slate-700">{t("workflows.execStepsLabel")}</div>
                         {r.stepsLog.map((s, idx) => (
                           <div
                             key={idx}
@@ -1939,7 +2012,7 @@ export default function WorkflowsPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-xl">🧪</span>
-                <h3 className="font-bold text-slate-900 text-lg">টেস্ট ও Dry-run — {testPanel.name}</h3>
+                <h3 className="font-bold text-slate-900 text-lg">{t("workflows.testPanelTitle")} — {testPanel.name}</h3>
               </div>
               <button
                 type="button"
@@ -1956,7 +2029,7 @@ export default function WorkflowsPage() {
             {/* Quick Sample Presets */}
             <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3 space-y-1.5">
               <div className="text-xs font-semibold text-brand-900">
-                💡 নমুনা ডাটা দিয়ে ১-ক্লিক টেস্ট (প্রয়োজনীয় ফিল্ডগুলো স্বয়ংক্রিয়ভাবে পূরণ হবে):
+                {t("workflows.sampleHint")}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -1966,7 +2039,7 @@ export default function WorkflowsPage() {
                     setTestCtx({ orderId: "sample_order_101", customerId: "cust_vip_01", leadId: "", conversationId: "" })
                   }
                 >
-                  🛒 নমুনা অর্ডার (৳১,৫০০)
+                  {t("workflows.sampleOrder")}
                 </button>
                 <button
                   type="button"
@@ -1975,7 +2048,7 @@ export default function WorkflowsPage() {
                     setTestCtx({ leadId: "sample_lead_01", customerId: "", conversationId: "", orderId: "" })
                   }
                 >
-                  👤 নমুনা লিড (Qualified)
+                  {t("workflows.sampleLead")}
                 </button>
                 <button
                   type="button"
@@ -1984,14 +2057,14 @@ export default function WorkflowsPage() {
                     setTestCtx({ conversationId: "sample_conv_01", customerId: "", leadId: "", orderId: "" })
                   }
                 >
-                  💬 নমুনা ইনবক্স চ্যাট
+                  {t("workflows.sampleInbox")}
                 </button>
                 <button
                   type="button"
                   className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:text-slate-800 transition"
                   onClick={() => setTestCtx({ leadId: "", customerId: "", conversationId: "", orderId: "" })}
                 >
-                  মুছুন
+                  {t("workflows.deleteShort")}
                 </button>
               </div>
             </div>
@@ -2003,7 +2076,7 @@ export default function WorkflowsPage() {
                   className={inputCls}
                   value={testCtx.leadId}
                   onChange={(e) => setTestCtx({ ...testCtx, leadId: e.target.value })}
-                  placeholder="যেমন: lead_123"
+                  placeholder={t("workflows.exLeadId")}
                 />
               </div>
               <div>
@@ -2012,7 +2085,7 @@ export default function WorkflowsPage() {
                   className={inputCls}
                   value={testCtx.customerId}
                   onChange={(e) => setTestCtx({ ...testCtx, customerId: e.target.value })}
-                  placeholder="যেমন: cust_456"
+                  placeholder={t("workflows.exCustId")}
                 />
               </div>
               <div>
@@ -2021,7 +2094,7 @@ export default function WorkflowsPage() {
                   className={inputCls}
                   value={testCtx.conversationId}
                   onChange={(e) => setTestCtx({ ...testCtx, conversationId: e.target.value })}
-                  placeholder="যেমন: conv_789"
+                  placeholder={t("workflows.exConvId")}
                 />
               </div>
               <div>
@@ -2030,7 +2103,7 @@ export default function WorkflowsPage() {
                   className={inputCls}
                   value={testCtx.orderId}
                   onChange={(e) => setTestCtx({ ...testCtx, orderId: e.target.value })}
-                  placeholder="যেমন: ord_101"
+                  placeholder={t("workflows.exOrderId")}
                 />
               </div>
             </div>
@@ -2042,7 +2115,7 @@ export default function WorkflowsPage() {
                 disabled={isDryRunning}
                 onClick={runDry}
               >
-                {isDryRunning ? "সিমুলেট হচ্ছে..." : "🧪 Dry-run (নিরাপদ সিমুলেশন)"}
+                {isDryRunning ? t("workflows.simulating") : t("workflows.dryRunBtn")}
               </button>
               <button
                 type="button"
@@ -2050,7 +2123,7 @@ export default function WorkflowsPage() {
                 disabled={isManualRunning}
                 onClick={runManual}
               >
-                {isManualRunning ? "চালানো হচ্ছে..." : "▶️ আসল Run (লাইভ প্রয়োগ)"}
+                {isManualRunning ? t("workflows.running") : t("workflows.liveRunBtn")}
               </button>
             </div>
 
@@ -2058,17 +2131,17 @@ export default function WorkflowsPage() {
             {trace && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">ফলাফল:</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">{t("workflows.resultLabel")}</span>
                   {trace.conditionsPassed ? (
-                    <span className="badge badge-green">✅ সব শর্ত মিলেছে — ফ্লো চলবে</span>
+                    <span className="badge badge-green">{t("workflows.allCondsMet")}</span>
                   ) : (
-                    <span className="badge badge-amber">⚠️ শর্ত মেলেনি — Run Skipped হতো</span>
+                    <span className="badge badge-amber">{t("workflows.condsNotMet")}</span>
                   )}
                 </div>
 
                 {trace.conditionsPassed && trace.trace && trace.trace.length > 0 && (
                   <div className="mt-2 space-y-1.5 text-xs">
-                    <div className="font-semibold text-slate-700">ধাপসমূহের ট্রেস:</div>
+                    <div className="font-semibold text-slate-700">{t("workflows.stepsTrace")}</div>
                     {trace.trace.map((t, idx) => (
                       <div key={idx} className="rounded-lg bg-white p-2 border border-slate-100 shadow-sm">
                         <span className="font-mono font-bold text-slate-900">{t.step}</span>
@@ -2092,7 +2165,7 @@ export default function WorkflowsPage() {
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-xl">📥</span>
-                <h3 className="font-bold text-slate-900 text-lg">Workflow JSON ইমপোর্ট</h3>
+                <h3 className="font-bold text-slate-900 text-lg">Workflow {t("workflows.jsonImport")}</h3>
               </div>
               <button
                 type="button"
@@ -2107,7 +2180,7 @@ export default function WorkflowsPage() {
             </div>
 
             <p className="text-xs text-slate-500">
-              পূর্বে এক্সপোর্ট করা কোনো Workflow এর সম্পূর্ণ JSON কোড এখানে পেস্ট করুন:
+              {t("workflows.importHint")}
             </p>
 
             <textarea
@@ -2126,14 +2199,14 @@ export default function WorkflowsPage() {
                   setImportText("");
                 }}
               >
-                বাতিল
+                {t("workflows.cancelBtn")}
               </button>
               <button
                 type="button"
                 className="btn-primary"
                 onClick={handleImportJson}
               >
-                ইমপোর্ট ও বিল্ডারে লোড করুন
+                {t("workflows.importLoad")}
               </button>
             </div>
           </div>

@@ -12,6 +12,7 @@ import { seal } from "../common/platform-config";
 import { FraudNetworkService } from "../fraud-network/fraud-network.service";
 import { bdPhoneMatchKey } from "./phone-utils";
 import { namesMateriallyDifferent, scoreFraud } from "./fraud-score";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * ON4 — Fraud Shield v2 service: persisted per-order risk
@@ -189,70 +190,70 @@ export class FraudShieldService {
     const data: Record<string, unknown> = {};
     if (dto?.autoHoldBand !== undefined) {
       if (!["medium", "high"].includes(String(dto.autoHoldBand))) {
-        throw new BadRequestException("autoHoldBand হতে হবে medium অথবা high");
+        throw badRequest("orders.autoHoldBandInvalid");
       }
       data.autoHoldBand = String(dto.autoHoldBand);
     }
     if (dto?.highValueMinor !== undefined) {
       const raw = String(dto.highValueMinor);
       if (!/^\d+$/.test(raw)) {
-        throw new BadRequestException("highValueMinor সঠিক সংখ্যায় পাঠান (পয়সায়)");
+        throw badRequest("orders.highValueMinorInvalid");
       }
       data.highValueMinor = BigInt(raw);
     }
     if (dto?.burstCount !== undefined) {
       const v = Number(dto.burstCount);
       if (!Number.isInteger(v) || v < 1 || v > 50) {
-        throw new BadRequestException("burstCount ১–৫০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("orders.burstCountRange");
       }
       data.burstCount = v;
     }
     if (dto?.burstWindowHours !== undefined) {
       const v = Number(dto.burstWindowHours);
       if (!Number.isInteger(v) || v < 1 || v > 720) {
-        throw new BadRequestException("burstWindowHours ১–৭২০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("orders.burstWindowHoursRange");
       }
       data.burstWindowHours = v;
     }
     if (dto?.enabled !== undefined) {
-      if (typeof dto.enabled !== "boolean") throw new BadRequestException("enabled boolean হতে হবে");
+      if (typeof dto.enabled !== "boolean") throw badRequest("orders.enabledMustBeBoolean");
       data.enabled = dto.enabled;
     }
     if (dto?.autoHoldEnabled !== undefined) {
-      if (typeof dto.autoHoldEnabled !== "boolean") throw new BadRequestException("autoHoldEnabled boolean হতে হবে");
+      if (typeof dto.autoHoldEnabled !== "boolean") throw badRequest("orders.autoHoldEnabledMustBeBoolean");
       data.autoHoldEnabled = dto.autoHoldEnabled;
     }
     // GB3 (GC9): gate policy fields.
     if (dto?.openOrderPolicy !== undefined) {
       if (!["off", "warn", "block"].includes(String(dto.openOrderPolicy))) {
-        throw new BadRequestException("openOrderPolicy হতে হবে off, warn অথবা block");
+        throw badRequest("orders.openOrderPolicyInvalid");
       }
       data.openOrderPolicy = String(dto.openOrderPolicy);
     }
     if (dto?.openOrderWindowHours !== undefined) {
       const v = Number(dto.openOrderWindowHours);
       if (!Number.isInteger(v) || v < 1 || v > 720) {
-        throw new BadRequestException("openOrderWindowHours ১–৭২০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("orders.openOrderWindowHoursRange");
       }
       data.openOrderWindowHours = v;
     }
     if (dto?.waitingPeriodMinutes !== undefined) {
       const v = Number(dto.waitingPeriodMinutes);
       if (!Number.isInteger(v) || v < 0 || v > 10080) {
-        throw new BadRequestException("waitingPeriodMinutes ০–১০০৮০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("orders.waitingPeriodMinutesRange");
       }
       data.waitingPeriodMinutes = v;
     }
     if (dto?.maxOrdersPerPhonePerDay !== undefined) {
       const v = Number(dto.maxOrdersPerPhonePerDay);
       if (!Number.isInteger(v) || v < 0 || v > 100) {
-        throw new BadRequestException("maxOrdersPerPhonePerDay ০–১০০ এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("orders.maxOrdersPerPhonePerDayRange");
       }
       data.maxOrdersPerPhonePerDay = v;
     }
     for (const key of ["captchaEnabled", "captchaOnCheckout", "captchaOnOtp"] as const) {
       if (dto?.[key] !== undefined) {
-        if (typeof dto[key] !== "boolean") throw new BadRequestException(`${key} boolean হতে হবে`);
+        if (typeof dto[key] !== "boolean") throw badRequest("orders.fieldMustBeBoolean", { key: key });
         data[key] = dto[key];
       }
     }
@@ -261,7 +262,7 @@ export class FraudShieldService {
         data.turnstileSiteKey = null;
       } else {
         const v = String(dto.turnstileSiteKey).trim();
-        if (v.length > 200) throw new BadRequestException("turnstileSiteKey সর্বোচ্চ ২০০ অক্ষরের হতে হবে");
+        if (v.length > 200) throw badRequest("orders.turnstileSiteKeyTooLong");
         data.turnstileSiteKey = v ? v : null;
       }
     }
@@ -273,7 +274,7 @@ export class FraudShieldService {
         data.turnstileSecretEncrypted = null;
       } else {
         const v = String(dto.turnstileSecret);
-        if (v.length > 200) throw new BadRequestException("turnstileSecret সর্বোচ্চ ২০০ অক্ষরের হতে হবে");
+        if (v.length > 200) throw badRequest("orders.turnstileSecretTooLong");
         data.turnstileSecretEncrypted = seal(v);
       }
     }
@@ -321,12 +322,12 @@ export class FraudShieldService {
   }
 
   blockAdd(orgId: string, actorId: string, dto: { phone?: string; reason?: string }) {
-    if (!this.blockedPhones) throw new BadRequestException("ব্লকলিস্ট সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.blockedPhones) throw badRequest("orders.blocklistFeatureUnavailable");
     return this.blockedPhones.add(orgId, actorId, dto);
   }
 
   blockRemove(orgId: string, actorId: string, id: string) {
-    if (!this.blockedPhones) throw new BadRequestException("ব্লকলিস্ট সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.blockedPhones) throw badRequest("orders.blocklistFeatureUnavailable");
     return this.blockedPhones.remove(orgId, actorId, id);
   }
 
@@ -735,7 +736,7 @@ export class FraudShieldService {
 
   async reassess(orgId: string, actorId: string, orderId: string) {
     const order = await this.loadOrder(orgId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const assessment = await this.assessOrder(orgId, orderId);
     const fresh = await this.loadOrder(orgId, orderId);
     if (assessment) {
@@ -767,10 +768,10 @@ export class FraudShieldService {
   async hold(orgId: string, actorId: string, orderId: string, reasonRaw: unknown) {
     const reason = String(reasonRaw ?? "").trim();
     if (reason.length < 1 || reason.length > 300) {
-      throw new BadRequestException("আটকানোর কারণ ১–৩০০ অক্ষরের হতে হবে");
+      throw badRequest("orders.holdReasonLength");
     }
     const order = await this.loadOrder(orgId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const updated = await (this.prisma as any).order.update({
       where: { id: order.id },
       data: { reviewHold: true, reviewHoldReason: reason, reviewHeldAt: new Date() },
@@ -784,7 +785,7 @@ export class FraudShieldService {
 
   async release(orgId: string, actorId: string, orderId: string) {
     const order = await this.loadOrder(orgId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const updated = await (this.prisma as any).order.update({
       where: { id: order.id },
       data: { reviewHold: false, reviewHoldReason: null, reviewHeldAt: null },
@@ -801,13 +802,13 @@ export class FraudShieldService {
   async recordCodCall(orgId: string, actorId: string, orderId: string, outcomeRaw: unknown) {
     const outcome = String(outcomeRaw ?? "");
     if (!(COD_CALL_OUTCOMES as readonly string[]).includes(outcome)) {
-      throw new BadRequestException("কলের ফলাফল সঠিক নয় — confirmed, rejected, unreachable অথবা callback_requested পাঠান");
+      throw badRequest("orders.callOutcomeInvalid");
     }
     const order = await this.loadOrder(orgId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
-    if (!order.isCod) throw new BadRequestException("এটি COD অর্ডার নয়");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
+    if (!order.isCod) throw badRequest("orders.notCodOrder");
     if (!["pending", "on-hold", "processing"].includes(String(order.status))) {
-      throw new BadRequestException(`এই অবস্থায় ("${order.status}") COD কল রেকর্ড করা যায় না`);
+      throw badRequest("orders.codCallStatusBlocked", { status: order.status });
     }
     const attempts = Number(order.codCallAttempts ?? 0) + 1;
     const data: Record<string, unknown> = {

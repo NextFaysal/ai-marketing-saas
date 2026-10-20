@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { FraudShieldService } from "../orders/fraud-shield.service";
@@ -16,6 +11,8 @@ import {
   InitiateVoiceCallDto,
   VoiceCallSettingDto,
 } from "./voice.types";
+import { catalogText, catalogTextBn, resolveStaffLocale, type ApiLocale } from "../i18n/catalog/send-locale";
+import { badRequest, notFound } from "../i18n";
 
 @Injectable()
 export class VoiceService {
@@ -97,9 +94,7 @@ export class VoiceService {
         ...(dto.conversationMode !== undefined && {
           conversationMode: (() => {
             if (!["simulation", "twilio_relay"].includes(String(dto.conversationMode))) {
-              throw new BadRequestException(
-                "conversationMode শুধু simulation অথবা twilio_relay হতে পারে",
-              );
+              throw badRequest("voice.conversationModeInvalid");
             }
             return String(dto.conversationMode);
           })(),
@@ -155,11 +150,11 @@ export class VoiceService {
     });
 
     if (!order) {
-      throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
+      throw notFound("voice.orderNotFound");
     }
 
     if (!order.isCod) {
-      throw new BadRequestException("এটি একটি ক্যাশ অন ডেলিভারি (COD) অর্ডার নয়");
+      throw badRequest("voice.notCodOrder");
     }
 
     // Determine target phone number
@@ -169,9 +164,7 @@ export class VoiceService {
       (order.address?.match(/01\d{9}/)?.[0] ?? null);
 
     if (!targetPhone) {
-      throw new BadRequestException(
-        "গ্রাহকের ফোন নম্বর পাওয়া যায়নি — সঠিক মোবাইল নম্বর নিশ্চিত করুন",
-      );
+      throw badRequest("voice.phoneMissing");
     }
 
     const settings = await this.getSettings(organizationId);
@@ -244,7 +237,42 @@ export class VoiceService {
   }
 
   /**
-   * Generates standard TwiML XML for Twilio Voice webhook
+   * D-MB4-9 (bug fix): the org's configured conversationLanguage
+   * for TwiML. Before MB4 the fallback TwiML hardcoded
+   * language="bn-BD" and ignored the field entirely. bn-BD
+   * remains the default when the field is unset or settings
+   * cannot be loaded.
+   */
+  private async conversationLanguageFor(organizationId?: string | null): Promise<string> {
+    if (!organizationId) return "bn-BD";
+    try {
+      const settings = await (this.prisma as any).voiceCallSetting?.findUnique({
+        where: { organizationId },
+      });
+      const lang = String(settings?.conversationLanguage ?? "").trim();
+      return lang || "bn-BD";
+    } catch {
+      return "bn-BD";
+    }
+  }
+
+  /** Catalog locale for a BCP-47 voice language (en-* → en). */
+  private catalogLocaleFor(language: string): ApiLocale {
+    return /^en\b/i.test(language) || /^en-/i.test(language) ? "en" : "bn";
+  }
+
+  /** The <Say> voice attribute: Polly.Nabanita is the bn voice;
+   * for other languages the attribute is omitted so the
+   * provider picks its default voice for that language. */
+  private sayVoiceAttr(language: string): string {
+    return language === "bn-BD" ? ` voice="Polly.Nabanita"` : "";
+  }
+
+  /**
+   * Generates standard TwiML XML for Twilio Voice webhook.
+   * The <Say> language honours the org's conversationLanguage
+   * setting (D-MB4-9); the fallback lines come from the
+   * notifications catalog in the matching locale.
    */
   async generateTwiml(callId: string, baseUrl: string): Promise<string> {
     const call = await (this.prisma as any).orderVoiceCall.findUnique({
@@ -252,18 +280,21 @@ export class VoiceService {
     });
 
     if (!call) {
-      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="bn-BD">অর্ডার কল পাওয়া যায়নি।</Say></Response>`;
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="bn-BD">${catalogTextBn("voice.callNotFound")}</Say></Response>`;
     }
 
+    const language = await this.conversationLanguageFor(call.organizationId);
+    const locale = this.catalogLocaleFor(language);
+    const voiceAttr = this.sayVoiceAttr(language);
     const actionUrl = `${baseUrl.replace(/\/$/, "")}/voice/webhook/gather/${callId}`;
-    const prompt = call.speechPrompt || "আপনার অর্ডারটি নিশ্চিত করতে ১ চাপুন, বাতিল করতে ২ চাপুন।";
+    const prompt = call.speechPrompt || catalogText("voice.defaultPrompt", locale);
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather action="${actionUrl}" method="POST" numDigits="1" timeout="10">
-    <Say language="bn-BD" voice="Polly.Nabanita">${prompt}</Say>
+    <Say language="${language}"${voiceAttr}>${prompt}</Say>
   </Gather>
-  <Say language="bn-BD" voice="Polly.Nabanita">আমরা কোনো সাড়া পাইনি। ধন্যবাদ।</Say>
+  <Say language="${language}"${voiceAttr}>${catalogText("voice.noResponse", locale)}</Say>
 </Response>`;
   }
 
@@ -277,19 +308,22 @@ export class VoiceService {
     });
 
     if (!call) {
-      throw new NotFoundException("কলের রেকর্ড পাওয়া যায়নি");
+      throw notFound("voice.callRecordNotFound");
     }
 
+    // D-MB4-9: the gather-result TwiML honours conversationLanguage too.
+    const language = await this.conversationLanguageFor(call.organizationId);
+    const locale = this.catalogLocaleFor(language);
     const digits = String(digitsPressed ?? "").trim();
     let outcome: CallOutcome = "unreachable";
-    let twimlResponseText = "আমরা কোনো সাড়া পাইনি। ধন্যবাদ।";
+    let twimlResponseText = catalogText("voice.noResponse", locale);
 
     if (digits === "1") {
       outcome = "confirmed";
-      twimlResponseText = "ধন্যবাদ! আপনার অর্ডারটি নিশ্চিত করা হয়েছে। আমরা দ্রুত ডেলিভারির ব্যবস্থা করছি।";
+      twimlResponseText = catalogText("voice.confirmed", locale);
     } else if (digits === "2") {
       outcome = "rejected";
-      twimlResponseText = "আপনার অর্ডারটি বাতিলের অনুরোধ গ্রহণ করা হয়েছে। ধন্যবাদ।";
+      twimlResponseText = catalogText("voice.rejected", locale);
     }
 
     // Update Call record
@@ -318,7 +352,7 @@ export class VoiceService {
 
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say language="bn-BD" voice="Polly.Nabanita">${twimlResponseText}</Say>
+  <Say language="${language}"${this.sayVoiceAttr(language)}>${twimlResponseText}</Say>
 </Response>`;
 
     return { call: updatedCall, outcome, xml };
@@ -412,12 +446,15 @@ export class VoiceService {
       });
       for (const m of members ?? []) {
         try {
+          // ML11: staff recipients render in the STAFF locale
+          // (User.preferredLocale → org dashboardLocale → bn).
+          const staffLocale = await resolveStaffLocale(this.prisma as any, m.userId, call.organizationId);
           await createAgentNotification(this.prisma, {
             organizationId: call.organizationId,
             userId: m.userId,
             type: "urgent",
-            title: "ভয়েস কল ফলো-আপ প্রয়োজন (WhatsApp — ম্যানুয়াল)",
-            body: `অর্ডার ${call.orderId}-এর গ্রাহককে ভয়েস কলে পাওয়া যায়নি। অনুগ্রহ করে ইনবক্স থেকে WhatsApp-এ ম্যানুয়ালি ফলো-আপ করুন — কোনো স্বয়ংক্রিয় বার্তা পাঠানো হয়নি।`,
+            title: catalogText("voice.followUpTitle", staffLocale),
+            body: catalogText("voice.followUpBody", staffLocale, { orderId: call.orderId }),
           });
         } catch {
           // Notification failure never undoes the follow-up record.

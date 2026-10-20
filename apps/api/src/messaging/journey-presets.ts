@@ -46,6 +46,22 @@ export interface JourneyPreset {
   channel: "email" | "sms";
   template: { name: string; subject?: string; body: string };
   steps: (templateId: string) => Record<string, unknown>[];
+  /** MB4 (D-MB4-8): en companions of the platform-authored
+   * preset content. Install picks one locale (org
+   * dashboardLocale); the installed copy is merchant-owned
+   * afterwards (D-MB4-5). */
+  descriptionEn: string;
+  flowEn: string;
+  templateEn: { name: string; subject?: string; body: string };
+}
+
+/** The preset's installable content in one locale. */
+export function journeyPresetForLocale(preset: JourneyPreset, locale: "bn" | "en"): {
+  description: string; flow: string; template: { name: string; subject?: string; body: string };
+} {
+  return locale === "en"
+    ? { description: preset.descriptionEn, flow: preset.flowEn, template: preset.templateEn }
+    : { description: preset.descriptionBn, flow: preset.flow, template: preset.template };
 }
 
 export const JOURNEY_PRESETS: JourneyPreset[] = [
@@ -60,6 +76,13 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
       name: "Journey: অর্ডারের ধন্যবাদ (ইমেইল)",
       subject: "ধন্যবাদ, {{name}}! আপনার অর্ডার {{orderNumber}} পেয়েছি",
       body: "আসসালামু আলাইকুম {{name}},\n\nআমাদের কাছ থেকে অর্ডার করার জন্য আন্তরিক ধন্যবাদ! আপনার অর্ডার নম্বর {{orderNumber}} — আমরা শীঘ্রই এটি প্রসেস করে পাঠিয়ে দেব।\n\nকোনো প্রশ্ন থাকলে এই ইমেইলেই জবাব দিন।",
+    },
+      descriptionEn: "Sends a thank-you email to the buyer 30 minutes after a new order.",
+    flowEn: "Order created → wait 30 minutes → thank-you email",
+    templateEn: {
+      name: "Journey: Order thank-you (Email)",
+      subject: "Thank you, {{name}}! We received your order {{orderNumber}}",
+      body: "Hello {{name}},\n\nThank you so much for ordering from us! Your order number is {{orderNumber}} — we will process and dispatch it soon.\n\nIf you have any questions, just reply to this email.",
     },
     steps: (templateId) => [
       { type: "wait", minutes: 30 },
@@ -77,6 +100,12 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
       name: "Journey: অর্ডারের ধন্যবাদ (SMS)",
       body: "ধন্যবাদ, {{name}}! আপনার অর্ডার {{orderNumber}} গ্রহণ করা হয়েছে। ডেলিভারির আপডেট শীঘ্রই পাবেন।",
     },
+      descriptionEn: "Sends a thank-you SMS to the buyer 30 minutes after a new order.",
+    flowEn: "Order created → wait 30 minutes → thank-you SMS",
+    templateEn: {
+      name: "Journey: Order thank-you (SMS)",
+      body: "Thank you, {{name}}! Your order {{orderNumber}} has been received. You will get delivery updates soon.",
+    },
     steps: (templateId) => [
       { type: "wait", minutes: 30 },
       { type: "send_sms", templateId },
@@ -92,6 +121,12 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
     template: {
       name: "Journey: ডেলিভারির পর রিভিউ (SMS)",
       body: "আসসালামু আলাইকুম {{name}}, আপনার অর্ডার {{orderNumber}} ডেলিভারি হয়েছে। পণ্যটি কেমন লাগলো? এই নম্বরেই জবাব দিয়ে আপনার অভিজ্ঞতা জানালে আমরা কৃতজ্ঞ থাকব।",
+    },
+      descriptionEn: "Asks the buyer about their experience by SMS 24 hours after delivery. (No review link — a per-order review token is not in the workflow context, so a direct reply is asked for.)",
+    flowEn: "Order delivered → wait 24 hours → review-ask SMS",
+    templateEn: {
+      name: "Journey: Post-delivery review (SMS)",
+      body: "Hello {{name}}, your order {{orderNumber}} has been delivered. How did you like the product? We would be grateful if you reply to this number with your experience.",
     },
     steps: (templateId) => [
       { type: "wait", minutes: 1440 },
@@ -109,6 +144,12 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
       name: "Journey: কার্ট রিকভারি (SMS)",
       body: "{{name}}, আপনি কার্টে কিছু পণ্য রেখে গেছেন ({{itemsSummary}})। স্টক শেষ হওয়ার আগেই অর্ডারটি সম্পন্ন করুন!",
     },
+      descriptionEn: "Sends an SMS 1 hour after cart abandonment reminding the buyer to complete the order. Without a phone number it cannot be sent — the run log will honestly show it as failed.",
+    flowEn: "Cart abandoned → wait 1 hour → recovery SMS",
+    templateEn: {
+      name: "Journey: Cart recovery (SMS)",
+      body: "{{name}}, you left some products in your cart ({{itemsSummary}}). Complete your order before stock runs out!",
+    },
     steps: (templateId) => [
       { type: "wait", minutes: 60 },
       { type: "send_sms", templateId },
@@ -125,6 +166,13 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
       name: "Journey: লিড ফলো-আপ (ইমেইল)",
       subject: "আপনার জিজ্ঞাসা নিয়ে ছোট্ট ফলো-আপ, {{name}}",
       body: "আসসালামু আলাইকুম {{name}},\n\nকয়েকদিন আগে আপনি আমাদের সঙ্গে যোগাযোগ করেছিলেন — কোনো সাহায্য লাগলে বা কোনো প্রশ্ন থাকলে এই ইমেইলেই জবাব দিন, আমরা যত দ্রুত সম্ভব উত্তর দেব।\n\nধন্যবাদ!",
+    },
+      descriptionEn: "Sends a follow-up email 3 days after a new lead arrives, so an interested buyer is not lost.",
+    flowEn: "New lead → wait 3 days → follow-up email",
+    templateEn: {
+      name: "Journey: Lead follow-up (Email)",
+      subject: "A quick follow-up on your enquiry, {{name}}",
+      body: "Hello {{name}},\n\nYou contacted us a few days ago — if you need any help or have any questions, just reply to this email and we will answer as quickly as possible.\n\nThank you!",
     },
     steps: (templateId) => [
       { type: "wait", minutes: 4320 },
@@ -150,6 +198,12 @@ export const JOURNEY_PRESETS: JourneyPreset[] = [
     template: {
       name: "Journey: কার্ট রিকভারি ৩ ধাপ (SMS)",
       body: "{{name}}, আপনি কার্টে কিছু পণ্য রেখে গেছেন ({{itemsSummary}})। স্টক শেষ হওয়ার আগেই অর্ডারটি সম্পন্ন করুন!",
+    },
+      descriptionEn: "Sends a recovery SMS 1 hour after cart abandonment, another message with a coupon at 24 hours (when the coupon setting is enabled), and a final reminder SMS at 72 hours.",
+    flowEn: "Cart abandoned → wait 1 hour → SMS → wait 23 hours → SMS with coupon → wait 48 hours → final SMS",
+    templateEn: {
+      name: "Journey: Cart recovery 3-step (SMS)",
+      body: "{{name}}, you left some products in your cart ({{itemsSummary}}). Complete your order before stock runs out!",
     },
     steps: (templateId) => [
       { type: "wait", minutes: 60 },

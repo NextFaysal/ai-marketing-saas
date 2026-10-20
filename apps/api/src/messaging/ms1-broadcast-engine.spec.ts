@@ -109,12 +109,12 @@ describe("MS1 prepare + snapshot", () => {
   it("kill-switch and plan cap still block prepare (no snapshot is stamped)", async () => {
     const ks = build({ killSwitch: true });
     const bc1 = await draftEmailBroadcast(ks.svc);
-    await expect(ks.svc.prepareBroadcast("org-1", bc1.id)).rejects.toThrow(/paused platform-wide/);
+    await expect(ks.svc.prepareBroadcast("org-1", bc1.id)).rejects.toMatchObject({ code: "messaging.broadcastsAreTemporarilyPausedPlatformWide" });
     expect(ks.tables.broadcast.rows[0].recipientSnapshot ?? null).toBeNull();
 
     const capped = build({ capOverride: 2 });
     const bc2 = await draftEmailBroadcast(capped.svc);
-    await expect(capped.svc.prepareBroadcast("org-1", bc2.id)).rejects.toThrow(/per-send cap of 2/);
+    await expect(capped.svc.prepareBroadcast("org-1", bc2.id)).rejects.toMatchObject({ code: "messaging.audienceHasRecipientsLengthRecipientsOverThe" });
     expect(capped.tables.broadcast.rows[0].recipientSnapshot ?? null).toBeNull();
   });
 });
@@ -179,7 +179,7 @@ describe("MS1 chunked processing", () => {
     const row = tables.broadcast.rows[0];
     expect(row.status).toBe("cancelled");
     expect(row.recipientSnapshot.every((e: any) => e.status === "skipped" && e.error === "cancelled")).toBe(true);
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/cancelled/);
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasCancelledAndCan" });
   });
 
   it("cancelBroadcast is terminal from draft and refuses afterwards", async () => {
@@ -187,8 +187,8 @@ describe("MS1 chunked processing", () => {
     const bc = await draftEmailBroadcast(svc);
     const cancelled: any = await svc.cancelBroadcast("org-1", "owner", bc.id);
     expect(cancelled.status).toBe("cancelled");
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/cancelled/);
-    await expect(svc.cancelBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/cannot be cancelled/);
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasCancelledAndCan" });
+    await expect(svc.cancelBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.aBroadcastStatusBroadcastCannotBeCancelled" });
   });
 });
 
@@ -215,8 +215,8 @@ describe("MS1 retry-failed", () => {
     const { svc } = build();
     const bc = await draftEmailBroadcast(svc);
     await svc.sendBroadcast("org-1", "owner", bc.id);
-    await expect(svc.retryFailedBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/no failed recipients/);
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/already sent/);
+    await expect(svc.retryFailedBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastHasNoFailedRecipients" });
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
   });
 });
 
@@ -227,7 +227,7 @@ describe("MS1 scheduling", () => {
     const future = new Date(Date.now() + 3600_000).toISOString();
     const scheduled: any = await svc.scheduleBroadcast("org-1", "owner", bc.id, future);
     expect(scheduled.status).toBe("scheduled");
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/scheduled for/);
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastIsScheduledForToISOString" });
     const back: any = await svc.scheduleBroadcast("org-1", "owner", bc.id, null);
     expect(back.status).toBe("draft");
     expect(back.scheduledAt).toBeNull();
@@ -245,7 +245,7 @@ describe("MS1 scheduling", () => {
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "Past", channel: "email", subject: "s", body: "b", audienceType: "customers",
       scheduledAt: new Date(Date.now() - 1000).toISOString(),
-    })).rejects.toThrow(/must be in the future/);
+    })).rejects.toMatchObject({ code: "messaging.scheduledAtMustBeInTheFuture" });
   });
 });
 

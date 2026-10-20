@@ -105,10 +105,10 @@ describe("ORG12 — maxOrgsPerUser platform setting", () => {
 
   it("refuses 0, fractions, negatives and non-numbers", async () => {
     const { svc } = makeAdmin();
-    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: 0 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: 2.5 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: -1 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: "3" as any })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: 0 })).rejects.toMatchObject({ code: "admin.maxorgsperuserMustBeNullNoLimit" });
+    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: 2.5 })).rejects.toMatchObject({ code: "admin.maxorgsperuserMustBeNullNoLimit" });
+    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: -1 })).rejects.toMatchObject({ code: "admin.maxorgsperuserMustBeNullNoLimit" });
+    await expect(svc.updateSettings(SUPER, { maxOrgsPerUser: "3" as any })).rejects.toMatchObject({ code: "admin.maxorgsperuserMustBeNullNoLimit" });
     expect((await svc.getSettings()).maxOrgsPerUser).toBeNull();
   });
 
@@ -137,15 +137,15 @@ describe("ORG13 — org tags write path", () => {
   it("refuses more than 20 tags and tags over 40 characters", async () => {
     const { svc } = makeAdmin();
     const many = Array.from({ length: 21 }, (_, i) => `t${i}`);
-    await expect(svc.updateOrgTags(SUPER, "org-1", many)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateOrgTags(SUPER, "org-1", ["x".repeat(41)])).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateOrgTags(SUPER, "org-1", "vip" as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateOrgTags(SUPER, "org-1", [42] as any)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateOrgTags(SUPER, "org-1", many)).rejects.toMatchObject({ code: "admin.anOrganizationMayCarryAtMost" });
+    await expect(svc.updateOrgTags(SUPER, "org-1", ["x".repeat(41)])).rejects.toMatchObject({ code: "admin.eachTagMayBeAtMost" });
+    await expect(svc.updateOrgTags(SUPER, "org-1", "vip" as any)).rejects.toMatchObject({ code: "admin.tagsMustBeAnArrayOf" });
+    await expect(svc.updateOrgTags(SUPER, "org-1", [42] as any)).rejects.toMatchObject({ code: "admin.everyTagMustBeAString" });
   });
 
   it("unknown org → 404", async () => {
     const { svc } = makeAdmin();
-    await expect(svc.updateOrgTags(SUPER, "org-nope", ["a"])).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateOrgTags(SUPER, "org-nope", ["a"])).rejects.toMatchObject({ code: "admin.organizationNotFound" });
   });
 });
 
@@ -186,7 +186,7 @@ describe("ORG13 — SUPER-only route protection", () => {
       return { guard, ctx };
     };
     const support = guardFor(supportRow);
-    await expect(support.guard.canActivate(support.ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(support.guard.canActivate(support.ctx)).rejects.toMatchObject({ code: "common.adminTierRequired" });
     const sup = guardFor(superRow);
     await expect(sup.guard.canActivate(sup.ctx)).resolves.toBe(true);
   });

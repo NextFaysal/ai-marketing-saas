@@ -2,6 +2,9 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 /**
  * MX10 — double opt-in confirmation page. The signed token in
@@ -21,9 +24,9 @@ export default function PublicOptInConfirmPage() {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/public/messaging/optin/${token}`);
-        if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? "লিংকটি ব্যবহার করা যাচ্ছে না"); }
+        if (!res.ok) { const j = await res.json().catch(() => null); throw new Error(j?.message ?? t.optinConfirm.linkUnusable); }
         setInfo(await res.json());
-      } catch (e) { setError(e instanceof Error ? e.message : "লিংকটি ব্যবহার করা যাচ্ছে না"); }
+      } catch (e) { setError(e instanceof Error ? e.message : t.optinConfirm.linkUnusable); }
     })();
   }, [token]);
 
@@ -32,9 +35,9 @@ export default function PublicOptInConfirmPage() {
     try {
       const res = await fetch(`${API_URL}/public/messaging/optin/${token}`, { method: "POST" });
       const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.message ?? "নিশ্চিত করা যায়নি");
-      setDone(j?.message ?? "আপনার সাবস্ক্রিপশন নিশ্চিত হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "নিশ্চিত করা যায়নি"); }
+      if (!res.ok) throw new Error(j?.message ?? t.optinConfirm.confirmFailed);
+      setDone(j?.message ?? t.optinConfirm.confirmedFallback);
+    } catch (e) { setError(e instanceof Error ? e.message : t.optinConfirm.confirmFailed); }
     finally { setBusy(false); }
   }
 
@@ -42,14 +45,15 @@ export default function PublicOptInConfirmPage() {
     <main className="mx-auto max-w-xl space-y-5 p-6">
       <header>
         <p className="text-xs uppercase tracking-wide text-slate-400">Messaging</p>
-        <h1 className="mt-1 text-2xl font-bold">✅ সাবস্ক্রিপশন নিশ্চিত করুন</h1>
+        <h1 className="mt-1 text-2xl font-bold">{t.optinConfirm.title}</h1>
       </header>
-      {!info && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+      {!info && !error ? <p className="text-sm text-slate-500">{t.optinConfirm.loading}</p> : null}
       {error && !done ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
       {info && !done ? (
         <section className="space-y-4 rounded-2xl border bg-white p-4 shadow-sm">
-          <p className="text-sm text-slate-700"><span className="font-medium">{info.address}</span> ঠিকানার সাবস্ক্রিপশন নিশ্চিত করতে বোতামটি চাপুন। নিশ্চিত না করলে কোনো মার্কেটিং বার্তা পাঠানো হবে না।</p>
-          <button className="btn-primary" disabled={busy} onClick={confirm}>{busy ? "কাজ চলছে..." : "সাবস্ক্রিপশন নিশ্চিত করুন"}</button>
+          <p className="text-sm text-slate-700"><span className="font-medium">{info.address}</span>{t.optinConfirm.bodySuffix}</p>
+          <button className="btn-primary" disabled={busy} onClick={confirm}>{busy ? t.optinConfirm.working : t.optinConfirm.confirmButton}</button>
+
         </section>
       ) : null}
       {done ? (

@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson, encryptJson } from "../integrations/crypto";
 import { socialVideoMaxBytes } from "./social.service";
 import { SocialImportService } from "./social-import.service";
+import { badRequest } from "../i18n/api-exception";
 
 /** One fetch call (the real implementation is the global fetch). */
 export type StockFetchFn = (url: string, init?: any) => Promise<any>;
@@ -97,7 +98,7 @@ export class SocialStockService {
         headers: { Authorization: apiKey },
       });
     } catch (e) {
-      throw new BadRequestException(`Pexels-এ সংযোগ করা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+      throw badRequest("social.couldNotConnectToPexels", { p1: e instanceof Error ? e.message : String(e) });
     }
     const status = Number(res?.status ?? 0);
     if (status < 200 || status >= 300) {
@@ -108,12 +109,12 @@ export class SocialStockService {
           : typeof body?.status === "string" ? body.status
           : typeof body?.message === "string" ? body.message : "";
       } catch { detail = ""; }
-      throw new BadRequestException(`Pexels অনুরোধ ব্যর্থ হয়েছে (HTTP ${status})${detail ? `: ${detail}` : ""}`);
+      throw badRequest("social.pexelsRequestFailedHttp", { status: status, p2: detail ? `: ${detail}` : "" });
     }
     try {
       return await res.json();
     } catch {
-      throw new BadRequestException("Pexels এমন উত্তর দিয়েছে যা পড়া যাচ্ছে না — আবার চেষ্টা করুন।");
+      throw badRequest("social.pexelsRespondedInAWayThat");
     }
   }
 
@@ -125,7 +126,7 @@ export class SocialStockService {
    */
   async saveStockKey(organizationId: string, actorId: string, dto: { apiKey?: string }) {
     const apiKey = typeof dto?.apiKey === "string" ? dto.apiKey.trim() : "";
-    if (!apiKey) throw new BadRequestException("Pexels API key দিন।");
+    if (!apiKey) throw badRequest("social.pexelsApiKey");
     await this.pexelsGet(apiKey, "/v1/curated?per_page=1");
     const data = {
       provider: "pexels",
@@ -164,7 +165,7 @@ export class SocialStockService {
   private async requireKey(organizationId: string): Promise<string> {
     const key = await this.resolveKey(organizationId);
     if (!key) {
-      throw new BadRequestException("আগে নিজের Pexels API key যোগ করুন — Library-র Stock অংশে key দিলে তবেই stock ছবি/ভিডিও খোঁজা যাবে।");
+      throw badRequest("social.addYourOwnPexelsApiKey");
     }
     return key;
   }
@@ -277,7 +278,7 @@ export class SocialStockService {
     const kind = dto?.kind === "video" ? "video" : "photo";
     const stockId = typeof dto?.stockId === "string" ? dto.stockId.trim() : "";
     if (!/^\d+$/.test(stockId)) {
-      throw new BadRequestException("সঠিক Stock item বেছে নিন।");
+      throw badRequest("social.chooseAValidStockItem");
     }
     const key = await this.requireKey(organizationId);
     const raw = await this.pexelsGet(key, kind === "video" ? `/videos/videos/${stockId}` : `/v1/photos/${stockId}`);
@@ -286,7 +287,7 @@ export class SocialStockService {
       : SocialStockService.mapPhotoItem(raw);
     const fileUrl = SocialStockService.pickFileUrl(kind, raw);
     if (!fileUrl || !item.pageUrl) {
-      throw new BadRequestException("Pexels এই item-এর ডাউনলোডযোগ্য ফাইল দেয়নি — অন্য একটি item বেছে নিন।");
+      throw badRequest("social.pexelsDidNotGiveADownloadable");
     }
     const attribution = item.photographer
       ? `${kind === "video" ? "Video" : "Photo"} by ${item.photographer} on Pexels`

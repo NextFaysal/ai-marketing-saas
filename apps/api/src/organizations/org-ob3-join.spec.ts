@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { createHash } from "node:crypto";
 import { OrganizationsService } from "./organizations.service";
 import { OrganizationsController } from "./organizations.controller";
@@ -142,16 +143,16 @@ describe("ORG9 — invite link creation & storage", () => {
 
   it("refuses the OWNER role through a link", async () => {
     const { svc } = makeService();
-    await expect(svc.createInviteLink("org-1", "u-owner", { role: "OWNER" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createInviteLink("org-1", "u-owner", { role: "SUPER_ADMIN" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createInviteLink("org-1", "u-owner", { role: "OWNER" })).rejects.toMatchObject({ code: "organizations.roleNotViaInviteLink", status: 400 });
+    await expect(svc.createInviteLink("org-1", "u-owner", { role: "SUPER_ADMIN" })).rejects.toMatchObject({ code: "organizations.roleNotViaInviteLink", status: 400 });
   });
 
   it("refuses non-admin members and non-members (service-layer guard)", async () => {
     const { svc } = makeService();
-    await expect(svc.createInviteLink("org-1", "u-agent", { role: "VIEWER" })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.createInviteLink("org-1", "u-a", { role: "VIEWER" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.listInviteLinks("org-1", "u-agent")).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.listJoinRequests("org-1", "u-agent")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.createInviteLink("org-1", "u-agent", { role: "VIEWER" })).rejects.toMatchObject({ code: "organizations.ownerOrAdminOnly", status: 403 });
+    await expect(svc.createInviteLink("org-1", "u-a", { role: "VIEWER" })).rejects.toMatchObject({ code: "connections.userNotOrgMember", status: 404 });
+    await expect(svc.listInviteLinks("org-1", "u-agent")).rejects.toMatchObject({ code: "organizations.ownerOrAdminOnly", status: 403 });
+    await expect(svc.listJoinRequests("org-1", "u-agent")).rejects.toMatchObject({ code: "organizations.ownerOrAdminOnly", status: 403 });
   });
 
   it("list view derives status: revoked / expired / exhausted; stored null cap reads as 10", async () => {
@@ -177,7 +178,7 @@ describe("ORG9 — invite link creation & storage", () => {
     await svc.revokeInviteLink("org-1", "u-owner", a.link.id);
     const after = await svc.listInviteLinks("org-1", "u-owner");
     expect(after.find((l: any) => l.id === a.link.id).status).toBe("revoked");
-    await expect(svc.revokeInviteLink("org-1", "u-owner", a.link.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.revokeInviteLink("org-1", "u-owner", a.link.id)).rejects.toMatchObject({ code: "organizations.inviteLinkAlreadyRevoked", status: 400 });
   });
 });
 
@@ -209,7 +210,7 @@ describe("ORG9 — public link information is uniform", () => {
     const revoked = await grab(() => svc.getInviteLinkPublic(c.raw));
     for (const e of [unknown, exhausted, expired, revoked]) {
       expect(e).not.toBeNull();
-      expect(e!.cls).toBe("NotFoundException");
+      expect(e!.cls).toBe("ApiException");
       expect(e!.msg).toBe(unknown!.msg);
     }
   });
@@ -234,22 +235,22 @@ describe("ORG10 — filing a join request", () => {
     const { svc, p } = makeService();
     const one = await makeLink(svc, { role: "VIEWER", maxUses: 1 });
     await svc.requestToJoin(personA, one.raw, {});
-    await expect(svc.requestToJoin(personB, one.raw, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.requestToJoin(personB, one.raw, {})).rejects.toMatchObject({ code: "organizations.inviteLinkClosed", status: 400 });
     const two = await makeLink(svc, { role: "VIEWER" });
     await svc.revokeInviteLink("org-1", "u-owner", two.link.id);
-    await expect(svc.requestToJoin(personB, two.raw, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.requestToJoin(personB, two.raw, {})).rejects.toMatchObject({ code: "organizations.inviteLinkClosed", status: 400 });
     const three = await makeLink(svc, { role: "VIEWER" });
     p.orgInviteLink.rows.find((r: any) => r.id === three.link.id).expiresAt = new Date(Date.now() - 1000);
-    await expect(svc.requestToJoin(personB, three.raw, {})).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.requestToJoin(personB, "unknown-token-999", {})).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.requestToJoin(personB, three.raw, {})).rejects.toMatchObject({ code: "organizations.inviteLinkClosed", status: 400 });
+    await expect(svc.requestToJoin(personB, "unknown-token-999", {})).rejects.toMatchObject({ code: "organizations.invitationLinkInvalid", status: 404 });
   });
 
   it("refuses a second PENDING request and refuses existing members", async () => {
     const { svc } = makeService();
     const { raw } = await makeLink(svc, { role: "VIEWER" });
     await svc.requestToJoin(personA, raw, {});
-    await expect(svc.requestToJoin(personA, raw, {})).rejects.toBeInstanceOf(ConflictException);
-    await expect(svc.requestToJoin(owner, raw, {})).rejects.toBeInstanceOf(ConflictException);
+    await expect(svc.requestToJoin(personA, raw, {})).rejects.toMatchObject({ code: "organizations.alreadyPendingJoinRequest", status: 409 });
+    await expect(svc.requestToJoin(owner, raw, {})).rejects.toMatchObject({ code: "organizations.alreadyOrgMember", status: 409 });
   });
 
   it("my-request shows only the caller's own latest request", async () => {
@@ -261,7 +262,7 @@ describe("ORG10 — filing a join request", () => {
     const mineB = await svc.getMyJoinRequest(personB, raw);
     expect(mineB.request).toBeNull();
     expect(mineB.organizationName).toBe("Demo Shop");
-    await expect(svc.getMyJoinRequest(personA, "nope-token-000")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getMyJoinRequest(personA, "nope-token-000")).rejects.toMatchObject({ code: "organizations.invitationLinkInvalid", status: 404 });
   });
 });
 
@@ -295,14 +296,14 @@ describe("ORG10 — the approval queue", () => {
     expect(req.decidedAt).toBeTruthy();
     expect(auditEntries.some((e: any) => e.action === "org.join_request_approved")).toBe(true);
     // Decided requests cannot be decided again.
-    await expect(svc.approveJoinRequest("org-1", "u-admin", requestId, {})).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.rejectJoinRequest("org-1", "u-admin", requestId, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.approveJoinRequest("org-1", "u-admin", requestId, {})).rejects.toMatchObject({ code: "organizations.requestAlreadyStatus", status: 400 });
+    await expect(svc.rejectJoinRequest("org-1", "u-admin", requestId, {})).rejects.toMatchObject({ code: "organizations.requestAlreadyStatus", status: 400 });
   });
 
   it("approve honours a role override but never OWNER", async () => {
     const { svc, p } = makeService();
     const { requestId } = await queued(svc);
-    await expect(svc.approveJoinRequest("org-1", "u-owner", requestId, { role: "OWNER" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.approveJoinRequest("org-1", "u-owner", requestId, { role: "OWNER" })).rejects.toMatchObject({ code: "organizations.roleNotViaJoinRequest", status: 400 });
     const out = await svc.approveJoinRequest("org-1", "u-owner", requestId, { role: "ANALYST" });
     expect(out.role).toBe("ANALYST");
     expect(p.membership.rows.find((m: any) => m.userId === "u-a").role).toBe("ANALYST");
@@ -313,7 +314,7 @@ describe("ORG10 — the approval queue", () => {
     // org-1 already has OWNER + ADMIN + agent = 3 ACTIVE memberships
     // in the seed; FREE allows 2 — the guard must refuse.
     const { requestId } = await queued(svc);
-    await expect(svc.approveJoinRequest("org-1", "u-owner", requestId, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.approveJoinRequest("org-1", "u-owner", requestId, {})).rejects.toMatchObject({ code: "organizations.seatLimitReachedWithInvites", status: 400 });
     expect(p.orgJoinRequest.rows[0].status).toBe("PENDING");
     expect(p.membership.rows.find((m: any) => m.userId === "u-a")).toBeUndefined();
   });
@@ -351,8 +352,8 @@ describe("ORG10 — the approval queue", () => {
 
   it("queue decisions on unknown ids are 404", async () => {
     const { svc } = makeService();
-    await expect(svc.approveJoinRequest("org-1", "u-owner", "missing", {})).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.rejectJoinRequest("org-1", "u-owner", "missing", {})).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.approveJoinRequest("org-1", "u-owner", "missing", {})).rejects.toMatchObject({ code: "organizations.joinRequestNotFound", status: 404 });
+    await expect(svc.rejectJoinRequest("org-1", "u-owner", "missing", {})).rejects.toMatchObject({ code: "organizations.joinRequestNotFound", status: 404 });
   });
 });
 
@@ -381,7 +382,7 @@ describe("ORG9/ORG10 — route metadata + guard layer", () => {
   it("RolesGuard: SUPPORT_AGENT is refused, ADMIN passes, SUPER passes", () => {
     const guard = new RolesGuard(reflector);
     const handler = OrganizationsController.prototype.approveJoinRequest;
-    expect(() => guard.canActivate(ctxFor(handler, { user: { userId: "u-agent" }, membership: { role: "SUPPORT_AGENT" } }))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(ctxFor(handler, { user: { userId: "u-agent" }, membership: { role: "SUPPORT_AGENT" } }))).toThrow(ApiException);
     expect(guard.canActivate(ctxFor(handler, { user: { userId: "u-admin" }, membership: { role: "ADMIN" } }))).toBe(true);
     expect(guard.canActivate(ctxFor(handler, { user: { userId: "root", isSuperAdmin: true } }))).toBe(true);
   });

@@ -320,14 +320,14 @@ describe("MS5 HTML email", () => {
   it("htmlBody on an sms template / sms broadcast / template update = honest 400", async () => {
     const { svc } = build();
     await expect(svc.createTemplate("org-1", "owner", { name: "t", channel: "sms", body: "b", htmlBody: "<p>x</p>" }))
-      .rejects.toThrow(/htmlBody is only allowed for email/);
+      .rejects.toMatchObject({ code: "messaging.htmlBodyIsOnlyAllowedForEmail" });
     const smsTpl = await svc.createTemplate("org-1", "owner", { name: "t2", channel: "sms", body: "b" });
     await expect(svc.updateTemplate("org-1", smsTpl.id, { htmlBody: "<p>x</p>" }))
-      .rejects.toThrow(/htmlBody is only allowed for email/);
+      .rejects.toMatchObject({ code: "messaging.htmlBodyIsOnlyAllowedForEmail" });
     await expect(svc.createBroadcast("org-1", "owner", { name: "m", channel: "sms", body: "b", htmlBody: "<p>x</p>", audienceType: "customers" }))
-      .rejects.toThrow(/htmlBody is only allowed for email/);
+      .rejects.toMatchObject({ code: "messaging.htmlBodyIsOnlyAllowedForEmail2" });
     await expect(svc.createBroadcast("org-1", "owner", { name: "m", channel: "whatsapp", whatsappTemplateId: "wa-x", htmlBody: "<p>x</p>", audienceType: "customers" }))
-      .rejects.toThrow(/htmlBody is only allowed for email/);
+      .rejects.toMatchObject({ code: "messaging.htmlBodyIsOnlyAllowedForEmail2" });
   });
 });
 
@@ -376,10 +376,10 @@ describe("MS5 test sends", () => {
 
   it("test sends 404 honestly for a missing broadcast/template and 400 without an address", async () => {
     const { svc } = build();
-    await expect(svc.testSendBroadcast("org-1", "owner", "nope", "x@example.com")).rejects.toThrow(/Broadcast not found/);
-    await expect(svc.testSendTemplate("org-1", "owner", "nope", "x@example.com")).rejects.toThrow(/Template not found/);
+    await expect(svc.testSendBroadcast("org-1", "owner", "nope", "x@example.com")).rejects.toMatchObject({ code: "messaging.broadcastNotFound" });
+    await expect(svc.testSendTemplate("org-1", "owner", "nope", "x@example.com")).rejects.toMatchObject({ code: "messaging.templateNotFound" });
     const bc = await svc.createBroadcast("org-1", "owner", { name: "m", channel: "email", subject: "s", body: "b", audienceType: "customers" });
-    await expect(svc.testSendBroadcast("org-1", "owner", bc.id, "  ")).rejects.toThrow(/test recipient address is required/);
+    await expect(svc.testSendBroadcast("org-1", "owner", bc.id, "  ")).rejects.toMatchObject({ code: "messaging.aTestRecipientAddressIsRequired" });
   });
 });
 
@@ -486,7 +486,7 @@ describe("MS5 link tracking + UTM", () => {
 
   it("settings: linkTrackingEnabled must be a real boolean", async () => {
     const { svc } = build();
-    await expect(svc.updateMessagingSetting("org-1", "owner", { linkTrackingEnabled: "yes" as any })).rejects.toThrow(/linkTrackingEnabled must be a boolean/);
+    await expect(svc.updateMessagingSetting("org-1", "owner", { linkTrackingEnabled: "yes" as any })).rejects.toMatchObject({ code: "messaging.linkTrackingEnabledMustBeABoolean" });
   });
 });
 
@@ -532,7 +532,9 @@ describe("MS5 compose-check", () => {
     const { svc } = build();
     const out: any = svc.checkCompose({ channel: "email", body: "free money" });
     expect(codes(out.warnings)).toContain("SPAM_WORD");
-    expect(() => svc.checkCompose({ channel: "pigeon", body: "b" })).toThrow(/channel must be/);
+    let channelErr: any = null;
+    try { svc.checkCompose({ channel: "pigeon", body: "b" }); } catch (e) { channelErr = e; }
+    expect(channelErr?.code).toBe("messaging.channelMustBeEmailSmsWhatsapp");
   });
 });
 

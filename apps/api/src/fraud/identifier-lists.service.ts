@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { deviceHashPrefix, maskIdentifier, normalizeIdentifier } from "./identifier-utils";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * GB3 (GC9): staff-managed blocked / trusted identifier lists
@@ -92,21 +93,21 @@ export class IdentifierListsService {
   ) {
     const kind = String(dto?.kind ?? "");
     if (!["phone", "email", "ip", "device"].includes(kind)) {
-      throw new BadRequestException("ধরন সঠিক নয় — phone, email, ip অথবা device পাঠান");
+      throw badRequest("fraud.invalidTypeSendPhoneEmailIp");
     }
     const norm = normalizeIdentifier(kind, dto?.value ?? "");
     if (!norm) {
       throw new BadRequestException(INVALID_MESSAGES[kind] ?? "শনাক্তকারীটি সঠিক নয়");
     }
     const table = this.table(list);
-    if (!table?.create) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!table?.create) throw badRequest("fraud.theListFacilityIsNotAvailable");
     const existing = table.findFirst
       ? await table.findFirst({
           where: { organizationId: orgId, kind, matchKey: norm.matchKey },
         }).catch(() => null)
       : null;
     if (existing) {
-      throw new BadRequestException("ইতিমধ্যে তালিকায় আছে");
+      throw badRequest("fraud.alreadyOnTheList");
     }
     let row: any;
     try {
@@ -123,7 +124,7 @@ export class IdentifierListsService {
     } catch (e: any) {
       // Unique (organizationId, kind, matchKey) race → duplicate.
       if (String(e?.code ?? "").includes("P2002") || /unique/i.test(String(e?.message ?? ""))) {
-        throw new BadRequestException("ইতিমধ্যে তালিকায় আছে");
+        throw badRequest("fraud.alreadyOnTheList");
       }
       throw e;
     }
@@ -136,7 +137,7 @@ export class IdentifierListsService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id, organizationId: orgId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Identifier not found in this organization");
+    if (!row) throw notFound("fraud.identifierNotFoundInThisOrganization");
     await table.delete({ where: { id: row.id } });
     await this.auditChange(orgId, actorId, list, "removed", row);
     return { deleted: true, id: row.id };

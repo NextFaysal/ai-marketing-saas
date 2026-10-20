@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { PERMISSION_AREA_KEYS } from "./permission-catalog";
+import { ApiException, forbidden, renderMessage, withCatalogCode } from "../i18n";
 
 // Milestone 40: scheduled maintenance windows live in
 // SystemSetting; the guard caches the row briefly.
@@ -74,20 +75,20 @@ export class TenantGuard implements CanActivate {
     const organizationId: string | undefined =
       req.params?.organizationId ?? req.params?.id ?? req.headers?.["x-organization-id"];
     if (!organizationId) return true; // route is not org-scoped
-    if (!req.user?.userId) throw new ForbiddenException("Authentication required");
+    if (!req.user?.userId) throw forbidden("common.authRequired");
     if (req.user.isSuperAdmin) { req.organizationId = organizationId; return true; }
     const membership = await (this.prisma as any).membership.findUnique({
       where: { userId_organizationId: { userId: req.user.userId, organizationId } },
     });
     if (!membership || membership.status !== "ACTIVE") {
-      throw new ForbiddenException("You do not have access to this organization");
+      throw forbidden("common.noOrgAccess");
     }
     // A platform-suspended (or deleted) organization locks its
     // members out; super admins keep access for support/recovery.
     try {
       const org = await (this.prisma as any).organization?.findUnique({ where: { id: organizationId }, select: { status: true, archivedAt: true } });
       if (org?.status && org.status !== "ACTIVE") {
-        throw new ForbiddenException(`This organization is ${org.status.toLowerCase()} by the platform team`);
+        throw forbidden("common.orgStatusBlocked", { status: org.status.toLowerCase() });
       }
       // ORG3: a tenant-archived organization is closed for work
       // until the OWNER restores it. Only the owner's lifecycle /
@@ -98,15 +99,17 @@ export class TenantGuard implements CanActivate {
         const url: string = req.originalUrl ?? req.url ?? "";
         const isOwner = membership.role === "OWNER";
         if (!isOwner || !isArchivedOwnerPath(url, method, organizationId)) {
-          throw new ForbiddenException(
-            isOwner
-              ? "This organization is archived — restore it to continue working"
-              : "This organization is archived by its owner",
+          throw withCatalogCode(
+            new ForbiddenException(renderMessage("bn", isOwner ? "common.orgArchivedOwner" : "common.orgArchivedMember")),
+            isOwner ? "common.orgArchivedOwner" : "common.orgArchivedMember",
           );
         }
       }
     } catch (e) {
-      if (e instanceof ForbiddenException) throw e;
+      // Deliberate blocks (typed ForbiddenException and coded
+      // ApiException) always propagate; only lookup failures
+      // fall through open.
+      if (e instanceof ForbiddenException || e instanceof ApiException) throw e;
       // organization lookup unavailable (older fakes) — do not block
     }
     // ORG11 (Organization Next OB4): org security policy — MFA
@@ -161,6 +164,7 @@ export class TenantGuard implements CanActivate {
                 statusCode: 403,
                 code: "ORG_SESSION_EXPIRED",
                 message: `এই Organization-এ সেশনের সর্বোচ্চ বয়স ${cap} ঘণ্টা — আপনার সেশন তার চেয়ে পুরনো। আবার লগইন করে চেষ্টা করুন।`,
+                params: { hours: cap },
                 error: "Forbidden",
               });
             }
@@ -186,7 +190,9 @@ export class TenantGuard implements CanActivate {
         if (w?.hardLockout && w.startsAt && w.endsAt) {
           const now = Date.now();
           if (new Date(w.startsAt).getTime() <= now && now <= new Date(w.endsAt).getTime()) {
-            throw new ServiceUnavailableException(w.message || "রক্ষণাবেক্ষণ চলছে — সাময়িকভাবে পরিবর্তন বন্ধ আছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।");
+            throw w.message
+              ? new ServiceUnavailableException(w.message)
+              : withCatalogCode(new ServiceUnavailableException(renderMessage("bn", "common.maintenanceLockout")), "common.maintenanceLockout");
           }
         }
       }
@@ -209,11 +215,11 @@ export class TenantGuard implements CanActivate {
           where: { organizationId }, orderBy: { createdAt: "desc" }, select: { status: true },
         });
         if (sub?.status === "PAST_DUE") {
-          throw new ForbiddenException("This organization's subscription is past due — the workspace is read-only until payment is recorded. You can still view everything and request a plan change from Billing.");
+          throw forbidden("common.orgSubscriptionPastDue");
         }
       }
     } catch (e) {
-      if (e instanceof ForbiddenException) throw e;
+      if (e instanceof ForbiddenException || e instanceof ApiException) throw e;
       // subscription lookup unavailable (older fakes) — do not block
     }
     // Milestone 38 (Admin Phase A2): view-as sessions are bound
@@ -223,7 +229,7 @@ export class TenantGuard implements CanActivate {
     const viewAs = (req.user as any)?.viewAs;
     if (viewAs) {
       if (viewAs.orgId !== organizationId) {
-        throw new ForbiddenException("This view-as session is limited to a single organization");
+        throw forbidden("common.viewAsSingleOrg");
       }
       // Admin Polish AP2: the token alone is no longer enough —
       // its server-side session must exist and be live (not
@@ -237,11 +243,11 @@ export class TenantGuard implements CanActivate {
         } catch { session = null; }
       }
       if (!session || session.revokedAt || new Date(session.expiresAt).getTime() <= Date.now() || session.organizationId !== organizationId) {
-        throw new ForbiddenException("This view-as session has been revoked or has expired. The admin can start a new session.");
+        throw forbidden("common.viewAsRevoked");
       }
       const method = (req.method ?? "GET").toUpperCase();
       if (viewAs.mode !== "write" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
-        throw new ForbiddenException("This is a read-only view-as session — changes are disabled. The admin can start a write session if a fix is needed.");
+        throw forbidden("common.viewAsReadOnly");
       }
     }
     // GB6 (GC16): attach the member's CustomRole areas (if any)

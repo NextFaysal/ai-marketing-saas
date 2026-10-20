@@ -119,6 +119,6 @@ describe("CA4 localizeAdCopy", () => {
   it("ad not in the plan → 404", async () => {
     const { svc } = build({ getProvider: () => fakeLlm("{}") });
     await expect(svc.localizeAdCopy("org-1", "u1", "plan-1", "ad-zzz", { targetLocale: "en" }))
-      .rejects.toThrow("Ad not found in this plan");
+      .rejects.toMatchObject({ code: "campaigns.adNotFoundInThisPlan" });
   });
 });

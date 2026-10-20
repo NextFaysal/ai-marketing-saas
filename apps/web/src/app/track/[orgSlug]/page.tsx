@@ -5,8 +5,9 @@ import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { MediaImage } from "@/components/media-image";
-import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { courierStatusView, courierStepLabels } from "@/lib/courier-status";
 import { shopLocaleOf, shopT, type ShopDict, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
 
 // EC18 — branded public order-tracking page. Branding + locale +
 // the on/off switch come from the public shop home payload; the
@@ -186,8 +187,8 @@ export default function TrackOrderPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || "ডেলিভারি নির্দেশনা সংরক্ষণ করা যায়নি");
-      setNdrSuccess(data.message || "আপনার নির্দেশনা সফলভাবে গ্রহণ করা হয়েছে!");
+      if (!res.ok) throw new Error(data.message || t.track.ndrSaveFailed);
+      setNdrSuccess(data.message || t.track.ndrSuccessFallback);
       setNdrOpen(false);
     } catch (err) {
       setNdrError(err instanceof Error ? err.message : String(err));
@@ -232,7 +233,7 @@ export default function TrackOrderPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error((body as { message?: string }).message ?? "লিংক পাওয়া যায়নি");
+        throw new Error((body as { message?: string }).message ?? t.track.linkNotFound);
       }
       const json = (await res.json()) as {
         links: { productName: string; itemId: string; downloadPath: string; expiresAt: string }[];
@@ -245,7 +246,7 @@ export default function TrackOrderPage() {
       setLicenseShortages(json.licenseShortages ?? []);
       setRevealedGiftCards(json.giftCards ?? []);
     } catch (err) {
-      setDigitalError(err instanceof Error ? err.message : "লিংক পাওয়া যায়নি");
+      setDigitalError(err instanceof Error ? err.message : t.track.linkNotFound);
     } finally {
       setDigitalBusy(false);
     }
@@ -354,7 +355,7 @@ export default function TrackOrderPage() {
       <main className="mx-auto max-w-2xl px-4 py-16">
         <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <p className="text-4xl">📦</p>
-          <p className="mt-3 text-base font-bold text-slate-800">ট্র্যাকিং সুবিধা বন্ধ আছে</p>
+          <p className="mt-3 text-base font-bold text-slate-800">{shopT("bn").track.disabled}</p>
         </div>
       </main>
     );
@@ -433,7 +434,7 @@ export default function TrackOrderPage() {
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                {t.track.placedAt}: {new Date(result.placedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")}
+                {t.track.placedAt}: {fmtDateTime(locale, result.placedAt)}
               </p>
 
               {/* Timeline from the API's steps — reached = filled. */}
@@ -473,7 +474,7 @@ export default function TrackOrderPage() {
               <ul className="space-y-1.5 text-sm">
                 {result.items.map((item, i) => (
                   <li key={`${item.name}-${i}`} className="flex justify-between gap-2">
-                    <span className="text-slate-700">{item.name} × {item.quantity}</span>
+                    <span className="text-slate-700">{item.name} × {fmtNumber(locale, item.quantity)}</span>
                     <span className="shrink-0 font-semibold text-slate-900">{money(item.totalMinor)}</span>
                   </li>
                 ))}
@@ -492,17 +493,17 @@ export default function TrackOrderPage() {
                 no placeholder when absent. */}
             {result.riderLocation ? (
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-900">🛵 রাইডারের অবস্থান</h3>
+                <h3 className="text-sm font-bold text-slate-900">{t.track.riderHeading}</h3>
                 <p className="text-sm text-slate-700">
-                  {result.riderLocation.riderName ? <>রাইডার <b>{result.riderLocation.riderName}</b> · </> : null}
+                  {result.riderLocation.riderName ? <>{t.track.riderPrefix}<b>{result.riderLocation.riderName}</b> · </> : null}
                   <span className="font-mono font-semibold">{result.riderLocation.lat}, {result.riderLocation.lng}</span>
                   {result.riderLocation.stale ? (
-                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">পুরনো অবস্থান</span>
+                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">{t.track.staleBadge}</span>
                   ) : null}
                 </p>
                 <p className="text-xs text-slate-500">
-                  অবস্থানের সময়: {new Date(result.riderLocation.recordedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")} ·{" "}
-                  <a href={result.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">মানচিত্রে দেখুন</a>
+                  {t.track.locationTimePrefix}{fmtDateTime(locale, result.riderLocation.recordedAt)} ·{" "}
+                  <a href={result.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">{t.track.viewOnMap}</a>
                 </p>
               </section>
             ) : null}
@@ -511,7 +512,7 @@ export default function TrackOrderPage() {
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-slate-900">{t.track.installmentHeading}</h3>
                 <p className="text-sm text-slate-700">
-                  {result.installmentSummary.paidInstallments} / {result.installmentSummary.totalInstallments} {t.track.installmentProgress}
+                  {fmtNumber(locale, result.installmentSummary.paidInstallments)} / {fmtNumber(locale, result.installmentSummary.totalInstallments)} {t.track.installmentProgress}
                 </p>
                 {result.installmentSummary.nextDueDate ? (
                   <p className="text-sm text-slate-700">
@@ -624,7 +625,7 @@ export default function TrackOrderPage() {
 
             {(result.digitalItems ?? []).length > 0 ? (
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-900">💾 ডিজিটাল পণ্য</h3>
+                <h3 className="text-sm font-bold text-slate-900">{t.track.digitalHeading}</h3>
                 <ul className="space-y-1 text-sm text-slate-700">
                   {(result.digitalItems ?? []).map((d, i) => (
                     <li key={`${d.name}-${i}`}>{d.name}</li>
@@ -638,7 +639,7 @@ export default function TrackOrderPage() {
                     disabled={digitalBusy}
                     className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white hover:bg-sky-700 disabled:opacity-50"
                   >
-                    {digitalBusy ? "অপেক্ষা করুন…" : "লিংক দেখুন"}
+                    {digitalBusy ? t.track.pleaseWait : t.track.viewLinks}
                   </button>
                 ) : null}
                 {digitalError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{digitalError}</p> : null}
@@ -648,10 +649,10 @@ export default function TrackOrderPage() {
                       <li key={`${l.productName}-${i}`} className="text-sm">
                         {l.productName}:{" "}
                         <a href={`${API_URL}/${l.downloadPath}`} target="_blank" rel="noreferrer" className="font-semibold text-sky-700 underline">
-                          ডাউনলোড
+                          {t.track.download}
                         </a>
                         {l.expiresAt ? (
-                          <span className="block text-xs text-slate-400">এই লিংকের মেয়াদ: {new Date(l.expiresAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")} পর্যন্ত</span>
+                          <span className="block text-xs text-slate-400">{t.track.linkExpiry.replace("{date}", fmtDateTime(locale, l.expiresAt))}</span>
                         ) : null}
                       </li>
                     ))}
@@ -665,8 +666,8 @@ export default function TrackOrderPage() {
                 + an honest shortage notice when the pool ran dry. */}
             {revealedLicenseKeys && revealedLicenseKeys.some((e) => e.keys.length > 0) ? (
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-900">🔑 লাইসেন্স কী</h3>
-                <p className="text-xs font-semibold text-amber-700">আপনার লাইসেন্স কীগুলো শুধুমাত্র এখানেই দেখানো হয় — নিরাপদে সংরক্ষণ করে রাখুন।</p>
+                <h3 className="text-sm font-bold text-slate-900">{t.track.licenseHeading}</h3>
+                <p className="text-xs font-semibold text-amber-700">{t.track.licenseNote}</p>
                 {revealedLicenseKeys.filter((e) => e.keys.length > 0).map((entry) => (
                   <div key={entry.itemId} className="space-y-1.5">
                     <p className="text-sm font-semibold text-slate-800">{entry.productName}</p>
@@ -678,7 +679,7 @@ export default function TrackOrderPage() {
                           onClick={() => copyLicenseKey(k.key)}
                           className="shrink-0 rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700"
                         >
-                          {lkCopied === k.key ? "কপি হয়েছে ✅" : "কপি করুন"}
+                          {lkCopied === k.key ? t.track.copied : t.track.copy}
                         </button>
                       </div>
                     ))}
@@ -688,10 +689,10 @@ export default function TrackOrderPage() {
             ) : null}
             {licenseShortages && licenseShortages.length > 0 ? (
               <section className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-                <p className="text-sm font-semibold text-amber-800">কিছু লাইসেন্স কী এখনো দেওয়া যায়নি — বিক্রেতার সঙ্গে যোগাযোগ করুন।</p>
+                <p className="text-sm font-semibold text-amber-800">{t.track.shortageText}</p>
                 <ul className="mt-1 space-y-0.5 text-xs text-amber-700">
                   {licenseShortages.map((s, i) => (
-                    <li key={`${s.productName}-${i}`}>{s.productName}: প্রয়োজন {s.needed}টি, দেওয়া হয়েছে {s.assigned}টি</li>
+                    <li key={`${s.productName}-${i}`}>{s.productName}: {t.track.shortageLine.replace("{needed}", fmtNumber(locale, s.needed)).replace("{assigned}", fmtNumber(locale, s.assigned))}</li>
                   ))}
                 </ul>
               </section>
@@ -702,13 +703,13 @@ export default function TrackOrderPage() {
                 which rides the EC24b digital-access flow. */}
             {(result.giftCardItems ?? []).length > 0 ? (
               <section className="space-y-2 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-slate-900">🎁 গিফট কার্ড</h3>
+                <h3 className="text-sm font-bold text-slate-900">{t.track.giftCardHeading}</h3>
                 <ul className="space-y-1 text-sm text-slate-700">
                   {(result.giftCardItems ?? []).map((g, i) => (
                     <li key={`${g.name}-${i}`} className="flex flex-wrap items-center gap-2">
                       <span>{g.name}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${g.issued ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                        {g.issued ? "ইস্যু হয়েছে" : "এখনো ইস্যু হয়নি"}
+                        {g.issued ? t.track.gcIssued : t.track.gcNotIssued}
                       </span>
                     </li>
                   ))}
@@ -721,7 +722,7 @@ export default function TrackOrderPage() {
                     disabled={digitalBusy}
                     className="rounded-xl bg-pink-600 px-4 py-2 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
                   >
-                    {digitalBusy ? "অপেক্ষা করুন…" : "লিংক দেখুন"}
+                    {digitalBusy ? t.track.pleaseWait : t.track.viewLinks}
                   </button>
                 ) : null}
                 {digitalError && (result.giftCardItems ?? []).some((g) => g.issued) && (result.digitalItems ?? []).length === 0 ? (
@@ -738,14 +739,14 @@ export default function TrackOrderPage() {
                             onClick={() => copyGiftCardCode(c.code)}
                             className="shrink-0 rounded-lg bg-pink-600 px-3 py-2 text-xs font-bold text-white hover:bg-pink-700"
                           >
-                            {gcCopied === c.code ? "কপি হয়েছে ✅" : "কপি করুন"}
+                            {gcCopied === c.code ? t.track.copied : t.track.copy}
                           </button>
                         </div>
                         <p className="text-xs text-slate-600">
-                          মূল্য: <b className="text-slate-900">{money(c.initialAmountMinor)}</b>
-                          {" · "}অবশিষ্ট ব্যালেন্স: <b className="text-slate-900">{money(c.balanceMinor)}</b>
-                          {" · "}অবস্থা: <b className="text-slate-900">{{ active: "সক্রিয়", depleted: "ব্যালেন্স শেষ", expired: "মেয়াদোত্তীর্ণ", void: "বাতিল" }[c.status] ?? c.status}</b>
-                          {c.expiresAt ? <>{" · "}মেয়াদ: <b className="text-slate-900">{new Date(c.expiresAt).toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD")}</b></> : null}
+                          {t.track.gcValueLabel}<b className="text-slate-900">{money(c.initialAmountMinor)}</b>
+                          {" · "}{t.track.gcBalanceLabel}<b className="text-slate-900">{money(c.balanceMinor)}</b>
+                          {" · "}{t.track.gcStatusLabel}<b className="text-slate-900">{{ active: t.track.gcStatusActive, depleted: t.track.gcStatusDepleted, expired: t.track.gcStatusExpired, void: t.track.gcStatusVoid }[c.status] ?? c.status}</b>
+                          {c.expiresAt ? <>{" · "}{t.track.gcExpiryLabel}<b className="text-slate-900">{fmtDate(locale, c.expiresAt)}</b></> : null}
                         </p>
                       </div>
                     ))}
@@ -759,13 +760,13 @@ export default function TrackOrderPage() {
                 <h3 className="text-sm font-bold text-slate-900">🚚 {t.track.shipmentTitle} — {result.shipment.provider}</h3>
                 {result.shipment.trackingCode ? (
                   <p className="text-sm text-slate-600">{t.track.trackingCode}: <span className="font-mono font-bold">{result.shipment.trackingCode}</span>{result.shipment.trackingUrl ? (
-                    <> — <a href={result.shipment.trackingUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">{locale === "en" ? "Track on courier site" : "কুরিয়ারের সাইটে ট্র্যাক করুন"}</a></>
+                    <> — <a href={result.shipment.trackingUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">{t.track.trackOnCourierSite}</a></>
                   ) : null}</p>
                 ) : null}
                 {courierView?.kind === "progress" ? (
                   <>
                     <div className="flex items-center gap-1">
-                      {COURIER_STEP_LABELS.map((label, i) => (
+                      {courierStepLabels(locale).map((label, i) => (
                         <div key={label} className="flex flex-1 flex-col items-center gap-1">
                           <div className={`h-2 w-full rounded-full ${i <= courierView.step ? "bg-gradient-to-r from-emerald-500 to-teal-400" : "bg-slate-200"}`} />
                           <span className={`text-center text-[11px] leading-tight ${i === courierView.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>
@@ -781,7 +782,7 @@ export default function TrackOrderPage() {
                 ) : (
                   <p className="text-sm text-slate-600">{t.track.shipmentStatus}: <b>{result.shipment.status}</b></p>
                 )}
-                <p className="text-xs text-slate-400">{t.track.bookedAt}: {new Date(result.shipment.bookedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")}</p>
+                <p className="text-xs text-slate-400">{t.track.bookedAt}: {fmtDateTime(locale, result.shipment.bookedAt)}</p>
               </section>
             ) : null}
 
@@ -792,10 +793,10 @@ export default function TrackOrderPage() {
                   <div>
                     <h3 className="text-sm font-black text-amber-950 flex items-center gap-1.5">
                       <span>🤖</span>
-                      <span>ডেলিভারি সহায়তা ও রাইডার নির্দেশনা (NDR Assistant)</span>
+                      <span>{t.track.ndrHeading}</span>
                     </h3>
                     <p className="mt-1 text-xs text-amber-800">
-                      ডেলিভারি নিতে সমস্যা হচ্ছে? সময় বা ফোন নম্বর পরিবর্তন করতে নিচের বাটন ব্যবহার করুন।
+                      {t.track.ndrIntro}
                     </p>
                   </div>
                   {!ndrOpen && (
@@ -804,7 +805,7 @@ export default function TrackOrderPage() {
                       onClick={() => setNdrOpen(true)}
                       className="shrink-0 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-amber-700 shadow-sm transition"
                     >
-                      নির্দেশনা দিন
+                      {t.track.ndrGiveInstruction}
                     </button>
                   )}
                 </div>
@@ -820,10 +821,10 @@ export default function TrackOrderPage() {
                   <form onSubmit={submitNdr} className="mt-3 space-y-3 rounded-2xl bg-white p-4 border border-amber-200 shadow-xs">
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {[
-                        { id: "reschedule", label: "📅 তারিখ পরিবর্তন" },
-                        { id: "alt_phone", label: "📞 বিকল্প ফোন" },
-                        { id: "update_address", label: "📍 ঠিকানা সংশোধন" },
-                        { id: "instruction", label: "📝 বিশেষ নোট" },
+                        { id: "reschedule", label: t.track.ndrReschedule },
+                        { id: "alt_phone", label: t.track.ndrAltPhone },
+                        { id: "update_address", label: t.track.ndrUpdateAddress },
+                        { id: "instruction", label: t.track.ndrInstructionTab },
                       ].map((item) => (
                         <button
                           key={item.id}
@@ -843,7 +844,7 @@ export default function TrackOrderPage() {
                     {ndrAction === "reschedule" && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                          কোন তারিখে ডেলিভারি নিতে চান?
+                          {t.track.ndrDateQuestion}
                         </label>
                         <input
                           type="date"
@@ -858,12 +859,12 @@ export default function TrackOrderPage() {
                     {ndrAction === "alt_phone" && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                          বিকল্প ফোন নম্বর (রাইডার না পেলে এই নম্বরে কল করবে):
+                          {t.track.ndrAltPhoneLabel}
                         </label>
                         <input
                           type="tel"
                           required
-                          placeholder="যেমন: 018XXXXXXXX"
+                          placeholder={t.track.ndrAltPhonePlaceholder}
                           value={ndrAltPhone}
                           onChange={(e) => setNdrAltPhone(e.target.value)}
                           className="w-full rounded-xl border border-slate-300 p-2 text-xs font-mono focus:border-amber-600 focus:outline-none"
@@ -874,12 +875,12 @@ export default function TrackOrderPage() {
                     {ndrAction === "update_address" && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                          সংশোধিত ঠিকানা বা পরিচিত ল্যান্ডমার্ক:
+                          {t.track.ndrAddressLabel}
                         </label>
                         <input
                           type="text"
                           required
-                          placeholder="যেমন: বাসা নং ১২, রোড ৩, মসজিদের পাশে"
+                          placeholder={t.track.ndrAddressPlaceholder}
                           value={ndrAddress}
                           onChange={(e) => setNdrAddress(e.target.value)}
                           className="w-full rounded-xl border border-slate-300 p-2 text-xs focus:border-amber-600 focus:outline-none"
@@ -890,12 +891,12 @@ export default function TrackOrderPage() {
                     {ndrAction === "instruction" && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">
-                          রাইডারের জন্য বিশেষ নির্দেশনা:
+                          {t.track.ndrInstructionLabel}
                         </label>
                         <textarea
                           required
                           rows={2}
-                          placeholder="যেমন: কল দিয়ে আসবেন, বা সিকিউরিটির কাছে রেখে যাবেন"
+                          placeholder={t.track.ndrInstructionPlaceholder}
                           value={ndrInstruction}
                           onChange={(e) => setNdrInstruction(e.target.value)}
                           className="w-full rounded-xl border border-slate-300 p-2 text-xs focus:border-amber-600 focus:outline-none"
@@ -915,14 +916,14 @@ export default function TrackOrderPage() {
                         onClick={() => setNdrOpen(false)}
                         className="rounded-xl px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
                       >
-                        বাতিল
+                        {t.track.ndrCancel}
                       </button>
                       <button
                         type="submit"
                         disabled={ndrBusy}
                         className="rounded-xl bg-amber-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
                       >
-                        {ndrBusy ? "সংরক্ষণ হচ্ছে..." : "নির্দেশনা পাঠান"}
+                        {ndrBusy ? t.track.ndrSaving : t.track.ndrSend}
                       </button>
                     </div>
                   </form>
@@ -939,10 +940,10 @@ export default function TrackOrderPage() {
                   </span>
                   <div>
                     <h3 className="text-sm font-black text-indigo-950">
-                      আপনার জন্য বিশেষ উপহার — পরবর্তী অর্ডারে ১৫% ছাড়!
+                      {t.track.loyaltyHeading}
                     </h3>
                     <p className="mt-0.5 text-xs text-indigo-700">
-                      চেকআউটে কুপন কোড ব্যবহার করুন: <span className="font-mono font-black rounded bg-white px-2 py-0.5 border border-indigo-200 text-indigo-900">VIP15</span>
+                      {t.track.loyaltyPrefix}<span className="font-mono font-black rounded bg-white px-2 py-0.5 border border-indigo-200 text-indigo-900">VIP15</span>
                     </p>
                   </div>
                 </div>
@@ -950,7 +951,8 @@ export default function TrackOrderPage() {
                   href={`/shop/${orgSlug}`}
                   className="rounded-2xl bg-indigo-600 px-5 py-2.5 text-xs font-black text-white hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition"
                 >
-                  🛍️ নতুন কালেকশন দেখুন →
+                  {t.track.loyaltyCta}
+
                 </Link>
               </div>
             </section>

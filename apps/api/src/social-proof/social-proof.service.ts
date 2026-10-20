@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { isSoldOrder } from "../storefront/ec27-discovery";
 import { parseBdAddress } from "../orders/bd-address";
 import type { UpdateSocialProofSettingDto } from "./social-proof.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * AB7 (AX17) — social-proof popups fed by REAL orders only.
@@ -46,7 +47,7 @@ const FEED_CAP = 10;
 
 function intInRange(v: unknown, min: number, max: number, label: string): number {
   if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) {
-    throw new BadRequestException(`${label} ${min}–${max} এর মধ্যে পূর্ণসংখ্যা হতে হবে`);
+    throw badRequest("socialProof.mustBeAnIntegerBetweenAnd", { label: label, min: min, max: max });
   }
   return v as number;
 }
@@ -55,7 +56,7 @@ function parseMinTotalMinor(v: unknown): bigint | null {
   if (v === null) return null;
   const s = typeof v === "string" ? v.trim() : "";
   if (!/^\d+$/.test(s)) {
-    throw new BadRequestException("সর্বনিম্ন অর্ডার মূল্য (minTotalMinor) ০ বা তার বেশি পূর্ণসংখ্যা পয়সায়, সংখ্যার স্ট্রিং হিসেবে দিতে হবে");
+    throw badRequest("socialProof.theMinimumOrderValueMintotalminorMust");
   }
   return BigInt(s);
 }
@@ -124,7 +125,7 @@ export class SocialProofService {
     const data: Record<string, any> = {};
     if (dto.enabled !== undefined) {
       if (typeof dto.enabled !== "boolean") {
-        throw new BadRequestException("enabled অবশ্যই true বা false হতে হবে");
+        throw badRequest("socialProof.enabledMustBeTrueOrFalse");
       }
       data.enabled = dto.enabled;
     }
@@ -297,7 +298,7 @@ export class SocialProofService {
 
   async getPublicFeed(orgSlug: string) {
     const org = await this.findOrgBySlug(orgSlug);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("socialProof.theShopWasNotFound");
     const setting = await this.settingRow(org.id);
     if (!setting || setting.enabled !== true) return { enabled: false };
     const config = {

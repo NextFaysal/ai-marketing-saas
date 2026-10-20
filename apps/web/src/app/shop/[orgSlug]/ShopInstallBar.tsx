@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { useOverlayGrant } from "@/lib/shop-overlay-queue";
 import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
 
@@ -46,7 +47,8 @@ export function shopInstallDismissedKey(orgSlug: string): string {
   return `shop-install-dismissed:${orgSlug}`;
 }
 
-export function ShopInstallBar({ orgSlug }: { orgSlug: string }) {
+export function ShopInstallBar({ orgSlug, locale = "bn" }: { orgSlug: string; locale?: ShopLocale | string }) {
+  const t = shopT(locale);
   const [mode, setMode] = useState<"prompt" | "ios" | null>(null);
   // ED9: queue grant + bottom lift (the bar is bottom-0
   // full-width bottom chrome itself, so the lift moves it above
@@ -96,17 +98,17 @@ export function ShopInstallBar({ orgSlug }: { orgSlug: string }) {
       <div className="mx-auto flex max-w-3xl items-center gap-3">
         {mode === "prompt" ? (
           <>
-            <p className="flex-1 text-sm font-semibold text-slate-800">এই শপটি অ্যাপ হিসেবে ইনস্টল করুন — দ্রুত অর্ডার করুন যেকোনো সময়।</p>
+            <p className="flex-1 text-sm font-semibold text-slate-800">{t.shopWidgets.installText}</p>
             <button type="button" onClick={() => void install()} className="shrink-0 rounded-full bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700">
-              📲 ইনস্টল করুন
+              {t.shopWidgets.installButton}
             </button>
           </>
         ) : (
           <p className="flex-1 text-sm font-semibold leading-relaxed text-slate-800">
-            অ্যাপ হিসেবে যোগ করতে নিচের <span aria-hidden="true">⎙</span> শেয়ার বাটনে ট্যাপ করে <span className="font-bold">“হোম স্ক্রিনে যোগ করুন”</span> সিলেক্ট করুন।
+            {t.shopWidgets.installIosPrefix}<span aria-hidden="true">⎙</span>{t.shopWidgets.installIosMid}<span className="font-bold">{t.shopWidgets.installIosBold}</span>{t.shopWidgets.installIosSuffix}
           </p>
         )}
-        <button type="button" onClick={dismiss} aria-label="বন্ধ করুন" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">
+        <button type="button" onClick={dismiss} aria-label={t.shopWidgets.close} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">
           ✕
         </button>
       </div>

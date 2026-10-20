@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface ShortcutsModalProps {
   isOpen: boolean;
@@ -7,6 +8,7 @@ interface ShortcutsModalProps {
 }
 
 export function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
+  const { t } = useLocale();
   if (!isOpen) return null;
 
   return (
@@ -15,21 +17,21 @@ export function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
         <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
             <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 text-xs">⌨️</span>
-            <span>কীবোর্ড শর্টকাট</span>
+            <span>{t("inbox.keyboardShortcuts")}</span>
           </div>
           <button className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition" onClick={onClose}>✕</button>
         </div>
         <ul className="divide-y divide-slate-100 text-xs text-slate-600">
           <li className="flex items-center justify-between py-2">
-            <span>Command Palette খুলুন</span>
+            <span>{t("inbox.openCommandPalette")}</span>
             <span className="flex items-center gap-1 font-mono">
               <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">⌘K</kbd>
-              <span className="text-slate-400">বা</span>
+              <span className="text-slate-400">{t("inbox.inbZOrWord")}</span>
               <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">Ctrl+K</kbd>
             </span>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>তালিকায় নিচে / ওপরে যান</span>
+            <span>{t("inbox.listUpDown")}</span>
             <span className="flex items-center gap-1 font-mono">
               <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">J</kbd>
               <span className="text-slate-400">/</span>
@@ -37,32 +39,32 @@ export function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {
             </span>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>বেছে নেওয়া কথোপকথন খুলুন</span>
+            <span>{t("inbox.openSelectedConv")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">Enter</kbd>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>খোঁজার বক্সে ফোকাস করুন</span>
+            <span>{t("inbox.focusSearch")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">/</kbd>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>উত্তরের ঘরে (Composer) যান</span>
+            <span>{t("inbox.goComposer")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">R</kbd>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন</span>
+            <span>{t("inbox.assignSelfCurrent")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">E</kbd>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>শর্টকাট গাইড দেখুন</span>
+            <span>{t("inbox.shortcutGuide")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">?</kbd>
           </li>
           <li className="flex items-center justify-between py-2">
-            <span>প্যানেল বা মোডাল বন্ধ করুন</span>
+            <span>{t("inbox.closePanelModal")}</span>
             <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">Esc</kbd>
           </li>
         </ul>
         <div className="mt-4 rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500 text-center">
-          💡 কোনো লেখার ঘরে (Input/Textarea) থাকা অবস্থায় ⌘K ছাড়া অন্যান্য শর্টকাট ট্রিগার হয় না।
+          {t("inbox.inbZShortcutNote")}
         </div>
       </div>
     </div>

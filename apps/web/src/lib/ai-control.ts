@@ -10,6 +10,19 @@
  * window is the latest 50) and are labelled as such in the UI.
  */
 
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import type { UiLocale } from "./i18n/dict";
+import { tr } from "./i18n/lookup";
+import { aiBn, aiEn } from "./i18n/ai";
+
+const AI_DICTS = { bn: aiBn, en: aiEn };
+/** MB2 (ML6): label helpers read the `ai` namespace directly and
+ * take an optional locale (default "bn" — existing callers and
+ * tests keep the Bengali output they have today). */
+function L(locale: UiLocale | undefined, key: string, params?: Record<string, string | number>): string {
+  return tr(AI_DICTS, locale ?? "bn", key, params) ?? key;
+}
+
 // Roles mirror the ActionEngineController discipline exactly:
 // decisions (approve/reject) OWNER/ADMIN/MARKETING_MANAGER;
 // autonomy settings OWNER/ADMIN.
@@ -70,39 +83,39 @@ export interface ActionProposal {
   updatedAt: string;
 }
 
-export function surfaceLabel(surface: string | null | undefined): string {
+export function surfaceLabel(surface: string | null | undefined, locale: UiLocale = "bn"): string {
   switch (surface) {
-    case "inbox": return "ইনবক্স";
-    case "comment": return "কমেন্ট";
+    case "inbox": return L(locale, "ctrlSurfaceInbox");
+    case "comment": return L(locale, "ctrlSurfaceComment");
     default: return surface ?? "";
   }
 }
 
-export function riskLabel(riskClass: string): string {
+export function riskLabel(riskClass: string, locale: UiLocale = "bn"): string {
   switch (riskClass) {
-    case "low": return "কম ঝুঁকি";
-    case "medium": return "মাঝারি ঝুঁকি";
-    case "high": return "বেশি ঝুঁকি";
+    case "low": return L(locale, "ctrlRiskLow");
+    case "medium": return L(locale, "ctrlRiskMedium");
+    case "high": return L(locale, "ctrlRiskHigh");
     default: return riskClass;
   }
 }
 
-export function proposedByLabel(proposedBy: string | null | undefined): string {
+export function proposedByLabel(proposedBy: string | null | undefined, locale: UiLocale = "bn"): string {
   switch (proposedBy) {
-    case "ai": return "AI-এর প্রস্তাব";
-    case "staff": return "টিমের প্রস্তাব";
+    case "ai": return L(locale, "ctrlProposedByAi");
+    case "staff": return L(locale, "ctrlProposedByStaff");
     default: return proposedBy ?? "";
   }
 }
 
-export function proposalStatusLabel(status: string): string {
+export function proposalStatusLabel(status: string, locale: UiLocale = "bn"): string {
   switch (status) {
-    case "proposed": return "সিদ্ধান্তের অপেক্ষায়";
-    case "approved": return "অনুমোদিত";
-    case "executing": return "কার্যকর হচ্ছে";
-    case "executed": return "কার্যকর হয়েছে";
-    case "failed": return "ব্যর্থ হয়েছে";
-    case "rejected": return "বাতিল করা হয়েছে";
+    case "proposed": return L(locale, "ctrlStatusProposed");
+    case "approved": return L(locale, "ctrlStatusApproved");
+    case "executing": return L(locale, "ctrlStatusExecuting");
+    case "executed": return L(locale, "ctrlStatusExecuted");
+    case "failed": return L(locale, "ctrlStatusFailed");
+    case "rejected": return L(locale, "ctrlStatusRejected");
     default: return status;
   }
 }
@@ -110,17 +123,17 @@ export function proposalStatusLabel(status: string): string {
 /** The decision levels a human may pick in the matrix. Level 3
  * exists in the plan (D5) but is NOT storable in this build —
  * the UI renders it as a disabled option with its reason. */
-export const AUTONOMY_OPTIONS: { level: number; label: string }[] = [
-  { level: 0, label: "বন্ধ" },
-  { level: 1, label: "প্রস্তাব — মানুষ অনুমোদন দেবে" },
-  { level: 2, label: "সীমিত নিজে — শুধু কম ঝুঁকির কাজ" },
+export const AUTONOMY_OPTIONS: { level: number; label: string; labelEn: string }[] = [
+  { level: 0, label: aiBn.ctrlAutonomyOff, labelEn: aiEn.ctrlAutonomyOff },
+  { level: 1, label: aiBn.ctrlAutonomyPropose, labelEn: aiEn.ctrlAutonomyPropose },
+  { level: 2, label: aiBn.ctrlAutonomyLimited, labelEn: aiEn.ctrlAutonomyLimited },
 ];
 
-export function autonomyLevelLabel(level: number): string {
+export function autonomyLevelLabel(level: number, locale: UiLocale = "bn"): string {
   const found = AUTONOMY_OPTIONS.find((o) => o.level === level);
-  if (found) return found.label;
-  if (level === 3) return "তত্ত্বাবধানে নিজে";
-  return `স্তর ${level}`;
+  if (found) return locale === "en" ? found.labelEn : found.label;
+  if (level === 3) return L(locale, "ctrlAutonomySupervised");
+  return L(locale, "ctrlAutonomyLevelFallback", { level });
 }
 
 /** A money-adjacent proposal that was approved: the decision is
@@ -133,40 +146,38 @@ export function isProposalOnly(p: Pick<ActionProposal, "status" | "result">): bo
 /** What actually happened to a decided proposal, in plain
  * language. A failure shows the recorded reason verbatim —
  * never dressed up, never hidden. */
-export function proposalOutcomeText(p: Pick<ActionProposal, "status" | "result" | "error">): string {
-  if (p.status === "executed") return "কার্যকর হয়েছে — কাজটি আসল পথে করা হয়েছে এবং ফলাফল যাচাই করে নিশ্চিত করা হয়েছে।";
-  if (p.status === "failed") return `কার্যকর করা যায়নি — কারণ: ${p.error ?? "অজানা কারণ"}`;
-  if (isProposalOnly(p)) return "অনুমোদন রেকর্ড হয়েছে — তবে এটি টাকা-সংক্রান্ত কাজ: AI নিজে এটি কার্যকর করে না (কখনোই করে না)। টিমকে প্রচলিত পথে নিজে করতে হবে।";
-  if (p.status === "approved") return "অনুমোদিত হয়েছে।";
-  if (p.status === "rejected") return "প্রস্তাবটি বাতিল করা হয়েছে — কিছুই করা হয়নি।";
-  if (p.status === "executing") return "কার্যকর করা হচ্ছে…";
-  if (p.status === "proposed") return "আপনার সিদ্ধান্তের অপেক্ষায় আছে।";
-  return proposalStatusLabel(p.status);
+export function proposalOutcomeText(p: Pick<ActionProposal, "status" | "result" | "error">, locale: UiLocale = "bn"): string {
+  if (p.status === "executed") return L(locale, "ctrlOutcomeExecuted");
+  if (p.status === "failed") return L(locale, "ctrlOutcomeFailed", { error: p.error ?? L(locale, "ctrlOutcomeUnknownError") });
+  if (isProposalOnly(p)) return L(locale, "ctrlOutcomeProposalOnly");
+  if (p.status === "approved") return L(locale, "ctrlOutcomeApproved");
+  if (p.status === "rejected") return L(locale, "ctrlOutcomeRejected");
+  if (p.status === "executing") return L(locale, "ctrlOutcomeExecuting");
+  if (p.status === "proposed") return L(locale, "ctrlOutcomeProposed");
+  return proposalStatusLabel(p.status, locale);
 }
-
-const bnNum = (n: number) => n.toLocaleString("bn-BD");
 
 /** Relative age of a proposal ("এইমাত্র / ৫ মিনিট আগে / …").
  * `now` is a parameter so the mapping is deterministic in tests. */
-export function ageText(iso: string | null | undefined, now: Date = new Date()): string {
+export function ageText(iso: string | null | undefined, now: Date = new Date(), locale: UiLocale = "bn"): string {
   if (!iso) return "";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return "";
   const diffMs = Math.max(0, now.getTime() - t);
   const minutes = Math.floor(diffMs / 60000);
-  if (minutes < 1) return "এইমাত্র";
-  if (minutes < 60) return `${bnNum(minutes)} মিনিট আগে`;
+  if (minutes < 1) return L(locale, "ctrlAgeJustNow");
+  if (minutes < 60) return L(locale, "ctrlAgeMinutes", { count: fmtNumber(locale, minutes) });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${bnNum(hours)} ঘণ্টা আগে`;
+  if (hours < 24) return L(locale, "ctrlAgeHours", { count: fmtNumber(locale, hours) });
   const days = Math.floor(hours / 24);
-  return `${bnNum(days)} দিন আগে`;
+  return L(locale, "ctrlAgeDays", { count: fmtNumber(locale, days) });
 }
 
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(value: string | null | undefined, locale: UiLocale = "bn"): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("bn-BD", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return fmtDateTime(locale, d);
 }
 
 /* ------------------------------------------------------------------ */
@@ -237,12 +248,12 @@ export interface AiUsageOverview {
   daily: AiUsageDailyRow[];
 }
 
-export function activityKindLabel(kind: string): string {
+export function activityKindLabel(kind: string, locale: UiLocale = "bn"): string {
   switch (kind) {
-    case "proposal": return "কাজের প্রস্তাব";
-    case "learned": return "শেখা";
-    case "answer": return "উত্তর ভান্ডার";
-    case "content": return "কনটেন্ট";
+    case "proposal": return L(locale, "ctrlKindProposal");
+    case "learned": return L(locale, "ctrlKindLearned");
+    case "answer": return L(locale, "ctrlKindAnswer");
+    case "content": return L(locale, "ctrlKindContent");
     default: return kind;
   }
 }
@@ -250,34 +261,34 @@ export function activityKindLabel(kind: string): string {
 /** LearnedItem sourceType vocabulary — mirrors ai-learning.ts's
  * learnedSourceLabel and extends it with the SA-B14/B16/B17
  * sources (ads / creative / competitor) in the same wording. */
-export function activityLearnedSourceLabel(sourceType: string): string {
+export function activityLearnedSourceLabel(sourceType: string, locale: UiLocale = "bn"): string {
   switch (sourceType) {
-    case "conversation": return "কথোপকথন থেকে শেখা";
-    case "unanswered": return "উত্তর-না-পাওয়া প্রশ্ন থেকে";
-    case "website": return "ওয়েবসাইট থেকে";
-    case "product": return "পণ্য থেকে";
-    case "performance": return "পারফরম্যান্স থেকে";
-    case "ads": return "বিজ্ঞাপন থেকে";
-    case "creative": return "ক্রিয়েটিভ থেকে";
-    case "competitor": return "প্রতিযোগী থেকে";
+    case "conversation": return L(locale, "learnSourceConversation");
+    case "unanswered": return L(locale, "learnSourceUnanswered");
+    case "website": return L(locale, "learnSourceWebsite");
+    case "product": return L(locale, "learnSourceProduct");
+    case "performance": return L(locale, "learnSourcePerformance");
+    case "ads": return L(locale, "ctrlLearnedSourceAds");
+    case "creative": return L(locale, "ctrlLearnedSourceCreative");
+    case "competitor": return L(locale, "ctrlLearnedSourceCompetitor");
     default: return sourceType;
   }
 }
 
 /** The short source chip for a feed row: where this event came
  * from, in the vocabulary of its own kind. */
-export function activitySourceLabel(ev: Pick<ActivityEvent, "kind" | "meta">): string {
+export function activitySourceLabel(ev: Pick<ActivityEvent, "kind" | "meta">, locale: UiLocale = "bn"): string {
   const meta = ev.meta ?? {};
   switch (ev.kind) {
     case "learned":
-      return meta.sourceType ? activityLearnedSourceLabel(String(meta.sourceType)) : "";
+      return meta.sourceType ? activityLearnedSourceLabel(String(meta.sourceType), locale) : "";
     case "proposal":
       if (meta.via === "copilot") return "Copilot";
-      return surfaceLabel((meta.surface as string | null | undefined) ?? null);
+      return surfaceLabel((meta.surface as string | null | undefined) ?? null, locale);
     case "answer":
-      return meta.channel ? surfaceLabel(String(meta.channel)) : "";
+      return meta.channel ? surfaceLabel(String(meta.channel), locale) : "";
     case "content":
-      return "AI কনটেন্ট";
+      return L(locale, "ctrlContentSource");
     default:
       return "";
   }
@@ -286,44 +297,44 @@ export function activitySourceLabel(ev: Pick<ActivityEvent, "kind" | "meta">): s
 /** One plain-Bengali sentence for a feed event. A decided
  * proposal whose decision is unknown, and any unknown
  * (kind, event) pair, falls back to the raw event string. */
-export function activityEventText(ev: Pick<ActivityEvent, "kind" | "event" | "meta">): string {
+export function activityEventText(ev: Pick<ActivityEvent, "kind" | "event" | "meta">, locale: UiLocale = "bn"): string {
   const meta = ev.meta ?? {};
   if (ev.kind === "proposal") {
     switch (ev.event) {
-      case "filed": return "নতুন প্রস্তাব এসেছে";
+      case "filed": return L(locale, "ctrlEventProposalFiled");
       case "decided":
         if (meta.decision === "approved") {
           return meta.proposalOnly
-            ? "অনুমোদন রেকর্ড হয়েছে — টাকা-সংক্রান্ত কাজ, AI নিজে কার্যকর করেনি"
-            : "অনুমোদন দেওয়া হয়েছে";
+            ? L(locale, "ctrlEventProposalApprovedProposalOnly")
+            : L(locale, "ctrlEventProposalApproved");
         }
-        if (meta.decision === "rejected") return "বাতিল করা হয়েছে";
+        if (meta.decision === "rejected") return L(locale, "ctrlEventProposalRejected");
         return ev.event;
-      case "executed": return "কার্যকর হয়েছে (যাচাইকৃত)";
-      case "failed": return "কার্যকর করা যায়নি";
+      case "executed": return L(locale, "ctrlEventProposalExecuted");
+      case "failed": return L(locale, "ctrlEventProposalFailed");
       default: return ev.event;
     }
   }
   if (ev.kind === "learned") {
     switch (ev.event) {
-      case "suggested": return "নতুন শেখার প্রস্তাব এসেছে";
+      case "suggested": return L(locale, "ctrlEventLearnedSuggested");
       case "decided":
-        if (meta.decision === "approved") return "শেখা অনুমোদিত হয়েছে";
-        if (meta.decision === "rejected") return "শেখার প্রস্তাব বাতিল হয়েছে";
+        if (meta.decision === "approved") return L(locale, "ctrlEventLearnedApproved");
+        if (meta.decision === "rejected") return L(locale, "ctrlEventLearnedRejected");
         return ev.event;
       default: return ev.event;
     }
   }
   if (ev.kind === "answer") {
     switch (ev.event) {
-      case "captured": return "নতুন যাচাইকৃত উত্তর জমা হয়েছে";
-      case "invalidated": return "সংরক্ষিত উত্তর বাতিল হয়েছে (তথ্য বদলে গেছে)";
+      case "captured": return L(locale, "ctrlEventAnswerCaptured");
+      case "invalidated": return L(locale, "ctrlEventAnswerInvalidated");
       default: return ev.event;
     }
   }
   if (ev.kind === "content") {
     switch (ev.event) {
-      case "draft_created": return "AI কনটেন্টের খসড়া তৈরি হয়েছে";
+      case "draft_created": return L(locale, "ctrlEventContentDraft");
       default: return ev.event;
     }
   }
@@ -338,7 +349,12 @@ export function isAdminConsoleDecision(ev: Pick<ActivityEvent, "kind" | "event" 
   return ev.kind === "learned" && ev.event === "decided" && ev.meta?.reviewedVia === "admin_console";
 }
 
-export const ADMIN_CONSOLE_DECISION_LABEL = "প্ল্যাটফর্ম অ্যাডমিনের সিদ্ধান্ত";
+export const ADMIN_CONSOLE_DECISION_LABEL = aiBn.ctrlAdminConsoleLabel;
+export const ADMIN_CONSOLE_DECISION_LABEL_EN = aiEn.ctrlAdminConsoleLabel;
+/** Locale-aware accessor for ADMIN_CONSOLE_DECISION_LABEL. */
+export function adminConsoleDecisionLabel(locale: UiLocale = "bn"): string {
+  return L(locale, "ctrlAdminConsoleLabel");
+}
 
 /** AIUsageRecord feature buckets that actually exist in the API
  * tree (chat / report / copilot are the long-standing buckets;
@@ -348,15 +364,15 @@ export const ADMIN_CONSOLE_DECISION_LABEL = "প্ল্যাটফর্ম �
  * BROADCAST_PERSONALIZATION_FEATURE; autopilot is the inbox
  * grounded-reply bucket and comment_autopilot its comment twin).
  * Anything unmapped falls back to the raw feature string. */
-export function usageFeatureLabel(feature: string): string {
+export function usageFeatureLabel(feature: string, locale: UiLocale = "bn"): string {
   switch (feature) {
-    case "chat": return "চ্যাট";
-    case "report": return "রিপোর্ট";
-    case "copilot": return "কোপাইলট";
-    case "content_generation": return "কনটেন্ট তৈরি";
-    case "broadcast_personalization": return "ব্রডকাস্ট সাজানো";
-    case "autopilot": return "ইনবক্স অটোপাইলট";
-    case "comment_autopilot": return "কমেন্ট অটোপাইলট";
+    case "chat": return L(locale, "ctrlUsageChat");
+    case "report": return L(locale, "ctrlUsageReport");
+    case "copilot": return L(locale, "ctrlUsageCopilot");
+    case "content_generation": return L(locale, "ctrlUsageContentGeneration");
+    case "broadcast_personalization": return L(locale, "ctrlUsageBroadcastPersonalization");
+    case "autopilot": return L(locale, "ctrlUsageAutopilot");
+    case "comment_autopilot": return L(locale, "ctrlUsageCommentAutopilot");
     default: return feature;
   }
 }

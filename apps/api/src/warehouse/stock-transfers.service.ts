@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
 import type {
   CreateStockTransferDto, ReceiveStockTransferDto,
 } from "./warehouse.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * AB3 (AX4) — warehouse-to-warehouse stock transfers
@@ -43,19 +44,19 @@ export class StockTransfersService {
   private t(name: string): any { return (this.prisma as any)[name]; }
 
   private requireInventory(): InventoryService {
-    if (!this.inventory) throw new BadRequestException("ইনভেন্টরি সার্ভিস পাওয়া যাচ্ছে না");
+    if (!this.inventory) throw badRequest("warehouse.theInventoryServiceIsNotAvailable");
     return this.inventory;
   }
 
   private async loadBinOr400(organizationId: string, binId: string): Promise<any> {
     const bin = await this.t("binLocation")?.findFirst({ where: { id: binId, organizationId } }).catch(() => null);
-    if (!bin) throw new BadRequestException("বিনটি এই প্রতিষ্ঠানে পাওয়া যায়নি — সঠিক বিন বেছে নিন");
+    if (!bin) throw badRequest("warehouse.theBinWasNotFoundIn2");
     return bin;
   }
 
   private async loadTransferOr404(organizationId: string, transferId: string): Promise<any> {
     const row = await this.t("stockTransfer")?.findFirst({ where: { id: transferId, organizationId } }).catch(() => null);
-    if (!row) throw new NotFoundException("ট্রান্সফারটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!row) throw notFound("warehouse.theTransferWasNotFoundIn");
     return row;
   }
 
@@ -118,11 +119,11 @@ export class StockTransfersService {
     const fromBin = await this.loadBinOr400(organizationId, dto.fromBinId);
     const toBin = await this.loadBinOr400(organizationId, dto.toBinId);
     if (fromBin.id === toBin.id) {
-      throw new BadRequestException("একই বিনে ট্রান্সফার করা যাবে না — আলাদা গন্তব্য বিন বেছে নিন");
+      throw badRequest("warehouse.transferWithinTheSameBinIs");
     }
     const rawLines = Array.isArray(dto.lines) ? dto.lines : [];
     if (rawLines.length === 0) {
-      throw new BadRequestException("ট্রান্সফারে অন্তত একটি লাইন দরকার");
+      throw badRequest("warehouse.aTransferNeedsAtLeastOne");
     }
     // Validate EVERY line up front — a draft is only created
     // when the whole body is sound.
@@ -132,18 +133,18 @@ export class StockTransfersService {
       const variantId = raw.variantId ?? null;
       const key = `${raw.productId}::${variantId ?? ""}`;
       if (seen.has(key)) {
-        throw new BadRequestException("একই পণ্যের একাধিক লাইন দেওয়া যাবে না — পরিমাণ এক লাইনে মিলিয়ে দিন");
+        throw badRequest("warehouse.multipleLinesForTheSameProduct");
       }
       seen.add(key);
       if (!Number.isInteger(raw.qtySent) || (raw.qtySent as number) <= 0) {
-        throw new BadRequestException("প্রেরণের পরিমাণ (qtySent) অবশ্যই ধনাত্মক পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("warehouse.theSentQuantityQtysentMustBe");
       }
       const product = await this.t("product")?.findFirst({ where: { id: raw.productId, organizationId } }).catch(() => null);
-      if (!product) throw new NotFoundException("পণ্যটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+      if (!product) throw notFound("warehouse.theProductWasNotFoundIn");
       let tracked: number | null;
       if (variantId) {
         const variant = await this.t("productVariant")?.findFirst({ where: { id: variantId, productId: product.id } }).catch(() => null);
-        if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        if (!variant) throw badRequest("warehouse.theVariantDoesNotBelongTo");
         tracked = variant.stockQuantity ?? null;
       } else {
         tracked = product.stockQuantity ?? null;
@@ -151,7 +152,7 @@ export class StockTransfersService {
       if (tracked == null) {
         // A transfer is a physical claim on TRACKED stock only
         // (design §6: dispatch/receive refuse untracked rows).
-        throw new BadRequestException(`「${product.name}」-এর স্টক ট্র্যাক করা হচ্ছে না — ট্রান্সফার করা যাবে না`);
+        throw badRequest("warehouse.theStockOfIsNotTracked", { productName: product.name });
       }
       lines.push({ productId: product.id, variantId, qtySent: raw.qtySent });
     }
@@ -202,7 +203,7 @@ export class StockTransfersService {
     const inventory = this.requireInventory();
     const transfer = await this.loadTransferOr404(organizationId, transferId);
     if (transfer.status !== "draft") {
-      throw new BadRequestException(`শুধু খসড়া (draft) ট্রান্সফার পাঠানো যায় — বর্তমান অবস্থা: ${transfer.status}`);
+      throw badRequest("warehouse.onlyADraftTransferCanBe", { transferStatus: transfer.status });
     }
     const lines = await this.linesOf(transfer.id);
 
@@ -219,9 +220,7 @@ export class StockTransfersService {
       const onHand = (bal?.onHand as number) ?? 0;
       if (onHand < line.qtySent) {
         const product = await this.t("product")?.findFirst({ where: { id: line.productId, organizationId } }).catch(() => null);
-        throw new BadRequestException(
-          `「${product?.name ?? line.productId}」-এর জন্য উৎস বিনে পর্যাপ্ত স্টক নেই (আছে ${onHand}, দরকার ${line.qtySent}) — ট্রান্সফার পাঠানো যাচ্ছে না`,
-        );
+        throw badRequest("warehouse.thereIsNotEnoughStockIn", { p1: product?.name ?? line.productId, onHand: onHand, lineQtySent: line.qtySent });
       }
     }
 
@@ -274,13 +273,13 @@ export class StockTransfersService {
     const inventory = this.requireInventory();
     const transfer = await this.loadTransferOr404(organizationId, transferId);
     if (transfer.status !== "in_transit") {
-      throw new BadRequestException(`শুধু পথে-থাকা (in_transit) ট্রান্সফার গ্রহণ করা যায় — বর্তমান অবস্থা: ${transfer.status}`);
+      throw badRequest("warehouse.onlyAnInTransitTransferCan", { transferStatus: transfer.status });
     }
     const lines = await this.linesOf(transfer.id);
     const requested = new Map<string, number>();
     for (const entry of dto?.lines ?? []) {
       if (!lines.some((l) => l.id === entry.lineId)) {
-        throw new BadRequestException("লাইনটি এই ট্রান্সফারের নয় — সঠিক লাইন বেছে নিন");
+        throw badRequest("warehouse.theLineDoesNotBelongTo");
       }
       requested.set(entry.lineId, entry.qtyReceived);
     }
@@ -297,9 +296,7 @@ export class StockTransfersService {
         : (requested.has(line.id) ? (requested.get(line.id) as number) : (line.qtySent as number));
       if (!Number.isInteger(qtyReceived) || qtyReceived < 0 || qtyReceived > line.qtySent) {
         const product = await this.t("product")?.findFirst({ where: { id: line.productId, organizationId } }).catch(() => null);
-        throw new BadRequestException(
-          `「${product?.name ?? line.productId}」-এর গৃহীত পরিমাণ অবশ্যই ০–${line.qtySent}-এর মধ্যে পূর্ণসংখ্যা হতে হবে`,
-        );
+        throw badRequest("warehouse.theReceivedQuantityForMustBe", { p1: product?.name ?? line.productId, lineQtySent: line.qtySent });
       }
       plan.push({ line, qtyReceived, alreadyApplied });
     }
@@ -379,6 +376,6 @@ export class StockTransfersService {
       });
       return this.detail(organizationId, updated ?? { ...transfer, status: "cancelled" });
     }
-    throw new BadRequestException(`এই অবস্থার ট্রান্সফার বাতিল করা যাবে না — বর্তমান অবস্থা: ${transfer.status}`);
+    throw badRequest("warehouse.aTransferInThisStatusCannot", { transferStatus: transfer.status });
   }
 }

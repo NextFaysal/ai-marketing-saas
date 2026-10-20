@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ReviewsService, reviewMediaOf } from "./reviews.service";
 import { ProductReviewsService } from "./product-reviews.service";
 import { normalizeGoogleReviewUrl } from "../organizations/organizations.service";
@@ -87,17 +88,17 @@ function makeReviewsSvc(opts: { googleUrl?: string | null } = {}) {
 describe("NF8 (a) review media upload — guards through the real path", () => {
   it("presign rejects a disallowed type, an oversize image and an oversize video", async () => {
     const { svc } = makeReviewsSvc();
-    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/gif", sizeBytes: 1000 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: 11 * 1024 * 1024 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.presignReviewMedia("tok-open", { kind: "video", contentType: "video/mp4", sizeBytes: 51 * 1024 * 1024 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.presignReviewMedia("tok-open", { kind: "video", contentType: "video/avi", sizeBytes: 1000 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.presignReviewMedia("tok-open", { kind: "file", contentType: "image/png", sizeBytes: 1000 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/gif", sizeBytes: 1000 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: 11 * 1024 * 1024 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "video", contentType: "video/mp4", sizeBytes: 51 * 1024 * 1024 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "video", contentType: "video/avi", sizeBytes: 1000 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "file", contentType: "image/png", sizeBytes: 1000 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("unknown token 404s on both steps (token is the only credential)", async () => {
     const { svc } = makeReviewsSvc();
-    await expect(svc.presignReviewMedia("nope", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.completeReviewMedia("nope", { key: "k", kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.presignReviewMedia("nope", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.completeReviewMedia("nope", { key: "k", kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("happy path: presign -> PUT -> complete attaches the media as a PRIVATE key + registry row; quarantine dropped", async () => {
@@ -132,7 +133,7 @@ describe("NF8 (a) review media upload — guards through the real path", () => {
     const { svc, reviews, objects, deleted } = makeReviewsSvc();
     const pre: any = await svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: TEXT.length });
     objects.set(pre.key, TEXT);
-    await expect(svc.completeReviewMedia("tok-open", { key: pre.key, kind: "image", contentType: "image/png", sizeBytes: TEXT.length })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.completeReviewMedia("tok-open", { key: pre.key, kind: "image", contentType: "image/png", sizeBytes: TEXT.length })).rejects.toBeInstanceOf(ApiException);
     expect(reviewMediaOf(reviews[0])).toHaveLength(0);
     expect(deleted).toContain(pre.key);
   });
@@ -141,21 +142,21 @@ describe("NF8 (a) review media upload — guards through the real path", () => {
     const { svc, objects } = makeReviewsSvc();
     const pre: any = await svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: PNG.length });
     objects.set(pre.key, PNG);
-    await expect(svc.completeReviewMedia("tok-open", { key: pre.key, kind: "image", contentType: "image/png", sizeBytes: PNG.length + 5 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.completeReviewMedia("tok-open", { key: pre.key, kind: "image", contentType: "image/png", sizeBytes: PNG.length + 5 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("a quarantine key from ANOTHER org's prefix is refused (org binding)", async () => {
     const { svc, objects } = makeReviewsSvc();
     const foreignKey = `_quarantine/${ORG2}/review/abc`;
     objects.set(foreignKey, PNG);
-    await expect(svc.completeReviewMedia("tok-open", { key: foreignKey, kind: "image", contentType: "image/png", sizeBytes: PNG.length })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.completeReviewMedia("tok-open", { key: foreignKey, kind: "image", contentType: "image/png", sizeBytes: PNG.length })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("no uploads after the review is submitted, and the 4-item cap holds", async () => {
     const { svc, reviews } = makeReviewsSvc();
-    await expect(svc.presignReviewMedia("tok-done", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.presignReviewMedia("tok-done", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(ApiException);
     reviews[0].media = [1, 2, 3, 4].map((n) => ({ key: `${ORG}/review/k${n}.png`, kind: "image", contentType: "image/png", sizeBytes: 10 }));
-    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.presignReviewMedia("tok-open", { kind: "image", contentType: "image/png", sizeBytes: 10 })).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -192,9 +193,9 @@ describe("NF8 (c) Google offer — only rating >= 4 AND configured link; offer, 
     expect(normalizeGoogleReviewUrl("  https://maps.google.com/x  ")).toBe("https://maps.google.com/x");
     expect(normalizeGoogleReviewUrl("")).toBeNull();
     expect(normalizeGoogleReviewUrl(null)).toBeNull();
-    expect(() => normalizeGoogleReviewUrl("not a url")).toThrow(BadRequestException);
-    expect(() => normalizeGoogleReviewUrl("javascript:alert(1)")).toThrow(BadRequestException);
-    expect(() => normalizeGoogleReviewUrl("ftp://example.com")).toThrow(BadRequestException);
+    expect(() => normalizeGoogleReviewUrl("not a url")).toThrow(ApiException);
+    expect(() => normalizeGoogleReviewUrl("javascript:alert(1)")).toThrow(ApiException);
+    expect(() => normalizeGoogleReviewUrl("ftp://example.com")).toThrow(ApiException);
   });
 });
 
@@ -298,22 +299,22 @@ describe("NF8 (d)+(e) social proof draft — exactly once, draft only, org-isola
 
   it("hidden and unreceived reviews are refused; a foreign-org review 404s", async () => {
     const { svc, createPostCalls } = makeProductReviewsSvc();
-    await expect(svc.createSocialDraft(ORG, "rev-hidden", "user-1")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createSocialDraft(ORG, "rev-pending", "user-1")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createSocialDraft(ORG, "rev-foreign", "user-1")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.createSocialDraft(ORG2, "rev-vis", "user-1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.createSocialDraft(ORG, "rev-hidden", "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createSocialDraft(ORG, "rev-pending", "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createSocialDraft(ORG, "rev-foreign", "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createSocialDraft(ORG2, "rev-vis", "user-1")).rejects.toBeInstanceOf(ApiException);
     expect(createPostCalls).toHaveLength(0);
   });
 
   it("no connected account -> honest refusal, nothing created, no claim written", async () => {
     const { svc, reviews, createPostCalls } = makeProductReviewsSvc({ accounts: [] });
-    await expect(svc.createSocialDraft(ORG, "rev-vis", "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createSocialDraft(ORG, "rev-vis", "user-1")).rejects.toBeInstanceOf(ApiException);
     expect(createPostCalls).toHaveLength(0);
     expect(reviews[0].socialDraftPostId).toBeNull();
   });
 
   it("an explicit foreign/disconnected account id is refused", async () => {
     const { svc } = makeProductReviewsSvc({ accounts: [{ id: "acc-x", organizationId: ORG2, platform: "meta_page", status: "connected", createdAt: new Date() }] });
-    await expect(svc.createSocialDraft(ORG, "rev-vis", "user-1", { socialAccountId: "acc-x" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createSocialDraft(ORG, "rev-vis", "user-1", { socialAccountId: "acc-x" })).rejects.toBeInstanceOf(ApiException);
   });
 });

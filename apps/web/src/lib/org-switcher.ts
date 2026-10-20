@@ -14,6 +14,15 @@
  * switch would leave stale org-scoped data on screen.
  */
 
+import type { UiLocale } from "./i18n/dict";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: badge/role copy resolves through the `shared`
+ * namespace; locale defaults to "bn" so existing callers/tests
+ * stay byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 export interface SwitcherOrg {
   id: string;
   name: string;
@@ -42,9 +51,10 @@ export function orgArchived(org: SwitcherOrg): boolean {
 
 /** Badge text for the switcher rows / button: suspension (the
  * harder stop) wins over archive when both somehow apply. */
-export function orgStateBadge(org: SwitcherOrg): string | null {
-  if (orgSuspended(org)) return "স্থগিত";
-  if (orgArchived(org)) return "আর্কাইভ করা";
+export function orgStateBadge(org: SwitcherOrg, locale: UiLocale = "bn"): string | null {
+  const d = SD(locale);
+  if (orgSuspended(org)) return d.orgBadgeSuspended;
+  if (orgArchived(org)) return d.orgBadgeArchived;
   return null;
 }
 
@@ -66,22 +76,26 @@ export function isSwitchNeeded(orgs: SwitcherOrg[], storedId: string | null, tar
   return resolveCurrentOrgId(orgs, storedId) !== targetId;
 }
 
-/** Bengali labels for the membership roles the API can return
- * (Role enum). Unknown roles render as-is rather than vanishing. */
-const ROLE_LABELS: Record<string, string> = {
-  OWNER: "মালিক (Owner)",
-  ADMIN: "অ্যাডমিন",
-  MARKETING_MANAGER: "মার্কেটিং ম্যানেজার",
-  ADVERTISER: "বিজ্ঞাপনদাতা",
-  SUPPORT_AGENT: "সাপোর্ট এজেন্ট",
-  ANALYST: "অ্যানালিস্ট",
-  VIEWER: "শুধু দেখতে পারেন",
-  SUPER_ADMIN: "সুপার অ্যাডমিন",
-};
+/** Labels for the membership roles the API can return (Role
+ * enum), per locale. The bn record stays the pinned source;
+ * unknown roles render as-is rather than vanishing. */
+export function roleLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    OWNER: d.roleOwner,
+    ADMIN: d.roleAdmin,
+    MARKETING_MANAGER: d.roleMarketingManager,
+    ADVERTISER: d.roleAdvertiser,
+    SUPPORT_AGENT: d.roleSupportAgent,
+    ANALYST: d.roleAnalyst,
+    VIEWER: d.roleViewer,
+    SUPER_ADMIN: d.roleSuperAdmin,
+  };
+}
 
-export function roleLabel(role: string | undefined | null): string {
+export function roleLabel(role: string | undefined | null, locale: UiLocale = "bn"): string {
   if (!role) return "";
-  return ROLE_LABELS[role] ?? role;
+  return roleLabelsFor(locale)[role] ?? role;
 }
 
 /** Single-org users get a quiet state, not a cluttered menu: the

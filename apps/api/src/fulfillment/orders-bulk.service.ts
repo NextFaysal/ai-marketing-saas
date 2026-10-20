@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrdersService } from "../orders/orders.service";
 import { CourierService } from "../courier/courier.service";
 import { PrintCenterService } from "../orders/print-center.service";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * ON1 — bulk actions over a set of orders. Hosted in the
@@ -71,30 +72,30 @@ export class OrdersBulkService {
   async bulk(organizationId: string, actorId: string, dto: BulkDto) {
     // ---- whole-request validation (before ANY work) ----
     if (!dto || !Array.isArray(dto.orderIds) || dto.orderIds.length < 1 || dto.orderIds.length > 100) {
-      throw new BadRequestException("১–১০০টি অর্ডার বেছে নিন");
+      throw badRequest("fulfillment.select1100Orders");
     }
     if (!(BULK_ACTIONS as readonly string[]).includes(dto.action)) {
-      throw new BadRequestException(`অজানা bulk action "${dto.action}" — সঠিক action: ${BULK_ACTIONS.join(", ")}`);
+      throw badRequest("fulfillment.unknownBulkActionValidActions", { dtoAction: dto.action, p2: BULK_ACTIONS.join(", ") });
     }
     const action = dto.action as BulkAction;
     const params = dto.params ?? {};
     const orderIds = [...new Set(dto.orderIds.map((x) => String(x)).filter(Boolean))];
-    if (orderIds.length === 0) throw new BadRequestException("১–১০০টি অর্ডার বেছে নিন");
+    if (orderIds.length === 0) throw badRequest("fulfillment.select1100Orders");
 
     if (action === "set_status") {
       if (!params.status || typeof params.status !== "string" || !params.status.trim()) {
-        throw new BadRequestException("অবস্থা (status) দরকার");
+        throw badRequest("fulfillment.statusIsRequired");
       }
     }
     if (action === "add_tag" || action === "remove_tag") {
       const tag = typeof params.tag === "string" ? params.tag.trim() : "";
-      if (!tag) throw new BadRequestException("ট্যাগ দরকার");
+      if (!tag) throw badRequest("fulfillment.aTagIsRequired");
       // Same 1..30 rule as the single-order tags endpoint.
       this.orders.validateTags([tag]);
     }
     if (action === "assign") {
       if (!("assigneeId" in params)) {
-        throw new BadRequestException("দায়িত্বপ্রাপ্ত সদস্য (assigneeId) দরকার");
+        throw badRequest("fulfillment.anAssigneeAssigneeidIsRequired");
       }
       if (params.assigneeId !== null && params.assigneeId !== undefined) {
         // Validated ONCE up front: an invalid assignee fails the
@@ -104,7 +105,7 @@ export class OrdersBulkService {
     }
     if (action === "book_courier" && params.provider !== undefined && params.provider !== null) {
       if (!["steadfast", "pathao", "redx"].includes(String(params.provider))) {
-        throw new BadRequestException(`অজানা কুরিয়ার প্রোভাইডার "${params.provider}"`);
+        throw badRequest("fulfillment.unknownCourierProvider", { paramsProvider: params.provider });
       }
     }
 

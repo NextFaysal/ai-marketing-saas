@@ -1,10 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrganizationsService } from "../organizations/organizations.service";
 import { AnalyticsService } from "../analytics/analytics.service";
 import type { CreateOrganizationDto } from "../organizations/organizations.dto";
 import type { CreateAgencyCommissionDto } from "./agency.dto";
+import { badRequest, forbidden } from "../i18n/api-exception";
 
 /**
  * NF15 (FB5) — Agency / reseller console.
@@ -219,33 +220,33 @@ export class AgencyConsoleService {
   ) {
     const periodLabel = String(dto?.periodLabel ?? "").trim();
     if (!periodLabel) {
-      throw new BadRequestException("সময়ের লেবেল (period) আবশ্যক — যেমন “অক্টোবর ২০২৬”।");
+      throw badRequest("agency.aPeriodLabelIsRequiredE");
     }
     if (periodLabel.length > 40) {
-      throw new BadRequestException("সময়ের লেবেল সর্বোচ্চ ৪০ অক্ষরের হতে পারবে।");
+      throw badRequest("agency.thePeriodLabelCanBeAt");
     }
     let amount: bigint;
     try {
       amount = BigInt(String(dto?.amountMinor ?? "").trim());
     } catch {
-      throw new BadRequestException("কমিশনের পরিমাণ সঠিক সংখ্যা নয়।");
+      throw badRequest("agency.theCommissionAmountIsNotA");
     }
     if (amount <= 0n) {
-      throw new BadRequestException("কমিশনের পরিমাণ শূন্যের বেশি হতে হবে।");
+      throw badRequest("agency.theCommissionAmountMustBeMore");
     }
     const clientOrganizationId = String(dto?.clientOrganizationId ?? "").trim();
     if (!clientOrganizationId) {
-      throw new BadRequestException("ক্লায়েন্ট প্রতিষ্ঠান বেছে নিন।");
+      throw badRequest("agency.chooseTheClientOrganization");
     }
     if (clientOrganizationId === agencyOrganizationId) {
-      throw new BadRequestException("এজেন্সি প্রতিষ্ঠান নিজেই ক্লায়েন্ট হতে পারে না।");
+      throw badRequest("agency.theAgencyOrganizationCannotItselfBe");
     }
     // An agency records commission only for client orgs they
     // actually belong to in v1 — membership is proven through
     // the caller's own listMine, never by trusting the id.
     const names = await this.myOrgNames(userId);
     if (!names.has(clientOrganizationId)) {
-      throw new ForbiddenException("আপনি এই ক্লায়েন্ট প্রতিষ্ঠানের সদস্য নন — কমিশন রেকর্ড করা যাবে না।");
+      throw forbidden("agency.youAreNotAMemberOf");
     }
     const note = String(dto?.note ?? "").trim() || null;
     const entry = await (this.prisma as any).agencyCommissionEntry.create({

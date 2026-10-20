@@ -368,16 +368,16 @@ describe("refreshAccountStatus", () => {
     const db = fakeDb(); seedMembers(db);
     const { integration, account } = seedConnectedMeta(db, {});
     jest.spyOn(MetaClient.prototype, "listAdAccounts").mockResolvedValue([]);
-    await expect(service(db).refreshAccountStatus(ORG, "owner-1", account.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service(db).refreshAccountStatus(ORG, "owner-1", account.id)).rejects.toMatchObject({ code: "ads.metaNoLongerShowsTheAccount" });
     expect(db.integrations.find((i: Row) => i.id === integration.id).status).toBe("CONNECTED");
   });
 
   it("manual/csv accounts cannot refresh; another org's account is a 404", async () => {
     const db = fakeDb(); seedMembers(db);
     const manual = seedAccount(db, { sourceType: "csv", integrationId: null, externalId: null });
-    await expect(service(db).refreshAccountStatus(ORG, "owner-1", manual.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service(db).refreshAccountStatus(ORG, "owner-1", manual.id)).rejects.toMatchObject({ code: "ads.thisAdAccountHasNoApi" });
     const foreign = seedAccount(db, { organizationId: ORG2 });
-    await expect(service(db).refreshAccountStatus(ORG, "owner-1", foreign.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service(db).refreshAccountStatus(ORG, "owner-1", foreign.id)).rejects.toMatchObject({ code: "ads.adAccountNotFoundInThis" });
   });
 });
 

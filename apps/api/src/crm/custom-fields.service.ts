@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * CRM C4: custom field definitions + value validation.
@@ -40,30 +41,30 @@ function isRealDateString(v: string): boolean {
 export function validateCustomFieldValue(def: { label: string; type: string; options?: unknown }, raw: unknown): unknown {
   const label = def.label;
   if (def.type === "text") {
-    if (typeof raw !== "string") throw new BadRequestException(`Custom field "${label}" must be text`);
+    if (typeof raw !== "string") throw badRequest("crm.customFieldMustBeText", { label: label });
     const v = raw.trim();
-    if (v.length > CUSTOM_FIELD_TEXT_MAX) throw new BadRequestException(`Custom field "${label}" is too long (max ${CUSTOM_FIELD_TEXT_MAX} characters)`);
+    if (v.length > CUSTOM_FIELD_TEXT_MAX) throw badRequest("crm.customFieldIsTooLongMax", { label: label, CUSTOM_FIELD_TEXT_MAX: CUSTOM_FIELD_TEXT_MAX });
     return v;
   }
   if (def.type === "number") {
     const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw.trim()) : NaN;
-    if (!Number.isFinite(n)) throw new BadRequestException(`Custom field "${label}" must be a number`);
+    if (!Number.isFinite(n)) throw badRequest("crm.customFieldMustBeANumber", { label: label });
     return n;
   }
   if (def.type === "date") {
     if (typeof raw !== "string" || !isRealDateString(raw.trim())) {
-      throw new BadRequestException(`Custom field "${label}" must be a date in YYYY-MM-DD format`);
+      throw badRequest("crm.customFieldMustBeADate", { label: label });
     }
     return raw.trim();
   }
   if (def.type === "select") {
     const options = Array.isArray(def.options) ? def.options.map(String) : [];
     if (typeof raw !== "string" || !options.includes(raw)) {
-      throw new BadRequestException(`Custom field "${label}" must be one of: ${options.join(", ")}`);
+      throw badRequest("crm.customFieldMustBeOneOf", { label: label, p2: options.join(", ") });
     }
     return raw;
   }
-  throw new BadRequestException(`Custom field "${label}" has an unknown type "${def.type}"`);
+  throw badRequest("crm.customFieldHasAnUnknownType", { label: label, defType: def.type });
 }
 
 /** Render a stored value for CSV export / display. */
@@ -78,7 +79,7 @@ export class CustomFieldsService {
 
   private assertEntity(entity: string) {
     if (!(CUSTOM_FIELD_ENTITIES as readonly string[]).includes(entity)) {
-      throw new BadRequestException(`Invalid entity: "${entity}" (use lead, customer)`);
+      throw badRequest("crm.invalidEntityUseLeadCustomer", { entity: entity });
     }
   }
 
@@ -112,8 +113,8 @@ export class CustomFieldsService {
   private normalizeOptions(type: string, options?: string[] | null): string[] | null {
     if (type !== "select") return null;
     const cleaned = [...new Set((options ?? []).map((o) => String(o).trim()).filter(Boolean))];
-    if (!cleaned.length) throw new BadRequestException("A select field needs at least one option");
-    if (cleaned.some((o) => o.length > 100)) throw new BadRequestException("Select options are limited to 100 characters each");
+    if (!cleaned.length) throw badRequest("crm.aSelectFieldNeedsAtLeast");
+    if (cleaned.some((o) => o.length > 100)) throw badRequest("crm.selectOptionsAreLimitedTo100");
     return cleaned;
   }
 
@@ -123,18 +124,18 @@ export class CustomFieldsService {
   }) {
     this.assertEntity(dto.entity);
     if (!(CUSTOM_FIELD_TYPES as readonly string[]).includes(dto.type)) {
-      throw new BadRequestException(`Invalid field type: "${dto.type}" (use ${CUSTOM_FIELD_TYPES.join(", ")})`);
+      throw badRequest("crm.invalidFieldTypeUse", { dtoType: dto.type, p2: CUSTOM_FIELD_TYPES.join(", ") });
     }
     const label = String(dto.label ?? "").trim();
-    if (!label) throw new BadRequestException("Field label is required");
+    if (!label) throw badRequest("crm.fieldLabelIsRequired");
     const key = slugifyFieldKey(dto.key ?? label);
     if (!KEY_PATTERN.test(key)) {
-      throw new BadRequestException(`Invalid field key: "${dto.key ?? label}" — a key must start with a letter and use only a-z, 0-9 and _ (it is derived from the label when not supplied)`);
+      throw badRequest("crm.invalidFieldKeyAKeyMust", { p1: dto.key ?? label });
     }
     const dupe = await (this.prisma as any).customFieldDef.findFirst({
       where: { organizationId, entity: dto.entity, key },
     }).catch(() => null);
-    if (dupe) throw new BadRequestException(`A "${dto.entity}" field with key "${key}" already exists${dupe.archivedAt ? " (archived)" : ""} — keys stay reserved so stored values keep their meaning`);
+    if (dupe) throw badRequest("crm.aFieldWithKeyAlreadyExists", { dtoEntity: dto.entity, key: key, p3: dupe.archivedAt ? " (archived)" : "" });
     const def = await (this.prisma as any).customFieldDef.create({
       data: {
         organizationId, entity: dto.entity, key, label, type: dto.type,
@@ -150,20 +151,20 @@ export class CustomFieldsService {
     required?: boolean; sortOrder?: number; archived?: boolean;
   }) {
     const def = await (this.prisma as any).customFieldDef.findFirst({ where: { id: defId, organizationId } });
-    if (!def) throw new NotFoundException("Custom field not found in this organization");
+    if (!def) throw notFound("crm.customFieldNotFoundInThis");
     // The key keys stored values in every row's JSON — immutable.
     if (dto.key !== undefined && dto.key !== def.key) {
-      throw new BadRequestException(`Field key "${def.key}" cannot be changed — stored values reference it. Archive this field and create a new one instead.`);
+      throw badRequest("crm.fieldKeyCannotBeChangedStored", { defKey: def.key });
     }
     const data: Record<string, unknown> = {};
     if (dto.label !== undefined) {
       const label = String(dto.label).trim();
-      if (!label) throw new BadRequestException("Field label cannot be empty");
+      if (!label) throw badRequest("crm.fieldLabelCannotBeEmpty");
       data.label = label;
     }
     const nextType = dto.type ?? def.type;
     if (dto.type !== undefined && !(CUSTOM_FIELD_TYPES as readonly string[]).includes(dto.type)) {
-      throw new BadRequestException(`Invalid field type: "${dto.type}" (use ${CUSTOM_FIELD_TYPES.join(", ")})`);
+      throw badRequest("crm.invalidFieldTypeUse", { dtoType: dto.type, p2: CUSTOM_FIELD_TYPES.join(", ") });
     }
     if (dto.type !== undefined) data.type = dto.type;
     if (dto.options !== undefined || dto.type !== undefined) {
@@ -171,7 +172,7 @@ export class CustomFieldsService {
     }
     if (dto.required !== undefined) data.required = Boolean(dto.required);
     if (dto.sortOrder !== undefined) {
-      if (!Number.isInteger(dto.sortOrder)) throw new BadRequestException("sortOrder must be an integer");
+      if (!Number.isInteger(dto.sortOrder)) throw badRequest("crm.sortorderMustBeAnInteger");
       data.sortOrder = dto.sortOrder;
     }
     if (dto.archived !== undefined) data.archivedAt = dto.archived ? new Date() : null;
@@ -204,14 +205,14 @@ export class CustomFieldsService {
   ): Promise<CustomFieldValues> {
     this.assertEntity(entity);
     if (values != null && (typeof values !== "object" || Array.isArray(values))) {
-      throw new BadRequestException("customFields must be an object keyed by field key");
+      throw badRequest("crm.customfieldsMustBeAnObjectKeyed");
     }
     const defs = await this.activeDefs(organizationId, entity);
     const byKey = new Map(defs.map((d: any) => [d.key, d]));
     const sanitized: CustomFieldValues = {};
     for (const [key, raw] of Object.entries(values ?? {})) {
       const def: any = byKey.get(key);
-      if (!def) throw new BadRequestException(`Unknown custom field: "${key}" for ${entity}`);
+      if (!def) throw badRequest("crm.unknownCustomFieldFor", { key: key, entity: entity });
       if (raw === null || (typeof raw === "string" && raw.trim() === "")) { sanitized[key] = null; continue; }
       sanitized[key] = validateCustomFieldValue(def, raw);
     }
@@ -220,7 +221,7 @@ export class CustomFieldsService {
         if (!def.required) continue;
         const v = sanitized[def.key] !== undefined ? sanitized[def.key] : opts.existing?.[def.key];
         if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) {
-          throw new BadRequestException(`Custom field "${def.label}" is required`);
+          throw badRequest("crm.customFieldIsRequired", { defLabel: def.label });
         }
       }
     }

@@ -1,3 +1,5 @@
+import type { UiLocale } from "@repo/contracts";
+
 /**
  * SN1/SN2 (Social Posts Next, Batch N1) — web-side types + pure
  * helpers. Fetching stays in page.tsx / the public share page; this
@@ -44,18 +46,28 @@ export function shareLinkStatus(link: Pick<SocialShareLink, "expiresAt" | "revok
   return "active";
 }
 
-export const SHARE_LINK_STATUS_META: Record<ShareLinkStatus, { label: string; pillCls: string }> = {
-  active: { label: "সক্রিয়", pillCls: "bg-emerald-100 text-emerald-800" },
-  expired: { label: "মেয়াদ শেষ", pillCls: "bg-slate-200 text-slate-600" },
-  revoked: { label: "বাতিল করা", pillCls: "bg-red-100 text-red-700" },
+export const SHARE_LINK_STATUS_META: Record<ShareLinkStatus, { label: string; labelEn: string; pillCls: string }> = {
+  active: { label: "সক্রিয়", labelEn: "Active", pillCls: "bg-emerald-100 text-emerald-800" },
+  expired: { label: "মেয়াদ শেষ", labelEn: "Expired", pillCls: "bg-slate-200 text-slate-600" },
+  revoked: { label: "বাতিল করা", labelEn: "Revoked", pillCls: "bg-red-100 text-red-700" },
 };
+
+export function shareLinkStatusLabel(status: ShareLinkStatus, locale: UiLocale = "bn"): string {
+  const meta = SHARE_LINK_STATUS_META[status];
+  return locale === "en" ? meta.labelEn : meta.label;
+}
 
 export type ClientReviewDecision = "approved" | "changes_requested";
 
-export const CLIENT_REVIEW_META: Record<ClientReviewDecision, { label: string; pillCls: string }> = {
-  approved: { label: "ক্লায়েন্ট অনুমোদন দিয়েছেন", pillCls: "bg-emerald-100 text-emerald-800" },
-  changes_requested: { label: "ক্লায়েন্ট পরিবর্তন চেয়েছেন", pillCls: "bg-amber-100 text-amber-800" },
+export const CLIENT_REVIEW_META: Record<ClientReviewDecision, { label: string; labelEn: string; pillCls: string }> = {
+  approved: { label: "ক্লায়েন্ট অনুমোদন দিয়েছেন", labelEn: "Client approved", pillCls: "bg-emerald-100 text-emerald-800" },
+  changes_requested: { label: "ক্লায়েন্ট পরিবর্তন চেয়েছেন", labelEn: "Client requested changes", pillCls: "bg-amber-100 text-amber-800" },
 };
+
+export function clientReviewLabel(decision: ClientReviewDecision, locale: UiLocale = "bn"): string {
+  const meta = CLIENT_REVIEW_META[decision];
+  return locale === "en" ? meta.labelEn : meta.label;
+}
 
 /** Effective client review carried on the public preview + timeline. */
 export interface ClientReviewSummary {

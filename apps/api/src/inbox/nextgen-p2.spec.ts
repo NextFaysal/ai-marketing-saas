@@ -190,7 +190,7 @@ describe("bulk actions", () => {
     expect(out.succeeded).toBe(1);
     expect(out.failed).toBe(1);
     expect(out.results.find((r) => r.id === "c-foreign")).toMatchObject({ ok: false });
-    expect(out.results.find((r) => r.id === "c-foreign")?.error).toMatch(/not found/i);
+    expect(out.results.find((r) => r.id === "c-foreign")?.error).toContain("conversation পাওয়া যায়নি");
     expect(fake.convRows.find((c) => c.id === "c-foreign")?.unreadCount).toBe(3); // untouched
     expect(fake.convRows.find((c) => c.id === "c-young")?.unreadCount).toBe(0);
   });
@@ -199,7 +199,7 @@ describe("bulk actions", () => {
     const fake = fakePrisma();
     const bad = await svc(fake).bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "assign", assignedUserId: "ghost" });
     expect(bad.results[0]).toMatchObject({ ok: false });
-    expect(bad.results[0].error).toMatch(/not a member/);
+    expect(bad.results[0].error).toContain("সদস্য নন");
     const good = await svc(fake).bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "assign", assignedUserId: "user-2" });
     expect(good.results[0].ok).toBe(true);
     expect(fake.convRows.find((c) => c.id === "c-breach")?.assignedUserId).toBe("user-2");
@@ -211,10 +211,10 @@ describe("bulk actions", () => {
   it("caps the batch at 25 and rejects empty/invalid requests", async () => {
     const fake = fakePrisma();
     const s = svc(fake);
-    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: Array.from({ length: 26 }, (_, i) => `x-${i}`), action: "close" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: [], action: "close" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "explode" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "tag-add" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: Array.from({ length: 26 }, (_, i) => `x-${i}`), action: "close" })).rejects.toMatchObject({ code: "inbox.bulkActionsCanBeAppliedTo" });
+    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: [], action: "close" })).rejects.toMatchObject({ code: "inbox.selectAtLeastOneConversation" });
+    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "explode" })).rejects.toMatchObject({ code: "inbox.invalidBulkActionCloseAssignTag" });
+    await expect(s.bulkUpdateConversations("org-1", "user-1", { ids: ["c-breach"], action: "tag-add" })).rejects.toMatchObject({ code: "inbox.tagIsRequiredForTheTag" });
   });
 });
 
@@ -277,7 +277,7 @@ describe("sendProductCard", () => {
     const fake = fakePrisma();
     fake.convRows.push({ id: "c-msg", organizationId: "org-1", channel: "messenger", status: "open", firstResponseAt: null, assignedUserId: null, tags: [], createdAt: new Date(), pipelineStage: "new", autoReplyPaused: false, integrationId: null, externalContactId: "psid-1", csatSentAt: null, unreadCount: 0 });
     (globalThis as any).fetch = fetchOk(PNG);
-    await expect(svc(fake).sendProductCard("org-1", "user-1", "c-msg", { productId: "p-1" })).rejects.toThrow(/NOT sent/);
+    await expect(svc(fake).sendProductCard("org-1", "user-1", "c-msg", { productId: "p-1" })).rejects.toMatchObject({ code: "inbox.mediaWasNotSent" });
     // the image row exists and is marked failed; NO text row was created
     expect(fake.msgRows).toHaveLength(1);
     expect(fake.msgRows[0]).toMatchObject({ type: "image", status: "failed" });
@@ -285,8 +285,8 @@ describe("sendProductCard", () => {
 
   it("unknown product is a 404 scoped to the org", async () => {
     const fake = fakePrisma();
-    await expect(svc(fake).sendProductCard("org-1", "user-1", "c-breach", { productId: "nope" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc(fake).sendProductCard("org-2", "user-1", "c-foreign", { productId: "p-1" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc(fake).sendProductCard("org-1", "user-1", "c-breach", { productId: "nope" })).rejects.toMatchObject({ code: "inbox.productNotFoundInThisOrganization" });
+    await expect(svc(fake).sendProductCard("org-2", "user-1", "c-foreign", { productId: "p-1" })).rejects.toMatchObject({ code: "inbox.productNotFoundInThisOrganization" });
   });
 });
 

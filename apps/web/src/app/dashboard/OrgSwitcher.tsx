@@ -10,6 +10,7 @@ import {
   userIdFromAccessToken, type OrgListPrefs, type SwitcherOrg,
 } from "@/lib/org-switcher";
 import OrgCreateForm from "./OrgCreateForm";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * OU1 (One-Umbrella OB1): the dashboard Organization switcher.
@@ -40,6 +41,7 @@ import OrgCreateForm from "./OrgCreateForm";
  * signed-in user's id, so they are per device (see the lib note).
  */
 export default function OrgSwitcher() {
+  const { dict, t, locale } = useLocale();
   const [orgs, setOrgs] = React.useState<SwitcherOrg[] | null>(null);
   const [open, setOpen] = React.useState(false);
   const [view, setView] = React.useState<"list" | "create">("list");
@@ -118,9 +120,9 @@ export default function OrgSwitcher() {
         <span className="min-w-0">
           <span className="block truncate text-[12.5px] font-bold leading-tight text-slate-800">{current.name}</span>
           <span className="block text-[10px] leading-tight text-slate-500">
-            {roleLabel(current.myRole)}
-            {orgStateBadge(current) ? (
-              <span className={`ml-1 rounded px-1 py-px text-[9px] font-bold ${orgSuspended(current) ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{orgStateBadge(current)}</span>
+            {roleLabel(current.myRole, locale)}
+            {orgStateBadge(current, locale) ? (
+              <span className={`ml-1 rounded px-1 py-px text-[9px] font-bold ${orgSuspended(current) ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{orgStateBadge(current, locale)}</span>
             ) : null}
           </span>
         </span>
@@ -133,22 +135,22 @@ export default function OrgSwitcher() {
           <div className="absolute left-0 top-12 z-50 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl" role="menu">
             {view === "list" ? (
               <>
-                <div className="px-2 pb-1 pt-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Organization বদলান</div>
+                <div className="px-2 pb-1 pt-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">{dict.shell.switchOrg}</div>
                 {showSearch ? (
                   <div className="relative px-1 pb-1.5">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-[calc(50%+2px)] text-slate-400" />
                     <input
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="Organization খুঁজুন…"
+                      placeholder={dict.shell.searchOrgPlaceholder}
                       className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-2 text-[13px] text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
-                      aria-label="Organization খুঁজুন"
+                      aria-label={dict.shell.searchOrgLabel}
                     />
                   </div>
                 ) : null}
                 <div className="max-h-64 overflow-y-auto">
                   {visibleOrgs.length === 0 ? (
-                    <p className="px-2 py-3 text-[12.5px] text-slate-400">“{query}” নামে কোনো Organization পাওয়া যায়নি।</p>
+                    <p className="px-2 py-3 text-[12.5px] text-slate-400">{t("shell.noOrgFound", { query })}</p>
                   ) : null}
                   {visibleOrgs.map((o) => {
                     const isCurrent = o.id === current.id;
@@ -166,13 +168,13 @@ export default function OrgSwitcher() {
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-[13px] font-semibold text-slate-800">
                               {o.name}
-                              {orgStateBadge(o) ? (
-                                <span className={`ml-1.5 rounded px-1.5 py-0.5 align-middle text-[10px] font-bold ${orgSuspended(o) ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{orgStateBadge(o)}</span>
+                              {orgStateBadge(o, locale) ? (
+                                <span className={`ml-1.5 rounded px-1.5 py-0.5 align-middle text-[10px] font-bold ${orgSuspended(o) ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{orgStateBadge(o, locale)}</span>
                               ) : null}
                             </span>
                             <span className="block text-[11px] text-slate-500">
-                              {roleLabel(o.myRole)}{o.slug ? ` · ${o.slug}` : ""}
-                              {orgArchived(o) && !orgSuspended(o) ? " · Restore করলে আবার চালু হবে" : ""}
+                              {roleLabel(o.myRole, locale)}{o.slug ? ` · ${o.slug}` : ""}
+                              {orgArchived(o) && !orgSuspended(o) ? dict.shell.restoreHintSuffix : ""}
                             </span>
                           </span>
                           {isCurrent ? <Check className="h-4 w-4 shrink-0 text-indigo-600" /> : null}
@@ -182,8 +184,8 @@ export default function OrgSwitcher() {
                             type="button"
                             onClick={() => togglePin(o.id)}
                             className={`absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg transition hover:bg-slate-100 ${pinned ? "text-indigo-600" : "text-slate-300 hover:text-slate-500"}`}
-                            title={pinned ? "Pin সরান" : "ওপরে Pin করুন"}
-                            aria-label={pinned ? `${o.name} — Pin সরান` : `${o.name} — ওপরে Pin করুন`}
+                            title={pinned ? dict.shell.pinRemove : dict.shell.pinAdd}
+                            aria-label={pinned ? t("shell.pinRemoveLabel", { name: o.name }) : t("shell.pinAddLabel", { name: o.name })}
                             aria-pressed={pinned}
                           >
                             <Pin className="h-3.5 w-3.5" fill={pinned ? "currentColor" : "none"} />
@@ -195,14 +197,14 @@ export default function OrgSwitcher() {
                 </div>
                 <div className="mt-1 border-t border-slate-100 pt-1">
                   <a href="/dashboard/portfolio" className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50" role="menuitem">
-                    <LayoutGrid className="h-4 w-4 text-slate-400" /> সব Organization-এর সারসংক্ষেপ
+                    <LayoutGrid className="h-4 w-4 text-slate-400" /> {dict.shell.portfolioSummary}
                   </a>
                   <button onClick={() => setView("create")} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-[13px] font-semibold text-indigo-700 transition hover:bg-indigo-50" role="menuitem">
-                    <Plus className="h-4 w-4" /> নতুন Organization তৈরি
+                    <Plus className="h-4 w-4" /> {dict.shell.createOrg}
                   </button>
                 </div>
                 {mode === "single" ? (
-                  <p className="px-2 pb-1 pt-1 text-[11px] leading-relaxed text-slate-400">আপনি এখন একটি Organization-এর সদস্য। নতুন আরেকটি তৈরি করলে এখান থেকেই বদলাতে পারবেন।</p>
+                  <p className="px-2 pb-1 pt-1 text-[11px] leading-relaxed text-slate-400">{dict.shell.singleOrgNote}</p>
                 ) : null}
               </>
             ) : (

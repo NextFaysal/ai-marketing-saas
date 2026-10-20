@@ -55,13 +55,22 @@ export interface PayoutReceiptParams {
   date?: string;
 }
 
-export const SOCIAL_PLATFORMS: { id: SocialPlatform; label: string; icon: string }[] = [
-  { id: "instagram", label: "Instagram", icon: "📷" },
-  { id: "facebook", label: "Facebook", icon: "📘" },
-  { id: "youtube", label: "YouTube", icon: "▶️" },
-  { id: "tiktok", label: "TikTok", icon: "🎵" },
-  { id: "other", label: "অন্যান্য / ব্লগ", icon: "🌐" },
+import { fmtDate, fmtMoney, type UiLocale } from "@repo/contracts";
+
+export const SOCIAL_PLATFORMS: { id: SocialPlatform; label: string; labelEn: string; icon: string }[] = [
+  { id: "instagram", label: "Instagram", labelEn: "Instagram", icon: "📷" },
+  { id: "facebook", label: "Facebook", labelEn: "Facebook", icon: "📘" },
+  { id: "youtube", label: "YouTube", labelEn: "YouTube", icon: "▶️" },
+  { id: "tiktok", label: "TikTok", labelEn: "TikTok", icon: "🎵" },
+  { id: "other", label: "অন্যান্য / ব্লগ", labelEn: "Other / Blog", icon: "🌐" },
 ];
+
+/** Platform display label for the active UI locale (D7 companion field). */
+export function platformLabelFor(platform: string, locale: UiLocale = "bn"): string {
+  const meta = SOCIAL_PLATFORMS.find((p) => p.id === platform);
+  if (!meta) return platform;
+  return locale === "en" ? meta.labelEn : meta.label;
+}
 
 /**
  * Builds a clean, fully tagged influencer tracking link
@@ -168,7 +177,23 @@ export function formatBdPhoneForWhatsApp(phone: string): string {
  * Generates an onboarding & promo kit WhatsApp message in Bengali
  * tailored for Bangladeshi content creators.
  */
-export function buildInfluencerWhatsAppBriefing(params: InfluencerWhatsAppBriefingParams): string {
+export function buildInfluencerWhatsAppBriefing(params: InfluencerWhatsAppBriefingParams, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    const termsEn = params.paymentTerms || "Via bKash / Nagad / bank account on the 1st and 15th of every month";
+    return `Hello ${params.creatorName}! 🌟
+
+A warm welcome to the influencer partnership from ${params.brandName}.
+
+Your custom tracking and promo details are ready:
+🏷️ Your coupon code: *${params.promoCode.toUpperCase()}* (for a special discount for your audience)
+🔗 Your unique tracking link: ${params.trackingUrl}
+💰 Your earned commission: *${params.commissionPercent}%* on every successful delivery
+💳 Payout terms: ${termsEn}
+
+📌 Tip: Add this link to your TikTok bio, Instagram story/reel description or YouTube video caption. Whenever someone orders through this link or with your coupon code, the commission lands in your dashboard.
+
+Contact us for any help. Best of luck with your campaign! 🚀`.trim();
+  }
   const terms = params.paymentTerms || "বিকাশ / নগদ / ব্যাংক অ্যাকাউন্টে প্রতি মাসের ১ ও ১৫ তারিখে";
   return `সালাম/হ্যালো ${params.creatorName}! 🌟
 
@@ -196,7 +221,7 @@ export function buildInfluencerWhatsAppUrl(phone: string, text: string): string 
 /**
  * Generates a commission payout voucher receipt text for WhatsApp/SMS.
  */
-export function buildPayoutReceiptText(params: PayoutReceiptParams): string {
+export function buildPayoutReceiptText(params: PayoutReceiptParams, locale: UiLocale = "bn"): string {
   const methodMap: Record<string, string> = {
     bkash: "bKash (বিকাশ)",
     nagad: "Nagad (নগদ)",
@@ -205,6 +230,26 @@ export function buildPayoutReceiptText(params: PayoutReceiptParams): string {
     cash: "Cash (নগদ টাকা)",
     other: "Other",
   };
+  const methodMapEn: Record<string, string> = {
+    bkash: "bKash",
+    nagad: "Nagad",
+    rocket: "Rocket",
+    bank: "Bank Transfer",
+    cash: "Cash",
+    other: "Other",
+  };
+  if (locale === "en") {
+    const mLabelEn = methodMapEn[params.method.toLowerCase()] || params.method;
+    const refTextEn = params.reference ? `\n🧾 Transaction ID / reference: *${params.reference}*` : "";
+    const dateTextEn = params.date || fmtDate(locale, new Date());
+    return `✅ Commission payout completed — ${params.brandName}
+
+Dear ${params.creatorName},
+${fmtMoney(locale, Number(params.amountBdt))} of your earned influencer partnership commission has been transferred successfully via ${mLabelEn}.${refTextEn}
+📅 Date: ${dateTextEn}
+
+Thank you sincerely for continuing the partnership with us! 🌟`.trim();
+  }
   const mLabel = methodMap[params.method.toLowerCase()] || params.method;
   const refText = params.reference ? `\n🧾 ট্রানজেকশন আইডি / রেফারেন্স: *${params.reference}*` : "";
   const dateText = params.date || new Date().toLocaleDateString("en-GB");

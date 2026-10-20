@@ -11,6 +11,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { ALL_NAV_ITEMS, LS_KEYS, NavIcon, lsGetArray, lsSet } from "./nav";
+import { useAdminLocale } from "./AdminLocale";
 
 interface SearchResults {
   users: { id: string; email: string; name: string; status: string }[];
@@ -23,6 +24,7 @@ interface PaletteItem {
 }
 
 export default function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { dict, locale, t } = useAdminLocale();
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const [entities, setEntities] = React.useState<SearchResults | null>(null);
@@ -59,21 +61,22 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     const out: PaletteItem[] = [];
     if (needle) {
       for (const p of ALL_NAV_ITEMS) {
-        if (p.label.toLowerCase().includes(needle) || p.href.toLowerCase().includes(needle)) {
-          out.push({ key: `page-${p.href}`, label: p.label, sub: "পেজ", href: p.href, kind: "page" });
+        const label = t(p.labelKey);
+        if (label.toLowerCase().includes(needle) || p.href.toLowerCase().includes(needle)) {
+          out.push({ key: `page-${p.href}`, label, sub: dict.palette.page, href: p.href, kind: "page" });
         }
       }
     } else {
-      for (const p of ALL_NAV_ITEMS) out.push({ key: `page-${p.href}`, label: p.label, sub: "পেজ", href: p.href, kind: "page" });
+      for (const p of ALL_NAV_ITEMS) out.push({ key: `page-${p.href}`, label: t(p.labelKey), sub: dict.palette.page, href: p.href, kind: "page" });
     }
     if (entities) {
-      for (const u of entities.users) out.push({ key: `user-${u.id}`, label: u.name || u.email, sub: `User · ${u.email} · ${u.status}`, href: `/users/${u.id}`, kind: "user" });
-      for (const o of entities.organizations) out.push({ key: `org-${o.id}`, label: o.name, sub: `Organization · ${o.slug} · ${o.status}`, href: `/orgs/${o.id}`, kind: "org" });
-      for (const o of entities.orders) out.push({ key: `order-${o.id}`, label: `#${o.externalNumber ?? o.id.slice(0, 8)}`, sub: `Order · ${o.status} · ${formatMinorStr(o.totalMinor)}`, href: `/search?q=${encodeURIComponent(q.trim())}`, kind: "order" });
+      for (const u of entities.users) out.push({ key: `user-${u.id}`, label: u.name || u.email, sub: `${dict.palette.kindUser} · ${u.email} · ${u.status}`, href: `/users/${u.id}`, kind: "user" });
+      for (const o of entities.organizations) out.push({ key: `org-${o.id}`, label: o.name, sub: `${dict.palette.kindOrg} · ${o.slug} · ${o.status}`, href: `/orgs/${o.id}`, kind: "org" });
+      for (const o of entities.orders) out.push({ key: `order-${o.id}`, label: `#${o.externalNumber ?? o.id.slice(0, 8)}`, sub: `${dict.palette.kindOrder} · ${o.status} · ${formatMinorStr(o.totalMinor, locale)}`, href: `/search?q=${encodeURIComponent(q.trim())}`, kind: "order" });
     }
-    if (needle.length >= 2) out.push({ key: "search-all", label: `সব ফলাফল দেখুন: “${q.trim()}”`, sub: "Search", href: `/search?q=${encodeURIComponent(q.trim())}`, kind: "search-all" });
+    if (needle.length >= 2) out.push({ key: "search-all", label: t("palette.seeAll", { query: q.trim() }), sub: dict.palette.kindSearch, href: `/search?q=${encodeURIComponent(q.trim())}`, kind: "search-all" });
     return out;
-  }, [q, entities]);
+  }, [q, entities, dict, locale, t]);
 
   React.useEffect(() => { setSelected(0); }, [items.length]);
 
@@ -107,7 +110,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     kind === "user" ? "users" : kind === "org" ? "building" : kind === "order" ? "card" : "search";
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center px-2 pt-[6vh] sm:px-4 sm:pt-[12vh]" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div className="fixed inset-0 z-[60] flex items-start justify-center px-2 pt-[6vh] sm:px-4 sm:pt-[12vh]" role="dialog" aria-modal="true" aria-label={dict.palette.ariaLabel}>
       <div className="aoverlay absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="apalette-panel relative w-full max-w-xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onKeyDown={onKeyDown}>
         <div className="flex items-center gap-2.5 border-b border-slate-800 px-4">
@@ -116,15 +119,15 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="পেজ, User, Organization, Order খুঁজুন…"
+            placeholder={dict.palette.placeholder}
             className="w-full bg-transparent py-3.5 text-[15px] text-slate-100 placeholder:text-slate-400 focus:outline-none"
-            aria-label="Command palette অনুসন্ধান"
+            aria-label={dict.palette.ariaSearch}
           />
           <kbd className="hidden shrink-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 sm:block">ESC</kbd>
         </div>
         <div ref={listRef} className="max-h-[46vh] overflow-y-auto py-2">
           {items.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-slate-400">{q.trim().length >= 2 ? "কিছু পাওয়া যায়নি।" : "লিখতে শুরু করুন — পেজ ও আসল ডেটা থেকে ফলাফল আসবে।"}</p>
+            <p className="px-4 py-3 text-sm text-slate-400">{q.trim().length >= 2 ? dict.palette.nothingFound : dict.palette.startTyping}</p>
           ) : items.map((item, i) => (
             <button
               key={item.key}
@@ -144,7 +147,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
         </div>
         {q.trim() === "" && recentSearches.length > 0 ? (
           <div className="border-t border-slate-800 px-4 py-2.5">
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অনুসন্ধান</div>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{dict.palette.recentSearches}</div>
             <div className="flex flex-wrap gap-1.5">
               {recentSearches.map((s) => (
                 <button key={s} type="button" onClick={() => setQ(s)} className="rounded-full border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition hover:border-slate-500">{s}</button>

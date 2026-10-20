@@ -1,3 +1,8 @@
+import { inboxBn, inboxEn } from "./i18n/inbox";
+import { interpolate } from "./i18n/lookup";
+
+type Loc = "bn" | "en";
+const D = (locale?: string) => (locale === "en" ? inboxEn : inboxBn);
 /**
  * IN3: pure helpers for inbox macros + bulk reply in the inbox
  * page. A macro step mirrors the API's sanitizeMacroSteps
@@ -16,12 +21,16 @@ export type MacroStep =
   | { type: "snooze"; minutes: number };
 
 export const MACRO_STEP_LABELS: Record<string, string> = {
-  reply: "💬 Quick Reply পাঠান",
-  assign: "👤 অ্যাসাইন",
-  tag: "🏷️ ট্যাগ যোগ",
-  pipeline: "📊 Pipeline স্টেজ",
-  close: "✅ বন্ধ করুন",
+  reply: inboxBn.macroReply,
+  assign: inboxBn.macroAssign,
+  tag: inboxBn.macroTag,
+  pipeline: inboxBn.macroPipeline,
+  close: inboxBn.macroClose,
   snooze: "😴 Snooze",
+};
+export const macroStepLabels = (locale?: string): Record<string, string> => {
+  const dd = D(locale);
+  return { reply: dd.macroReply, assign: dd.macroAssign, tag: dd.macroTag, pipeline: dd.macroPipeline, close: dd.macroClose, snooze: "😴 Snooze" };
 };
 
 export const PIPELINE_STAGES = ["new", "talking", "ordered", "delivered", "repeat"] as const;
@@ -37,26 +46,28 @@ export const CONVERSATION_OUTCOMES = [
 export function macroStepSummary(
   step: MacroStep,
   lookups: { quickReplyTitle?: (id: string) => string | undefined; memberName?: (id: string) => string | undefined } = {},
+  locale: Loc = "bn",
 ): string {
+  const dd = D(locale);
   switch (step.type) {
     case "reply": {
       const title = lookups.quickReplyTitle?.(step.quickReplyId);
-      return `💬 উত্তর${title ? `: “${title}”` : ""}`;
+      return `${dd.macroReplyWord}${title ? `: “${title}”` : ""}`;
     }
     case "assign":
-      if (step.assignedUserId === null) return "👤 অ্যাসাইন তুলে নিন";
-      if (step.assignedUserId === "me") return "👤 অ্যাসাইন: নিজেকে";
-      return `👤 অ্যাসাইন: ${lookups.memberName?.(step.assignedUserId) ?? step.assignedUserId}`;
+      if (step.assignedUserId === null) return dd.macroUnassign;
+      if (step.assignedUserId === "me") return dd.macroAssignMe;
+      return `${dd.macroAssignTo}: ${lookups.memberName?.(step.assignedUserId) ?? step.assignedUserId}`;
     case "tag":
-      return `🏷️ ট্যাগ: ${step.tag}`;
+      return `${dd.macroTagWord}: ${step.tag}`;
     case "pipeline":
-      return `📊 স্টেজ: ${step.stage}`;
+      return `${dd.macroStageWord}: ${step.stage}`;
     case "close":
-      return `✅ বন্ধ করুন${step.outcome ? ` (${step.outcome})` : ""}`;
+      return `${dd.macroClose}${step.outcome ? ` (${step.outcome})` : ""}`;
     case "snooze":
-      return `😴 Snooze: ${step.minutes} মিনিট`;
+      return `😴 Snooze: ${step.minutes} ${dd.macroMinutes}`;
     default:
-      return "ধাপ";
+      return dd.macroStepWord;
   }
 }
 
@@ -69,24 +80,28 @@ export interface MacroRunResult {
 /** The honest one-paragraph report of a macro run: success only
  * when every step succeeded; a failure names the step and its
  * real error, and skipped steps are called skipped. */
-export function formatMacroRunResult(r: MacroRunResult): string {
-  if (r.success) return `ম্যাক্রো “${r.macroName}” সম্পন্ন — ${r.completed}/${r.total} ধাপ সফল।`;
+export function formatMacroRunResult(r: MacroRunResult, locale: Loc = "bn"): string {
+  const dd = D(locale);
+  const macroWord = dd.macroWord;
+  if (r.success) return `${macroWord} “${r.macroName}” ${interpolate(dd.macroDoneSuffix, { completed: r.completed, total: r.total })}`;
   const failed = r.steps.find((s) => !s.ok && !s.skipped);
   const skipped = r.steps.filter((s) => s.skipped).length;
-  return `ম্যাক্রো “${r.macroName}” থেমেছে — ${r.completed}/${r.total} ধাপ হয়েছে${failed ? `; ধাপ ${failed.index + 1} (${MACRO_STEP_LABELS[failed.type] ?? failed.type}) ব্যর্থ: ${failed.error ?? "অজানা ত্রুটি"}` : ""}${skipped ? `; বাকি ${skipped}টি ধাপ হয়নি` : ""}।`;
+  return `${macroWord} “${r.macroName}” ${interpolate(dd.macroStoppedSuffix, { completed: r.completed, total: r.total })}${failed ? `; ${dd.macroStepWord} ${failed.index + 1} (${macroStepLabels(locale)[failed.type] ?? failed.type}) ${dd.macroFailedWord}: ${failed.error ?? dd.macroUnknownError}` : ""}${skipped ? `; ${interpolate(dd.macroSkippedSuffix, { count: skipped })}` : ""}${locale === "en" ? "." : "।"}`;
 }
 
 /** Per-step lines for the result panel (✓ done / ✗ failed / ⏭ skipped). */
-export function macroRunStepLines(r: MacroRunResult): string[] {
+export function macroRunStepLines(r: MacroRunResult, locale: Loc = "bn"): string[] {
+  const dd = D(locale);
   return r.steps.map((s) => {
-    const label = MACRO_STEP_LABELS[s.type] ?? s.type;
-    if (s.skipped) return `⏭ ধাপ ${s.index + 1}: ${label} — হয়নি (আগের ধাপে থেমেছে)`;
-    if (s.ok) return `✓ ধাপ ${s.index + 1}: ${label}`;
-    return `✗ ধাপ ${s.index + 1}: ${label} — ${s.error ?? "ব্যর্থ"}`;
+    const label = macroStepLabels(locale)[s.type] ?? s.type;
+    if (s.skipped) return `⏭ ${dd.macroStepWord} ${s.index + 1}: ${label} — ${dd.macroStepSkipped}`;
+    if (s.ok) return `✓ ${dd.macroStepWord} ${s.index + 1}: ${label}`;
+    return `✗ ${dd.macroStepWord} ${s.index + 1}: ${label} — ${s.error ?? dd.macroStepFailed}`;
   });
 }
 
 /** IN3c bulk-reply summary line (counts are the server's). */
-export function bulkReplySummary(succeeded: number, failed: number): string {
-  return `বাল্ক রিপ্লাই সম্পন্ন: পাঠানো হয়েছে ${succeeded}টি${failed ? `, পাঠানো যায়নি ${failed}টি` : ""}।`;
+export function bulkReplySummary(succeeded: number, failed: number, locale: Loc = "bn"): string {
+  const dd = D(locale);
+  return `${interpolate(dd.bulkReplyDone, { sent: succeeded })}${failed ? interpolate(dd.bulkReplyFailedPart, { failed }) : ""}${locale === "en" ? "." : "।"}`;
 }

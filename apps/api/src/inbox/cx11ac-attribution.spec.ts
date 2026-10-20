@@ -166,7 +166,7 @@ describe("CX11ac (a) sendReply attribution", () => {
     const c = conv({ channel: "whatsapp" }); stores.channelConversation.push(c);
     const qr = { id: "qr-1", organizationId: ORG, title: "স্বাগতম", content: "হ্যালো", timesUsed: 3, createdAt: now() };
     stores.quickReply.push(qr);
-    await expect(service.sendReply(ORG, "agent-1", c.id, "হ্যালো", { quickReplyId: "qr-1" })).rejects.toThrow(/NOT sent/);
+    await expect(service.sendReply(ORG, "agent-1", c.id, "হ্যালো", { quickReplyId: "qr-1" })).rejects.toMatchObject({ code: "inbox.messageWasNotSent" });
     expect(qr.timesUsed).toBe(3);
     const row = stores.channelMessage.find((m) => m.conversationId === c.id);
     expect(row?.status).toBe("failed");

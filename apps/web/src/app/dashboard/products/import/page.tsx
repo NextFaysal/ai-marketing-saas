@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 
@@ -9,6 +10,7 @@ interface ImportResult {
 }
 
 export default function ProductImportPage() {
+  const { dict, t, locale } = useLocale();
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,7 +20,7 @@ export default function ProductImportPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(dict.products.noOrganizationSelected); return; }
     setLoading(true); setError(""); setResult(null); setFileName(file.name);
     try {
       const isXlsx = /\.xlsx$/i.test(file.name);
@@ -27,7 +29,7 @@ export default function ProductImportPage() {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result ?? ""));
-          reader.onerror = () => reject(new Error("ফাইল পড়া যায়নি"));
+          reader.onerror = () => reject(new Error(dict.products.couldNotReadFile));
           reader.readAsDataURL(file);
         });
         const fileBase64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
@@ -49,39 +51,34 @@ export default function ProductImportPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="page-title">CSV / Excel দিয়ে পণ্য ইমপোর্ট</h1>
+        <h1 className="page-title">{dict.products.importProductsViaCSVExcel}</h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-500">
-          কলাম: name (আবশ্যক), price (আবশ্যক), sku, cost, stock, category, description, image_url, currency, brand, status,
-          variant_name, variant_sku, variant_price, variant_stock, variant_cost।
-          একই SKU আবার আপলোড হলে সেটি Skip হবে, পুরনো ডেটা ওভাররাইট হবে না। সর্বোচ্চ ফাইল ২ MB।
-          একই SKU-এর একাধিক Row-তে variant কলাম থাকলে সেগুলো একটি পণ্যের ভ্যারিয়েন্ট হিসেবে যোগ হবে —
-          অর্থাৎ একই SKU ভাগ করা Rowগুলো ONE product with variants তৈরি করে।
-          নমুনা: <code>docs/examples/products-sample.csv</code>
+          {dict.products.columnsNameRequiredPriceRequired}<code>docs/examples/products-sample.csv</code>
         </p>
       </div>
       <div className="card p-6">
         <input type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={onFile} className="text-sm" />
         {fileName ? <span className="ml-3 text-sm text-slate-500">{fileName}</span> : null}
-        {loading ? <p className="mt-3 text-sm text-slate-500">ইমপোর্ট হচ্ছে...</p> : null}
+        {loading ? <p className="mt-3 text-sm text-slate-500">{dict.products.importing}</p> : null}
         {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
       </div>
       {result ? (
         <div className="space-y-4 card p-6">
           <div className="grid grid-cols-4 gap-4 text-center">
-            <div><div className="page-title">{result.totalRows}</div><div className="text-xs text-slate-500">মোট Row</div></div>
-            <div><div className="text-2xl font-bold text-green-600">{result.successRows}</div><div className="text-xs text-slate-500">সফল</div></div>
+            <div><div className="page-title">{result.totalRows}</div><div className="text-xs text-slate-500">{dict.products.totalRows}</div></div>
+            <div><div className="text-2xl font-bold text-green-600">{result.successRows}</div><div className="text-xs text-slate-500">{dict.products.succeeded}</div></div>
             <div><div className="text-2xl font-bold text-amber-600">{result.skippedRows}</div><div className="text-xs text-slate-500">Skip (Duplicate SKU)</div></div>
-            <div><div className="text-2xl font-bold text-red-600">{result.failedRows}</div><div className="text-xs text-slate-500">ব্যর্থ</div></div>
+            <div><div className="text-2xl font-bold text-red-600">{result.failedRows}</div><div className="text-xs text-slate-500">{dict.products.failed}</div></div>
           </div>
           {result.errors && result.errors.length > 0 ? (
             <div>
-              <div className="font-semibold">Row অনুযায়ী এরর</div>
+              <div className="font-semibold">{dict.products.errorsByRow}</div>
               <ul className="mt-2 max-h-56 space-y-1 overflow-auto text-sm text-red-600">
                 {result.errors.map((e, i) => <li key={i}>Row {e.row}: {e.message}</li>)}
               </ul>
             </div>
           ) : null}
-          <a href="/dashboard/products" className="inline-block text-sm font-semibold text-blue-600">পণ্যের তালিকায় যান →</a>
+          <a href="/dashboard/products" className="inline-block text-sm font-semibold text-blue-600">{dict.products.goToProductList}</a>
         </div>
       ) : null}
     </div>

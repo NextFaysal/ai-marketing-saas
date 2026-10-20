@@ -286,7 +286,7 @@ describe("MX15 pure checklist v2", () => {
     const r = composeCheckV2({ ...baseInput, body: "Deal!", htmlBody: '<p><img src="https://cdn.example.com/a.png"></p>' });
     const img = r.checks.find((c) => c.code === "IMAGE_SIZE");
     expect(img?.status).toBe("not_run");
-    expect(img?.detail).toMatch(/no size metadata/i);
+    expect(img?.detail).toMatch(/metadata রাখা হয় না/);
     const spam = composeCheckV2({ ...baseInput, body: "You won a cash prize — act now!" });
     expect(spam.checks.find((c) => c.code === "SPAM_HEURISTIC")?.status).toBe("warn");
     expect(spam.spamWords.en).toContain("cash prize");
@@ -355,8 +355,8 @@ describe("MX15 service — approval workflow", () => {
     const bc: any = await draftEmail(svc, "mm-1");
     expect(bc.status).toBe("pending_approval");
     expect(bc.approvalStatus).toBe("pending");
-    await expect(svc.sendBroadcast("org-1", "mm-1", bc.id)).rejects.toThrow(/pending approval/);
-    await expect(svc.scheduleBroadcast("org-1", "mm-1", bc.id, new Date(Date.now() + 3600e3).toISOString())).rejects.toThrow(/pending approval/);
+    await expect(svc.sendBroadcast("org-1", "mm-1", bc.id)).rejects.toMatchObject({ code: "messaging.broadcastPendingApprovalCannotBeSent" });
+    await expect(svc.scheduleBroadcast("org-1", "mm-1", bc.id, new Date(Date.now() + 3600e3).toISOString())).rejects.toMatchObject({ code: "messaging.broadcastPendingApprovalCannotBeSent" });
     const queue: any[] = await svc.listApprovalQueue("org-1");
     expect(queue.map((q) => q.id)).toContain(bc.id);
     expect(deliveriesOf(tables, bc.id).length).toBe(0);
@@ -371,7 +371,7 @@ describe("MX15 service — approval workflow", () => {
     const { svc, tables, auditCalls } = build();
     withApproval(tables);
     const bc: any = await draftEmail(svc, "mm-1");
-    await expect(svc.approveBroadcast("org-1", "mm-1", bc.id, "self")).rejects.toThrow(/OWNER or ADMIN/);
+    await expect(svc.approveBroadcast("org-1", "mm-1", bc.id, "self")).rejects.toMatchObject({ code: "messaging.onlyAnOWNEROrADMINMember" });
     // Force the creator to be an approver on the row: even then, self-approval is refused.
     const row = tables.broadcast.rows.find((r: any) => r.id === bc.id);
     row.createdById = "admin-1";
@@ -472,8 +472,8 @@ describe("MX15 service — seed list + checklist v2 over a real sample", () => {
     expect(seed.address).toBe("boss@example.com");
     const dupe: any = await svc.addSeedRecipient("org-1", "owner-1", { channel: "email", address: "boss@example.com" });
     expect(dupe.id).toBe(seed.id);
-    await expect(svc.addSeedRecipient("org-1", "owner-1", { channel: "email", address: "not-an-email" })).rejects.toThrow(/Invalid email/);
-    await expect(svc.addSeedRecipient("org-1", "owner-1", { channel: "push", address: "https://push.example.com/x" })).rejects.toThrow(/email, sms, whatsapp or telegram/);
+    await expect(svc.addSeedRecipient("org-1", "owner-1", { channel: "email", address: "not-an-email" })).rejects.toMatchObject({ code: "messaging.invalidEmailAddressRaw" });
+    await expect(svc.addSeedRecipient("org-1", "owner-1", { channel: "push", address: "https://push.example.com/x" })).rejects.toMatchObject({ code: "messaging.channelMustBeEmailSmsWhatsapp2" });
     const bc: any = await draftEmail(svc, "owner-1");
     const result: any = await svc.testSendBroadcastToSeed("org-1", "owner-1", bc.id, seed.id);
     expect(result.status).toBe("sent");
@@ -481,7 +481,7 @@ describe("MX15 service — seed list + checklist v2 over a real sample", () => {
     expect(testDeliveries.length).toBe(1);
     expect(testDeliveries[0].address).toBe("boss@example.com");
     const smsSeed: any = await svc.addSeedRecipient("org-1", "owner-1", { channel: "sms", address: "01712345679" });
-    await expect(svc.testSendBroadcastToSeed("org-1", "owner-1", bc.id, smsSeed.id)).rejects.toThrow(/Seed recipient is a sms/);
+    await expect(svc.testSendBroadcastToSeed("org-1", "owner-1", bc.id, smsSeed.id)).rejects.toMatchObject({ code: "messaging.seedRecipientIsAChannelAddress" });
     const removed: any = await svc.removeSeedRecipient("org-1", "owner-1", seed.id);
     expect(removed.deleted).toBe(true);
     expect((await svc.listSeedRecipients("org-1")).map((s: any) => s.id)).not.toContain(seed.id);

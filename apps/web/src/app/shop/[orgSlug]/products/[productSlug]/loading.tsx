@@ -1,4 +1,6 @@
 import React from "react";
+import { shopT } from "@/lib/shop-i18n";
+const t = shopT("bn");
 
 /**
  * ED5 (EB2) streaming shell for the product detail route.
@@ -9,8 +11,8 @@ import React from "react";
  */
 export default function ProductDetailLoading() {
   return (
-    <div className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-6" aria-label="লোড হচ্ছে">
-      <span className="sr-only">লোড হচ্ছে…</span>
+    <div className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-6" aria-label={t.shopWidgets.loading}>
+      <span className="sr-only">{t.shopWidgets.loadingEllipsis}</span>
       <div className="skeleton h-3 w-56" />
       <div className="grid gap-8 lg:grid-cols-2">
         <div className="space-y-3">

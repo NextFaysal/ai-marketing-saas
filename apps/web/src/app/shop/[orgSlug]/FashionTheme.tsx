@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import Link from "next/link";
-import { formatMinor } from "@repo/contracts";
+import { fmtNumber, formatMinor } from "@repo/contracts";
 import { MediaImage } from "@/components/media-image";
 import type { ShopHome, ShopProduct } from "@/lib/storefront-server";
 import { shopSortOf } from "@/lib/storefront-server";
@@ -26,10 +26,13 @@ export function formatFashionPrice(minor: string): string {
 export function FashionSizeGuideModal({
   open,
   onClose,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [tab, setTab] = useState<"panjabi" | "kurti" | "shirt" | "tshirt">("panjabi");
 
   if (!open) return null;
@@ -49,8 +52,8 @@ export function FashionSizeGuideModal({
         <div className="flex items-center gap-2.5">
           <span className="text-2xl">📏</span>
           <div>
-            <h3 className="text-lg font-black text-stone-900 sm:text-xl">সাইজ নির্দেশিকা (Size Chart Guide)</h3>
-            <p className="text-xs text-stone-500">আপনার সঠিক মাপ বেছে নিন (সব পরিমাপ ইঞ্চিতে)</p>
+            <h3 className="text-lg font-black text-stone-900 sm:text-xl">{t.themeFashion.sizeGuideTitle}</h3>
+            <p className="text-xs text-stone-500">{t.themeFashion.sizeGuideSub}</p>
           </div>
         </div>
 
@@ -83,11 +86,11 @@ export function FashionSizeGuideModal({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b bg-stone-50 text-stone-700">
-                  <th className="p-2.5 font-bold">সাইজ (Size)</th>
-                  <th className="p-2.5 font-bold">বডি / চেস্ট (Chest)</th>
-                  <th className="p-2.5 font-bold">দৈর্ঘ্য (Length)</th>
-                  <th className="p-2.5 font-bold">শোল্ডার (Shoulder)</th>
-                  <th className="p-2.5 font-bold">হাতা (Sleeve)</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSize}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thChest}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thLength}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thShoulder}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSleeve}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-stone-600">
@@ -104,11 +107,11 @@ export function FashionSizeGuideModal({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b bg-stone-50 text-stone-700">
-                  <th className="p-2.5 font-bold">সাইজ (Size)</th>
-                  <th className="p-2.5 font-bold">বুকের মাপ (Bust)</th>
-                  <th className="p-2.5 font-bold">কোমর (Waist)</th>
-                  <th className="p-2.5 font-bold">হিপ (Hip)</th>
-                  <th className="p-2.5 font-bold">লম্বা (Length)</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSize}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thBust}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thWaist}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thHip}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thLength2}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-stone-600">
@@ -125,10 +128,10 @@ export function FashionSizeGuideModal({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b bg-stone-50 text-stone-700">
-                  <th className="p-2.5 font-bold">সাইজ (Size)</th>
-                  <th className="p-2.5 font-bold">চেস্ট (Chest)</th>
-                  <th className="p-2.5 font-bold">দৈর্ঘ্য (Length)</th>
-                  <th className="p-2.5 font-bold">কলার (Collar)</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSize}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thChest}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thLength}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thCollar}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-stone-600">
@@ -144,10 +147,10 @@ export function FashionSizeGuideModal({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b bg-stone-50 text-stone-700">
-                  <th className="p-2.5 font-bold">সাইজ (Size)</th>
-                  <th className="p-2.5 font-bold">চেস্ট (Chest)</th>
-                  <th className="p-2.5 font-bold">দৈর্ঘ্য (Length)</th>
-                  <th className="p-2.5 font-bold">স্লিভ (Sleeve)</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSize}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thChest}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thLength}</th>
+                  <th className="p-2.5 font-bold">{t.themeFashion.thSleeve}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 text-stone-600">
@@ -277,7 +280,7 @@ export function FashionProductCard({
           )}
           {product.freeShipping && (
             <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold text-white shadow-xs">
-              ফ্রি ডেলিভারি
+              {t.themeFashion.freeDelivery}
             </span>
           )}
         </div>
@@ -294,7 +297,7 @@ export function FashionProductCard({
           }`}
         >
           <div className="flex items-center justify-between px-1 pb-1 text-[11px] font-bold text-stone-600">
-            <span>দ্রুত সাইজ বাছুন:</span>
+            <span>{t.themeFashion.quickSizeLabel}</span>
             {onOpenSizeGuide && (
               <button
                 type="button"
@@ -305,7 +308,7 @@ export function FashionProductCard({
                 }}
                 className="text-[10px] font-semibold text-indigo-600 underline hover:text-indigo-800"
               >
-                সাইজ গাইড
+                {t.themeFashion.sizeGuide}
               </button>
             )}
           </div>
@@ -326,7 +329,7 @@ export function FashionProductCard({
                     ? "bg-stone-100 text-stone-800 hover:bg-neutral-900 hover:text-white"
                     : "bg-stone-50 text-stone-300 cursor-not-allowed line-through"
                 }`}
-                title={s.inStock ? `অ্যাড করুন: ${s.label}` : "স্টক শেষ"}
+                title={s.inStock ? `${t.themeFashion.addTitlePrefix}${s.label}` : t.themeFashion.outOfStock}
               >
                 {s.label}
               </button>
@@ -376,7 +379,7 @@ export function FashionProductCard({
                 : "bg-stone-100 text-stone-800 hover:bg-neutral-900 hover:text-white"
             }`}
           >
-            {added ? "✓ যোগ হয়েছে" : adding ? "..." : "+ ব্যাগে নিন"}
+            {added ? t.themeFashion.added : adding ? "..." : t.themeFashion.addToBag}
           </button>
         </div>
       </div>
@@ -424,13 +427,13 @@ export function FashionThemeHome({
       <div className="bg-neutral-950 py-2.5 text-center text-xs font-semibold text-stone-200 tracking-wider uppercase">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 sm:px-6">
           <span className="hidden sm:inline text-amber-400">✨ NEW SEASON DROP</span>
-          <span>🚚 ঢাকার ভিতরে ২৪-৪৮ ঘণ্টায় এক্সপ্রেস হোম ডেলিভারি • সহজ ৭ দিন এক্সচেঞ্জ</span>
+          <span>{t.themeFashion.topBar}</span>
           <button
             type="button"
             onClick={() => setSizeModalOpen(true)}
             className="hidden sm:inline font-bold text-amber-300 underline hover:text-white transition"
           >
-            📏 সাইজ গাইড
+            {t.themeFashion.sizeGuide}
           </button>
         </div>
       </div>
@@ -448,7 +451,7 @@ export function FashionThemeHome({
                 {settings.shopName}
               </h1>
               <p className="max-w-lg text-sm leading-relaxed text-stone-300 sm:text-base">
-                {settings.metaDescription || "ঐতিহ্য ও আধুনিক ফ্যাশনের অপূর্ব মেলবন্ধন — প্রিমিয়াম পাঞ্জাবি, শাড়ি, কুর্তি ও ট্রেন্ডি পোশাকের এক্সক্লুসিভ কালেকশন।"}
+                {settings.metaDescription || t.themeFashion.heroDescFallback}
               </p>
 
               {/* Call to Actions */}
@@ -457,14 +460,14 @@ export function FashionThemeHome({
                   href="#collection-grid"
                   className="rounded-full bg-white px-7 py-3 text-xs font-black uppercase tracking-wider text-neutral-950 shadow-md hover:bg-amber-300 transition"
                 >
-                  কালেকশন দেখুন ↓
+                  {t.themeFashion.heroCta}
                 </a>
                 <button
                   type="button"
                   onClick={() => setSizeModalOpen(true)}
                   className="rounded-full border border-stone-500 bg-neutral-900/60 px-5 py-3 text-xs font-bold text-stone-200 backdrop-blur hover:bg-neutral-800 transition"
                 >
-                  📏 সাইজ চার্ট গাইড
+                  {t.themeFashion.heroSizeChart}
                 </button>
               </div>
             </div>
@@ -484,7 +487,7 @@ export function FashionThemeHome({
                   <div className="flex h-full w-full items-center justify-center text-4xl">👗</div>
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent flex items-end p-3">
-                  <span className="text-xs font-bold text-white">নারীদের উৎসব কালেকশন</span>
+                  <span className="text-xs font-bold text-white">{t.themeFashion.womenFestive}</span>
                 </div>
               </div>
 
@@ -501,7 +504,7 @@ export function FashionThemeHome({
                   <div className="flex h-full w-full items-center justify-center text-4xl">👔</div>
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent flex items-end p-3">
-                  <span className="text-xs font-bold text-white">এক্সক্লুসিভ পাঞ্জাবি ও মেনস</span>
+                  <span className="text-xs font-bold text-white">{t.themeFashion.mensExclusive}</span>
                 </div>
               </div>
             </div>
@@ -513,29 +516,29 @@ export function FashionThemeHome({
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-xl">🚚</span>
             <div>
-              <h4 className="text-xs font-bold text-stone-900">দ্রুত হোম ডেলিভারি</h4>
-              <p className="text-[11px] text-stone-500">ঢাকার ভিতর ২৪-৪৮ ঘণ্টা</p>
+              <h4 className="text-xs font-bold text-stone-900">{t.themeFashion.trust1Title}</h4>
+              <p className="text-[11px] text-stone-500">{t.themeFashion.trust1Desc}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-50 text-xl">🔄</span>
             <div>
-              <h4 className="text-xs font-bold text-stone-900">সহজ ৭ দিন এক্সচেঞ্জ</h4>
-              <p className="text-[11px] text-stone-500">সাইজ পরিবর্তন সুবিধা</p>
+              <h4 className="text-xs font-bold text-stone-900">{t.themeFashion.trust2Title}</h4>
+              <p className="text-[11px] text-stone-500">{t.themeFashion.trust2Desc}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-xl">💵</span>
             <div>
-              <h4 className="text-xs font-bold text-stone-900">ক্যাশ অন ডেলিভারি</h4>
-              <p className="text-[11px] text-stone-500">সারাদেশে COD ও বিকাশ</p>
+              <h4 className="text-xs font-bold text-stone-900">{t.themeFashion.trust3Title}</h4>
+              <p className="text-[11px] text-stone-500">{t.themeFashion.trust3Desc}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-xl">🧵</span>
             <div>
-              <h4 className="text-xs font-bold text-stone-900">১০০% প্রিমিয়াম সুতি</h4>
-              <p className="text-[11px] text-stone-500">সেরা আরাম ও টেকসই ফেব্রিক</p>
+              <h4 className="text-xs font-bold text-stone-900">{t.themeFashion.trust4Title}</h4>
+              <p className="text-[11px] text-stone-500">{t.themeFashion.trust4Desc}</p>
             </div>
           </div>
         </section>
@@ -546,7 +549,7 @@ export function FashionThemeHome({
             <div className="flex items-end justify-between">
               <div>
                 <span className="text-xs font-black tracking-wider text-amber-700 uppercase">DEPARTMENTS</span>
-                <h2 className="text-2xl font-black text-stone-900 font-serif">পোশাকের ধরন অনুযায়ী বেছে নিন</h2>
+                <h2 className="text-2xl font-black text-stone-900 font-serif">{t.themeFashion.shopByType}</h2>
               </div>
             </div>
 
@@ -578,7 +581,7 @@ export function FashionThemeHome({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex flex-col justify-end p-4 text-white">
                       <h3 className="text-base font-extrabold">{cat.name}</h3>
                       <span className="text-xs text-stone-300 font-medium">
-                        {cat.productCount} টি পোশাক রয়েছে →
+                        {fmtNumber(locale === "en" ? "en" : "bn", cat.productCount)}{t.themeFashion.itemsSuffix}
                       </span>
                     </div>
                   </Link>
@@ -594,7 +597,7 @@ export function FashionThemeHome({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-black tracking-widest text-rose-600 uppercase">LIMITED DROP</span>
-                <h2 className="text-2xl font-black text-rose-900">⚡ ফ্ল্যাশ সেল অফার</h2>
+                <h2 className="text-2xl font-black text-rose-900">{t.themeFashion.flashSale}</h2>
               </div>
               <span className="rounded-full bg-white px-4 py-1.5 text-xs font-bold text-rose-700 shadow-xs">
                 <FlashCountdown
@@ -626,7 +629,7 @@ export function FashionThemeHome({
             <div className="flex items-end justify-between">
               <div>
                 <span className="text-xs font-black tracking-widest text-stone-400 uppercase">CURATED LOOKS</span>
-                <h2 className="text-2xl font-black text-stone-900 font-serif">নতুন আগমন ও স্পেশাল ডিজাইন</h2>
+                <h2 className="text-2xl font-black text-stone-900 font-serif">{t.themeFashion.newArrivals}</h2>
               </div>
             </div>
 
@@ -650,9 +653,9 @@ export function FashionThemeHome({
             <div>
               <span className="text-xs font-black tracking-wider text-amber-700 uppercase">ALL APPAREL</span>
               <h2 className="text-2xl font-black text-stone-900 font-serif">
-                সকল পোশাক কালেকশন
+                {t.themeFashion.allCollection}
                 <span className="ml-2 text-sm font-semibold text-stone-400 font-sans">
-                  ({pagination.total} টি পোশাক)
+                  ({fmtNumber(locale === "en" ? "en" : "bn", pagination.total)}{t.themeFashion.garmentsSuffix})
                 </span>
               </h2>
             </div>
@@ -662,7 +665,7 @@ export function FashionThemeHome({
                 onClick={() => setSizeModalOpen(true)}
                 className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-50"
               >
-                📏 সাইজ চার্ট
+                {t.themeFashion.sizeChart}
               </button>
               <SortSelect
                 orgSlug={orgSlug}
@@ -686,7 +689,7 @@ export function FashionThemeHome({
                     : "bg-white text-stone-700 border border-stone-200 hover:bg-stone-50"
                 }`}
               >
-                সব পোশাক ({pagination.total})
+                {t.themeFashion.allGarmentsPrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.total)}{t.themeFashion.allGarmentsSuffix}
               </Link>
               {categories.map((c) => {
                 const value = c.slug ?? c.name;
@@ -711,12 +714,12 @@ export function FashionThemeHome({
           {products.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-stone-300 bg-white p-12 text-center">
               <p className="text-4xl">👗</p>
-              <p className="mt-2 text-sm font-semibold text-stone-600">কোনো পোশাক পাওয়া যায়নি</p>
+              <p className="mt-2 text-sm font-semibold text-stone-600">{t.themeFashion.noGarments}</p>
               <Link
                 href={`/shop/${orgSlug}`}
                 className="mt-4 inline-block rounded-full bg-neutral-900 px-5 py-2 text-xs font-bold text-white hover:bg-stone-800"
               >
-                সকল পোশাক দেখুন
+                {t.themeFashion.viewAll}
               </Link>
             </div>
           ) : (
@@ -741,18 +744,18 @@ export function FashionThemeHome({
                   href={`/shop/${orgSlug}?page=${page - 1}${category ? `&category=${category}` : ""}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
                 >
-                  আগের পেজ
+                  {t.themeFashion.prevPage}
                 </Link>
               )}
               <span className="text-xs font-semibold text-stone-500">
-                পেজ {pagination.page} / {pagination.totalPages}
+                {t.themeFashion.pagePrefix}{fmtNumber(locale === "en" ? "en" : "bn", pagination.page)} / {fmtNumber(locale === "en" ? "en" : "bn", pagination.totalPages)}
               </span>
               {page < pagination.totalPages && (
                 <Link
                   href={`/shop/${orgSlug}?page=${page + 1}${category ? `&category=${category}` : ""}`}
                   className="rounded-xl border bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
                 >
-                  পরের পেজ
+                  {t.themeFashion.nextPage}
                 </Link>
               )}
             </nav>
@@ -763,9 +766,9 @@ export function FashionThemeHome({
         <section className="rounded-3xl border border-stone-200 bg-white p-8 text-center space-y-5">
           <div>
             <span className="text-xs font-black tracking-widest text-amber-700 uppercase">#WEARYOURSTYLE</span>
-            <h2 className="text-2xl font-black text-stone-900 font-serif">গ্রাহকদের ভালোবাসায় ও স্টাইলে</h2>
+            <h2 className="text-2xl font-black text-stone-900 font-serif">{t.themeFashion.ugcHeading}</h2>
             <p className="mx-auto mt-1 max-w-md text-xs text-stone-500">
-              আমাদের পোশাক পরে আপনার ছবি পোস্ট করে ট্যাগ করুন সোশ্যাল মিডিয়ায় আর পান আকর্ষণীয় সারপ্রাইজ গিফট!
+              {t.themeFashion.ugcSub}
             </p>
           </div>
 
@@ -803,12 +806,15 @@ export function FashionFitAssistantModal({
   onClose,
   onApplySize,
   availableSizes = ["S", "M", "L", "XL", "XXL"],
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   onApplySize?: (size: string) => void;
   availableSizes?: string[];
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [feet, setFeet] = useState(5);
   const [inches, setInches] = useState(8);
   const [weightKg, setWeightKg] = useState(68);
@@ -864,37 +870,37 @@ export function FashionFitAssistantModal({
         <div className="flex items-center gap-2.5">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-xl">✨</span>
           <div>
-            <h3 className="text-lg font-black text-stone-900">ফাইন্ড মাই ফিট (Smart Size Assistant)</h3>
-            <p className="text-xs text-stone-500">আপনার শারীরিক মাপ অনুযায়ী সেরা সাইজ নির্ধারণ করুন</p>
+            <h3 className="text-lg font-black text-stone-900">{t.themeFashion.fitTitle}</h3>
+            <p className="text-xs text-stone-500">{t.themeFashion.fitSub}</p>
           </div>
         </div>
 
         <div className="mt-5 space-y-4">
           {/* Height */}
           <div>
-            <label className="text-xs font-bold text-stone-800">আপনার উচ্চতা (Height):</label>
+            <label className="text-xs font-bold text-stone-800">{t.themeFashion.heightLabel}</label>
             <div className="mt-1.5 grid grid-cols-2 gap-3">
               <div className="flex items-center gap-2 rounded-xl border border-stone-200 px-3 py-2">
-                <span className="text-xs text-stone-500">ফুট:</span>
+                <span className="text-xs text-stone-500">{t.themeFashion.feetLabel}</span>
                 <select
                   value={feet}
                   onChange={(e) => setFeet(Number(e.target.value))}
                   className="w-full bg-transparent text-sm font-bold text-stone-900 focus:outline-none"
                 >
                   {[4, 5, 6].map((f) => (
-                    <option key={f} value={f}>{f} ফুট</option>
+                    <option key={f} value={f}>{fmtNumber(locale === "en" ? "en" : "bn", f)}{t.themeFashion.feetSuffix}</option>
                   ))}
                 </select>
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-stone-200 px-3 py-2">
-                <span className="text-xs text-stone-500">ইঞ্চি:</span>
+                <span className="text-xs text-stone-500">{t.themeFashion.inchLabel}</span>
                 <select
                   value={inches}
                   onChange={(e) => setInches(Number(e.target.value))}
                   className="w-full bg-transparent text-sm font-bold text-stone-900 focus:outline-none"
                 >
                   {Array.from({ length: 12 }, (_, i) => i).map((i) => (
-                    <option key={i} value={i}>{i} ইঞ্চি</option>
+                    <option key={i} value={i}>{fmtNumber(locale === "en" ? "en" : "bn", i)}{t.themeFashion.inchSuffix}</option>
                   ))}
                 </select>
               </div>
@@ -904,8 +910,8 @@ export function FashionFitAssistantModal({
           {/* Weight */}
           <div>
             <div className="flex justify-between text-xs font-bold text-stone-800">
-              <span>আপনার ওজন (Weight):</span>
-              <span className="text-neutral-900 font-extrabold">{weightKg} কেজি</span>
+              <span>{t.themeFashion.weightLabel}</span>
+              <span className="text-neutral-900 font-extrabold">{fmtNumber(locale === "en" ? "en" : "bn", weightKg)}{t.themeFashion.kgSuffix}</span>
             </div>
             <input
               type="range"
@@ -919,12 +925,12 @@ export function FashionFitAssistantModal({
 
           {/* Fit Preference */}
           <div>
-            <label className="text-xs font-bold text-stone-800">ফিট পছন্দ (Fit Style):</label>
+            <label className="text-xs font-bold text-stone-800">{t.themeFashion.fitStyleLabel}</label>
             <div className="mt-1.5 grid grid-cols-3 gap-2">
               {[
-                { id: "slim", label: "স্লিম ফিট", desc: "বডি-ফিটেড" },
-                { id: "regular", label: "রেগুলার", desc: "আরামদায়ক" },
-                { id: "relaxed", label: "রিল্যাক্সড", desc: "ঢিলেঢালা" },
+                { id: "slim", label: t.themeFashion.fitSlim, desc: t.themeFashion.fitSlimDesc },
+                { id: "regular", label: t.themeFashion.fitRegular, desc: t.themeFashion.fitRegularDesc },
+                { id: "relaxed", label: t.themeFashion.fitRelaxed, desc: t.themeFashion.fitRelaxedDesc },
               ].map((style) => (
                 <button
                   key={style.id}
@@ -946,14 +952,14 @@ export function FashionFitAssistantModal({
           {/* Recommendation Output */}
           <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/50 p-4 text-center">
             <span className="inline-block rounded-full bg-amber-500/20 px-3 py-1 text-[11px] font-black text-amber-900">
-              🎯 ৯৪% সঠিক ফিটিং নিশ্চয়তা
+              {t.themeFashion.fitAccuracy}
             </span>
-            <p className="mt-2 text-xs text-stone-600">আপনার জন্য সবচেয়ে পারফেক্ট সাইজ:</p>
+            <p className="mt-2 text-xs text-stone-600">{t.themeFashion.fitResultLabel}</p>
             <p className="text-3xl font-black text-neutral-950 font-serif my-1">
-              {matchedSize} <span className="text-sm font-sans font-bold text-stone-500">({estChest}&quot; চেস্ট)</span>
+              {matchedSize} <span className="text-sm font-sans font-bold text-stone-500">({estChest}&quot;{t.themeFashion.fitChestSuffix})</span>
             </p>
             <p className="text-[11px] text-stone-500">
-              দৈর্ঘ্য ও কাঁধের মাপ সম্পূর্ণ স্ট্যান্ডার্ড অনুযায়ী মিলবে।
+              {t.themeFashion.fitNote}
             </p>
           </div>
 
@@ -967,7 +973,7 @@ export function FashionFitAssistantModal({
               }}
               className="w-full rounded-xl bg-neutral-900 py-3 text-xs font-bold text-white shadow hover:bg-black transition"
             >
-              এই সাইজটি সিলেক্ট করুন ({matchedSize})
+              {t.themeFashion.fitSelectPrefix}{matchedSize}{t.themeFashion.fitSelectSuffix}
             </button>
           </div>
         </div>
@@ -984,12 +990,15 @@ export function FashionRestockAlertModal({
   onClose,
   productName,
   sizeName,
+  locale = "bn",
 }: {
   open: boolean;
   onClose: () => void;
   productName: string;
   sizeName: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   const [contact, setContact] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
@@ -1009,15 +1018,15 @@ export function FashionRestockAlertModal({
 
         <div className="text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-2xl">🔔</div>
-          <h3 className="mt-3 text-base font-black text-stone-900">সাইজ রিস্টক নোটিফিকেশন</h3>
+          <h3 className="mt-3 text-base font-black text-stone-900">{t.themeFashion.restockTitle}</h3>
           <p className="mt-1 text-xs text-stone-500 leading-relaxed">
-            <strong>{productName}</strong>-এর <strong>{sizeName}</strong> সাইজটি বর্তমানে স্টক আউট। রিস্টক হওয়া মাত্রই আপনাকে জানানো হবে।
+            <strong>{productName}</strong>{t.themeFashion.restockBodyMid}<strong>{sizeName}</strong>{t.themeFashion.restockBodySuffix}
           </p>
         </div>
 
         {submitted ? (
           <div className="mt-5 rounded-2xl bg-emerald-50 p-4 text-center text-xs font-bold text-emerald-800">
-            ✅ ধন্যবাদ! আপনার তথ্য সংরক্ষিত হয়েছে। সাইজটি রিস্টক হওয়া মাত্রই আপনি মেসেজ পাবেন।
+            {t.themeFashion.restockThanks}
           </div>
         ) : (
           <form
@@ -1028,7 +1037,7 @@ export function FashionRestockAlertModal({
             className="mt-4 space-y-3"
           >
             <div>
-              <label className="text-xs font-bold text-stone-700">আপনার মোবাইল / WhatsApp নম্বর:</label>
+              <label className="text-xs font-bold text-stone-700">{t.themeFashion.phoneLabel}</label>
               <input
                 type="text"
                 required
@@ -1042,7 +1051,7 @@ export function FashionRestockAlertModal({
               type="submit"
               className="w-full rounded-xl bg-neutral-900 py-2.5 text-xs font-bold text-white shadow hover:bg-black transition"
             >
-              নোটিফিকেশন পেতে যুক্ত হোন
+              {t.themeFashion.restockCta}
             </button>
           </form>
         )}
@@ -1058,28 +1067,31 @@ export function FashionModelStats({
   height = "৬ ফুট ০ ইঞ্চি (১৮৩ সেমি)",
   chest = "৩৯ ইঞ্চি",
   size = "L (Large)",
+  locale = "bn",
 }: {
   height?: string;
   chest?: string;
   size?: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-3.5 text-xs">
       <div className="flex items-center gap-2 font-bold text-stone-800">
         <span>🧍‍♂️</span>
-        <span>মডেলের সাইজ ও মাপ:</span>
+        <span>{t.themeFashion.modelSizeLabel}</span>
       </div>
       <div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px]">
         <div className="rounded-lg bg-white p-2 shadow-xs border border-stone-100">
-          <p className="text-stone-400">উচ্চতা</p>
+          <p className="text-stone-400">{t.themeFashion.modelHeight}</p>
           <p className="font-bold text-stone-800">{height}</p>
         </div>
         <div className="rounded-lg bg-white p-2 shadow-xs border border-stone-100">
-          <p className="text-stone-400">বুকের মাপ</p>
+          <p className="text-stone-400">{t.themeFashion.modelChest}</p>
           <p className="font-bold text-stone-800">{chest}</p>
         </div>
         <div className="rounded-lg bg-white p-2 shadow-xs border border-stone-100">
-          <p className="text-stone-400">পরিহিত সাইজ</p>
+          <p className="text-stone-400">{t.themeFashion.modelWorn}</p>
           <p className="font-bold text-neutral-900">{size}</p>
         </div>
       </div>
@@ -1093,39 +1105,42 @@ export function FashionModelStats({
 export function FashionFabricCareGuide({
   fabric = "১০০% প্রিমিয়াম কম্বড কটন (Combed Cotton)",
   gsm = "২২০ GSM (ঘন ও আরামদায়ক টেক্সচার)",
-  careNotes = "রঙের উজ্জ্বলতা দীর্ঘস্থায়ী রাখতে ছায়ায় শুকান",
+  careNotes = "রঙের উজ্জ্বলতা দীর্ঘস্থায়ী রাখতে {t.themeFashion.care3}",
+  locale = "bn",
 }: {
   fabric?: string;
   gsm?: string;
   careNotes?: string;
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   return (
     <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-4">
       <div className="flex items-center gap-2">
         <span className="text-base">🧵</span>
-        <h4 className="text-xs font-bold text-stone-900">ফেব্রিক ও উপাদান বৈশিষ্ট্য:</h4>
+        <h4 className="text-xs font-bold text-stone-900">{t.themeFashion.fabricHeading}</h4>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-stone-700">
         <div className="flex items-center gap-2 rounded-xl bg-stone-50 p-2.5">
           <span className="text-amber-700 font-bold">✓</span>
-          <span><strong>উপাদান:</strong> {fabric}</span>
+          <span><strong>{t.themeFashion.materialLabel}</strong> {fabric}</span>
         </div>
         <div className="flex items-center gap-2 rounded-xl bg-stone-50 p-2.5">
           <span className="text-amber-700 font-bold">✓</span>
-          <span><strong>ঘনত্ব:</strong> {gsm}</span>
+          <span><strong>{t.themeFashion.densityLabel}</strong> {gsm}</span>
         </div>
       </div>
 
       <div className="border-t border-stone-100 pt-3">
-        <p className="text-[11px] font-bold text-stone-800 mb-2">ধোয়া ও যত্নের নিয়মাবলী (Care Guide):</p>
+        <p className="text-[11px] font-bold text-stone-800 mb-2">{t.themeFashion.careHeading}</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-stone-600">
           <div className="flex items-center gap-1.5 rounded-lg bg-stone-50 p-2">
             <span>🧺</span>
-            <span>মৃদু ওয়াশ (৩০°C)</span>
+            <span>{t.themeFashion.care1}</span>
           </div>
           <div className="flex items-center gap-1.5 rounded-lg bg-stone-50 p-2">
             <span>🚫</span>
-            <span>ব্লিচ নিষেধ</span>
+            <span>{t.themeFashion.care2}</span>
           </div>
           <div className="flex items-center gap-1.5 rounded-lg bg-stone-50 p-2">
             <span>💨</span>
@@ -1133,7 +1148,7 @@ export function FashionFabricCareGuide({
           </div>
           <div className="flex items-center gap-1.5 rounded-lg bg-stone-50 p-2">
             <span>🌡️</span>
-            <span>হালকা ইস্ত্রি</span>
+            <span>{t.themeFashion.care4}</span>
           </div>
         </div>
       </div>
@@ -1148,11 +1163,14 @@ export function FashionCompleteTheLook({
   orgSlug,
   mainProduct,
   relatedProducts = [],
+  locale = "bn",
 }: {
   orgSlug: string;
   mainProduct: ShopProduct;
   relatedProducts?: ShopProduct[];
+  locale?: ShopLocale | string;
 }) {
+  const t = shopT(locale);
   // Pick up to 2 items from related products to build a full stylish outfit
   const items = relatedProducts.slice(0, 2);
   const [selectedIds, setSelectedIds] = useState<string[]>(items.map((i) => i.id));
@@ -1209,12 +1227,12 @@ export function FashionCompleteTheLook({
         <div className="flex items-center gap-2">
           <span className="text-xl">✨</span>
           <div>
-            <h3 className="text-sm font-black text-stone-900 font-serif">কমপ্লিট দ্য লুক (Complete the Look)</h3>
-            <p className="text-[11px] text-stone-500">ম্যাচিং পোশাক ও এক্সেসরিজ একসাথে কিনে ১০% ছাড় উপভোগ করুন</p>
+            <h3 className="text-sm font-black text-stone-900 font-serif">{t.themeFashion.lookTitle}</h3>
+            <p className="text-[11px] text-stone-500">{t.themeFashion.lookSub}</p>
           </div>
         </div>
         <span className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-black text-white">
-          ১০% সেভ করুন
+          {t.themeFashion.lookSave}
         </span>
       </div>
 
@@ -1222,7 +1240,7 @@ export function FashionCompleteTheLook({
         {/* Main Product Card */}
         <div className="relative rounded-2xl border border-neutral-900 bg-white p-3 shadow-xs">
           <span className="absolute left-2 top-2 rounded bg-neutral-900 px-1.5 py-0.5 text-[9px] font-bold text-white">
-            মূল পোশাক
+            {t.themeFashion.lookMain}
           </span>
           <div className="aspect-[3/4] overflow-hidden rounded-xl bg-stone-100 mt-4">
             {mainProduct.imageUrl ? (
@@ -1263,7 +1281,7 @@ export function FashionCompleteTheLook({
                 className="absolute right-3 top-3 accent-neutral-900"
               />
               <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[9px] font-bold text-stone-600">
-                ম্যাচিং লুক
+                {t.themeFashion.lookMatching}
               </span>
               <div className="aspect-[3/4] overflow-hidden rounded-xl bg-stone-100 mt-2">
                 {item.imageUrl ? (
@@ -1294,20 +1312,20 @@ export function FashionCompleteTheLook({
               {formatFashionPrice(discountedTotal.toString())}
             </span>
             <span className="text-xs font-bold text-emerald-700">
-              (বাঁচবে {formatFashionPrice(savings.toString())})
+              {t.themeFashion.lookSavePrefix}{formatFashionPrice(savings.toString())}{t.themeFashion.lookSaveSuffix}
             </span>
           </div>
-          <p className="text-[11px] text-stone-500">নির্বাচিত {selectedIds.length + 1}টি আইটেম কম্বো হিসেবে যুক্ত হবে</p>
+          <p className="text-[11px] text-stone-500">{t.themeFashion.lookItemsPrefix}{fmtNumber(locale === "en" ? "en" : "bn", selectedIds.length + 1)}{t.themeFashion.lookItemsSuffix}</p>
         </div>
 
         {added ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-emerald-800">✅ সম্পূর্ণ লুক ব্যাগে যোগ হয়েছে!</span>
+            <span className="text-xs font-bold text-emerald-800">{t.themeFashion.lookAdded}</span>
             <Link
               href={`/shop/${orgSlug}/cart`}
               className="rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-black"
             >
-              কার্ট দেখুন
+              {t.themeFashion.viewCart}
             </Link>
           </div>
         ) : (
@@ -1317,7 +1335,7 @@ export function FashionCompleteTheLook({
             disabled={busy}
             className="rounded-xl bg-neutral-900 px-5 py-3 text-xs font-bold text-white shadow hover:bg-black transition disabled:opacity-50"
           >
-            {busy ? "যোগ হচ্ছে…" : "এক ক্লিকে কমপ্লিট লুক কিনুন"}
+            {busy ? t.themeFashion.lookBusy : t.themeFashion.lookBuy}
           </button>
         )}
       </div>

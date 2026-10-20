@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { InventoryService } from "../inventory/inventory.service";
 import { ProductsService } from "../products/products.service";
 import { LandingsService } from "../landings/landings.service";
@@ -134,7 +135,7 @@ describe("EC24a preorder limit — open qty accounting", () => {
     const prisma = fakePrisma();
     const order = await seed(prisma, "processing", 4);
     const product = { id: "p-1", preorderEnabled: true, preorderLimit: 5 };
-    await expect(assertPreorderLimit(prisma, "org-1", product, 2)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(assertPreorderLimit(prisma, "org-1", product, 2)).rejects.toBeInstanceOf(ApiException);
     await expect(assertPreorderLimit(prisma, "org-1", product, 2)).rejects.toThrow(/প্রি-অর্ডারের সীমা শেষ/);
     order.status = "cancelled";
     await expect(assertPreorderLimit(prisma, "org-1", product, 2)).resolves.toBeUndefined();
@@ -212,7 +213,7 @@ describe("EC24a storefront stock gate", () => {
     ).resolves.toBeUndefined();
     await expect(
       (svc as any).assertStock({ name: "Norm", stockQuantity: 0, preorderEnabled: false }, null, 1),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
   });
 });
 

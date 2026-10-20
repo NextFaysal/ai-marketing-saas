@@ -1,15 +1,13 @@
 import {
-  BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { MembershipService, SOLD_ORDER_STATUSES } from "./membership.service";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF7 (FB3) — Store credit, a customer-scoped money instrument.
@@ -81,10 +79,10 @@ function isUniqueViolation(e: unknown): boolean {
 function parseAmountMinor(raw: unknown, field = "amountMinor"): bigint {
   const s = raw === null || raw === undefined ? "" : String(raw).trim();
   if (!/^\d+$/.test(s)) {
-    throw new BadRequestException(`${field} অবশ্যই একটি ধনাত্মক পূর্ণসংখ্যা (পয়সায়) হতে হবে`);
+    throw badRequest("membership.mustBeAPositiveIntegerIn", { field: field });
   }
   const v = BigInt(s);
-  if (v <= 0n) throw new BadRequestException(`${field} শূন্যের বেশি হতে হবে`);
+  if (v <= 0n) throw badRequest("membership.mustBeMoreThanZero", { field: field });
   return v;
 }
 
@@ -138,7 +136,7 @@ export class StoreCreditService {
     const customer = await this.t("customer").findFirst({
       where: { id: customerId, organizationId: orgId },
     });
-    if (!customer) throw new NotFoundException("কাস্টমার পাওয়া যায়নি");
+    if (!customer) throw notFound("membership.theCustomerWasNotFound");
     return customer;
   }
 
@@ -217,11 +215,11 @@ export class StoreCreditService {
   ) {
     const customer = await this.loadCustomerOr404(orgId, customerId);
     if (customer.mergedIntoId) {
-      throw new BadRequestException("এই কাস্টমারটি অন্য কাস্টমারের সাথে মার্জ হয়ে গেছে — সারভাইভর কাস্টমারে ক্রেডিট দিন");
+      throw badRequest("membership.thisCustomerHasBeenMergedInto2");
     }
     const amount = parseAmountMinor(dto?.amountMinor);
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("ক্রেডিট দেওয়ার কারণ (note) আবশ্যক");
+    if (!note) throw badRequest("membership.aReasonForGivingCreditNote");
     const entry = await (this.prisma as any).$transaction(async (tx: any) => {
       const balanceBefore = await this.balanceFor(orgId, customerId, tx);
       return this.postEntryTx(tx, {
@@ -270,17 +268,17 @@ export class StoreCreditService {
     const order = await this.t("order").findFirst({
       where: { id: orderId, organizationId: orgId },
     });
-    if (!order) throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
+    if (!order) throw notFound("membership.theOrderWasNotFound");
     if (!order.customerId) {
-      throw new BadRequestException("এই অর্ডারের সাথে কোনো কাস্টমার যুক্ত নেই — স্টোর ক্রেডিট কাস্টমার-ভিত্তিক, তাই ক্রেডিটে রিফান্ড সম্ভব নয়");
+      throw badRequest("membership.noCustomerIsLinkedToThis");
     }
     const customer = await this.loadCustomerOr404(orgId, String(order.customerId));
     if (customer.mergedIntoId) {
-      throw new BadRequestException("এই কাস্টমারটি অন্য কাস্টমারের সাথে মার্জ হয়ে গেছে — আগে মার্জ-পরবর্তী কাস্টমার দিয়ে চেষ্টা করুন");
+      throw badRequest("membership.thisCustomerHasBeenMergedInto");
     }
     const refundKey = String(dto?.refundKey ?? "").trim();
     if (!refundKey) {
-      throw new BadRequestException("refundKey আবশ্যক — একই রিফান্ডের পুনঃচেষ্টা যাতে দ্বিতীয়বার ক্রেডিট না দেয়, তার জন্য এই চাবিটি দরকার");
+      throw badRequest("membership.refundkeyIsRequiredThisKeyIs");
     }
     const sourceRef = `nf7:refund-credit:${order.id}:${refundKey}`;
     // Exactly-once replay check BEFORE the gate: a retry of an
@@ -296,13 +294,13 @@ export class StoreCreditService {
     }
     const enabled = await this.refundToCreditEnabledForOrder(orgId, order);
     if (!enabled) {
-      throw new ForbiddenException("স্টোর ক্রেডিটে রিফান্ড এই দোকানে চালু নেই — Store settings-এ Refund-to-Credit চালু করলেই এই অপশনটি পাওয়া যাবে");
+      throw forbidden("membership.refundToStoreCreditIsNot");
     }
     const amount = parseAmountMinor(dto?.amountMinor);
     const total = toBig(order.totalMinor);
     const alreadyRefunded = toBig(order.refundedMinor);
     if (amount > total - alreadyRefunded) {
-      throw new BadRequestException("রিফান্ডের পরিমাণ অর্ডারের অবশিষ্ট রিফান্ডযোগ্য পরিমাণের বেশি হতে পারবে না");
+      throw badRequest("membership.theRefundAmountCannotExceedThe");
     }
     const note = String(dto?.note ?? "").trim() || null;
     const entry = await (this.prisma as any).$transaction(async (tx: any) => {
@@ -313,7 +311,7 @@ export class StoreCreditService {
       const fresh = await tx.order.findFirst({ where: { id: order.id, organizationId: orgId } });
       const freshRefunded = toBig(fresh?.refundedMinor);
       if (amount > total - freshRefunded) {
-        throw new BadRequestException("রিফান্ডের পরিমাণ অর্ডারের অবশিষ্ট রিফান্ডযোগ্য পরিমাণের বেশি হতে পারবে না");
+        throw badRequest("membership.theRefundAmountCannotExceedThe");
       }
       await tx.order.update({
         where: { id: order.id },

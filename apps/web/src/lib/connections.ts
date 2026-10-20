@@ -9,6 +9,30 @@
  * `unknown` stays "অজানা" in the UI.
  */
 
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import type { UiLocale } from "./i18n/dict";
+import { connectionsBn, connectionsEn } from "./i18n/connections";
+
+/**
+ * MB2 (ML4): label helpers take an optional locale (default "bn",
+ * so existing callers/tests keep the exact Bengali wording) and
+ * read their copy from the connections dictionary namespace.
+ */
+type ConnectionsDict = typeof connectionsBn;
+const CD = (locale: UiLocale = "bn"): ConnectionsDict => (locale === "en" ? connectionsEn : connectionsBn);
+function tpl(template: string, params: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (m, k: string) => params[k] ?? m);
+}
+interface MetaRow { key: keyof ConnectionsDict; cls: string }
+function metaFrom(table: Record<string, MetaRow>, value: string, locale: UiLocale): { label: string; cls: string } {
+  const row = table[value];
+  if (!row) return { label: value, cls: "bg-slate-100 text-slate-600" };
+  return { label: CD(locale)[row.key] as string, cls: row.cls };
+}
+function bnMeta(table: Record<string, MetaRow>): Record<string, { label: string; cls: string }> {
+  return Object.fromEntries(Object.entries(table).map(([k, r]) => [k, { label: connectionsBn[r.key] as string, cls: r.cls }]));
+}
+
 export type ConnectionHealth = "ok" | "error" | "disconnected" | "expiring" | "unknown";
 
 export interface ConnectionAccount {
@@ -87,24 +111,26 @@ export interface HealthCheckRunView {
   createdAt: string;
 }
 
-export const OVERALL_META: Record<string, { label: string; cls: string }> = {
-  pass: { label: "পাস", cls: "bg-green-100 text-green-700" },
-  fail: { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" },
-  partial: { label: "আংশিক", cls: "bg-amber-100 text-amber-700" },
+const OVERALL_ROWS: Record<string, MetaRow> = {
+  pass: { key: "overallPass", cls: "bg-green-100 text-green-700" },
+  fail: { key: "overallFail", cls: "bg-red-100 text-red-700" },
+  partial: { key: "overallPartial", cls: "bg-amber-100 text-amber-700" },
 };
+export const OVERALL_META: Record<string, { label: string; cls: string }> = bnMeta(OVERALL_ROWS);
 
-export function overallMeta(overall: string): { label: string; cls: string } {
-  return OVERALL_META[overall] ?? { label: overall, cls: "bg-slate-100 text-slate-600" };
+export function overallMeta(overall: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(OVERALL_ROWS, overall, locale);
 }
 
-export const STEP_STATUS_META: Record<string, { label: string; cls: string }> = {
-  pass: { label: "✓ পাস", cls: "bg-green-100 text-green-700" },
-  fail: { label: "✗ ব্যর্থ", cls: "bg-red-100 text-red-700" },
-  not_checkable: { label: "? যাচাই সম্ভব নয়", cls: "bg-slate-100 text-slate-500" },
+const STEP_STATUS_ROWS: Record<string, MetaRow> = {
+  pass: { key: "stepPass", cls: "bg-green-100 text-green-700" },
+  fail: { key: "stepFail", cls: "bg-red-100 text-red-700" },
+  not_checkable: { key: "stepNotCheckable", cls: "bg-slate-100 text-slate-500" },
 };
+export const STEP_STATUS_META: Record<string, { label: string; cls: string }> = bnMeta(STEP_STATUS_ROWS);
 
-export function stepStatusMeta(status: string): { label: string; cls: string } {
-  return STEP_STATUS_META[status] ?? { label: status, cls: "bg-slate-100 text-slate-600" };
+export function stepStatusMeta(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(STEP_STATUS_ROWS, status, locale);
 }
 
 /** CC12 — one delivered connection alert as the API reports it.
@@ -127,14 +153,15 @@ export interface ConnectionAlertView {
   createdAt: string;
 }
 
-export const ALERT_KIND_META: Record<string, { label: string; cls: string }> = {
-  broke: { label: "সমস্যা", cls: "bg-red-100 text-red-700" },
-  expiring: { label: "মেয়াদ শেষের পথে", cls: "bg-amber-100 text-amber-700" },
-  recovered: { label: "ঠিক হয়েছে", cls: "bg-green-100 text-green-700" },
+const ALERT_KIND_ROWS: Record<string, MetaRow> = {
+  broke: { key: "alertBroke", cls: "bg-red-100 text-red-700" },
+  expiring: { key: "alertExpiring", cls: "bg-amber-100 text-amber-700" },
+  recovered: { key: "alertRecovered", cls: "bg-green-100 text-green-700" },
 };
+export const ALERT_KIND_META: Record<string, { label: string; cls: string }> = bnMeta(ALERT_KIND_ROWS);
 
-export function alertKindMeta(kind: string): { label: string; cls: string } {
-  return ALERT_KIND_META[kind] ?? { label: kind, cls: "bg-slate-100 text-slate-600" };
+export function alertKindMeta(kind: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(ALERT_KIND_ROWS, kind, locale);
 }
 
 export interface AlertPreferencesView {
@@ -156,12 +183,22 @@ export interface TimelineItemView {
 }
 
 export const TIMELINE_KIND_LABEL: Record<string, string> = {
-  audit: "কার্যকলাপ",
+  audit: connectionsBn.timelineAudit,
   sync: "Sync",
   webhook: "Webhook",
-  health_check: "স্বাস্থ্য পরীক্ষা",
-  payment: "পেমেন্ট",
+  health_check: connectionsBn.timelineHealth,
+  payment: connectionsBn.timelinePayment,
 };
+
+export function timelineKindLabel(kind: string, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  switch (kind) {
+    case "audit": return d.timelineAudit;
+    case "health_check": return d.timelineHealth;
+    case "payment": return d.timelinePayment;
+    default: return TIMELINE_KIND_LABEL[kind] ?? kind;
+  }
+}
 
 export const SEVERITY_META: Record<string, { cls: string }> = {
   info: { cls: "bg-slate-100 text-slate-600" },
@@ -194,25 +231,27 @@ export interface OwnAppGuides {
   threads?: { redirectUris: string[] };
 }
 
-export const APP_SOURCE_META: Record<string, { label: string; cls: string }> = {
-  own: { label: "নিজের অ্যাপ", cls: "bg-violet-100 text-violet-700" },
-  platform: { label: "প্ল্যাটফর্ম অ্যাপ", cls: "bg-slate-100 text-slate-600" },
+const APP_SOURCE_ROWS: Record<string, MetaRow> = {
+  own: { key: "appSourceOwn", cls: "bg-violet-100 text-violet-700" },
+  platform: { key: "appSourcePlatform", cls: "bg-slate-100 text-slate-600" },
 };
+export const APP_SOURCE_META: Record<string, { label: string; cls: string }> = bnMeta(APP_SOURCE_ROWS);
 
 /** Badge for an account's app source; null when the row carries
  * no app source (categories without an own-app path). */
-export function appSourceMeta(account: ConnectionAccount): { label: string; cls: string } | null {
+export function appSourceMeta(account: ConnectionAccount, locale: UiLocale = "bn"): { label: string; cls: string } | null {
   if (!account.appSource) return null;
-  return APP_SOURCE_META[account.appSource] ?? APP_SOURCE_META.platform;
+  return metaFrom(APP_SOURCE_ROWS, account.appSource in APP_SOURCE_ROWS ? account.appSource : "platform", locale);
 }
 
 /** Bengali wording for an own-app config's verification state —
  * "verified" only ever means a real platform check happened
  * (Meta); TikTok's "configured" says plainly that verification
  * waits for the first connect. */
-export function appConfigStatusLabel(config: TenantAppConfigView): string {
-  if (config.status === "verified") return "যাচাইকৃত";
-  return "কনফিগার করা হয়েছে — যাচাই প্রথম কানেক্টে হবে";
+export function appConfigStatusLabel(config: TenantAppConfigView, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (config.status === "verified") return d.appConfigVerified;
+  return d.appConfigConfigured;
 }
 
 /** CC8 — the tenant's OWN LLM config as the API reports it (the
@@ -227,9 +266,10 @@ export interface OrgLlmConfigView {
   verificationNote: string;
 }
 
-export function llmConfigStatusLabel(view: OrgLlmConfigView): string {
-  if (view.status === "verified") return "যাচাইকৃত — এই key দিয়েই AI চলবে";
-  return "কনফিগার করা";
+export function llmConfigStatusLabel(view: OrgLlmConfigView, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (view.status === "verified") return d.llmVerified;
+  return d.llmConfigured;
 }
 
 /** CC9 — one of the tenant's OWN payment gateways as the API
@@ -260,9 +300,10 @@ export interface TenantPaymentGatewayView {
 /** Honest status wording: "verified" is only ever bKash's real
  * grant-token check; SSLCommerz/Nagad rows say plainly that no
  * pre-transaction check exists for them. */
-export function gatewayStatusLabel(view: TenantPaymentGatewayView): string {
-  if (view.status === "verified") return "যাচাইকৃত";
-  return "কনফিগার করা — আগাম যাচাইয়ের সুযোগ নেই, প্রথম আসল লেনদেনই যাচাই";
+export function gatewayStatusLabel(view: TenantPaymentGatewayView, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (view.status === "verified") return d.gatewayVerified;
+  return d.gatewayConfigured;
 }
 
 /** CC10 — platform-payment offer + this org's enablement, as the
@@ -348,14 +389,15 @@ export interface PaymentRefundView {
   updatedAt: string;
 }
 
-export function refundStatusMeta(status: string): { label: string; cls: string } {
-  switch (status) {
-    case "refunded": return { label: "রিফান্ড যাচাইকৃত", cls: "bg-green-100 text-green-700" };
-    case "processing": return { label: "গেটওয়েতে প্রক্রিয়াধীন", cls: "bg-amber-100 text-amber-700" };
-    case "initiated": return { label: "শুরু হয়েছে", cls: "bg-amber-100 text-amber-700" };
-    case "failed": return { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" };
-    default: return { label: status, cls: "bg-slate-100 text-slate-600" };
-  }
+const REFUND_ROWS: Record<string, MetaRow> = {
+  refunded: { key: "refundRefunded", cls: "bg-green-100 text-green-700" },
+  processing: { key: "refundProcessing", cls: "bg-amber-100 text-amber-700" },
+  initiated: { key: "refundInitiated", cls: "bg-amber-100 text-amber-700" },
+  failed: { key: "refundFailed", cls: "bg-red-100 text-red-700" },
+};
+
+export function refundStatusMeta(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(REFUND_ROWS, status, locale);
 }
 
 export interface SettlementImportView {
@@ -402,12 +444,13 @@ export interface SettlementImportDetailView {
   missingInReport: SettlementMissingInReportView[];
 }
 
-export function settlementStateLabel(state: string): string {
+export function settlementStateLabel(state: string, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
   switch (state) {
-    case "matched": return "মিলেছে";
-    case "amount_mismatch": return "পরিমাণে অমিল";
-    case "missing_in_system": return "সিস্টেমে নেই";
-    case "duplicate": return "ফাইলে পুনরাবৃত্তি";
+    case "matched": return d.settleMatched;
+    case "amount_mismatch": return d.settleMismatch;
+    case "missing_in_system": return d.settleMissing;
+    case "duplicate": return d.settleDuplicate;
     default: return state;
   }
 }
@@ -454,14 +497,15 @@ export interface PaymentLinkCreatedView extends PaymentLinkView {
   payUrl: string;
 }
 
-export function paymentLinkStatusMeta(status: string): { label: string; cls: string } {
-  switch (status) {
-    case "active": return { label: "সক্রিয়", cls: "bg-green-100 text-green-700" };
-    case "used": return { label: "ব্যবহৃত হয়েছে", cls: "bg-slate-200 text-slate-600" };
-    case "expired": return { label: "মেয়াদ শেষ", cls: "bg-amber-100 text-amber-700" };
-    case "revoked": return { label: "বাতিল করা", cls: "bg-red-100 text-red-700" };
-    default: return { label: status, cls: "bg-slate-100 text-slate-600" };
-  }
+const PAYLINK_ROWS: Record<string, MetaRow> = {
+  active: { key: "paylinkActive", cls: "bg-green-100 text-green-700" },
+  used: { key: "paylinkUsed", cls: "bg-slate-200 text-slate-600" },
+  expired: { key: "paylinkExpired", cls: "bg-amber-100 text-amber-700" },
+  revoked: { key: "paylinkRevoked", cls: "bg-red-100 text-red-700" },
+};
+
+export function paymentLinkStatusMeta(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(PAYLINK_ROWS, status, locale);
 }
 
 export interface PublicPaymentLinkView {
@@ -475,32 +519,39 @@ export interface PublicPaymentLinkView {
   expiresAt: string;
 }
 
-/** Minor units (decimal string) → "৳ 1,234.56" / "-৳ 50.00". */
-export function formatTakaMinor(minor: string | number): string {
+/**
+ * Minor units (decimal string) → "৳ 1,234.56" / "-৳ 50.00".
+ * MB2: the bn default keeps this legacy shape byte-for-byte
+ * (pinned by connections.test.ts and used by non-dashboard
+ * callers); locale "en" switches the grouping to en-IN.
+ */
+export function formatTakaMinor(minor: string | number, locale: UiLocale = "bn"): string {
   let v: bigint;
   try { v = typeof minor === "string" ? BigInt(minor) : BigInt(Math.round(minor)); } catch { return "৳ 0.00"; }
   const neg = v < 0n; const abs = neg ? -v : v;
-  return `${neg ? "-৳ " : "৳ "}${(abs / 100n).toLocaleString("en-US")}.${String(abs % 100n).padStart(2, "0")}`;
+  return `${neg ? "-৳ " : "৳ "}${(abs / 100n).toLocaleString(locale === "en" ? "en-IN" : "en-US")}.${String(abs % 100n).padStart(2, "0")}`;
 }
 
-export function payoutStatusLabel(status: string): string {
+export function payoutStatusLabel(status: string, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
   switch (status) {
-    case "pending": return "অপেক্ষমাণ (অ্যাডমিনের সিদ্ধান্ত বাকি)";
-    case "approved": return "অনুমোদিত (পাঠানো বাকি)";
-    case "paid": return "পাঠানো হয়েছে";
-    case "rejected": return "প্রত্যাখ্যাত";
-    case "cancelled": return "বাতিল করেছেন";
+    case "pending": return d.payoutPending;
+    case "approved": return d.payoutApproved;
+    case "paid": return d.payoutPaid;
+    case "rejected": return d.payoutRejected;
+    case "cancelled": return d.payoutCancelled;
     default: return status;
   }
 }
 
-export function ledgerTypeLabel(type: string): string {
+export function ledgerTypeLabel(type: string, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
   switch (type) {
-    case "payment_credit": return "প্ল্যাটফর্ম পেমেন্ট জমা";
-    case "fee_debit": return "প্ল্যাটফর্ম ফি";
-    case "payout_debit": return "Payout পাঠানো";
-    case "refund_debit": return "রিফান্ড ডেবিট-ব্যাক";
-    case "adjustment": return "অ্যাডমিন সংশোধন";
+    case "payment_credit": return d.ledgerCredit;
+    case "fee_debit": return d.ledgerFee;
+    case "payout_debit": return d.ledgerPayout;
+    case "refund_debit": return d.ledgerRefund;
+    case "adjustment": return d.ledgerAdjustment;
     default: return type;
   }
 }
@@ -530,24 +581,26 @@ export interface ConnectionsOverview {
   categories: ConnectionCategory[];
 }
 
-export const HEALTH_META: Record<ConnectionHealth, { label: string; cls: string }> = {
-  ok: { label: "সচল", cls: "bg-green-100 text-green-700" },
-  error: { label: "সমস্যা আছে", cls: "bg-red-100 text-red-700" },
-  disconnected: { label: "বিচ্ছিন্ন", cls: "bg-slate-200 text-slate-600" },
-  expiring: { label: "টোকেনের মেয়াদ শেষের পথে", cls: "bg-amber-100 text-amber-700" },
-  unknown: { label: "অজানা", cls: "bg-slate-100 text-slate-500" },
+const HEALTH_ROWS: Record<string, MetaRow> = {
+  ok: { key: "healthOk", cls: "bg-green-100 text-green-700" },
+  error: { key: "healthError", cls: "bg-red-100 text-red-700" },
+  disconnected: { key: "healthDisconnected", cls: "bg-slate-200 text-slate-600" },
+  expiring: { key: "healthExpiring", cls: "bg-amber-100 text-amber-700" },
+  unknown: { key: "healthUnknown", cls: "bg-slate-100 text-slate-500" },
 };
+export const HEALTH_META: Record<ConnectionHealth, { label: string; cls: string }> = bnMeta(HEALTH_ROWS) as Record<ConnectionHealth, { label: string; cls: string }>;
 
-export function healthMeta(health: string): { label: string; cls: string } {
-  return HEALTH_META[(health as ConnectionHealth)] ?? HEALTH_META.unknown;
+export function healthMeta(health: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(HEALTH_ROWS, health in HEALTH_ROWS ? health : "unknown", locale);
 }
 
-/** Bengali wording for a category-level status from the API. */
-export function categoryStatusLabel(category: ConnectionCategory): string {
-  if (category.status === "platform_managed") return "প্ল্যাটফর্মের AI দিয়ে চলছে";
-  if (category.status === "not_configured") return "কনফিগার করা হয়নি";
-  if (category.totalCount === 0) return "কিছু কানেক্ট করা হয়নি";
-  return `${category.connectedCount}/${category.totalCount} কানেক্টেড`;
+/** Wording for a category-level status from the API. */
+export function categoryStatusLabel(category: ConnectionCategory, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (category.status === "platform_managed") return d.catPlatformManaged;
+  if (category.status === "not_configured") return d.catNotConfigured;
+  if (category.totalCount === 0) return d.catNothingConnected;
+  return tpl(d.catConnectedCount, { connected: fmtNumber(locale, category.connectedCount), total: fmtNumber(locale, category.totalCount) });
 }
 
 export function accountMatches(account: ConnectionAccount, query: string): boolean {
@@ -605,14 +658,17 @@ export function whatsappHealth(account: ConnectionAccount): WhatsAppHealthView |
   return out;
 }
 
-export const QUALITY_META: Record<string, { label: string; cls: string }> = {
-  GREEN: { label: "Quality: ভালো (Green)", cls: "bg-green-100 text-green-700" },
-  YELLOW: { label: "Quality: মাঝারি (Yellow)", cls: "bg-amber-100 text-amber-700" },
-  RED: { label: "Quality: খারাপ (Red)", cls: "bg-red-100 text-red-700" },
+const QUALITY_ROWS: Record<string, MetaRow> = {
+  GREEN: { key: "qualityGreen", cls: "bg-green-100 text-green-700" },
+  YELLOW: { key: "qualityYellow", cls: "bg-amber-100 text-amber-700" },
+  RED: { key: "qualityRed", cls: "bg-red-100 text-red-700" },
 };
+export const QUALITY_META: Record<string, { label: string; cls: string }> = bnMeta(QUALITY_ROWS);
 
-export function qualityMeta(rating: string): { label: string; cls: string } {
-  return QUALITY_META[rating] ?? { label: `Quality: ${rating}`, cls: "bg-slate-100 text-slate-600" };
+export function qualityMeta(rating: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  const row = QUALITY_ROWS[rating];
+  if (row) return { label: CD(locale)[row.key] as string, cls: row.cls };
+  return { label: tpl(CD(locale).qualityPrefix, { rating }), cls: "bg-slate-100 text-slate-600" };
 }
 
 /** CC15 — one completeness line: yes/no exactly as the provider
@@ -630,30 +686,31 @@ export const COMPLETENESS_META: Record<CompletenessItem["state"], { icon: string
   unknown: { icon: "?", cls: "bg-slate-100 text-slate-500" },
 };
 
-export function completenessItems(account: ConnectionAccount): CompletenessItem[] {
+export function completenessItems(account: ConnectionAccount, locale: UiLocale = "bn"): CompletenessItem[] {
+  const d = CD(locale);
   const snap = account.providerHealth;
   if (!snap) return [];
   const items: CompletenessItem[] = [];
   if (snap.kind === "meta_page") {
     const ig = snap.instagram;
     items.push({
-      key: "instagram", label: "Instagram লিঙ্ক করা",
+      key: "instagram", label: d.compInstagram,
       state: !ig ? "unknown" : ig.linked === true ? "yes" : ig.linked === false ? "no" : "unknown",
       detail: ig?.linked === true ? (ig.username ? `@${ig.username}` : ig.id ?? null) : null,
     });
-    for (const [key, label] of [["pixel", "Pixel / Dataset"], ["catalog", "Product Catalog"]] as const) {
+    for (const [key, label] of [["pixel", d.compPixel], ["catalog", d.compCatalog]] as const) {
       const entry = snap[key];
       items.push({
-        key, label: `${label} (Meta Business)`,
+        key, label,
         state: !entry ? "unknown" : entry.associated === true ? "yes" : entry.associated === false ? "no" : "unknown",
-        detail: entry?.associated === true && typeof entry.count === "number" ? `${entry.count}টি পাওয়া গেছে` : entry?.error ? String(entry.error) : null,
+        detail: entry?.associated === true && typeof entry.count === "number" ? tpl(d.compFound, { count: fmtNumber(locale, entry.count) }) : entry?.error ? String(entry.error) : null,
       });
     }
   }
   if (snap.kind === "ad_account") {
     const onFile = snap.paymentMethodOnFile;
     items.push({
-      key: "payment_method", label: "Payment method on file (Meta-র রিপোর্ট)",
+      key: "payment_method", label: d.compPaymentMethod,
       state: onFile === true ? "yes" : onFile === false ? "no" : "unknown",
       detail: null,
     });
@@ -664,9 +721,9 @@ export function completenessItems(account: ConnectionAccount): CompletenessItem[
   if (snap.kind === "meta_page" || snap.kind === "ad_account") {
     const biz = snap.business;
     items.push({
-      key: "business_verification", label: "Business verification (Meta)",
+      key: "business_verification", label: d.compBusinessVerif,
       state: !biz ? "unknown" : biz.verificationStatus === "verified" ? "yes" : biz.verificationStatus ? "no" : "unknown",
-      detail: biz ? (biz.verificationStatus ? `Meta-র মান: ${biz.verificationStatus}` : `Business ID: ${biz.id}`) : null,
+      detail: biz ? (biz.verificationStatus ? tpl(d.compMetaValue, { value: biz.verificationStatus }) : tpl(d.compBusinessId, { id: String(biz.id) })) : null,
     });
   }
   return items;
@@ -698,23 +755,25 @@ export interface UsageView {
   unattributed: ({ kind: string } & Record<string, number | string>)[];
 }
 
-/** One-line Bengali summary of a usage entry's metrics; null
- * when the API reported the facts as unattributable (the panel
- * renders "তথ্য নেই" for those). */
-export function usageMetricSummary(entry: UsageAccountView): string | null {
+/** One-line summary of a usage entry's metrics; null when the
+ * API reported the facts as unattributable (the panel renders
+ * its no-information label for those). */
+export function usageMetricSummary(entry: UsageAccountView, locale: UiLocale = "bn"): string | null {
+  const d = CD(locale);
+  const num = (v: number | string) => (typeof v === "number" ? fmtNumber(locale, v) : v);
   const m = entry.metrics;
   if (!m) return null;
   if ("messagesReceived" in m || "messagesSent" in m) {
     if (m.messagesReceived === null || m.messagesSent === null) return null;
-    return `এসেছে ${m.messagesReceived} · গেছে ${m.messagesSent}`;
+    return tpl(d.usageReceived, { received: num(m.messagesReceived), sent: num(m.messagesSent) });
   }
-  if ("postsPublished" in m) return `প্রকাশিত পোস্ট ${m.postsPublished}`;
+  if ("postsPublished" in m) return tpl(d.usagePosts, { count: num(m.postsPublished ?? "") });
   if ("ordersInWindow" in m) {
     if (m.ordersInWindow === null) return null;
-    return `অর্ডার ${m.ordersInWindow}`;
+    return tpl(d.usageOrders, { count: num(m.ordersInWindow) });
   }
-  if ("shipmentsBooked" in m) return `শিপমেন্ট বুকিং ${m.shipmentsBooked}`;
-  if ("verifiedPayments" in m) return `যাচাইকৃত পেমেন্ট ${m.verifiedPayments}টি`;
+  if ("shipmentsBooked" in m) return tpl(d.usageShipments, { count: num(m.shipmentsBooked ?? "") });
+  if ("verifiedPayments" in m) return tpl(d.usagePayments, { count: num(m.verifiedPayments ?? "") });
   return null;
 }
 
@@ -740,26 +799,29 @@ export interface DeliverabilityView {
 
 /** Meta business verification wording — Meta's verbatim value
  * is always shown beside the label; unknown stays unknown. */
-export function businessVerificationMeta(status: string | null | undefined): { label: string; cls: string } {
+export function businessVerificationMeta(status: string | null | undefined, locale: UiLocale = "bn"): { label: string; cls: string } {
+  const d = CD(locale);
   switch (status) {
-    case "verified": return { label: "✓ Verified", cls: "bg-green-100 text-green-700" };
-    case "not_verified": return { label: "✗ Not verified", cls: "bg-red-100 text-red-700" };
+    case "verified": return { label: d.bizVerified, cls: "bg-green-100 text-green-700" };
+    case "not_verified": return { label: d.bizNotVerified, cls: "bg-red-100 text-red-700" };
     case null:
     case undefined:
-    case "": return { label: "? তথ্য নেই", cls: "bg-slate-100 text-slate-500" };
+    case "": return { label: d.bizNoInfo, cls: "bg-slate-100 text-slate-500" };
     default: return { label: status, cls: "bg-amber-100 text-amber-700" };
   }
 }
 
 /** AD3 bucket wording — mirrors the API's bucketLabelBn. */
-export function adBucketMeta(bucket: string | null | undefined): { label: string; cls: string } {
-  switch (bucket) {
-    case "active": return { label: "সক্রিয়", cls: "bg-green-100 text-green-700" };
-    case "disabled": return { label: "বন্ধ (Disabled)", cls: "bg-red-100 text-red-700" };
-    case "restricted": return { label: "সীমাবদ্ধ (Restricted)", cls: "bg-amber-100 text-amber-700" };
-    case "unknown": return { label: "অজানা অবস্থা", cls: "bg-slate-100 text-slate-500" };
-    default: return { label: "জানা নেই", cls: "bg-slate-100 text-slate-500" };
-  }
+const AD_BUCKET_ROWS: Record<string, MetaRow> = {
+  active: { key: "adActive", cls: "bg-green-100 text-green-700" },
+  disabled: { key: "adDisabled", cls: "bg-red-100 text-red-700" },
+  restricted: { key: "adRestricted", cls: "bg-amber-100 text-amber-700" },
+  unknown: { key: "adUnknownState", cls: "bg-slate-100 text-slate-500" },
+};
+
+export function adBucketMeta(bucket: string | null | undefined, locale: UiLocale = "bn"): { label: string; cls: string } {
+  if (bucket && bucket in AD_BUCKET_ROWS) return metaFrom(AD_BUCKET_ROWS, bucket, locale);
+  return { label: CD(locale).adUnknown, cls: "bg-slate-100 text-slate-500" };
 }
 
 /** CC16 — commerce diagnostics as the API reports them. */
@@ -802,11 +864,11 @@ export function canRefreshProviderHealth(account: ConnectionAccount): boolean {
   return false;
 }
 
-export function formatWhen(value: string | null | undefined): string | null {
+export function formatWhen(value: string | null | undefined, locale: UiLocale = "bn"): string | null {
   if (!value) return null;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleString("bn-BD", { dateStyle: "medium", timeStyle: "short" });
+  return fmtDateTime(locale, d);
 }
 
 // ------------------------------------------------------------------
@@ -866,21 +928,30 @@ export function canPauseSync(account: ConnectionAccount): boolean {
 
 /** CC30 — cadence presets for the store-card interval choice
  * (minutes). "custom" and null (ডিফল্ট) are handled by the UI. */
-export const SYNC_INTERVAL_PRESETS: { minutes: number; label: string }[] = [
-  { minutes: 15, label: "১৫ মিনিট" },
-  { minutes: 30, label: "৩০ মিনিট" },
-  { minutes: 60, label: "১ ঘণ্টা" },
-  { minutes: 360, label: "৬ ঘণ্টা" },
-  { minutes: 1440, label: "২৪ ঘণ্টা" },
+const SYNC_PRESET_KEYS: { minutes: number; key: keyof ConnectionsDict }[] = [
+  { minutes: 15, key: "preset15" },
+  { minutes: 30, key: "preset30" },
+  { minutes: 60, key: "preset60" },
+  { minutes: 360, key: "preset360" },
+  { minutes: 1440, key: "preset1440" },
 ];
 
-export function syncIntervalLabel(minutes: number | null | undefined): string {
-  if (minutes === null || minutes === undefined) return "ডিফল্ট (cadence নেই)";
-  const preset = SYNC_INTERVAL_PRESETS.find((p) => p.minutes === minutes);
-  if (preset) return `প্রতি ${preset.label}`;
-  if (minutes % 1440 === 0) return `প্রতি ${minutes / 1440} দিন`;
-  if (minutes % 60 === 0) return `প্রতি ${minutes / 60} ঘণ্টা`;
-  return `প্রতি ${minutes} মিনিট`;
+export const SYNC_INTERVAL_PRESETS: { minutes: number; label: string }[] =
+  SYNC_PRESET_KEYS.map((p) => ({ minutes: p.minutes, label: connectionsBn[p.key] as string }));
+
+export function syncIntervalPresets(locale: UiLocale = "bn"): { minutes: number; label: string }[] {
+  const d = CD(locale);
+  return SYNC_PRESET_KEYS.map((p) => ({ minutes: p.minutes, label: d[p.key] as string }));
+}
+
+export function syncIntervalLabel(minutes: number | null | undefined, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (minutes === null || minutes === undefined) return d.syncDefault;
+  const preset = SYNC_PRESET_KEYS.find((p) => p.minutes === minutes);
+  if (preset) return tpl(d.syncEvery, { label: d[preset.key] as string });
+  if (minutes % 1440 === 0) return tpl(d.syncDays, { count: fmtNumber(locale, minutes / 1440) });
+  if (minutes % 60 === 0) return tpl(d.syncHours, { count: fmtNumber(locale, minutes / 60) });
+  return tpl(d.syncMinutes, { count: fmtNumber(locale, minutes) });
 }
 
 // ------------------------------------------------------------------
@@ -931,11 +1002,12 @@ export interface SyncHistoryItem {
   completedAt: string | null;
 }
 
-export function syncJobStatusLabel(item: SyncHistoryItem): string {
-  if (item.error === "sync_paused") return "বিরতি (pause) থাকায় এড়িয়ে যাওয়া হয়েছে";
-  if (item.status === "COMPLETED") return "সম্পন্ন";
-  if (item.status === "FAILED") return "ব্যর্থ";
-  if (item.status === "RUNNING") return "চলমান";
+export function syncJobStatusLabel(item: SyncHistoryItem, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  if (item.error === "sync_paused") return d.syncPaused;
+  if (item.status === "COMPLETED") return d.syncCompleted;
+  if (item.status === "FAILED") return d.syncFailed;
+  if (item.status === "RUNNING") return d.syncRunning;
   return item.status;
 }
 
@@ -959,14 +1031,15 @@ export interface PaymentTransactionView {
   updatedAt: string;
 }
 
-export function txnStatusMeta(status: string): { label: string; cls: string } {
-  switch (status) {
-    case "verified_paid": return { label: "যাচাইকৃত পেইড", cls: "bg-green-100 text-green-700" };
-    case "initiated": return { label: "শুরু হয়েছে", cls: "bg-amber-100 text-amber-700" };
-    case "failed": return { label: "ব্যর্থ", cls: "bg-red-100 text-red-700" };
-    case "cancelled": return { label: "বাতিল", cls: "bg-slate-200 text-slate-600" };
-    default: return { label: status, cls: "bg-slate-100 text-slate-600" };
-  }
+const TXN_ROWS: Record<string, MetaRow> = {
+  verified_paid: { key: "txnVerifiedPaid", cls: "bg-green-100 text-green-700" },
+  initiated: { key: "txnInitiated", cls: "bg-amber-100 text-amber-700" },
+  failed: { key: "txnFailed", cls: "bg-red-100 text-red-700" },
+  cancelled: { key: "txnCancelled", cls: "bg-slate-200 text-slate-600" },
+};
+
+export function txnStatusMeta(status: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(TXN_ROWS, status, locale);
 }
 
 export interface PaymentIpnView {
@@ -989,9 +1062,10 @@ export interface PayOption {
   source: "own" | "platform";
 }
 
-export function payOptionLabel(option: PayOption): string {
-  const provider = option.provider === "bkash" ? "বিকাশ" : "SSLCommerz (কার্ড/মোবাইল ব্যাংকিং)";
-  return option.source === "platform" ? `${provider} — প্ল্যাটফর্ম পেমেন্ট` : provider;
+export function payOptionLabel(option: PayOption, locale: UiLocale = "bn"): string {
+  const d = CD(locale);
+  const provider = option.provider === "bkash" ? d.payBkash : d.paySsl;
+  return option.source === "platform" ? `${provider}${d.payPlatformSuffix}` : provider;
 }
 
 /**
@@ -1022,14 +1096,15 @@ export interface SetupFindingView {
   href: string;
 }
 
-export const FINDING_SEVERITY_META: Record<string, { label: string; cls: string }> = {
-  blocker: { label: "🚫 ব্লকার", cls: "bg-red-100 text-red-700" },
-  improvement: { label: "⚠️ উন্নতি দরকার", cls: "bg-amber-100 text-amber-700" },
-  info: { label: "ℹ️ তথ্য", cls: "bg-slate-100 text-slate-600" },
+const FINDING_ROWS: Record<string, MetaRow> = {
+  blocker: { key: "findingBlocker", cls: "bg-red-100 text-red-700" },
+  improvement: { key: "findingImprovement", cls: "bg-amber-100 text-amber-700" },
+  info: { key: "findingInfo", cls: "bg-slate-100 text-slate-600" },
 };
+export const FINDING_SEVERITY_META: Record<string, { label: string; cls: string }> = bnMeta(FINDING_ROWS);
 
-export function findingSeverityMeta(severity: string): { label: string; cls: string } {
-  return FINDING_SEVERITY_META[severity] ?? FINDING_SEVERITY_META.info!;
+export function findingSeverityMeta(severity: string, locale: UiLocale = "bn"): { label: string; cls: string } {
+  return metaFrom(FINDING_ROWS, severity in FINDING_ROWS ? severity : "info", locale);
 }
 
 // ------------------------------------------------------------------
@@ -1045,26 +1120,22 @@ export interface GoogleConnectKindView {
   blurb: string;
 }
 
+const GOOGLE_BLURB_KEYS: Record<string, keyof ConnectionsDict> = {
+  ga4: "googleGa4Blurb",
+  merchant: "googleMerchantBlurb",
+  business: "googleBusinessBlurb",
+};
+
 export const GOOGLE_CONNECT_KINDS: GoogleConnectKindView[] = [
-  {
-    kind: "ga4",
-    label: "Google Analytics (GA4)",
-    icon: "📊",
-    blurb: "কানেক্টের পর আপনার GA4 property তালিকা থেকে একটি বেছে নেবেন — সেটির আইডিই সেভ হবে।",
-  },
-  {
-    kind: "merchant",
-    label: "Google Merchant Center",
-    icon: "🏷️",
-    blurb: "Merchant অ্যাকাউন্ট তালিকা থেকে একটি বেছে নেবেন (Merchant API v1 দিয়ে পড়া হয়)।",
-  },
-  {
-    kind: "business",
-    label: "Google Business Profile",
-    icon: "📍",
-    blurb: "আপনার Business Profile location তালিকা থেকে একটি বেছে নেবেন।",
-  },
+  { kind: "ga4", label: "Google Analytics (GA4)", icon: "📊", blurb: connectionsBn.googleGa4Blurb },
+  { kind: "merchant", label: "Google Merchant Center", icon: "🏷️", blurb: connectionsBn.googleMerchantBlurb },
+  { kind: "business", label: "Google Business Profile", icon: "📍", blurb: connectionsBn.googleBusinessBlurb },
 ];
+
+export function googleConnectKinds(locale: UiLocale = "bn"): GoogleConnectKindView[] {
+  const d = CD(locale);
+  return GOOGLE_CONNECT_KINDS.map((k) => ({ ...k, blurb: d[GOOGLE_BLURB_KEYS[k.kind] ?? "googleGa4Blurb"] as string }));
+}
 
 export function googleKindLabel(kind: string): string {
   return GOOGLE_CONNECT_KINDS.find((k) => k.kind === kind)?.label ?? kind;
@@ -1088,23 +1159,37 @@ export interface MarketplaceNoteView {
   revisit: string;
 }
 
+const MARKETPLACE_KEYS: Record<string, { summary: keyof ConnectionsDict; reason: keyof ConnectionsDict; revisit: keyof ConnectionsDict }> = {
+  tiktok_shop: { summary: "tiktokSummary", reason: "tiktokReason", revisit: "tiktokRevisit" },
+  daraz: { summary: "darazSummary", reason: "darazReason", revisit: "darazRevisit" },
+};
+
 export const MARKETPLACE_NOTES: MarketplaceNoteView[] = [
   {
     provider: "tiktok_shop",
     name: "TikTok Shop",
     icon: "🎵",
     verdict: "no_build",
-    summary: "TikTok Shop কানেক্ট করার বাটন এখানে নেই — এটি ইচ্ছাকৃত সিদ্ধান্ত, অসম্পূর্ণ কাজ নয়।",
-    reason: "গবেষণায় (EC14) দেখা গেছে: TikTok Shop-এর অফিসিয়াল seller-market তালিকায় বাংলাদেশ \"Not listed\" — বাংলাদেশি seller-এর কোনো TikTok Shop-ই থাকতে পারে না, তাই কানেক্ট করার মতো কোনো আসল অ্যাকাউন্টের অস্তিত্বই নেই।",
-    revisit: "রায় বদলাবে যদি: TikTok Shop বাংলাদেশে অফিসিয়ালি seller চালু করে, অথবা কোনো tenant সমর্থিত দেশের আসল TikTok Shop নিয়ে আসে।",
+    summary: connectionsBn.tiktokSummary,
+    reason: connectionsBn.tiktokReason,
+    revisit: connectionsBn.tiktokRevisit,
   },
   {
     provider: "daraz",
     name: "Daraz",
     icon: "🛍️",
     verdict: "no_build",
-    summary: "Daraz কানেক্ট করার বাটন এখানে নেই — কোনো আসল API পথ ছাড়া বাটন বসানো হবে না।",
-    reason: "গবেষণায় (EC14) দেখা গেছে: পাবলিক Lazada Open Platform শুধু মালয়েশিয়া/সিঙ্গাপুর/থাইল্যান্ড/ফিলিপাইন/ভিয়েতনাম/ইন্দোনেশিয়ার জন্য — Daraz বাংলাদেশের কোনো পাবলিক seller API বা developer onboarding পাওয়া যায়নি। Lazada ইন্টিগ্রেশনকে \"Daraz\" বলে চালানো মিথ্যা দাবি হতো।",
-    revisit: "রায় বদলাবে যদি: Daraz বাংলাদেশ লিখিতভাবে third-party API access নিশ্চিত করে, অথবা অফিসিয়াল পাবলিক BD developer portal চালু হয়।",
+    summary: connectionsBn.darazSummary,
+    reason: connectionsBn.darazReason,
+    revisit: connectionsBn.darazRevisit,
   },
 ];
+
+export function marketplaceNotes(locale: UiLocale = "bn"): MarketplaceNoteView[] {
+  const d = CD(locale);
+  return MARKETPLACE_NOTES.map((n) => {
+    const keys = MARKETPLACE_KEYS[n.provider];
+    if (!keys) return n;
+    return { ...n, summary: d[keys.summary] as string, reason: d[keys.reason] as string, revisit: d[keys.revisit] as string };
+  });
+}

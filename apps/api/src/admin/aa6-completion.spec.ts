@@ -87,18 +87,18 @@ describe("AA6.1 — announcement scheduling validation", () => {
     await expect(s.createAnnouncement(SUPER, {
       title: "T", body: "B",
       startsAt: "2026-11-02T00:00:00.000Z", endsAt: "2026-11-01T00:00:00.000Z",
-    })).rejects.toThrow(/endsAt must be after startsAt/);
+    })).rejects.toMatchObject({ code: "admin.endsatMustBeAfterStartsat" });
     await expect(s.createAnnouncement(SUPER, {
       title: "T", body: "B",
       startsAt: "2026-11-01T00:00:00.000Z", endsAt: "2026-11-01T00:00:00.000Z",
-    })).rejects.toThrow(/endsAt must be after startsAt/);
+    })).rejects.toMatchObject({ code: "admin.endsatMustBeAfterStartsat" });
   });
   it("invalid startsAt → 400; invalid endsAt → 400", async () => {
     const s = svc(annPrisma());
     await expect(s.createAnnouncement(SUPER, { title: "T", body: "B", startsAt: "not-a-date" }))
-      .rejects.toThrow(/startsAt must be a valid ISO date/);
+      .rejects.toMatchObject({ code: "admin.startsatMustBeAValidIso" });
     await expect(s.createAnnouncement(SUPER, { title: "T", body: "B", endsAt: "also-not-a-date" }))
-      .rejects.toThrow(/endsAt must be a valid ISO date/);
+      .rejects.toMatchObject({ code: "admin.endsatMustBeAValidIso" });
   });
   it("valid window persists Dates", async () => {
     const p = annPrisma();
@@ -337,7 +337,7 @@ describe("AA6.6 — systemWebhooks + systemWebhookEvent", () => {
   });
   it("systemWebhookEvent: unknown id → 404", async () => {
     const s = svc(whPrisma());
-    await expect(s.systemWebhookEvent("nope")).rejects.toThrow(/not found/i);
+    await expect(s.systemWebhookEvent("nope")).rejects.toMatchObject({ code: "admin.webhookEventNotFound" });
     try {
       await s.systemWebhookEvent("nope");
       throw new Error("should have thrown");

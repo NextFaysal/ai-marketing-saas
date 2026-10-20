@@ -1,6 +1,7 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, UseGuards,
+  BadRequestException, Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, UseGuards,
 } from "@nestjs/common";
+import { notFound } from "../i18n";
 import { PermissionArea, Roles } from "../common/decorators";
 import { RolesGuard } from "../common/roles.guard";
 import { TenantGuard } from "../common/tenant.guard";
@@ -40,8 +41,14 @@ export class FinanceController {
     try {
       return await fn();
     } catch (e: any) {
+      // MB4: coded ApiExceptions keep their own status/code —
+      // the global filter renders the message in the request
+      // locale. The legacy BN-substring mapping below only
+      // handles uncoded plain Errors from helpers not yet
+      // converted.
+      if (e instanceof HttpException) throw e;
       const msg = String(e?.message ?? e);
-      if (msg.includes("পাওয়া যায়নি")) throw new NotFoundException(msg);
+      if (msg.includes("পাওয়া যায়নি")) throw notFound("finance.reportTypeNotFound");
       throw new BadRequestException(msg);
     }
   }
@@ -60,13 +67,13 @@ export class FinanceController {
 
   @Get("reports/:type")
   report(@Param("organizationId") orgId: string, @Param("type") type: string, @Query("from") from?: string, @Query("to") to?: string) {
-    if (!(GC19_REPORT_TYPES as readonly string[]).includes(type)) throw new NotFoundException("রিপোর্টের ধরনটি পাওয়া যায়নি");
+    if (!(GC19_REPORT_TYPES as readonly string[]).includes(type)) throw notFound("finance.reportTypeNotFound");
     return this.guard(() => this.reports.getReport(orgId, type, from, to));
   }
 
   @Get("reports/:type/export")
   async reportExport(@Param("organizationId") orgId: string, @Param("type") type: string, @Res() res: any, @Query("from") from?: string, @Query("to") to?: string, @Query("format") format?: string) {
-    if (!(GC19_REPORT_TYPES as readonly string[]).includes(type)) throw new NotFoundException("রিপোর্টের ধরনটি পাওয়া যায়নি");
+    if (!(GC19_REPORT_TYPES as readonly string[]).includes(type)) throw notFound("finance.reportTypeNotFound");
     const file = await this.guard(() => this.reports.buildReportFile(orgId, type, from, to, this.formatOf(format)));
     this.sendFile(res, file);
   }

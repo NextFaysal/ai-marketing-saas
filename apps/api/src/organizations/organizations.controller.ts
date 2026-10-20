@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, Res, StreamableFile, UseGuards } from "@nestjs/common";
 import { Request, Response } from "express";
 import { OrganizationsService } from "./organizations.service";
-import { ApproveJoinRequestDto, AssignCustomRoleDto, CreateCustomRoleDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, TransferOwnershipDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateCustomRoleDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UpdateNotificationPreferencesDto, UpdateOrgIdentityDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
+import { ApproveJoinRequestDto, AssignCustomRoleDto, CreateCustomRoleDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, TransferOwnershipDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateCustomRoleDto, UpdateMemberAccessDto, UpdateMemberRoleDto, UpdateMemberStatusDto, UpdateNotificationPreferencesDto, UpdateOrgIdentityDto, UpdateOrgLocaleDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
 import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { notFound } from "../i18n";
 
 @Controller("organizations")
 export class OrganizationsController {
@@ -360,6 +361,17 @@ export class OrganizationsController {
     return this.orgs.updateIdentity(id, user.userId, dto, req.ip);
   }
 
+  // ML1 (Multi-Language MB1): the organization's dashboard
+  // default UI language (bn | en) — mirrors the identity
+  // endpoint's guards/roles exactly.
+  @PermissionArea("settings")
+  @Patch(":organizationId/locale")
+  @UseGuards(TenantGuard, RolesGuard)
+  @Roles("OWNER", "ADMIN")
+  updateLocale(@CurrentUser() user: AuthUser, @Param("organizationId") id: string, @Body() dto: UpdateOrgLocaleDto, @Req() req: Request) {
+    return this.orgs.updateDashboardLocale(id, user.userId, dto, req.ip);
+  }
+
   // ORG11 (Organization Next OB4): org security policy — MFA
   // requirement + session-age cap. GET is any ACTIVE member (the
   // dashboard's OrgStateGate probes it while TenantGuard blocks
@@ -453,7 +465,7 @@ export class PublicBrandingController {
       return undefined;
     }
     const logo = await this.orgs.publicLogo(id);
-    if (!logo) throw new NotFoundException("No logo for this organization");
+    if (!logo) throw notFound("organizations.orgNoLogo");
     return new StreamableFile(logo.bytes, { type: logo.contentType, disposition: "inline" });
   }
 }

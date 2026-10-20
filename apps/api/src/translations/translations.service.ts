@@ -1,4 +1,5 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
@@ -33,9 +34,15 @@ import type {
 export const PRODUCT_TRANSLATION_FIELDS = ["name", "description"] as const;
 export const STOREFRONT_STRING_FIELDS = ["announcementText", "returnPolicyText", "deliveryPromiseText"] as const;
 export const STOREFRONT_STRINGS_ENTITY_ID = "shop";
+/** MB5 (ML15, CD-5): Category joins NF5 with the same two
+ * fields as Product (name, description). */
+export const CATEGORY_TRANSLATION_FIELDS = ["name", "description"] as const;
+/** MB5 (ML15, CD-5): BlogPost joins with title ONLY — long-form
+ * content is deliberately NOT in this batch (AI draft cost);
+ * recorded as a partial in the MB5 acceptance. */
+export const BLOG_POST_TRANSLATION_FIELDS = ["title"] as const;
 
 const AI_DRAFT_NOTE_BN = "এটি AI-তৈরি খসড়া — অনুমোদন না করা পর্যন্ত দোকানে দেখাবে না। যাচাই করে অনুমোদন করুন।";
-const NO_LLM_ERROR_BN = "AI অনুবাদ তৈরি করা যায়নি — এই সংস্থার জন্য কোনো সক্রিয় AI মডেল কনফিগার করা নেই। অনুগ্রহ করে নিজে অনুবাদ লিখুন, অথবা সংযোগ সেটিংসে AI মডেল যাচাই করুন।";
 
 @Injectable()
 export class TranslationsService {
@@ -73,7 +80,7 @@ export class TranslationsService {
 
   private assertLocale(locale: unknown): string {
     if (!isTranslationLocale(locale)) {
-      throw new BadRequestException("ভাষা অবশ্যই bn, en অথবা hi হতে হবে");
+      throw badRequest("translations.languageMustBeBnEnOrHi");
     }
     return locale;
   }
@@ -81,23 +88,53 @@ export class TranslationsService {
   private assertEntity(entityType: unknown, field: unknown): { entityType: string; field: string } {
     if (entityType === "product") {
       if (!(PRODUCT_TRANSLATION_FIELDS as readonly string[]).includes(String(field))) {
-        throw new BadRequestException("পণ্যের জন্য ক্ষেত্র শুধু name অথবা description হতে পারে");
+        throw badRequest("translations.productFieldMustBeNameOrDescription");
       }
       return { entityType: "product", field: String(field) };
     }
+    // MB5 (ML15): category — the product pattern, name +
+    // description (CD-5: category first).
+    if (entityType === "category") {
+      if (!(CATEGORY_TRANSLATION_FIELDS as readonly string[]).includes(String(field))) {
+        throw badRequest("translations.categoryFieldMustBeNameOrDescription");
+      }
+      return { entityType: "category", field: String(field) };
+    }
+    // MB5 (ML15): blog_post — title ONLY (CD-5); a "content"
+    // field is refused here, never silently stored.
+    if (entityType === "blog_post") {
+      if (!(BLOG_POST_TRANSLATION_FIELDS as readonly string[]).includes(String(field))) {
+        throw badRequest("translations.blogPostFieldMustBeTitle");
+      }
+      return { entityType: "blog_post", field: String(field) };
+    }
     if (entityType === "storefront_string") {
       if (!(STOREFRONT_STRING_FIELDS as readonly string[]).includes(String(field))) {
-        throw new BadRequestException(`দোকানের লেখার জন্য ক্ষেত্র শুধু ${STOREFRONT_STRING_FIELDS.join(", ")} হতে পারে`);
+        throw badRequest("translations.storefrontFieldMustBeOneOf", { fields: STOREFRONT_STRING_FIELDS.join(", ") });
       }
       return { entityType: "storefront_string", field: String(field) };
     }
-    throw new BadRequestException("entityType অবশ্যই product অথবা storefront_string হতে হবে");
+    throw badRequest("translations.entityTypeMustBeProductCategoryBlogPostOrStorefrontString");
   }
 
   private async productOr404(orgId: string, productId: string) {
     const product = await this.db().product.findFirst({ where: { id: productId, organizationId: orgId } });
-    if (!product) throw new NotFoundException("পণ্যটি এই সংস্থায় পাওয়া যায়নি");
+    if (!product) throw notFound("translations.productNotFoundInOrg");
     return product;
+  }
+
+  /** MB5 (ML15): the category org check, mirroring productOr404. */
+  private async categoryOr404(orgId: string, categoryId: string) {
+    const category = await this.db().category.findFirst({ where: { id: categoryId, organizationId: orgId } });
+    if (!category) throw notFound("translations.categoryNotFoundInOrg");
+    return category;
+  }
+
+  /** MB5 (ML15): the blog-post org check, mirroring productOr404. */
+  private async blogPostOr404(orgId: string, blogPostId: string) {
+    const post = await this.db().blogPost.findFirst({ where: { id: blogPostId, organizationId: orgId } });
+    if (!post) throw notFound("translations.blogPostNotFoundInOrg");
+    return post;
   }
 
   // ---------- staff reads ----------
@@ -106,6 +143,26 @@ export class TranslationsService {
     await this.productOr404(orgId, productId);
     const rows = await this.db().contentTranslation.findMany({
       where: { organizationId: orgId, entityType: "product", entityId: productId },
+      orderBy: [{ locale: "asc" }, { field: "asc" }],
+    });
+    return { items: rows.map((r: any) => this.serialize(r)) };
+  }
+
+  /** MB5 (ML15): category translations list, mirroring listForProduct. */
+  async listForCategory(orgId: string, categoryId: string) {
+    await this.categoryOr404(orgId, categoryId);
+    const rows = await this.db().contentTranslation.findMany({
+      where: { organizationId: orgId, entityType: "category", entityId: categoryId },
+      orderBy: [{ locale: "asc" }, { field: "asc" }],
+    });
+    return { items: rows.map((r: any) => this.serialize(r)) };
+  }
+
+  /** MB5 (ML15): blog-post (title) translations list, mirroring listForProduct. */
+  async listForBlogPost(orgId: string, blogPostId: string) {
+    await this.blogPostOr404(orgId, blogPostId);
+    const rows = await this.db().contentTranslation.findMany({
+      where: { organizationId: orgId, entityType: "blog_post", entityId: blogPostId },
       orderBy: [{ locale: "asc" }, { field: "asc" }],
     });
     return { items: rows.map((r: any) => this.serialize(r)) };
@@ -131,9 +188,11 @@ export class TranslationsService {
     const { entityType, field } = this.assertEntity(dto.entityType, dto.field);
     const locale = this.assertLocale(dto.locale);
     const text = typeof dto.text === "string" ? dto.text.trim() : "";
-    if (!text) throw new BadRequestException("অনুবাদের লেখা খালি হতে পারে না");
-    const entityId = entityType === "product" ? String(dto.entityId ?? "") : STOREFRONT_STRINGS_ENTITY_ID;
+    if (!text) throw badRequest("translations.translationTextMustNotBeEmpty");
+    const entityId = entityType === "storefront_string" ? STOREFRONT_STRINGS_ENTITY_ID : String(dto.entityId ?? "");
     if (entityType === "product") await this.productOr404(orgId, entityId);
+    if (entityType === "category") await this.categoryOr404(orgId, entityId);
+    if (entityType === "blog_post") await this.blogPostOr404(orgId, entityId);
     const status = dto.status === "approved" ? "approved" : "draft";
     const where = { organizationId_entityType_entityId_field_locale: { organizationId: orgId, entityType, entityId, field, locale } };
     const row = await this.db().contentTranslation.upsert({
@@ -150,16 +209,16 @@ export class TranslationsService {
 
   async updateTranslation(orgId: string, userId: string, id: string, dto: UpdateTranslationDto) {
     const row = await this.db().contentTranslation.findFirst({ where: { id, organizationId: orgId } });
-    if (!row) throw new NotFoundException("অনুবাদটি পাওয়া যায়নি");
+    if (!row) throw notFound("translations.translationNotFound");
     const data: Record<string, unknown> = { updatedById: userId };
     if (dto.text !== undefined) {
       const text = typeof dto.text === "string" ? dto.text.trim() : "";
-      if (!text) throw new BadRequestException("অনুবাদের লেখা খালি হতে পারে না");
+      if (!text) throw badRequest("translations.translationTextMustNotBeEmpty");
       data.text = text;
     }
     if (dto.status !== undefined) {
       if (dto.status !== "approved" && dto.status !== "draft") {
-        throw new BadRequestException("status শুধু draft অথবা approved হতে পারে");
+        throw badRequest("translations.statusMustBeDraftOrApproved");
       }
       data.status = dto.status;
     }
@@ -178,14 +237,14 @@ export class TranslationsService {
   private async realProviderOrFail(orgId: string) {
     const ks = await killSwitches(this.prisma as any).catch(() => ({ aiDisabledOrgIds: [] as string[] }));
     if (ks.aiDisabledOrgIds.includes(orgId)) {
-      throw new HttpException("এই সংস্থার জন্য AI সুবিধা প্ল্যাটফর্ম টিম সাময়িকভাবে বন্ধ রেখেছে।", 403);
+      throw forbidden("translations.aiDisabledByPlatform");
     }
-    if (!this.llm) throw new BadRequestException(NO_LLM_ERROR_BN);
+    if (!this.llm) throw badRequest("translations.aiNoActiveModelConfigured");
     const provider = await providerForOrg(this.llm, orgId).catch(() => null);
     // The dev-template adapter is NOT a translator: with no real
     // LLM configured we fail honestly instead of storing a
     // fabricated "translation".
-    if (!provider || !provider.isRealLlm) throw new BadRequestException(NO_LLM_ERROR_BN);
+    if (!provider || !provider.isRealLlm) throw badRequest("translations.aiNoActiveModelConfigured");
     return provider;
   }
 
@@ -216,7 +275,7 @@ export class TranslationsService {
         { jsonMode: true, maxTokens: 1500 },
       );
     } catch (e: any) {
-      throw new BadRequestException(`AI অনুবাদ তৈরি করা যায়নি: ${e?.message ?? String(e)}`);
+      throw badRequest("translations.aiTranslationFailed", { detail: e?.message ?? String(e) });
     }
     await this.db().aIUsageRecord.create({
       data: {
@@ -234,7 +293,7 @@ export class TranslationsService {
       if (v) out[f.field] = v;
     }
     if (Object.keys(out).length === 0) {
-      throw new BadRequestException("AI অনুবাদ তৈরি করা যায়নি — মডেল কোনো ব্যবহারযোগ্য অনুবাদ দেয়নি। আবার চেষ্টা করুন অথবা নিজে লিখুন।");
+      throw badRequest("translations.aiNoUsableTranslation");
     }
     return out;
   }
@@ -272,9 +331,55 @@ export class TranslationsService {
       { field: "name", baseText: String(product.name ?? "") },
       ...(product.description ? [{ field: "description", baseText: String(product.description) }] : []),
     ].filter((f) => f.baseText.trim());
-    if (fields.length === 0) throw new BadRequestException("এই পণ্যের কোনো নাম/বিবরণ নেই — আগে পণ্যের তথ্য যোগ করুন");
+    if (fields.length === 0) throw badRequest("translations.productHasNoNameOrDescription");
     const translated = await this.translateFields(orgId, userId, provider, locale, fields, "product_translation");
     const saved = await this.saveDrafts(orgId, userId, "product", productId, locale, translated);
+    return {
+      mode: "ai_draft" as const,
+      provider: provider.name,
+      note: AI_DRAFT_NOTE_BN,
+      items: saved.map((r: any) => this.serialize(r)),
+    };
+  }
+
+  /**
+   * MB5 (ML15): AI draft for a category (name + description when
+   * present) — the product pattern exactly: real-provider only,
+   * always draft + source "ai", approval is a separate human
+   * act (ML-L6).
+   */
+  async generateCategoryDraft(orgId: string, userId: string, categoryId: string, dto: AiProductDraftDto) {
+    const locale = this.assertLocale(dto.locale);
+    const category = await this.categoryOr404(orgId, categoryId);
+    const provider = await this.realProviderOrFail(orgId);
+    const fields = [
+      { field: "name", baseText: String(category.name ?? "") },
+      ...(category.description ? [{ field: "description", baseText: String(category.description) }] : []),
+    ].filter((f) => f.baseText.trim());
+    if (fields.length === 0) throw badRequest("translations.categoryHasNoNameOrDescription");
+    const translated = await this.translateFields(orgId, userId, provider, locale, fields, "category_translation");
+    const saved = await this.saveDrafts(orgId, userId, "category", categoryId, locale, translated);
+    return {
+      mode: "ai_draft" as const,
+      provider: provider.name,
+      note: AI_DRAFT_NOTE_BN,
+      items: saved.map((r: any) => this.serialize(r)),
+    };
+  }
+
+  /**
+   * MB5 (ML15): AI draft for a blog post's TITLE only (CD-5 —
+   * content is not translated in this batch). Same draft-only
+   * discipline as every other entity.
+   */
+  async generateBlogPostDraft(orgId: string, userId: string, blogPostId: string, dto: AiProductDraftDto) {
+    const locale = this.assertLocale(dto.locale);
+    const post = await this.blogPostOr404(orgId, blogPostId);
+    const provider = await this.realProviderOrFail(orgId);
+    const fields = [{ field: "title", baseText: String(post.title ?? "") }].filter((f) => f.baseText.trim());
+    if (fields.length === 0) throw badRequest("translations.blogPostHasNoTitle");
+    const translated = await this.translateFields(orgId, userId, provider, locale, fields, "blog_post_translation");
+    const saved = await this.saveDrafts(orgId, userId, "blog_post", blogPostId, locale, translated);
     return {
       mode: "ai_draft" as const,
       provider: provider.name,
@@ -294,7 +399,7 @@ export class TranslationsService {
       .map((field) => ({ field, baseText: typeof setting?.[field] === "string" ? setting[field] : "" }))
       .filter((f) => f.baseText.trim());
     if (fields.length === 0) {
-      throw new BadRequestException("দোকানের কোনো মূল লেখা (ঘোষণা/রিটার্ন নীতি/ডেলিভারি প্রতিশ্রুতি) সেট করা নেই — আগে স্টোরফ্রন্ট সেটিংসে লেখা যোগ করুন");
+      throw badRequest("translations.noStorefrontSourceStrings");
     }
     const translated = await this.translateFields(orgId, userId, provider, locale, fields, "storefront_translation");
     const saved = await this.saveDrafts(orgId, userId, "storefront_string", STOREFRONT_STRINGS_ENTITY_ID, locale, translated);
@@ -335,15 +440,15 @@ export class TranslationsService {
 
   async upsertCurrencyRate(orgId: string, userId: string, dto: UpsertCurrencyRateDto) {
     const currency = String(dto.currency ?? "").trim().toUpperCase();
-    if (!/^[A-Z]{3}$/.test(currency)) throw new BadRequestException("মুদ্রার কোড অবশ্যই ৩ অক্ষরের ISO কোড হতে হবে (যেমন USD)");
+    if (!/^[A-Z]{3}$/.test(currency)) throw badRequest("translations.currencyCodeMustBeIso3");
     const baseCurrency = await this.baseCurrencyOf(orgId);
     if (currency === baseCurrency) {
-      throw new BadRequestException(`দোকানের মূল মুদ্রা (${baseCurrency}) নিজেই — এর জন্য আলাদা রেট লাগে না`);
+      throw badRequest("translations.baseCurrencyNeedsNoRate", { currency: baseCurrency });
     }
     const rate = parseRatePerUnit(dto.ratePerUnit as any);
-    if (rate === null) throw new BadRequestException("রেট অবশ্যই ধনাত্মক সংখ্যা হতে হবে (যেমন 119.50)");
+    if (rate === null) throw badRequest("translations.rateMustBePositive");
     const sourceNote = typeof dto.sourceNote === "string" ? dto.sourceNote.trim() : "";
-    if (!sourceNote) throw new BadRequestException("রেটের উৎস লিখতে হবে — এই রেট কোথা থেকে নিয়েছেন (যেমন: ব্যাংকের আজকের রেট, নিজের হিসাব)");
+    if (!sourceNote) throw badRequest("translations.rateSourceNoteRequired");
     const ratePerUnit = String(dto.ratePerUnit).trim();
     const where = { organizationId_currency: { organizationId: orgId, currency } };
     const row = await this.db().displayCurrencyRate.upsert({
@@ -361,7 +466,7 @@ export class TranslationsService {
   async deleteCurrencyRate(orgId: string, userId: string, currencyRaw: string) {
     const currency = String(currencyRaw ?? "").trim().toUpperCase();
     const row = await this.db().displayCurrencyRate.findFirst({ where: { organizationId: orgId, currency } });
-    if (!row) throw new NotFoundException("এই মুদ্রার কোনো রেট সেট করা নেই");
+    if (!row) throw notFound("translations.noRateSetForCurrency");
     await this.db().displayCurrencyRate.delete({ where: { id: row.id } });
     await this.safeAudit({
       organizationId: orgId, userId, action: "translation.currency_rate_delete", entityType: "DisplayCurrencyRate", entityId: row.id,

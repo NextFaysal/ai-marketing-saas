@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
+import { notFound } from "../i18n/api-exception";
 
 /**
  * SU6 — Social link tracking: UTM auto-build, tracked short link
@@ -159,7 +160,7 @@ export class SocialLinkService {
     const post = await this.p().socialPost.findFirst({
       where: { id: postId, organizationId },
     });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
 
     const clickRows = (await this.p().socialLinkClick
       ?.findMany({ where: { organizationId, socialPostId: postId } })

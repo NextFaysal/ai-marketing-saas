@@ -21,7 +21,7 @@ const CommandPaletteModal = dynamic(() => import("./CommandPaletteModal").then((
 import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
 import { mergeTimeline } from "@/lib/timeline";
 import { SNOOZE_PRESETS, isActivelySnoozed, snoozeBodyForCustom, snoozeBodyForMinutes } from "@/lib/snooze";
-import { PRODUCT_MATCH_HONESTY, productMatchDraftText, type ProductCandidateView } from "@/lib/cx8";
+import { PRODUCT_MATCH_HONESTY, productMatchDraftText, productMatchHonesty, type ProductCandidateView } from "@/lib/cx8";
 import { EMPTY_UI_FILTERS, hasAdvancedFilters, savedToUiFilters, splitSnippet, uiFiltersToParams, uiFiltersToSaved, type InboxUiFilters } from "@/lib/inbox-in1";
 import { CONVERSATION_OUTCOMES, MACRO_STEP_LABELS, PIPELINE_STAGES, bulkReplySummary, formatMacroRunResult, macroRunStepLines, macroStepSummary, type MacroRunResult, type MacroStep } from "@/lib/inbox-in3";
 import { parseSlaMinutesInput, slaChipInfo } from "@/lib/inbox-in4";
@@ -29,6 +29,11 @@ import { AGENT_REACTIONS, canSendReaction, deliveryTick, parseMessageReactions, 
 import { NEXT_ACTION_ICONS, handoverSummaryNotice, isRunnableAction, proposalAcceptPatch, type NextActionResponse } from "@/lib/inbox-in7";
 import { COURIER_RISK_BAND_BN, HANDOVER_REASON_LABELS, MOOD_TITLE, clampPane, dayLabel, initialsOf, money, relTime, renderQuick } from "@/lib/inbox-format";
 import { appendConversationPage, getDraftStorage, loadComposerDraft, saveComposerDraft } from "@/lib/inbox-in9";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber, fmtMoneyMinor, fmtDate, fmtTime, fmtDateTime } from "@repo/contracts";
+import { snoozePresets } from "@/lib/snooze";
+import { courierRiskBand, handoverReasonLabels, moodTitle } from "@/lib/inbox-format";
+import { macroStepLabels } from "@/lib/inbox-in3";
 
 /** IN1: a message-search hit + a saved view, as the API returns them. */
 interface MessageSearchResult {
@@ -210,6 +215,8 @@ function playNotificationChime() {
 }
 
 export default function InboxPage() {
+  const { t, locale } = useLocale();
+  const dictT = t;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [active, setActive] = useState<Conversation | null>(null);
@@ -302,8 +309,8 @@ export default function InboxPage() {
   const messagesRef = useRef<Message[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => {
-    const original = "ইনবক্স";
-    document.title = unreadTotal > 0 ? `(${unreadTotal}) ইনবক্স` : original;
+    const original = t("inbox.titleWord");
+    document.title = unreadTotal > 0 ? `(${fmtNumber(locale, unreadTotal)}) ${t("inbox.titleWord")}` : original;
     return () => { document.title = original; };
   }, [unreadTotal]);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
@@ -693,7 +700,7 @@ export default function InboxPage() {
     try {
       const saved = await apiFetch<any>(`/organizations/${orgId}/inbox/settings`, { method: "PATCH", body: JSON.stringify(patch) });
       setSettings(saved);
-      setNotice("Inbox সেটিংস সেভ হয়েছে।");
+      setNotice(t("inbox.settingsSaved"));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
 
@@ -702,7 +709,7 @@ export default function InboxPage() {
     setBusy("cod"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/cod-confirmation`, { method: "POST", body: JSON.stringify({ orderId }) });
-      setNotice("COD কনফার্মেশন বার্তা পাঠানো হয়েছে। গ্রাহকের উত্তরের অপেক্ষায়।");
+      setNotice(t("inbox.codSent"));
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -756,8 +763,8 @@ export default function InboxPage() {
    * successes clear, failures stay selected with their reasons. */
   async function runBulk(action: "close" | "assign" | "tag-add" | "mark-read") {
     const orgId = getOrganizationId(); if (!orgId || selectedIds.size === 0) return;
-    if (action === "assign" && !bulkAssign) { setError("অ্যাসাইন করার জন্য একজন সদস্য বেছে নিন।"); return; }
-    if (action === "tag-add" && !bulkTag.trim()) { setError("যোগ করার জন্য একটি ট্যাগ লিখুন।"); return; }
+    if (action === "assign" && !bulkAssign) { setError(t("inbox.assignPickMember")); return; }
+    if (action === "tag-add" && !bulkTag.trim()) { setError(t("inbox.tagTypeOne")); return; }
     setBusy("bulk"); setError("");
     try {
       const r = await apiFetch<{ results: { id: string; ok: boolean; error?: string }[]; succeeded: number; failed: number }>(
@@ -772,9 +779,9 @@ export default function InboxPage() {
         },
       );
       const failed = r.results.filter((x) => !x.ok);
-      setNotice(`বাল্ক সম্পন্ন: সফল ${r.succeeded}টি${r.failed ? `, ব্যর্থ ${r.failed}টি` : ""}।`);
+      setNotice(t("inbox.bulkDoneLine", { ok: fmtNumber(locale, r.succeeded), failed: r.failed ? t("inbox.bulkFailedPart", { n: fmtNumber(locale, r.failed) }) : "" }));
       if (failed.length) {
-        setError(`ব্যর্থ ${failed.length}টি: ${failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ")}`);
+        setError(t("inbox.failedListLine", { n: fmtNumber(locale, failed.length), list: failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ") }));
         setSelectedIds(new Set(failed.map((x) => x.id)));
       } else {
         setSelectedIds(new Set());
@@ -803,7 +810,7 @@ export default function InboxPage() {
       loadConversations();
       // A reply step may have consumed a quick reply — refresh counts.
       apiFetch<QuickReply[]>(`/organizations/${orgId}/inbox/quick-replies`).then(setQuickReplies).catch(() => undefined);
-    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো চালানো যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.macroCannotRun")); }
     finally { setBusy(""); }
   }
 
@@ -813,12 +820,12 @@ export default function InboxPage() {
   async function createMacroFromBuilder() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const name = macroName.trim();
-    if (!name) { setError("ম্যাক্রোর একটি নাম দিন।"); return; }
+    if (!name) { setError(t("inbox.macroNeedName")); return; }
     const steps: MacroStep[] = [];
     for (const d of macroDraft) {
-      if (d.type === "reply") { if (!d.quickReplyId) { setError("Reply ধাপের জন্য Quick Reply বেছে নিন।"); return; } steps.push({ type: "reply", quickReplyId: d.quickReplyId }); }
+      if (d.type === "reply") { if (!d.quickReplyId) { setError(t("inbox.macroNeedQuickReply")); return; } steps.push({ type: "reply", quickReplyId: d.quickReplyId }); }
       else if (d.type === "assign") steps.push({ type: "assign", assignedUserId: d.assignedUserId === "__none__" ? null : d.assignedUserId });
-      else if (d.type === "tag") { if (!d.tag.trim()) { setError("Tag ধাপে ট্যাগ লিখুন।"); return; } steps.push({ type: "tag", tag: d.tag.trim() }); }
+      else if (d.type === "tag") { if (!d.tag.trim()) { setError(t("inbox.macroNeedTag")); return; } steps.push({ type: "tag", tag: d.tag.trim() }); }
       else if (d.type === "pipeline") steps.push({ type: "pipeline", stage: d.stage });
       else if (d.type === "close") steps.push({ type: "close", ...(d.outcome ? { outcome: d.outcome } : {}) });
       else if (d.type === "snooze") steps.push({ type: "snooze", minutes: d.minutes });
@@ -830,8 +837,8 @@ export default function InboxPage() {
       });
       setMacros((prev) => [created, ...prev]);
       setMacroName(""); setMacroShared(false); setMacroDraft([emptyMacroStep()]);
-      setNotice(`ম্যাক্রো তৈরি হয়েছে: ${created.name}`);
-    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো তৈরি যায়নি"); }
+      setNotice(t("inbox.macroCreated", { name: created.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.macroCreateFailed")); }
     finally { setBusy(""); }
   }
 
@@ -841,8 +848,8 @@ export default function InboxPage() {
     try {
       await apiFetch(`/organizations/${orgId}/inbox/macros/${macro.id}`, { method: "DELETE" });
       setMacros((prev) => prev.filter((m) => m.id !== macro.id));
-      setNotice(`ম্যাক্রো মোছা হয়েছে: ${macro.name}`);
-    } catch (e) { setError(e instanceof Error ? e.message : "ম্যাক্রো মোছা যায়নি"); }
+      setNotice(t("inbox.macroDeleted", { name: macro.name }));
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.macroDeleteFailed")); }
     finally { setBusy(""); }
   }
 
@@ -852,8 +859,8 @@ export default function InboxPage() {
    * send and is reported, never dressed as sent. */
   async function runBulkReply(via: "quick" | "template") {
     const orgId = getOrganizationId(); if (!orgId || selectedIds.size === 0) return;
-    if (via === "quick" && !bulkQrId) { setError("বাল্ক রিপ্লাইয়ের জন্য একটি Quick Reply বেছে নিন।"); return; }
-    if (via === "template" && !bulkTplId) { setError("বাল্ক রিপ্লাইয়ের জন্য একটি Template বেছে নিন।"); return; }
+    if (via === "quick" && !bulkQrId) { setError(t("inbox.bulkNeedQuick")); return; }
+    if (via === "template" && !bulkTplId) { setError(t("inbox.bulkNeedTemplate")); return; }
     setBusy("bulk-reply"); setError("");
     try {
       const r = await apiFetch<{ results: { id: string; ok: boolean; error?: string }[]; succeeded: number; failed: number }>(
@@ -866,13 +873,13 @@ export default function InboxPage() {
       const failed = r.results.filter((x) => !x.ok);
       setNotice(bulkReplySummary(r.succeeded, r.failed));
       if (failed.length) {
-        setError(`পাঠানো যায়নি ${failed.length}টি: ${failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ")}`);
+        setError(t("inbox.notSentListLine", { n: fmtNumber(locale, failed.length), list: failed.slice(0, 3).map((x) => x.error ?? x.id).join(" · ") }));
         setSelectedIds(new Set(failed.map((x) => x.id)));
       } else {
         setSelectedIds(new Set());
       }
       loadConversations();
-    } catch (e) { setError(e instanceof Error ? e.message : "বাল্ক রিপ্লাই ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.bulkReplyFailed")); }
     finally { setBusy(""); }
   }
 
@@ -883,7 +890,7 @@ export default function InboxPage() {
     setBusy(`sync:${shipmentId}`); setError("");
     try {
       const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments/${shipmentId}/sync`, { method: "POST" });
-      setNotice(`কুরিয়ার স্ট্যাটাস আপডেট হয়েছে: ${r.status ?? ""}`);
+      setNotice(t("inbox.courierUpdated", { status: r.status ?? "" }));
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -894,12 +901,12 @@ export default function InboxPage() {
   async function runMessageSearch() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const q = msgQ.trim();
-    if (q.length < 2) { setError("মেসেজ খুঁজতে অন্তত ২টি অক্ষর লিখুন।"); return; }
+    if (q.length < 2) { setError(t("inbox.searchMinChars")); return; }
     setMsgBusy(true); setError("");
     try {
       const r = await apiFetch<{ query: string; results: MessageSearchResult[] }>(`/organizations/${orgId}/inbox/messages/search?q=${encodeURIComponent(q)}&limit=30`);
       setMsgResults(r.results);
-    } catch (e) { setError(e instanceof Error ? e.message : "Search ব্যর্থ"); setMsgResults(null); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.searchFailed")); setMsgResults(null); }
     finally { setMsgBusy(false); }
   }
 
@@ -918,14 +925,14 @@ export default function InboxPage() {
     setVisibleCount(40); setFocusedIdx(0);
     setSmartFolder(folder as "" | "sla" | "vip" | "handover" | "snoozed");
     setFilters(next);
-    setNotice(`ভিউ চালু: ${view.name}`);
+    setNotice(t("inbox.viewOn", { name: view.name }));
     loadConversations(next, folder);
   }
 
   async function saveCurrentView() {
     const orgId = getOrganizationId(); if (!orgId) return;
     const name = saveViewName.trim();
-    if (!name) { setError("ভিউয়ের একটি নাম দিন।"); return; }
+    if (!name) { setError(t("inbox.viewNeedName")); return; }
     setBusy("save-view"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/saved-views`, {
@@ -933,9 +940,9 @@ export default function InboxPage() {
         body: JSON.stringify({ name, shared: saveViewShared, filters: uiFiltersToSaved(filters, smartFolder) }),
       });
       setSaveViewOpen(false); setSaveViewName(""); setSaveViewShared(false);
-      setNotice(`ভিউ সেভ হয়েছে: ${name}${saveViewShared ? " (টিমের সবাই দেখতে পাবে)" : ""}`);
+      setNotice(t("inbox.viewSaved", { name }) + (saveViewShared ? t("inbox.viewSavedSharedSuffix") : ""));
       loadSavedViews();
-    } catch (e) { setError(e instanceof Error ? e.message : "ভিউ সেভ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.viewSaveFailed")); }
     finally { setBusy(""); }
   }
 
@@ -944,9 +951,9 @@ export default function InboxPage() {
     setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/saved-views/${view.id}`, { method: "DELETE" });
-      setNotice(`ভিউ মোছা হয়েছে: ${view.name}`);
+      setNotice(t("inbox.viewDeleted", { name: view.name }));
       loadSavedViews();
-    } catch (e) { setError(e instanceof Error ? e.message : "ভিউ মোছা ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.viewDeleteFailed")); }
   }
 
   async function openConversation(conv: Conversation, focusMessageId?: string) {
@@ -979,7 +986,7 @@ export default function InboxPage() {
           }, 180);
         } else {
           setHighlightMsgId(null);
-          setNotice("কথোপকথনটি খোলা হয়েছে — খোঁজা মেসেজটি সাম্প্রতিক ১০০টি মেসেজের চেয়ে পুরোনো, তাই সরাসরি সেখানে যাওয়া যায়নি।");
+          setNotice(t("inbox.convOpenedOld"));
         }
       } else {
         setHighlightMsgId(null);
@@ -999,15 +1006,15 @@ export default function InboxPage() {
    * rows and writes the undo record; here we only confirm + act. */
   async function mergeDuplicate(sourceCustomerId: string, sourceLabel: string) {
     const orgId = getOrganizationId(); if (!orgId || !active || !context?.identity?.customerId) return;
-    if (!window.confirm(`"${sourceLabel}"-এর Customer রেকর্ডটি এই গ্রাহকের রেকর্ডে মার্জ করবেন? সব অর্ডার ও কথোপকথন এই রেকর্ডের নিচে চলে আসবে — কোনো কিছু মোছা হবে না, এবং পরে আনমার্জ করা যাবে।`)) return;
+    if (!window.confirm(t("inbox.mergeConfirm", { label: sourceLabel }))) return;
     setBusy("identity"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/merge-customer`, {
         method: "POST", body: JSON.stringify({ sourceCustomerId, targetCustomerId: context.identity.customerId }),
       });
-      setNotice("Customer মার্জ হয়েছে — প্রয়োজনে নিচের তালিকা থেকে আনমার্জ করা যাবে।");
+      setNotice(t("inbox.mergeDone"));
       await refreshActive();
-    } catch (e) { setError(e instanceof Error ? e.message : "মার্জ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.mergeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1016,30 +1023,30 @@ export default function InboxPage() {
    * duplicate candidate was found by phone/email). */
   async function linkToCustomer(customerId: string, label: string) {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
-    if (!window.confirm(`এই কথোপকথনটি "${label}" Customer রেকর্ডের সাথে যুক্ত করবেন?`)) return;
+    if (!window.confirm(t("inbox.linkConfirm", { label }))) return;
     setBusy("identity"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/link-customer`, {
         method: "POST", body: JSON.stringify({ customerId }),
       });
-      setNotice("কথোপকথনটি Customer-এর সাথে যুক্ত হয়েছে।");
+      setNotice(t("inbox.linkDone"));
       await refreshActive();
-    } catch (e) { setError(e instanceof Error ? e.message : "লিংক ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.linkFailed")); }
     finally { setBusy(""); }
   }
 
   /** IN2: undo a recorded merge from the survivor's panel. */
   async function unmergeCustomer(sourceCustomerId: string, sourceLabel: string) {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
-    if (!window.confirm(`"${sourceLabel}"-এর মার্জ বাতিল করবেন? যেসব অর্ডার/কথোপকথন মার্জে সরেছিল, সেগুলো আগের রেকর্ডে ফিরে যাবে।`)) return;
+    if (!window.confirm(t("inbox.unmergeConfirm", { label: sourceLabel }))) return;
     setBusy("identity"); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/unmerge-customer`, {
         method: "POST", body: JSON.stringify({ sourceCustomerId }),
       });
-      setNotice("মার্জ বাতিল হয়েছে — রেকর্ডগুলো আগের অবস্থায় ফিরেছে।");
+      setNotice(t("inbox.unmergeDone"));
       await refreshActive();
-    } catch (e) { setError(e instanceof Error ? e.message : "আনমার্জ ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.unmergeFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1047,7 +1054,7 @@ export default function InboxPage() {
    * land in the Spam queue and no bot/AI runs for the thread. */
   async function setBlocked(blocked: boolean) {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
-    if (blocked && !window.confirm("এই গ্রাহককে আমাদের সিস্টেমে ব্লক করবেন? ভবিষ্যৎ মেসেজ Spam কিউতে যাবে এবং Bot/AI আর চলবে না। (এটি প্ল্যাটফর্মের ব্লক নয় — Messenger/WhatsApp-এ গ্রাহক এখনো মেসেজ পাঠাতে পারবেন।)")) return;
+    if (blocked && !window.confirm(t("inbox.blockConfirm"))) return;
     setBusy("block"); setError("");
     try {
       const updated = await apiFetch<Conversation>(`/organizations/${orgId}/inbox/conversations/${active.id}/block`, {
@@ -1055,9 +1062,9 @@ export default function InboxPage() {
       });
       setActive((a) => (a ? { ...a, ...updated } : a));
       setBlockReason("");
-      setNotice(blocked ? "গ্রাহক ব্লক হয়েছে — মেসেজ এখন Spam কিউতে যাবে।" : "ব্লক তোলা হয়েছে।");
+      setNotice(blocked ? t("inbox.blockDone") : t("inbox.unblockDone"));
       void loadConversations();
-    } catch (e) { setError(e instanceof Error ? e.message : "ব্লক ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.blockFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1066,7 +1073,7 @@ export default function InboxPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     setAnalyticsDays(days); setBusy("analytics");
     try { setAnalytics(await apiFetch<InboxAnalytics>(`/organizations/${orgId}/inbox/analytics?days=${days}`)); }
-    catch (e) { setError(e instanceof Error ? e.message : "Analytics লোড ব্যর্থ"); }
+    catch (e) { setError(e instanceof Error ? e.message : t("inbox.analyticsLoadFailed")); }
     finally { setBusy(""); }
   }
 
@@ -1074,7 +1081,7 @@ export default function InboxPage() {
    * (same mechanism the IN1 search jump uses). */
   function jumpToMessage(id: string) {
     if (!messagesRef.current.some((m) => m.id === id)) {
-      setNotice("মেসেজটি সাম্প্রতিক মেসেজগুলোর মধ্যে নেই — সরাসরি সেখানে যাওয়া যায়নি।");
+      setNotice(t("inbox.msgNotInRecent"));
       return;
     }
     setHighlightMsgId(id);
@@ -1114,7 +1121,7 @@ export default function InboxPage() {
       // IN7a: an assignee change is a handover — the API reports
       // the AI summary outcome separately; surface it honestly
       // and refresh so the summary note shows in the timeline.
-      const hsNote = handoverSummaryNotice((updated as any).handoverSummary);
+      const hsNote = handoverSummaryNotice((updated as any).handoverSummary, locale);
       if (hsNote) { setNotice(hsNote); void refreshActive(); }
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
@@ -1132,17 +1139,17 @@ export default function InboxPage() {
       loadConversations();
       // IN7a: take-over carries the handover-summary outcome.
       if (action === "take-over") {
-        const hsNote = handoverSummaryNotice((updated as any).handoverSummary);
+        const hsNote = handoverSummaryNotice((updated as any).handoverSummary, locale);
         if (hsNote) { setNotice(hsNote); void refreshActive(); }
       }
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
   }
 
   async function snoozeWith(body: { minutes: number } | { until: string } | null) {
-    if (!body) { setError("Snooze-এর সময় ঠিকমতো দিন — কমপক্ষে ৫ মিনিট বা ভবিষ্যতের একটি সময়।"); return; }
+    if (!body) { setError(t("inbox.snoozeTimeInvalid")); return; }
     setShowSnoozeMenu(false); setShowMoreMenu(false);
     await conversationAction("snooze", body);
-    setNotice("😴 কথোপকথনটি Snooze করা হয়েছে — সময় হলে তালিকায় আবার দেখা যাবে।");
+    setNotice(t("inbox.snoozedNotice"));
   }
 
   // CX5: action-bar segment renderers (snooze / timer menus).
@@ -1153,8 +1160,8 @@ export default function InboxPage() {
     ? Math.max(0, Math.ceil((new Date(active.assignedUntil).getTime() - handoverTick) / 60000)) : null;
   const renderAssignSelect = () => (
     <select className="rounded-lg bg-white px-2 py-1.5 font-medium ring-1 ring-inset ring-slate-200" value={active?.assignedUserId ?? ""}
-      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label="Assign করুন">
-      <option value="">👤 কেউ নয়</option>
+      onChange={(e) => { setShowMoreMenu(false); void patchConversation({ assignedUserId: e.target.value || null }); }} title="Assign" aria-label={t("inbox.assignBtn")}>
+      <option value="">{t("inbox.nobody")}</option>
       {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
     </select>
   );
@@ -1169,24 +1176,24 @@ export default function InboxPage() {
 
   const renderSnoozeControls = () => (
     <>
-      {SNOOZE_PRESETS.map((p) => (
-        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} পরে</button>
+      {snoozePresets(locale).map((p) => (
+        <button key={p.minutes} className={cx5MenuItem} onClick={() => void snoozeWith(snoozeBodyForMinutes(p.minutes))}>{p.label} {t("inbox.snoozeLaterSuffix")}</button>
       ))}
       <span className="mt-1 flex items-center gap-1 border-t border-slate-100 pt-1.5">
-        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label="কাস্টম Snooze সময়" />
-        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>Snooze করুন</button>
+        <input type="datetime-local" className="input !w-auto min-w-0 flex-1 !py-1 !text-xs" value={snoozeCustom} onChange={(e) => setSnoozeCustom(e.target.value)} aria-label={t("inbox.customSnoozeTime")} />
+        <button className="btn-primary btn-sm shrink-0" onClick={() => void snoozeWith(snoozeBodyForCustom(snoozeCustom))}>{t("inbox.snoozeDoBtn")}</button>
       </span>
-      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">Snooze AI বন্ধ করে না — কথোপকথন শুধু তালিকা থেকে সরে থাকে।</span>
+      <span className="px-1 pt-1 text-[10px] leading-snug text-slate-400">{t("inbox.snoozeAiNote")}</span>
     </>
   );
   const renderTimerControls = () => (
     <>
-      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">⏱️ আরও {timerRemaining} মিনিট বাকি (timed)</span> : null}
+      {timerRemaining !== null ? <span className="px-2 py-1 text-[11px] font-semibold text-indigo-600">{t("inbox.timerLeft", { n: fmtNumber(locale, timerRemaining) })}</span> : null}
       {([15, 30, 60, 120, 240] as const).map((n) => (
-        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{n} মিনিটের জন্য আমার কাছে</button>
+        <button key={n} className={cx5MenuItem} disabled={!myId} onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); void patchConversation({ assignedUserId: myId, assignForMinutes: n }); }}>{t("inbox.inbZAssignToMeFor", { minutes: fmtNumber(locale, n) })}</button>
       ))}
       {timerRemaining !== null ? (
-        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>টাইমার বাতিল</button>
+        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50" onClick={() => { setShowTimerMenu(false); setShowMoreMenu(false); if (active) void patchConversation({ assignedUserId: active.assignedUserId }); }}>{t("inbox.inbZCancelTimer")}</button>
       ) : null}
     </>
   );
@@ -1196,7 +1203,7 @@ export default function InboxPage() {
     setBusy("track");
     try {
       const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" });
-      setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`);
+      setNotice(t("inbox.trackingSent", { code: r.trackingCode }));
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -1205,16 +1212,16 @@ export default function InboxPage() {
   async function bookCourier() {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
     const order = context?.orders?.[0];
-    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
+    if (!order) { setError(t("inbox.courierNeedOrder")); return; }
     setBusy("courier");
     try {
       const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
       const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
-      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
-      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
+      if (!provider) { setError(t("inbox.courierNoneConnected")); return; }
+      const address = (order as any).address || window.prompt(t("inbox.deliveryAddressPrompt")) || "";
       if (!address) return;
       const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
-      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
+      setNotice(t("inbox.courierBooked", { provider, code: r.trackingCode ?? "" }));
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -1222,11 +1229,11 @@ export default function InboxPage() {
 
   async function requestRefund() {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
-    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
+    const reason = window.prompt(t("inbox.refundReasonPrompt")) ?? "";
     setBusy("refund");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) });
-      setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)");
+      setNotice(t("inbox.refundSent"));
       await refreshActive();
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -1238,14 +1245,14 @@ export default function InboxPage() {
       const token = localStorage.getItem("accessToken");
       const base = (window as any).location.origin;
       const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) throw new Error("Export ব্যর্থ");
+      if (!res.ok) throw new Error(t("inbox.exportFailed"));
       const blob = await res.blob();
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
-    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.exportFailed")); }
   }
 
   function markSpam() {
-    if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) {
+    if (window.confirm(t("inbox.spamConfirm"))) {
       void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" });
     }
   }
@@ -1256,7 +1263,7 @@ export default function InboxPage() {
     setBusy("connect"); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/inbox/connect`, { method: "POST", body: JSON.stringify(connectForm) });
-      setNotice("কানেক্ট হয়েছে (Token যাচাই সফল)। এখন Webhook সেট করলেই বার্তা আসবে।");
+      setNotice(t("inbox.connectedOk"));
       loadConversations();
     } catch (err) { setError(err instanceof Error ? err.message : "Failed"); }
     finally { setBusy(""); }
@@ -1275,7 +1282,7 @@ export default function InboxPage() {
     const sendAiAssisted = aiAssistUsed;
     const sendQuickReplyId = usedQuickReplyId;
     // UX1 Q5: instant local pending bubble. It is labelled
-    // "পাঠানো হচ্ছে…" (status "sending") and only ever replaced by
+    // t("inbox.sending") (status "sending") and only ever replaced by
     // the server's real message row — it never poses as sent. The
     // composer clears immediately; the BUBBLE keeps the content, so
     // a failure is retried from the bubble, not re-typed.
@@ -1336,7 +1343,7 @@ export default function InboxPage() {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => { const s = String(reader.result ?? ""); resolve(s.slice(s.indexOf(",") + 1)); };
-      reader.onerror = () => reject(new Error("ফাইলটি পড়া যায়নি।"));
+      reader.onerror = () => reject(new Error(t("inbox.fileUnreadable")));
       reader.readAsDataURL(file);
     });
   }
@@ -1353,7 +1360,7 @@ export default function InboxPage() {
     const orgId = getOrganizationId(); if (!orgId || !active || files.length === 0) return;
     for (const file of files) {
       if (file.size > MEDIA_UPLOAD_MAX_BYTES) {
-        setError(`"${file.name}" খুব বড় (${(file.size / 1048576).toFixed(1)}MB) — সর্বোচ্চ 2MB পর্যন্ত পাঠানো যাবে।`);
+        setError(t("inbox.fileTooBig", { name: file.name, size: (file.size / 1048576).toFixed(1) }));
         continue;
       }
       setBusy("media"); setError("");
@@ -1447,19 +1454,19 @@ export default function InboxPage() {
 
   async function createChatOrder() {
     const orgId = getOrganizationId(); if (!orgId || !active) return;
-    if (orderItems.length === 0) { setError("অন্তত একটি পণ্য যোগ করুন।"); return; }
+    if (orderItems.length === 0) { setError(t("inbox.addOneProduct")); return; }
     setBusy("order"); setError("");
     try {
       const order = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/orders`, {
         method: "POST",
         body: JSON.stringify({ items: orderItems, shippingMinor: Math.round((Number(orderShip) || 0) * 100), isCod: orderCod, address: orderAddress || undefined }),
       });
-      if (order.storeSyncStatus === "synced") setNotice(`Order তৈরি হয়েছে এবং WooCommerce এ পাঠানো হয়েছে (#${order.externalNumber})।`);
-      else if (order.storeSyncStatus === "failed") setNotice(`Order তৈরি হয়েছে (শুধু এই সিস্টেমে)। স্টোরে পাঠানো যায়নি: ${order.storeSyncError ?? "অজানা ত্রুটি"}`);
-      else setNotice(`Order তৈরি হয়েছে (শুধু এই সিস্টেমে) — ${order.externalNumber}।`);
+      if (order.storeSyncStatus === "synced") setNotice(t("inbox.orderCreatedWoo", { num: order.externalNumber }));
+      else if (order.storeSyncStatus === "failed") setNotice(t("inbox.orderCreatedLocalFailed", { err: order.storeSyncError ?? "" }));
+      else setNotice(t("inbox.orderCreatedLocal", { num: order.externalNumber }));
       // M50: merchant-side return-risk warning (never shown to the customer).
       if (order.risk && (order.risk.band === "high" || order.risk.band === "medium")) {
-        setError(`⚠️ রিটার্ন ঝুঁকি (${order.risk.band === "high" ? "উচ্চ" : "মাঝারি"}${order.risk.score != null ? `, স্কোর ${order.risk.score}` : ""}): ${order.risk.reasons?.[0] ?? ""} ${order.risk.suggestion ?? ""}`);
+        setError(t("inbox.inbZReturnRisk", { band: order.risk.band === "high" ? t("inbox.riskHighWord") : t("inbox.riskMediumWord"), scorePart: order.risk.score != null ? t("inbox.inbZScorePart", { score: fmtNumber(locale, order.risk.score) }) : "", reason: order.risk.reasons?.[0] ?? "", suggestion: order.risk.suggestion ?? "" }));
       }
       setOrderOpen(false); setOrderItems([]);
       await refreshActive();
@@ -1484,7 +1491,7 @@ export default function InboxPage() {
     try {
       await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/summary`, { method: "POST" });
       await refreshActive();
-      setNotice("সারসংক্ষেপ তৈরি হয়েছে।");
+      setNotice(t("inbox.summaryCreated"));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
   }
@@ -1510,15 +1517,15 @@ export default function InboxPage() {
     const action = nextAction.proposal.action;
     if (action === "share_tracking") {
       setBusy("track"); setError("");
-      try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+      try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(t("inbox.trackingSent", { code: r.trackingCode })); await refreshActive(); }
       catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
     } else if (action === "cod_confirm") {
       const order = (context?.orders ?? []).find((o) => o.isCod && o.codConfirmationStatus !== "awaiting" && o.codConfirmationStatus !== "confirmed");
-      if (!order) { setError("COD কনফার্মেশনের মতো কোনো অর্ডার এই কথোপকথনে নেই।"); return; }
+      if (!order) { setError(t("inbox.noCodOrder")); return; }
       await requestCod(order.id);
     } else if (action === "create_order") {
       setOrderOpen(true);
-      setNotice("🧾 Order প্যানেল খোলা হয়েছে — যাচাই করে Order তৈরি করুন।");
+      setNotice(t("inbox.orderPanelOpened"));
     } else if (action === "reply_manually") {
       replyRef.current?.focus();
     } else if (action === "resolve") {
@@ -1531,16 +1538,16 @@ export default function InboxPage() {
   async function acceptNextActionProposal() {
     if (!active || !nextAction?.proposal) return;
     const patch = proposalAcceptPatch(nextAction.proposal, active.tags ?? []);
-    if (!patch) { setNotice("গ্রহণ করার মতো নতুন Tag/Stage প্রস্তাব নেই।"); return; }
+    if (!patch) { setNotice(t("inbox.noProposal")); return; }
     await patchConversation(patch);
     setNextAction(null);
-    setNotice("✅ প্রস্তাবিত Tag/Stage বসানো হয়েছে।");
+    setNotice(t("inbox.proposalApplied"));
   }
 
   function insertProductSnippet(prod: { name: string; priceMinor: string; currency: string; stockQuantity?: number | null }) {
-    const price = money(prod.priceMinor, prod.currency);
-    const stock = prod.stockQuantity == null ? "" : prod.stockQuantity > 0 ? `, স্টকে ${prod.stockQuantity}টি আছে` : ", আপাতত স্টক শেষ";
-    setReply((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}"${prod.name}" — দাম ${price}${stock}।`);
+    const price = money(prod.priceMinor, prod.currency, locale);
+    const stock = prod.stockQuantity == null ? "" : prod.stockQuantity > 0 ? t("inbox.inbZStockPart", { count: fmtNumber(locale, prod.stockQuantity) }) : t("inbox.inbZStockOut");
+    setReply((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${t("inbox.inbZProductSnippet", { name: prod.name, price, stock })}`);
     setShowPicker(false);
   }
 
@@ -1562,9 +1569,9 @@ export default function InboxPage() {
       if (caption) setReply("");
       setShowPicker(false);
       setNotice(
-        r.sentAs === "text" ? "⚠️ প্রোডাক্টের ছবি পাঠানো যায়নি — টেক্সট হিসেবে পাঠানো হয়েছে।" :
-        r.captionDelivered === false ? "ছবি পাঠানো হয়েছে, তবে ক্যাপশন টেক্সটটি পাঠানো যায়নি।" :
-        "🃏 প্রোডাক্ট কার্ড পাঠানো হয়েছে।",
+        r.sentAs === "text" ? t("inbox.imgSendFailedText") :
+        r.captionDelivered === false ? t("inbox.captionSendFailed") :
+        t("inbox.productCardSent"),
       );
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
@@ -1577,7 +1584,7 @@ export default function InboxPage() {
       const variables = tplVars.split(",").map((v) => v.trim()).filter(Boolean);
       const msg = await apiFetch<Message>(`/organizations/${orgId}/inbox/conversations/${active.id}/send-template`, { method: "POST", body: JSON.stringify({ templateId: tplId, variables }) });
       setMessages((m) => [...m, msg]); setTplVars("");
-      setNotice("Template পাঠানো হয়েছে (Meta Message ID পাওয়া গেছে)।");
+      setNotice(t("inbox.templateSentMeta"));
     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(""); }
   }
@@ -1674,28 +1681,28 @@ export default function InboxPage() {
   const inputCls = "input mt-1";
   const statusIcon = (m: Message) => {
     if (m.direction === "in") return "";
-    if (m.status === "sending") return " · পাঠানো হচ্ছে…";
-    if (m.status === "failed") return " · ব্যর্থ";
+    if (m.status === "sending") return t("inbox.statusSending");
+    if (m.status === "failed") return t("inbox.statusFailed");
     // IN6a: on Meta channels + webchat the tick comes ONLY from
     // the platform-confirmed deliveryStatus — no status, no tick.
     // (Telegram/Email have no confirmed source: nothing shown.)
     if (["whatsapp", "messenger", "instagram", "webchat"].includes(active?.channel ?? "")) {
-      const tick = deliveryTick(active?.channel, m);
+      const tick = deliveryTick(active?.channel, m, locale);
       if (!tick) return "";
       return ` · ${tick.glyph ? `${tick.glyph} ` : ""}${tick.label}`;
     }
-    return " · পাঠানো হয়েছে";
+    return t("inbox.statusSent");
   };
   const memberName = (userId?: string | null) => {
     const m = members.find((x) => x.user.id === userId);
-    return m ? (m.user.name ?? m.user.email) : userId ? "টিম সদস্য" : "কেউ নয়";
+    return m ? (m.user.name ?? m.user.email) : userId ? t("inbox.teamMember") : t("inbox.nobodyPlain");
   };
   const windowLeft = (w?: WaWindow | null): string => {
     if (!w?.expiresAt) return "";
     const ms = new Date(w.expiresAt).getTime() - Date.now();
     if (ms <= 0) return "";
     const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
-    return `${h} ঘণ্টা ${m} মিনিট`;
+    return t("inbox.ghontaMin", { h: fmtNumber(locale, h), m: fmtNumber(locale, m) });
   };
   const quickMatches = showQuick
     ? quickReplies.filter((q) => !reply.startsWith("/") || q.title.toLowerCase().includes(reply.slice(1).toLowerCase()))
@@ -1711,9 +1718,9 @@ export default function InboxPage() {
   // P3: merged message + note timeline for the thread render.
   const timeline = mergeTimeline(messages, notes);
   const moodChip = (mood?: string | null) => {
-    if (mood === "positive") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">😃 ইতিবাচক</span>;
-    if (mood === "neutral") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">😐 স্বাভাবিক</span>;
-    if (mood === "negative") return <span title={MOOD_TITLE} className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">😡 অসন্তুষ্টির সংকেত</span>;
+    if (mood === "positive") return <span title={moodTitle(locale)} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">{t("inbox.moodPositive")}</span>;
+    if (mood === "neutral") return <span title={moodTitle(locale)} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">{t("inbox.moodNeutral")}</span>;
+    if (mood === "negative") return <span title={moodTitle(locale)} className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">{t("inbox.moodNegative")}</span>;
     return null;
   };
 
@@ -1723,15 +1730,15 @@ export default function InboxPage() {
       <div className="space-y-4">
         {isDrawer && (
           <div className="flex items-center justify-between border-b border-slate-100 pb-3 xl:hidden">
-            <span className="text-sm font-bold text-slate-900">গ্রাহক প্রোফাইল ও নিয়ন্ত্রণ</span>
-            <button className="rounded-xl bg-white px-2.5 py-1.5 text-xs font-semibold shadow-2xs border border-slate-200" onClick={() => setCtxOpen(false)}>✕ বন্ধ</button>
+            <span className="text-sm font-bold text-slate-900">{t("inbox.ctxProfileTitle")}</span>
+            <button className="rounded-xl bg-white px-2.5 py-1.5 text-xs font-semibold shadow-2xs border border-slate-200" onClick={() => setCtxOpen(false)}>{t("inbox.closeX")}</button>
           </div>
         )}
 
         {/* Customer Profile Card */}
         <div className="card space-y-3 p-4 shadow-2xs border border-slate-200/80">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">👤 কাস্টমার প্রোফাইল</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("inbox.customerProfile")}</span>
             {context?.lead ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200/60">Lead: {context.lead.stage}</span> : null}
           </div>
 
@@ -1755,19 +1762,19 @@ export default function InboxPage() {
               {context.lifetime ? (
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">মোট অর্ডার</div>
-                    <div className="mt-1 text-lg font-black text-slate-900">{context.lifetime.orderCount}টি</div>
+                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">{t("inbox.totalOrders")}</div>
+                    <div className="mt-1 text-lg font-black text-slate-900">{t("inbox.orderCountTi", { count: fmtNumber(locale, context.lifetime.orderCount) })}</div>
                   </div>
                   <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">Lifetime স্পেন্ড</div>
-                    <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div>
+                    <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">{t("inbox.lifetimeSpend")}</div>
+                    <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency, locale)}</div>
                   </div>
                 </div>
               ) : null}
             </div>
           ) : (
             <div className="rounded-xl bg-slate-50 p-3 text-center text-xs text-slate-500">
-              কোনো Customer রেকর্ডের সাথে যুক্ত নয়{context?.lead ? "" : " (নতুন কন্ট্যাক্ট হলে Lead তৈরি হয়েছে)"}।
+              {t("inbox.notLinkedCustomer")}{context?.lead ? "" : ` ${t("inbox.leadCreatedSuffix")}`}
             </div>
           )}
 
@@ -1775,28 +1782,28 @@ export default function InboxPage() {
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
               <span className="badge-brand">Lead: {context.lead.stage}</span>
               <span className="badge-slate">{context.lead.source}</span>
-              {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor)}</span> : null}
+              {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor, "BDT", locale)}</span> : null}
               {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
             </div>
           ) : null}
           {context?.orders?.length ? (
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.recentOrders")}</div>
               <div className="space-y-1.5">
                 {context.orders.map((o) => (
                   <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
                     <div className="flex items-center justify-between">
                       <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
-                      <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
+                      <span className="font-semibold">{money(o.totalMinor, o.currency, locale)}</span>
                     </div>
                     {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
                     {o.isCod ? (
                       <div className="mt-1 flex items-center gap-2">
-                        {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
-                          : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">✓ COD কনফার্মড</span>
-                          : o.codConfirmationStatus === "declined" ? <span className="badge-red">✗ গ্রাহক বাতিল করেছে</span>
+                        {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">{t("inbox.codAwaiting")}</span>
+                          : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">{t("inbox.codConfirmed")}</span>
+                          : o.codConfirmationStatus === "declined" ? <span className="badge-red">{t("inbox.codDeclined")}</span>
                           : ["pending", "on-hold", "processing"].includes(o.status) ? (
-                            <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? "পাঠাচ্ছি..." : "COD কনফার্ম পাঠান"}</button>
+                            <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? t("inbox.sendingDots") : t("inbox.codSendBtn")}</button>
                           ) : null}
                       </div>
                     ) : null}
@@ -1809,7 +1816,7 @@ export default function InboxPage() {
 
         {/* Quick Action Tiles */}
         <div className="card p-4 space-y-3">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("inbox.quickActions")}</div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <button
               type="button"
@@ -1817,15 +1824,15 @@ export default function InboxPage() {
               onClick={() => setOrderOpen((v) => !v)}
             >
               <span className="text-base">📄</span>
-              <span>ইনভয়েস পাঠান</span>
+              <span>{t("inbox.sendInvoice")}</span>
             </button>
             <button
               type="button"
               className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
-              onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
+              onClick={() => setNotice(t("inbox.taskWindowOpening"))}
             >
               <span className="text-base">📋</span>
-              <span>টাস্ক তৈরি</span>
+              <span>{t("inbox.createTask")}</span>
             </button>
             <button
               type="button"
@@ -1833,7 +1840,7 @@ export default function InboxPage() {
               onClick={() => { setComposerMode("note"); setMobileTab("chat"); focusComposer(); }}
             >
               <span className="text-base">📝</span>
-              <span>নোট যোগ করুন</span>
+              <span>{t("inbox.addNote")}</span>
             </button>
             <button
               type="button"
@@ -1841,7 +1848,7 @@ export default function InboxPage() {
               onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
             >
               <span className="text-base">✓</span>
-              <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
+              <span>{active.status === "closed" ? t("inbox.reopenChat") : t("inbox.resolveChat")}</span>
             </button>
           </div>
         </div>
@@ -1851,14 +1858,14 @@ export default function InboxPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
               <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
-              <span>AI কনভারসেশন সামারি</span>
+              <span>{t("inbox.aiSummaryTitle")}</span>
             </div>
             <button
               className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
               disabled={busy !== ""}
               onClick={summarize}
             >
-              {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
+              {busy === "summary" ? t("inbox.generating") : active.summaryText ? t("inbox.refresh") : t("inbox.create")}
             </button>
           </div>
 
@@ -1867,13 +1874,11 @@ export default function InboxPage() {
               {active.summaryText}
               <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
                 <span>{active.summaryProvider ?? "AI Engine"}</span>
-                <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+                <span>{active.summaryAt ? fmtTime(locale, active.summaryAt) : ""}</span>
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
-              গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
-            </div>
+            <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">{t("inbox.summaryHint")}</div>
           )}
         </div>
 
@@ -1883,13 +1888,13 @@ export default function InboxPage() {
             <div className="section-title">🎯 Command Profile</div>
             <div className="flex flex-wrap gap-1.5 text-[11px]">
               <span className="badge-indigo">Stage: {profile.conversation?.pipelineStage}</span>
-              {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
-              {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
+              {profile.rfm ? <span className="badge-green">{t("inbox.inbZRfmBadge", { segment: profile.rfm.segment, freq: fmtNumber(locale, profile.rfm.frequency), days: fmtNumber(locale, profile.rfm.recencyDays) })}</span> : <span className="badge-slate">{t("inbox.rfmNoOrders")}</span>}
+              {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">{t("inbox.ctwaAd")}</span> : null}
               {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
             </div>
             {profile.conversations?.length > 1 ? (
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
+                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.allChannelConvs")}</div>
                 <div className="space-y-1">
                   {profile.conversations.map((c: any) => (
                     <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
@@ -1903,10 +1908,10 @@ export default function InboxPage() {
             ) : null}
             {profile.payments?.verifications?.length ? (
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
+                <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.paymentVerify")}</div>
                 {profile.payments.verifications.map((v: any) => (
                   <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
-                    {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
+                    {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ${money(v.amountMinor, "BDT", locale)}` : ""}
                   </div>
                 ))}
               </div>
@@ -1916,58 +1921,58 @@ export default function InboxPage() {
 
         {/* Responsibility & Tags & Chat Order */}
         <div className="card space-y-3 p-4">
-          <div className="section-title">দায়িত্ব ও Tag</div>
+          <div className="section-title">{t("inbox.responsibilityTags")}</div>
           {active.spamFlag ? (
             <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
-              <div className="text-xs font-semibold text-amber-800">🚫 Spam সন্দেহভাজন</div>
+              <div className="text-xs font-semibold text-amber-800">{t("inbox.spamSuspect")}</div>
               <p className="mt-0.5 text-xs text-amber-700">{active.spamReason ?? ""}</p>
-              <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>Spam নয়, ঠিক আছে</button>
+              <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>{t("inbox.spamNotOk")}</button>
             </div>
           ) : null}
           {botSession?.status === "active" ? (
             <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
-              <div className="text-xs font-semibold text-indigo-800">🤖 অর্ডার Bot চলছে — ধাপ: {botSession.state}</div>
-              <p className="mt-0.5 text-xs text-indigo-600">গ্রাহক নিজে "এজেন্ট" লিখলে বা আপনি উত্তর দিলেই বট থেমে যাবে।</p>
+              <div className="text-xs font-semibold text-indigo-800">{t("inbox.botRunning", { state: botSession.state })}</div>
+              <p className="mt-0.5 text-xs text-indigo-600">{t("inbox.inbZBotStopNote")}</p>
               <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
                 const orgId = getOrganizationId(); if (!orgId || !active) return;
-                try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice("বট থামানো হয়েছে।"); await refreshActive(); }
+                try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice(t("inbox.botStopped")); await refreshActive(); }
                 catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-              }}>বট থামান</button>
+              }}>{t("inbox.stopBot")}</button>
             </div>
           ) : null}
           {active.csatRating ? (
-            <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
+            <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">{t("inbox.inbZCsatRating", { rating: fmtNumber(locale, active.csatRating ?? 0) })}</div>
           ) : null}
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
-              <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.orderFromChat")}</span>
+              <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? t("inbox.closeBtn") : t("inbox.createPlusBtn")}</button>
             </div>
             {orderOpen ? (
               <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
                 {orderItems.map((it, idx) => (
                   <div key={idx} className="flex items-center gap-1.5">
                     <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
-                      {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency)}</option>)}
+                      {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency, locale)}</option>)}
                     </select>
                     <input className="input !w-14 !py-1.5 !text-xs" type="number" min={1} max={99} value={it.quantity} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, quantity: Number(e.target.value) || 1 } : x))} />
                     <button className="text-slate-400 hover:text-red-500" onClick={() => setOrderItems(orderItems.filter((_, j) => j !== idx))}>✕</button>
                   </div>
                 ))}
-                <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
-                <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
+                <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>{t("inbox.addProductBtn")}</button>
+                <label className="block text-xs">{t("inbox.deliveryAddressLabel")}<input className="input mt-0.5 !py-1.5 !text-xs" placeholder={t("inbox.addressPlaceholder")} value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
                 <div className="flex items-end gap-2">
-                  <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
+                  <label className="flex-1 text-xs">{t("inbox.deliveryTakaLabel")}<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
                   <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
                 </div>
-                <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? "তৈরি হচ্ছে..." : "Order তৈরি করুন"}</button>
-                <p className="text-[10px] text-slate-400">দাম ক্যাটালগ থেকেই হিসাব হয়। WooCommerce যুক্ত থাকলে অর্ডারটি স্টোরেও পাঠানোর চেষ্টা করা হয়, ফলাফল জানিয়ে দেওয়া হয়।</p>
+                <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? t("inbox.creatingDots") : t("inbox.createOrderBtn")}</button>
+                <p className="text-[10px] text-slate-400">{t("inbox.orderPriceNote")}</p>
               </div>
             ) : null}
           </div>
           <label className="block text-sm">Assignee
             <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
-              <option value="">কেউ নয়</option>
+              <option value="">{t("inbox.nobodyPlain")}</option>
               {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
             </select>
           </label>
@@ -1976,10 +1981,10 @@ export default function InboxPage() {
               {(active.tags ?? []).map((t) => (
                 <span key={t} className="badge-brand">{t}<button className="ml-1 font-bold" onClick={() => patchConversation({ tags: (active.tags ?? []).filter((x) => x !== t) })}>×</button></span>
               ))}
-              {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Tag নেই</span> : null}
+              {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">{t("inbox.noTags")}</span> : null}
             </div>
             <div className="flex gap-1.5">
-              <input className="input flex-1" placeholder="নতুন Tag লিখে Enter" value={tagInput}
+              <input className="input flex-1" placeholder={t("inbox.newTagPlaceholder")} value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && tagInput.trim()) { patchConversation({ tags: [...(active.tags ?? []), tagInput.trim()] }); setTagInput(""); } }} />
             </div>
@@ -2015,10 +2020,10 @@ export default function InboxPage() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold tracking-tight text-slate-900">Unified Inbox</h1>
                 <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200/60">
-                  {conversations.length} চ্যাট
+                  {t("inbox.chatCountTi", { count: fmtNumber(locale, conversations.length) })}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">রিয়েলটাইম অমনিচ্যানেল মেসেজিং ও সেলস পাইপলাইন</p>
+              <p className="text-xs text-slate-400">{t("inbox.subtitle")}</p>
             </div>
           </div>
 
@@ -2028,25 +2033,25 @@ export default function InboxPage() {
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${viewMode === "list" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
               onClick={() => setViewMode("list")}
             >
-              <span>💬</span> <span>কথোপকথন</span>
+              <span>💬</span> <span>{t("inbox.tabConversations")}</span>
             </button>
             <button
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${viewMode === "board" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
               onClick={() => setViewMode("board")}
             >
-              <span>🗂️</span> <span>পাইপলাইন</span>
+              <span>🗂️</span> <span>{t("inbox.tabPipeline")}</span>
             </button>
             <button
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${viewMode === "media" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
               onClick={() => setViewMode("media")}
             >
-              <span>🖼️</span> <span>মিডিয়া</span>
+              <span>🖼️</span> <span>{t("inbox.tabMedia")}</span>
             </button>
             <button
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${viewMode === "manage" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
               onClick={() => setViewMode("manage")}
             >
-              <span>⚙️</span> <span>সেটিংস ও টিম</span>
+              <span>⚙️</span> <span>{t("inbox.tabSettingsTeam")}</span>
             </button>
           </div>
 
@@ -2063,14 +2068,14 @@ export default function InboxPage() {
                 setSoundEnabled(next);
                 if (next) playNotificationChime();
               }}
-              title={soundEnabled ? "বিজ্ঞপ্তি সাউন্ড চালু (ক্লিক করে বন্ধ করুন)" : "বিজ্ঞপ্তি সাউন্ড বন্ধ (ক্লিক করে চালু করুন)"}
+              title={soundEnabled ? t("inbox.soundOn") : t("inbox.soundOff")}
             >
               <span>{soundEnabled ? "🔔" : "🔕"}</span>
             </button>
             <button
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition"
               onClick={() => setPaletteOpen(true)}
-              title="কমান্ড প্যালেট খুলুন"
+              title={t("inbox.commandPalette")}
             >
               <span>🔍</span>
               <kbd className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">⌘K</kbd>
@@ -2078,10 +2083,10 @@ export default function InboxPage() {
             <button
               className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-blue-700 transition"
               onClick={() => setNewMsgOpen(true)}
-              title="নতুন বার্তা পাঠান"
+              title={t("inbox.newMessage")}
             >
               <span>＋</span>
-              <span>নতুন চ্যাট</span>
+              <span>{t("inbox.newChat")}</span>
             </button>
             <button
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition"
@@ -2091,9 +2096,9 @@ export default function InboxPage() {
                   const data = await apiFetch<any>(`/organizations/${orgId}/inbox/export`);
                   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
                   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "inbox-export.json"; a.click(); URL.revokeObjectURL(a.href);
-                } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+                } catch (e) { setError(e instanceof Error ? e.message : t("inbox.exportFailed")); }
               }}
-              title="বিগত ৩০ দিনের ডেটা Export করুন"
+              title={t("inbox.export30d")}
             >
               <span>⬇️</span>
               <span className="hidden sm:inline">Export</span>
@@ -2103,23 +2108,23 @@ export default function InboxPage() {
         {viewMode === "list" ? (
           <div className="flex flex-wrap items-center gap-1.5">
             {([
-              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
-              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
-              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
-              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং কার্যকর সীমা পেরিয়ে গেছে (সাধারণ সীমা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিট; Channel/VIP স্তর সেটিংসে থাকলে সেটাই প্রযোজ্য)`, onClick: () => applyFolder("sla") },
-              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
-              { key: "handover", label: "🤝 Handover কিউ", active: smartFolder === "handover", count: folderCounts?.handover, title: "মানুষের হাতে থাকা (Autopilot থেমে) কথোপকথন — সবচেয়ে বেশি অপেক্ষা করা আগে", onClick: () => applyFolder("handover") },
-              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: "Snooze করা কথোপকথন — জাগার সময় অনুযায়ী সাজানো, সময় হলে নিজে থেকে তালিকায় ফিরবে", onClick: () => applyFolder("snoozed") },
+              { key: "all", label: t("inbox.allWord"), active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: t("inbox.allConvs"), onClick: () => applyFolder("", "") },
+              { key: "mine", label: t("inbox.myInbox"), active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: t("inbox.assignedToMe"), onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: t("inbox.unassigned"), active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: t("inbox.unassignedSub"), onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: t("inbox.inbZSlaTitleA", { minutes: fmtNumber(locale, folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60) }), onClick: () => applyFolder("sla") },
+              { key: "vip", label: t("inbox.vipFolder"), active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? t("inbox.inbZVipTitle", { amount: money(folderCounts.vipThresholdMinor, "BDT", locale) }) : t("inbox.inbZVipNoThreshold"), onClick: () => applyFolder("vip") },
+              { key: "handover", label: t("inbox.handoverQueue"), active: smartFolder === "handover", count: folderCounts?.handover, title: t("inbox.handoverSub"), onClick: () => applyFolder("handover") },
+              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: t("inbox.snoozedSub"), onClick: () => applyFolder("snoozed") },
             ]).map((chip) => (
               <button key={chip.key} title={chip.title} onClick={chip.onClick}
                 className={`stat-chip ${chip.active ? "stat-chip-active" : ""} ${chip.key === "sla" && (chip.count ?? 0) > 0 && !chip.active ? "stat-chip-danger" : ""}`}>
                 {chip.label}{chip.count !== undefined && chip.count !== null ? <span className="stat-chip-count">{chip.count}</span> : null}
               </button>
             ))}
-            <span className="ml-1 min-w-0 truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</span>
+            <span className="ml-1 min-w-0 truncate text-[11px] text-slate-400">{t("inbox.aiDraftNote")}</span>
           </div>
         ) : (
-          <p className="truncate text-[11px] text-slate-400">AI শুধু Draft সাজেস্ট করে — পাঠানোর সিদ্ধান্ত সবসময় মানুষের · Internal Note কখনোই গ্রাহকের কাছে যায় না</p>
+          <p className="truncate text-[11px] text-slate-400">{t("inbox.aiDraftNote")}</p>
         )}
       </div>
       {error ? (
@@ -2170,7 +2175,7 @@ export default function InboxPage() {
         {/* Pane splitters (desktop only): drag to resize, arrow
             keys nudge, double-click resets. Widths persist locally. */}
         <div
-          role="separator" aria-label="কথোপকথন তালিকার প্রস্থ" aria-orientation="vertical" tabIndex={0}
+          role="separator" aria-label={t("inbox.listWidth")} aria-orientation="vertical" tabIndex={0}
           className="absolute inset-y-0 z-20 hidden w-3 cursor-col-resize touch-none rounded hover:bg-brand-100 focus:bg-brand-100 focus:outline-none lg:block"
           style={{ left: "calc(var(--ilw,300px) - 2px)" }}
           onPointerDown={(e) => startResize(e, "list")}
@@ -2183,7 +2188,7 @@ export default function InboxPage() {
           }}
         />
         <div
-          role="separator" aria-label="গ্রাহক প্যানেলের প্রস্থ" aria-orientation="vertical" tabIndex={0}
+          role="separator" aria-label={t("inbox.panelWidth")} aria-orientation="vertical" tabIndex={0}
           className="absolute inset-y-0 z-20 hidden w-3 cursor-col-resize touch-none rounded hover:bg-brand-100 focus:bg-brand-100 focus:outline-none xl:block"
           style={{ right: "calc(var(--icw,320px) - 2px)" }}
           onPointerDown={(e) => startResize(e, "ctx")}
@@ -2205,7 +2210,7 @@ export default function InboxPage() {
             <input
               id="inbox-search"
               className="w-full rounded-2xl border border-slate-200 bg-white py-2.5 pl-10 pr-10 text-xs text-slate-900 shadow-2xs placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              placeholder="নাম, ফোন নম্বর, মেসেজ বা কীওয়ার্ড খুঁজুন..."
+              placeholder={t("inbox.searchPlaceholder")}
               value={filters.q}
               onChange={(e) => onSearch(e.target.value)}
             />
@@ -2268,7 +2273,7 @@ export default function InboxPage() {
                 }`}
                 onClick={() => onFilter({ unreadOnly: false, spamOnly: false, status: "" })}
               >
-                সব
+                {t("inbox.allWord")}
               </button>
               <button
                 className={`rounded-lg px-2.5 py-1 font-semibold transition ${
@@ -2276,16 +2281,14 @@ export default function InboxPage() {
                 }`}
                 onClick={() => onFilter({ unreadOnly: !filters.unreadOnly, spamOnly: false })}
               >
-                অপঠিত {conversations.filter(c => c.unreadCount > 0).length ? `(${conversations.filter(c => c.unreadCount > 0).length})` : ""}
+                {t("inbox.inbZUnreadWord")} {conversations.filter(c => c.unreadCount > 0).length ? `(${fmtNumber(locale, conversations.filter(c => c.unreadCount > 0).length)})` : ""}
               </button>
               <button
                 className={`rounded-lg px-2.5 py-1 font-semibold transition ${
                   filters.status === "closed" ? "bg-white text-slate-900 shadow-2xs" : "text-slate-600 hover:text-slate-900"
                 }`}
                 onClick={() => onFilter({ status: filters.status === "closed" ? "" : "closed", unreadOnly: false })}
-              >
-                সমাধানকৃত
-              </button>
+              >{t("inbox.resolvedWord")}</button>
             </div>
 
             <button
@@ -2295,9 +2298,9 @@ export default function InboxPage() {
                   ? "bg-blue-50 text-blue-700 font-bold"
                   : "text-slate-500 hover:text-slate-800"
               }`}
-              title="ফিল্টার ও বাল্ক অ্যাকশন"
+              title={t("inbox.filterBulk")}
             >
-              <span>⚙️ ফিল্টার</span>
+              <span>{t("inbox.filterBtn")}</span>
               {(filters.spamOnly || filters.assignee || filters.tag || selectMode) && (
                 <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
               )}
@@ -2305,19 +2308,19 @@ export default function InboxPage() {
           </div>
           <input
             className="rounded-xl border border-slate-200/90 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-xs placeholder:text-slate-400 focus:border-brand-500 focus:outline-none"
-            placeholder="🏷️ Tag দিয়ে ফিল্টার (যেমন vip, repeat)..."
+            placeholder={t("inbox.tagFilterPlaceholder")}
             value={filters.tag}
             onChange={(e) => onFilter({ tag: e.target.value })}
           />
           <div className="flex flex-wrap items-center gap-1.5">
             {([
-              { key: "all", label: "সব", active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: "সব কথোপকথন", onClick: () => applyFolder("", "") },
-              { key: "mine", label: "👤 আমার ইনবক্স", active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: "আমাকে অ্যাসাইন করা", onClick: () => applyFolder("", "me") },
-              { key: "unassigned", label: "📥 অনির্ধারিত", active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: "কাউকে অ্যাসাইন করা হয়নি", onClick: () => applyFolder("", "unassigned") },
-              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: `প্রথম জবাব এখনো হয়নি এবং অপেক্ষা ${folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60} মিনিটের বেশি (থ্রেশহোল্ড: ইনবক্স সেটিংস)`, onClick: () => applyFolder("sla") },
-              { key: "vip", label: "⭐ VIP বড় অর্ডার", active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? `সর্বশেষ লিংকড অর্ডার ${money(folderCounts.vipThresholdMinor, "BDT")} বা তার বেশি (ইনবক্স সেটিংসের এসকেলেশন থ্রেশহোল্ড)` : "থ্রেশহোল্ড ইনবক্স সেটিংসে সেট করা নেই", onClick: () => applyFolder("vip") },
-              { key: "handover", label: "🤝 Handover কিউ", active: smartFolder === "handover", count: folderCounts?.handover, title: "মানুষের হাতে থাকা (Autopilot থেমে) কথোপকথন — সবচেয়ে বেশি অপেক্ষা করা আগে", onClick: () => applyFolder("handover") },
-              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: "Snooze করা কথোপকথন — জাগার সময় অনুযায়ী সাজানো, সময় হলে নিজে থেকে তালিকায় ফিরবে", onClick: () => applyFolder("snoozed") },
+              { key: "all", label: t("inbox.allWord"), active: !smartFolder && !filters.assignee, count: folderCounts?.all, title: t("inbox.allConvs"), onClick: () => applyFolder("", "") },
+              { key: "mine", label: t("inbox.myInbox"), active: !smartFolder && filters.assignee === "me", count: folderCounts?.mine, title: t("inbox.assignedToMe"), onClick: () => applyFolder("", "me") },
+              { key: "unassigned", label: t("inbox.unassigned"), active: !smartFolder && filters.assignee === "unassigned", count: folderCounts?.unassigned, title: t("inbox.unassignedSub"), onClick: () => applyFolder("", "unassigned") },
+              { key: "sla", label: "⏰ SLA Breach", active: smartFolder === "sla", count: folderCounts?.slaBreach, title: t("inbox.inbZSlaTitleB", { minutes: fmtNumber(locale, folderCounts?.slaFirstResponseMinutes ?? settings?.slaFirstResponseMinutes ?? 60) }), onClick: () => applyFolder("sla") },
+              { key: "vip", label: t("inbox.vipFolder"), active: smartFolder === "vip", count: folderCounts?.vip, title: folderCounts?.vipThresholdMinor ? t("inbox.inbZVipTitle", { amount: money(folderCounts.vipThresholdMinor, "BDT", locale) }) : t("inbox.inbZVipNoThreshold"), onClick: () => applyFolder("vip") },
+              { key: "handover", label: t("inbox.handoverQueue"), active: smartFolder === "handover", count: folderCounts?.handover, title: t("inbox.handoverSub"), onClick: () => applyFolder("handover") },
+              { key: "snoozed", label: "😴 Snoozed", active: smartFolder === "snoozed", count: folderCounts?.snoozed, title: t("inbox.snoozedSub"), onClick: () => applyFolder("snoozed") },
             ]).map((chip) => (
               <button key={chip.key} title={chip.title} onClick={chip.onClick}
                 className={`stat-chip ${chip.active ? "stat-chip-active" : ""} ${chip.key === "sla" && (chip.count ?? 0) > 0 && !chip.active ? "stat-chip-danger" : ""}`}>
@@ -2328,29 +2331,29 @@ export default function InboxPage() {
           {/* IN1a: search INSIDE messages (content + voice transcript) */}
           <div className="shrink-0">
             <div className="flex gap-1.5">
-              <input className="input min-w-0 flex-1" placeholder="মেসেজের ভেতরে খুঁজুন (যেমন: ডেলিভারি চার্জ)" value={msgQ}
+              <input className="input min-w-0 flex-1" placeholder={t("inbox.inMessageSearchPlaceholder")} value={msgQ}
                 onChange={(e) => setMsgQ(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void runMessageSearch(); }} />
-              <button className="btn-secondary btn-sm shrink-0" disabled={msgBusy} onClick={() => void runMessageSearch()}>{msgBusy ? "খুঁজছি…" : "🔎 মেসেজে খুঁজুন"}</button>
+              <button className="btn-secondary btn-sm shrink-0" disabled={msgBusy} onClick={() => void runMessageSearch()}>{msgBusy ? t("inbox.searchingDots") : t("inbox.searchInMessagesBtn")}</button>
             </div>
             {msgResults !== null ? (
               <div className="mt-1.5 max-h-64 space-y-1 overflow-y-auto rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200">
                 <div className="flex items-center justify-between px-1">
-                  <span className="text-[11px] font-bold text-slate-600">{msgResults.length}টি মেসেজ মিলেছে</span>
-                  <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setMsgResults(null)}>বন্ধ করুন</button>
+                  <span className="text-[11px] font-bold text-slate-600">{t("inbox.msgsMatched", { count: fmtNumber(locale, msgResults.length) })}</span>
+                  <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setMsgResults(null)}>{t("inbox.closeBtn")}</button>
                 </div>
-                {msgResults.length === 0 ? <p className="px-1 py-1 text-[11px] text-slate-400">কোনো মেসেজে এই লেখা পাওয়া যায়নি।</p> : msgResults.map((r) => {
+                {msgResults.length === 0 ? <p className="px-1 py-1 text-[11px] text-slate-400">{t("inbox.noMsgMatch")}</p> : msgResults.map((r) => {
                   const parts = splitSnippet(r.snippet, r.matchStart, r.matchLength);
                   return (
                     <button key={r.messageId} className="block w-full rounded-xl px-2 py-1.5 text-left hover:bg-indigo-50" onClick={() => void openSearchResult(r)}>
                       <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
-                        <span className="truncate">{r.contactName ?? r.contactPhone ?? "গ্রাহক"}</span>
+                        <span className="truncate">{r.contactName ?? r.contactPhone ?? t("inbox.customerFallback")}</span>
                         {r.channel ? <ChannelChip channel={r.channel} /> : null}
-                        <span className="ml-auto shrink-0 font-normal text-slate-400">{new Date(r.createdAt).toLocaleString("bn-BD")}</span>
+                        <span className="ml-auto shrink-0 font-normal text-slate-400">{fmtDateTime(locale, r.createdAt)}</span>
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-slate-500">
                         {r.direction === "out" ? "➡️ " : ""}{parts.before}{parts.match ? <mark className="rounded bg-amber-200 px-0.5">{parts.match}</mark> : null}{parts.after}
-                        {r.matchedField === "transcription" ? <span className="ml-1 text-slate-400">(ভয়েসের লেখা থেকে)</span> : null}
+                        {r.matchedField === "transcription" ? <span className="ml-1 text-slate-400">{t("inbox.fromVoiceText")}</span> : null}
                       </span>
                     </button>
                   );
@@ -2361,38 +2364,38 @@ export default function InboxPage() {
           {/* IN1b: advanced filters */}
           <div className="shrink-0">
             <button className={`toggle-pill ${showAdv || hasAdvancedFilters(filters) ? "toggle-pill-active" : ""}`} onClick={() => setShowAdv((v) => !v)}>
-              ⚙️ বিস্তারিত ফিল্টার{hasAdvancedFilters(filters) ? " •" : ""}
+              {t("inbox.inbZAdvFilters")}{hasAdvancedFilters(filters) ? " •" : ""}
             </button>
             {showAdv ? (
               <div className="mt-1.5 space-y-1.5 rounded-2xl bg-slate-50 p-2 ring-1 ring-slate-200">
                 <div className="flex items-center gap-1.5 text-[11px]">
-                  <label className="w-14 shrink-0 font-semibold text-slate-500">তারিখ</label>
-                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateFrom} onChange={(e) => onFilter({ dateFrom: e.target.value })} aria-label="শুরুর তারিখ" />
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">{t("inbox.dateLabel")}</label>
+                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateFrom} onChange={(e) => onFilter({ dateFrom: e.target.value })} aria-label={t("inbox.startDate")} />
                   <span className="text-slate-400">–</span>
-                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateTo} onChange={(e) => onFilter({ dateTo: e.target.value })} aria-label="শেষ তারিখ" />
+                  <input type="date" className="input min-w-0 flex-1 !py-1" value={filters.dateTo} onChange={(e) => onFilter({ dateTo: e.target.value })} aria-label={t("inbox.endDate")} />
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px]">
-                  <label className="w-14 shrink-0 font-semibold text-slate-500">অর্ডার ৳</label>
-                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder="কমপক্ষে" value={filters.amountMin} onChange={(e) => onFilter({ amountMin: e.target.value })} aria-label="সর্বনিম্ন অর্ডার মূল্য (টাকা)" />
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">{t("inbox.orderTakaLabel")}</label>
+                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder={t("inbox.atLeast")} value={filters.amountMin} onChange={(e) => onFilter({ amountMin: e.target.value })} aria-label={t("inbox.minOrderPlaceholder")} />
                   <span className="text-slate-400">–</span>
-                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder="সর্বোচ্চ" value={filters.amountMax} onChange={(e) => onFilter({ amountMax: e.target.value })} aria-label="সর্বোচ্চ অর্ডার মূল্য (টাকা)" />
+                  <input type="number" min="0" className="input min-w-0 flex-1 !py-1" placeholder={t("inbox.maxWord")} value={filters.amountMax} onChange={(e) => onFilter({ amountMax: e.target.value })} aria-label={t("inbox.maxOrderPlaceholder")} />
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px]">
-                  <label className="w-14 shrink-0 font-semibold text-slate-500">বিষয়</label>
+                  <label className="w-14 shrink-0 font-semibold text-slate-500">{t("inbox.subjectLabel")}</label>
                   <select className="filter-select min-w-0 flex-1" value={filters.intent} onChange={(e) => onFilter({ intent: e.target.value })} aria-label="Intent">
-                    <option value="">সব বিষয়</option>
-                    <option value="price">দাম</option><option value="stock">স্টক</option><option value="delivery">ডেলিভারি</option>
-                    <option value="order_status">অর্ডারের অবস্থা</option><option value="payment">পেমেন্ট</option>
-                    <option value="complaint">অভিযোগ</option><option value="order_intent">অর্ডার করতে চায়</option><option value="greeting">শুভেচ্ছা</option>
+                    <option value="">{t("inbox.allSubjects")}</option>
+                    <option value="price">{t("inbox.draftPriceWord")}</option><option value="stock">{t("inbox.intentStock")}</option><option value="delivery">{t("inbox.intentDelivery")}</option>
+                    <option value="order_status">{t("inbox.intentOrderStatus")}</option><option value="payment">{t("inbox.intentPayment")}</option>
+                    <option value="complaint">{t("inbox.intentComplaint")}</option><option value="order_intent">{t("inbox.intentWantsOrder")}</option><option value="greeting">{t("inbox.intentGreeting")}</option>
                   </select>
                   <select className="filter-select min-w-0 flex-1" value={filters.sentiment} onChange={(e) => onFilter({ sentiment: e.target.value })} aria-label="Sentiment">
-                    <option value="">সব মনোভাব</option>
-                    <option value="positive">😃 ইতিবাচক</option><option value="neutral">😐 স্বাভাবিক</option><option value="negative">😡 অসন্তুষ্ট</option>
+                    <option value="">{t("inbox.allMoods")}</option>
+                    <option value="positive">{t("inbox.moodPositive")}</option><option value="neutral">{t("inbox.moodNeutral")}</option><option value="negative">{t("inbox.moodNegativeShort")}</option>
                   </select>
                 </div>
-                <p className="text-[10px] text-slate-400">অর্ডার মূল্য = কথোপকথনের সর্বশেষ লিংকড অর্ডার; মনোভাব = কীওয়ার্ড-ভিত্তিক আনুমানিক সংকেত।</p>
+                <p className="text-[10px] text-slate-400">{t("inbox.filterNote")}</p>
                 {hasAdvancedFilters(filters) ? (
-                  <button className="text-[11px] font-semibold text-red-600 hover:underline" onClick={() => onFilter({ dateFrom: "", dateTo: "", amountMin: "", amountMax: "", intent: "", sentiment: "" })}>বিস্তারিত ফিল্টার মুছুন</button>
+                  <button className="text-[11px] font-semibold text-red-600 hover:underline" onClick={() => onFilter({ dateFrom: "", dateTo: "", amountMin: "", amountMax: "", intent: "", sentiment: "" })}>{t("inbox.inbZAdvFiltersClear")}</button>
                 ) : null}
               </div>
             ) : null}
@@ -2401,20 +2404,20 @@ export default function InboxPage() {
           <div className="shrink-0">
             <div className="flex flex-wrap items-center gap-1.5">
               {savedViews.map((v) => (
-                <span key={v.id} className="stat-chip" title={v.shared ? "টিমের সবার ভিউ" : "শুধু আমার ভিউ"}>
-                  <button className="font-semibold" onClick={() => applySavedView(v)}>⭐ {v.name}{v.shared ? " · টিম" : ""}</button>
-                  {v.mine ? <button className="ml-1 text-slate-400 hover:text-red-600" title="ভিউ মুছুন" onClick={() => void deleteSavedView(v)}>✕</button> : null}
+                <span key={v.id} className="stat-chip" title={v.shared ? t("inbox.teamViews") : t("inbox.myViewsOnly")}>
+                  <button className="font-semibold" onClick={() => applySavedView(v)}>⭐ {v.name}{v.shared ? t("inbox.teamSuffix") : ""}</button>
+                  {v.mine ? <button className="ml-1 text-slate-400 hover:text-red-600" title={t("inbox.deleteView")} onClick={() => void deleteSavedView(v)}>✕</button> : null}
                 </span>
               ))}
-              <button className="toggle-pill" onClick={() => setSaveViewOpen((v) => !v)}>＋ বর্তমান ফিল্টার ভিউ হিসেবে সেভ</button>
+              <button className="toggle-pill" onClick={() => setSaveViewOpen((v) => !v)}>{t("inbox.saveViewBtn")}</button>
             </div>
             {saveViewOpen ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-2xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
-                <input className="input min-w-0 flex-1 !py-1" placeholder="ভিউয়ের নাম (যেমন: ঢাকার VIP অপঠিত)" value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} maxLength={80} />
+                <input className="input min-w-0 flex-1 !py-1" placeholder={t("inbox.viewNamePlaceholder")} value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} maxLength={80} />
                 <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  <input type="checkbox" checked={saveViewShared} onChange={(e) => setSaveViewShared(e.target.checked)} /> টিমের সবাই দেখবে
+                  <input type="checkbox" checked={saveViewShared} onChange={(e) => setSaveViewShared(e.target.checked)} /> {t("inbox.inbZViewSharedNote")}
                 </label>
-                <button className="btn-primary btn-sm" disabled={busy === "save-view"} onClick={() => void saveCurrentView()}>সেভ করুন</button>
+                <button className="btn-primary btn-sm" disabled={busy === "save-view"} onClick={() => void saveCurrentView()}>{t("inbox.saveBtn")}</button>
               </div>
             ) : null}
           </div>
@@ -2424,15 +2427,15 @@ export default function InboxPage() {
             <div className="shrink-0 space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-2 text-xs animate-in fade-in">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-slate-500">অ্যাসাইনি:</span>
+                  <span className="text-[11px] font-medium text-slate-500">{t("inbox.assigneeLabel")}</span>
                   <select
                     className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-2xs focus:ring-0 cursor-pointer"
                     value={filters.assignee}
                     onChange={(e) => onFilter({ assignee: e.target.value })}
                   >
-                    <option value="">সকল সদস্য</option>
-                    <option value="me">আমারগুলো</option>
-                    <option value="unassigned">অনির্ধারিত</option>
+                    <option value="">{t("inbox.allMembers")}</option>
+                    <option value="me">{t("inbox.mineOnly")}</option>
+                    <option value="unassigned">{t("inbox.unassignedPlain")}</option>
                   </select>
                 </div>
                 <button
@@ -2440,21 +2443,17 @@ export default function InboxPage() {
                     filters.spamOnly ? "bg-rose-100 text-rose-700 font-bold" : "text-slate-600 hover:bg-slate-200"
                   }`}
                   onClick={() => onFilter({ spamOnly: !filters.spamOnly, unreadOnly: false })}
-                >
-                  🚫 স্প্যাম
-                </button>
+                >{t("inbox.spamWord")}</button>
                 <button
                   className={`rounded-lg border px-2 py-1 text-xs font-semibold transition ${
                     selectMode ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
                   }`}
                   onClick={() => { setSelectMode((v) => !v); setSelectedIds(new Set()); }}
-                >
-                  ☑️ বাল্ক
-                </button>
+                >{t("inbox.bulkWord")}</button>
               </div>
               <input
                 className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
-                placeholder="🏷️ Tag দিয়ে খুঁজুন (যেমন vip, repeat)..."
+                placeholder={t("inbox.tagSearchPlaceholder")}
                 value={filters.tag}
                 onChange={(e) => onFilter({ tag: e.target.value })}
               />
@@ -2463,65 +2462,65 @@ export default function InboxPage() {
           {selectedIds.size > 0 ? (
             <div className="shrink-0 rounded-xl bg-indigo-50 p-2 ring-1 ring-indigo-200">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-indigo-800">{selectedIds.size}টি নির্বাচিত</span>
-                <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setSelectedIds(new Set())}>সিলেকশন মুছুন</button>
+                <span className="text-xs font-bold text-indigo-800">{t("inbox.selectedCount", { count: fmtNumber(locale, selectedIds.size) })}</span>
+                <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => setSelectedIds(new Set())}>{t("inbox.clearSelection")}</button>
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkAssign} onChange={(e) => setBulkAssign(e.target.value)} aria-label="অ্যাসাইন করুন">
-                  <option value="">— অ্যাসাইন —</option>
-                  <option value="__none__">অ্যাসাইন তুলে নিন</option>
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkAssign} onChange={(e) => setBulkAssign(e.target.value)} aria-label={t("inbox.assignAction")}>
+                  <option value="">{t("inbox.assignDash")}</option>
+                  <option value="__none__">{t("inbox.unassignAction")}</option>
                   {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
                 </select>
-                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("assign")}>অ্যাসাইন</button>
-                <input className="w-24 rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" placeholder="ট্যাগ…" value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} list="bulk-tag-list" />
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("assign")}>{t("inbox.assignDoBtn")}</button>
+                <input className="w-24 rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" placeholder={t("inbox.tagDots")} value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} list="bulk-tag-list" />
                 <datalist id="bulk-tag-list">{[...new Set(conversations.flatMap((c) => c.tags ?? []))].map((t) => <option key={t} value={t} />)}</datalist>
-                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("tag-add")}>ট্যাগ যোগ</button>
-                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("mark-read")}>পঠিত</button>
-                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-red-600 ring-1 ring-red-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("close")}>বন্ধ করুন</button>
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("tag-add")}>{t("inbox.tagAddBtn")}</button>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("mark-read")}>{t("inbox.markReadBtn")}</button>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-red-600 ring-1 ring-red-200 disabled:opacity-50" disabled={busy === "bulk"} onClick={() => runBulk("close")}>{t("inbox.closeBtn")}</button>
               </div>
               {/* IN3c: bulk reply — the same quick reply / template to
                   every selected conversation. WhatsApp window-closed
                   items fail on the server before any send. */}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-indigo-100 pt-1.5">
-                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkQrId} onChange={(e) => setBulkQrId(e.target.value)} aria-label="বাল্ক রিপ্লাই Quick Reply">
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkQrId} onChange={(e) => setBulkQrId(e.target.value)} aria-label={t("inbox.bulkReplyQrLabel")}>
                   <option value="">— Quick Reply —</option>
                   {quickReplies.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
                 </select>
-                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("quick")}>💬 বাল্ক রিপ্লাই</button>
-                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkTplId} onChange={(e) => setBulkTplId(e.target.value)} aria-label="বাল্ক Template">
+                <button className="rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("quick")}>{t("inbox.bulkReplyBtn")}</button>
+                <select className="rounded-lg border border-indigo-200 bg-white px-1.5 py-1 text-[11px]" value={bulkTplId} onChange={(e) => setBulkTplId(e.target.value)} aria-label={t("inbox.bulkTemplateLabel")}>
                   <option value="">— Template —</option>
                   {templates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
                 </select>
-                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("template")}>🧩 Template পাঠান</button>
-                <span className="text-[10px] text-indigo-400">WhatsApp-এ Window বন্ধ থাকলে Quick Reply যাবে না — Template ব্যবহার করুন।</span>
+                <button className="rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-indigo-200 disabled:opacity-50" disabled={busy === "bulk-reply"} onClick={() => void runBulkReply("template")}>{t("inbox.templateSendBtn2")}</button>
+                <span className="text-[10px] text-indigo-400">{t("inbox.bulkWaNote")}</span>
               </div>
             </div>
           ) : selectMode ? (
-            <div className="shrink-0 text-[11px] text-slate-400">বাল্ক মোড চালু — কার্ডে ক্লিক করে কথোপকথন বেছে নিন।</div>
+            <div className="shrink-0 text-[11px] text-slate-400">{t("inbox.bulkModeHint")}</div>
           ) : null}
           {/* IN4d: handover queue ordering — longest wait (default)
               or SLA risk (effective deadline order, server-side). */}
           {smartFolder === "handover" ? (
             <div className="flex shrink-0 items-center gap-1.5 pt-1 text-[11px]">
-              <span className="text-slate-400">সাজান:</span>
-              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort !== "sla_risk" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200"}`} onClick={() => onFilter({ sort: "recent" })}>বেশি অপেক্ষা আগে</button>
-              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort === "sla_risk" ? "bg-red-600 text-white ring-red-600" : "bg-white text-slate-600 ring-slate-200"}`} title="স্তরভিত্তিক SLA deadline অনুযায়ী — যার সময় সবচেয়ে আগে শেষ হচ্ছে/হয়েছে সে আগে" onClick={() => onFilter({ sort: "sla_risk" })}>⏰ SLA ঝুঁকি আগে</button>
+              <span className="text-slate-400">{t("inbox.sortLabel")}</span>
+              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort !== "sla_risk" ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200"}`} onClick={() => onFilter({ sort: "recent" })}>{t("inbox.sortWaiting")}</button>
+              <button className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${filters.sort === "sla_risk" ? "bg-red-600 text-white ring-red-600" : "bg-white text-slate-600 ring-slate-200"}`} title={t("inbox.sortSlaTitle")} onClick={() => onFilter({ sort: "sla_risk" })}>{t("inbox.sortSla")}</button>
             </div>
           ) : null}
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pt-1 pr-0.5">
             {conversations.length === 0 ? (
               smartFolder === "vip" && !folderCounts?.vipThresholdMinor ? (
-                <EmptyState title="VIP ফোল্ডার এখনো সেট হয়নি" description="এই ফোল্ডারটি ইনবক্স সেটিংসের ‘এসকেলেশন থ্রেশহোল্ড’ ব্যবহার করে — থ্রেশহোল্ড সেট করা থাকলে, যেসব কথোপকথনের সর্বশেষ লিংকড অর্ডার সেই পরিমাণ বা তার বেশি, সেগুলো এখানে আসবে। সেটিংস খুলে থ্রেশহোল্ড বসান।" />
+                <EmptyState title={t("inbox.vipNotSet")} description={t("inbox.inbZVipEmptyDesc")} />
               ) : smartFolder === "vip" ? (
-                <EmptyState title="কোনো VIP কথোপকথন নেই" description="থ্রেশহোল্ডের সমান বা বড় সর্বশেষ অর্ডারওয়ালা কোনো কথোপকথন এখন নেই।" />
+                <EmptyState title={t("inbox.noVipConvs")} description={t("inbox.noVipHint")} />
               ) : smartFolder === "sla" ? (
-                <EmptyState title="🎉 কোনো SLA breach নেই" description="প্রথম জবাবের অপেক্ষায় থ্রেশহোল্ডের বেশি সময় ধরে কোনো কথোপকথন আটকে নেই।" />
+                <EmptyState title={t("inbox.noSlaBreach")} description={t("inbox.noSlaBreachHint")} />
               ) : smartFolder === "handover" ? (
-                <EmptyState title="🎉 Handover কিউ ফাঁকা" description="Autopilot থেমে মানুষের হাতে অপেক্ষা করা কোনো কথোপকথন এখন নেই।" />
+                <EmptyState title={t("inbox.handoverEmpty")} description={t("inbox.handoverEmptyHint")} />
               ) : smartFolder === "snoozed" ? (
-                <EmptyState title="😴 কোনো Snoozed কথোপকথন নেই" description="Snooze করা কথোপকথন সময় হলে নিজে থেকে তালিকায় ফিরে আসবে।" />
+                <EmptyState title={t("inbox.noSnoozed")} description={t("inbox.noSnoozedHint")} />
               ) : (
-                <EmptyState title="কোনো কথোপকথন নেই" description="WhatsApp/Messenger কানেক্ট করে Webhook সেট করলে গ্রাহকের বার্তা এখানে আসবে। নতুন গ্রাহক মেসেজ দিলে স্বয়ংক্রিয়ভাবে একটি Lead তৈরি হয়।" />
+                <EmptyState title={t("inbox.noConvs")} description={t("inbox.inbZNoConvsDesc")} />
               )
             ) : conversations.slice(0, visibleCount).map((c, ci) => {
               const isSelected = selectedIds.has(c.id);
@@ -2575,12 +2574,12 @@ export default function InboxPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="truncate font-semibold text-slate-900 group-hover:text-brand-600 transition-colors">
-                        {c.contactName ?? c.contactPhone ?? "(নাম নেই)"}
+                        {c.contactName ?? c.contactPhone ?? t("inbox.noName")}
                       </span>
                       <div className="flex shrink-0 items-center gap-1">
                         {c.lastMessageAt ? (
                           <span className="text-[10px] text-slate-400 font-medium">
-                            {new Date(c.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {fmtTime(locale, c.lastMessageAt)}
                           </span>
                         ) : null}
                         {c.unreadCount > 0 ? (
@@ -2592,14 +2591,14 @@ export default function InboxPage() {
                     </div>
 
                     <p className={`truncate text-xs mt-0.5 ${c.unreadCount > 0 ? "font-medium text-slate-800" : "text-slate-500"}`}>
-                      {c.lastMessagePreview || "কোনো বার্তা নেই"}
+                      {c.lastMessagePreview || t("inbox.noMessages")}
                     </p>
 
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10.5px]">
                       <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium ${
                         c.status === "open" ? "bg-emerald-50 text-emerald-700" : c.status === "pending" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"
                       }`}>
-                        {c.status === "open" ? "● ওপেন" : c.status === "pending" ? "○ পেন্ডিং" : "✓ বন্ধ"}
+                        {c.status === "open" ? t("inbox.stOpen") : c.status === "pending" ? t("inbox.stPending") : t("inbox.stClosed")}
                       </span>
 
                       {isSlaBreach ? (
@@ -2609,28 +2608,28 @@ export default function InboxPage() {
                       ) : null}
 
                       {isActivelySnoozed(c.snoozedUntil) ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700 ring-1 ring-indigo-200" title={`Snoozed — ${new Date(c.snoozedUntil as string).toLocaleString("bn-BD")} পর্যন্ত`}>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-700 ring-1 ring-indigo-200" title={`${t("inbox.snoozedUntilWord")} ${fmtDateTime(locale, c.snoozedUntil as string)}`}>
                           😴 Snoozed
                         </span>
                       ) : null}
 
                       {smartFolder === "handover" && c.handoverReason ? (
                         <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700 ring-1 ring-amber-200">
-                          {HANDOVER_REASON_LABELS[c.handoverReason] ?? c.handoverReason} · {Math.max(0, Math.floor((handoverTick - new Date(c.handoverAt ?? c.updatedAt ?? handoverTick).getTime()) / 60000))} মিনিট অপেক্ষা
+                          {handoverReasonLabels(locale)[c.handoverReason] ?? c.handoverReason} · {t("inbox.inbZWaitingMinutes", { count: fmtNumber(locale, Math.max(0, Math.floor((handoverTick - new Date(c.handoverAt ?? c.updatedAt ?? handoverTick).getTime()) / 60000))) })}
                         </span>
                       ) : null}
 
                       {c.channel === "whatsapp" && c.whatsappWindow ? (
                         c.whatsappWindow.open ? (
-                          <span className="text-emerald-600 font-medium" title="২৪ ঘণ্টার ফ্রি-ফর্ম উইন্ডো খোলা">🟢 Window</span>
+                          <span className="text-emerald-600 font-medium" title={t("inbox.windowOpen24")}>🟢 Window</span>
                         ) : (
-                          <span className="text-amber-600 font-medium" title="উইন্ডো বন্ধ, শুধু টেমপ্লেট প্রযোজ্য">🔒 Window</span>
+                          <span className="text-amber-600 font-medium" title={t("inbox.windowClosedTpl")}>🔒 Window</span>
                         )
                       ) : null}
 
                       {c.spamFlag ? <span className="font-semibold text-amber-600">🚫 Spam</span> : null}
-                      {c.priority === "high" ? <span className="font-semibold text-red-600">🔥 জরুরি</span> : null}
-                      {c.mood === "negative" ? <span title={MOOD_TITLE}>😡</span> : c.mood === "positive" ? <span title={MOOD_TITLE}>😃</span> : null}
+                      {c.priority === "high" ? <span className="font-semibold text-red-600">{t("inbox.urgentFire")}</span> : null}
+                      {c.mood === "negative" ? <span title={moodTitle(locale)}>😡</span> : c.mood === "positive" ? <span title={moodTitle(locale)}>😃</span> : null}
 
                       {c.assignedUserId ? (
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500 font-medium">
@@ -2651,10 +2650,10 @@ export default function InboxPage() {
                 </button>
               );
             })}
-            {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">আরও কথোপকথন লোড হচ্ছে… ({conversations.length - visibleCount} বাকি)</div> : nextCursor ? (
+            {visibleCount < conversations.length ? <div ref={sentinelRef} className="py-2 text-center text-xs text-slate-400">{t("inbox.inbZLoadingMore", { rest: fmtNumber(locale, conversations.length - visibleCount) })}</div> : nextCursor ? (
               <div ref={sentinelRef} className="py-2 text-center">
                 <button className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50" disabled={loadingMore} onClick={() => void loadMoreConversations()}>
-                  {loadingMore ? "লোড হচ্ছে…" : "আরও কথোপকথন লোড করুন"}
+                  {loadingMore ? t("inbox.loadingDots") : t("inbox.loadMoreConvs")}
                 </button>
               </div>
             ) : null}
@@ -2677,7 +2676,7 @@ export default function InboxPage() {
             >
               {dragOver ? (
                 <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-[inherit] bg-brand-500/10 ring-2 ring-inset ring-brand-500">
-                  <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">📎 ছেড়ে দিন — ফাইলটি পাঠানো হবে</span>
+                  <span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold shadow">{t("inbox.dropFile")}</span>
                 </div>
               ) : null}
               {/* Modern Sleek Thread Header with Dropdown Actions */}
@@ -2686,9 +2685,9 @@ export default function InboxPage() {
                   <button
                     className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 shadow-2xs lg:hidden hover:bg-slate-50"
                     onClick={() => setMobileChat(false)}
-                    title="কথোপকথন তালিকায় ফিরুন"
+                    title={t("inbox.backToList")}
                   >
-                    <span>←</span> <span className="hidden xs:inline">তালিকা</span>
+                    <span>←</span> <span className="hidden xs:inline">{t("inbox.listWord")}</span>
                   </button>
                   <ContactAvatar
                     name={active.contactName ?? active.contactPhone}
@@ -2699,7 +2698,7 @@ export default function InboxPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-bold text-slate-900 text-sm sm:text-base truncate">
-                        {active.contactName ?? active.contactPhone ?? "গ্রাহক"}
+                        {active.contactName ?? active.contactPhone ?? t("inbox.customerFallback")}
                       </span>
                       {/* Online Indicator */}
                       <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">
@@ -2724,7 +2723,7 @@ export default function InboxPage() {
                           type="button"
                           onClick={() => { setStageMenuOpen((v) => !v); setActionMenuOpen(false); }}
                           className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 transition"
-                          title="পাইপলাইন স্টেজ পরিবর্তন"
+                          title={t("inbox.stageChange")}
                         >
                           <span>🏷️ {active.pipelineStage ? active.pipelineStage.toUpperCase() : "NEW"}</span>
                           <span className="text-[8px]">▾</span>
@@ -2768,17 +2767,13 @@ export default function InboxPage() {
                         mobileTab === "chat" ? "bg-white text-slate-900 shadow-2xs font-bold" : "text-slate-500"
                       }`}
                       onClick={() => setMobileTab("chat")}
-                    >
-                      💬 চ্যাট
-                    </button>
+                    >{t("inbox.chatTab")}</button>
                     <button
                       className={`rounded-lg px-2.5 py-1 transition-all ${
                         mobileTab === "customer" ? "bg-white text-indigo-700 shadow-2xs font-bold" : "text-slate-500"
                       }`}
                       onClick={() => setMobileTab("customer")}
-                    >
-                      👤 প্রোফাইল
-                    </button>
+                    >{t("inbox.profileTab")}</button>
                   </div>
 
                   {/* Phone Call Button */}
@@ -2786,7 +2781,7 @@ export default function InboxPage() {
                     <a
                       href={`tel:${active.contactPhone}`}
                       className="hidden sm:flex rounded-xl border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition"
-                      title="সরাসরি ফোন কল করুন"
+                      title={t("inbox.callDirect")}
                     >
                       📞
                     </a>
@@ -2797,7 +2792,7 @@ export default function InboxPage() {
                     className="hidden sm:flex xl:hidden items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50"
                     onClick={() => setCtxOpen(true)}
                   >
-                    <span>👤</span> <span>প্রোফাইল</span>
+                    <span>👤</span> <span>{t("inbox.profileWord")}</span>
                   </button>
 
                   {/* Status Switcher pill */}
@@ -2810,7 +2805,7 @@ export default function InboxPage() {
                         }`}
                         onClick={() => patchConversation({ status: s })}
                       >
-                        {s === "open" ? "ওপেন" : s === "pending" ? "পেন্ডিং" : "বন্ধ"}
+                        {s === "open" ? t("inbox.stOpenPlain") : s === "pending" ? t("inbox.stPendingPlain") : t("inbox.stClosedPlain")}
                       </button>
                     ))}
                   </div>
@@ -2825,16 +2820,16 @@ export default function InboxPage() {
                           ? "border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-500/20"
                           : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300"
                       }`}
-                      title="অ্যাকশন মেনু"
+                      title={t("inbox.actionMenu")}
                     >
                       <span>⚡</span>
-                      <span className="hidden sm:inline">অ্যাকশন</span>
+                      <span className="hidden sm:inline">{t("inbox.actionsWord")}</span>
                       <span className="text-[10px]">▾</span>
                     </button>
 
                     {actionMenuOpen && (
                       <div className="absolute right-0 top-full mt-2 z-40 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl ring-1 ring-slate-900/5 animate-in fade-in zoom-in-95">
-                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">অর্ডার ও কুরিয়ার</div>
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.ordersCourier")}</div>
                         <button
                           type="button"
                           className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-700 transition disabled:opacity-50"
@@ -2843,8 +2838,8 @@ export default function InboxPage() {
                         >
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-100 text-sky-700 text-sm">🚚</span>
                           <div>
-                            <div className="font-bold text-slate-900">ট্র্যাকিং পাঠান</div>
-                            <div className="text-[10px] text-slate-400">শিপমেন্ট ট্র্যাকিং কোড শেয়ার করুন</div>
+                            <div className="font-bold text-slate-900">{t("inbox.sendTracking")}</div>
+                            <div className="text-[10px] text-slate-400">{t("inbox.shareTrackingCode")}</div>
                           </div>
                         </button>
                         <button
@@ -2855,13 +2850,13 @@ export default function InboxPage() {
                         >
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 text-violet-700 text-sm">📦</span>
                           <div>
-                            <div className="font-bold text-slate-900">কুরিয়ার বুকিং</div>
-                            <div className="text-[10px] text-slate-400">Steadfast / Pathao কুরিয়ারে বুক করুন</div>
+                            <div className="font-bold text-slate-900">{t("inbox.courierBooking")}</div>
+                            <div className="text-[10px] text-slate-400">{t("inbox.courierBookSub")}</div>
                           </div>
                         </button>
 
                         <div className="my-1.5 border-t border-slate-100" />
-                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">বিলিং ও ডেটা</div>
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.billingData")}</div>
                         <button
                           type="button"
                           className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-amber-50 hover:text-amber-800 transition disabled:opacity-50"
@@ -2870,8 +2865,8 @@ export default function InboxPage() {
                         >
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-800 text-sm">💸</span>
                           <div>
-                            <div className="font-bold text-slate-900">রিফান্ড অনুরোধ</div>
-                            <div className="text-[10px] text-slate-400">বিলিং ওনারকে রিফান্ড নোট পাঠান</div>
+                            <div className="font-bold text-slate-900">{t("inbox.refundRequest")}</div>
+                            <div className="text-[10px] text-slate-400">{t("inbox.refundSub")}</div>
                           </div>
                         </button>
                         <button
@@ -2882,13 +2877,13 @@ export default function InboxPage() {
                         >
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 text-sm">⬇️</span>
                           <div>
-                            <div className="font-bold text-slate-900">কথোপকথন CSV Export</div>
-                            <div className="text-[10px] text-slate-400">মেসেজ হিস্ট্রি ডাউনলোড করুন</div>
+                            <div className="font-bold text-slate-900">{t("inbox.csvExport")}</div>
+                            <div className="text-[10px] text-slate-400">{t("inbox.csvExportSub")}</div>
                           </div>
                         </button>
 
                         <div className="my-1.5 border-t border-slate-100" />
-                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">মডারেশন ও রেজোলিউশন</div>
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.moderation")}</div>
                         <button
                           type="button"
                           className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 transition disabled:opacity-50"
@@ -2897,40 +2892,37 @@ export default function InboxPage() {
                         >
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-100 text-rose-700 text-sm">🚫</span>
                           <div>
-                            <div className="font-bold text-rose-700">Spam হিসেবে মার্ক ও বন্ধ</div>
-                            <div className="text-[10px] text-rose-400">স্প্যাম চিহ্নিত করে চ্যাট ক্লোজ করুন</div>
+                            <div className="font-bold text-rose-700">{t("inbox.markSpamClose")}</div>
+                            <div className="text-[10px] text-rose-400">{t("inbox.markSpamSub")}</div>
                           </div>
                         </button>
 
                         {active.status !== "closed" ? (
                           <div className="mt-2 rounded-xl bg-slate-50 p-2 text-xs">
-                            <label className="block text-[11px] font-bold text-slate-700 mb-1">ফলাফল সহ বন্ধ করুন:</label>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">{t("inbox.closeWithOutcome")}</label>
                             <div className="flex gap-1.5">
                               <select
                                 className="flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                                 value={closeOutcome}
                                 onChange={(e) => setCloseOutcome(e.target.value)}
                               >
-                                <option value="sale">🛒 Sale হয়েছে</option>
-                                <option value="no_sale_price">💰 No-sale: দাম</option>
-                                <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
-                                <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
-                                <option value="support_resolved">🛠️ Support সমাধান</option>
+                                <option value="sale">{t("inbox.outcomeSale")}</option>
+                                <option value="no_sale_price">{t("inbox.outcomeNoSalePrice")}</option>
+                                <option value="no_sale_stock">{t("inbox.outcomeNoSaleStock")}</option>
+                                <option value="no_sale_undecided">{t("inbox.outcomeNoSaleUndecided")}</option>
+                                <option value="support_resolved">{t("inbox.outcomeSupport")}</option>
                                 <option value="spam">🚫 Spam</option>
-                                <option value="other">• অন্যান্য</option>
+                                <option value="other">{t("inbox.outcomeOther")}</option>
                               </select>
                               <button
                                 type="button"
                                 className="rounded-lg bg-slate-900 px-3 py-1 font-bold text-white hover:bg-slate-800 transition"
                                 onClick={() => { setActionMenuOpen(false); patchConversation({ status: "closed", outcome: closeOutcome }); }}
-                              >
-                                ✓ ক্লোজ
-                              </button>
+                              >{t("inbox.closeCheck")}</button>
                             </div>
                           </div>
                         ) : active.outcome ? (
-                          <div className="mt-2 rounded-xl bg-slate-50 p-2 text-center text-xs font-medium text-slate-500">
-                            ফলাফল: <span className="font-bold text-slate-700">{active.outcome}</span>
+                          <div className="mt-2 rounded-xl bg-slate-50 p-2 text-center text-xs font-medium text-slate-500">{t("inbox.outcomeLabel")}<span className="font-bold text-slate-700">{active.outcome}</span>
                           </div>
                         ) : null}
                       </div>
@@ -2942,7 +2934,7 @@ export default function InboxPage() {
               {/* Thread Action Controls */}
               <div className="flex shrink-0 flex-wrap items-center gap-1.5 rounded-xl bg-slate-50/80 p-2 text-xs ring-1 ring-slate-100">
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-400 font-medium ml-1">স্টেজ:</span>
+                  <span className="text-slate-400 font-medium ml-1">{t("inbox.stageLabel")}</span>
                   <select
                     className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
                     value={active.pipelineStage ?? "new"}
@@ -2962,8 +2954,8 @@ export default function InboxPage() {
                 {/* CX5 (ported): Later / Take over / Back to AI / Timer */}
                 {isActivelySnoozed(active.snoozedUntil) ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="rounded-lg bg-indigo-50 px-2.5 py-1.5 font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200/70">😴 {new Date(active.snoozedUntil as string).toLocaleString("bn-BD")} পর্যন্ত snoozed</span>
-                    <button className={cx5Btn} onClick={() => void conversationAction("unsnooze")}>এখনই জাগান</button>
+                    <span className="rounded-lg bg-indigo-50 px-2.5 py-1.5 font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200/70">😴 {t("inbox.snoozedUntilWord")} {fmtDateTime(locale, active.snoozedUntil as string)}</span>
+                    <button className={cx5Btn} onClick={() => void conversationAction("unsnooze")}>{t("inbox.wakeNow")}</button>
                   </span>
                 ) : (
                   <span className="relative hidden sm:inline-flex">
@@ -2976,17 +2968,17 @@ export default function InboxPage() {
                   <button className="rounded-lg bg-emerald-50 px-2.5 py-1.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200/70 transition hover:bg-emerald-100" onClick={() => void conversationAction("back-to-ai")}>🤖 Back to AI</button>
                 ) : null}
                 <span className="relative hidden sm:inline-flex">
-                  <button className={cx5Btn} onClick={() => { setShowTimerMenu((v) => !v); setShowSnoozeMenu(false); }}>⏱️ Timer{timerRemaining !== null ? ` (${timerRemaining}মি)` : ""}</button>
+                  <button className={cx5Btn} onClick={() => { setShowTimerMenu((v) => !v); setShowSnoozeMenu(false); }}>⏱️ Timer{timerRemaining !== null ? t("inbox.inbZTimerMinutes", { minutes: fmtNumber(locale, timerRemaining) }) : ""}</button>
                   {showTimerMenu ? <span className={cx5Menu}>{renderTimerControls()}</span> : null}
                 </span>
                 <span className="relative inline-flex">
-                  <button className={cx5Btn} onClick={() => { setShowMacroMenu((v) => !v); setShowSnoozeMenu(false); setShowTimerMenu(false); }} title="এক click-এ ধারাবাহিক কাজ (উত্তর + অ্যাসাইন + ট্যাগ + …)">⚡ ম্যাক্রো</button>
+                  <button className={cx5Btn} onClick={() => { setShowMacroMenu((v) => !v); setShowSnoozeMenu(false); setShowTimerMenu(false); }} title={t("inbox.inbZMacroTitle")}>{t("inbox.inbZMacroBtn")}</button>
                   {showMacroMenu ? (
                     <span className={cx5Menu}>
-                      <span className="px-2 pt-1 text-[11px] font-bold text-slate-400">এই কথোপকথনে চালান</span>
-                      {macros.length === 0 ? <span className="px-2 py-1.5 text-xs text-slate-400">কোনো ম্যাক্রো নেই — Manage ট্যাবে তৈরি করুন।</span> : macros.map((m) => (
+                      <span className="px-2 pt-1 text-[11px] font-bold text-slate-400">{t("inbox.macroRunHere")}</span>
+                      {macros.length === 0 ? <span className="px-2 py-1.5 text-xs text-slate-400">{t("inbox.noMacros")}</span> : macros.map((m) => (
                         <button key={m.id} className={cx5MenuItem} disabled={busy === "macro"} onClick={() => void runMacroOnActive(m)}>
-                          ⚡ {m.name}{m.shared ? " · টিম" : ""}
+                          ⚡ {m.name}{m.shared ? t("inbox.teamSuffix") : ""}
                           <span className="block truncate text-[10px] font-normal text-slate-400">{m.steps.map((s) => macroStepSummary(s, { quickReplyTitle: (id) => quickReplies.find((q) => q.id === id)?.title, memberName: (id) => members.find((mm) => mm.user.id === id)?.user.name ?? undefined })).join(" → ")}</span>
                         </button>
                       ))}
@@ -2996,11 +2988,11 @@ export default function InboxPage() {
                 <span className="hidden sm:inline-flex">{renderAssignSelect()}</span>
                 <span className="hidden sm:inline-flex">{renderLeadSelect()}</span>
                 <span className="relative inline-flex sm:hidden">
-                  <button className={cx5Btn} onClick={() => setShowMoreMenu((v) => !v)} aria-label="আরও অ্যাকশন">⋯ আরও</button>
+                  <button className={cx5Btn} onClick={() => setShowMoreMenu((v) => !v)} aria-label={t("inbox.inbZMoreActions")}>{t("inbox.inbZMoreBtn")}</button>
                   {showMoreMenu ? (
                     <span className={`${cx5Menu} !w-72`}>
                       {!isActivelySnoozed(active.snoozedUntil) ? (<><span className="px-2 pt-1 text-[11px] font-bold text-slate-400">😴 Later</span>{renderSnoozeControls()}</>) : null}
-                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">⏱️ Timer</span>
+                      <span className="px-2 pt-1.5 text-[11px] font-bold text-slate-400">{t("inbox.timerWord")}</span>
                       {renderTimerControls()}
                     </span>
                   ) : null}
@@ -3011,11 +3003,11 @@ export default function InboxPage() {
                   disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
-                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(t("inbox.trackingSent", { code: r.trackingCode })); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}
                 >
-                  <span>🚚</span> <span>ট্র্যাকিং</span>
+                  <span>🚚</span> <span>{t("inbox.trackingWord")}</span>
                 </button>
               </div>
 
@@ -3025,7 +3017,7 @@ export default function InboxPage() {
                 <div className={`shrink-0 rounded-xl p-2.5 text-xs ring-1 ${macroResult.success ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-red-50 text-red-800 ring-red-200"}`}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-bold">{formatMacroRunResult(macroResult)}</span>
-                    <button className="shrink-0 font-semibold hover:underline" onClick={() => setMacroResult(null)}>বন্ধ</button>
+                    <button className="shrink-0 font-semibold hover:underline" onClick={() => setMacroResult(null)}>{t("inbox.stClosedPlain")}</button>
                   </div>
                   <ul className="mt-1 space-y-0.5">
                     {macroRunStepLines(macroResult).map((line, i) => <li key={i}>{line}</li>)}
@@ -3034,8 +3026,8 @@ export default function InboxPage() {
               ) : null}
 
               <div className="flex shrink-0 flex-wrap gap-1.5 lg:hidden">
-                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>👤 আমাকে অ্যাসাইন</button>
-                {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>📞 কল করুন</a> : null}
+                <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium disabled:opacity-50" disabled={!myId} onClick={() => patchConversation({ assignedUserId: myId })}>{t("inbox.assignToMe")}</button>
+                {active.contactPhone ? <a className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700" href={`tel:${active.contactPhone}`}>{t("inbox.callBtn")}</a> : null}
                 <button className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium" onClick={() => setPaletteOpen(true)}>⌘K</button>
               </div>
 
@@ -3046,11 +3038,11 @@ export default function InboxPage() {
                 <button className="rounded-lg bg-sky-50 px-2.5 py-1.5 font-medium text-sky-700 ring-1 ring-inset ring-sky-200/70 transition hover:bg-sky-100" disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return; setBusy("track");
-                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(`Tracking পাঠানো হয়েছে: ${r.trackingCode}`); await refreshActive(); }
+                    try { const r = await apiFetch<any>(`/organizations/${orgId}/inbox/conversations/${active.id}/share-tracking`, { method: "POST" }); setNotice(t("inbox.trackingSent", { code: r.trackingCode })); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}
                 >
-                  <span>🚚</span> <span>ট্র্যাকিং</span>
+                  <span>🚚</span> <span>{t("inbox.trackingWord")}</span>
                 </button>
 
                 <button
@@ -3059,21 +3051,21 @@ export default function InboxPage() {
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
                     const order = context?.orders?.[0];
-                    if (!order) { setError("কুরিয়ার বুকিংয়ের জন্য আগে একটি অর্ডার থাকতে হবে"); return; }
+                    if (!order) { setError(t("inbox.courierNeedOrder")); return; }
                     setBusy("courier");
                     try {
                       const conns = await apiFetch<any[]>(`/organizations/${orgId}/courier/connections`).catch(() => []);
                       const provider = (conns as any[])?.find((c: any) => c.status === "CONNECTED")?.provider;
-                      if (!provider) { setError("কোনো কুরিয়ার কানেক্ট করা নেই — Orders পেজ থেকে আগে কানেক্ট করুন"); return; }
-                      const address = (order as any).address || window.prompt("ডেলিভারি ঠিকানা দিন:") || "";
+                      if (!provider) { setError(t("inbox.courierNoneConnected")); return; }
+                      const address = (order as any).address || window.prompt(t("inbox.deliveryAddressPrompt")) || "";
                       if (!address) return;
                       const r = await apiFetch<any>(`/organizations/${orgId}/courier/shipments`, { method: "POST", body: JSON.stringify({ orderId: order.id, provider, recipientAddress: address }) });
-                      setNotice(`কুরিয়ার বুক হয়েছে (${provider}) — Tracking: ${r.trackingCode ?? ""}`);
+                      setNotice(t("inbox.courierBooked", { provider, code: r.trackingCode ?? "" }));
                       await refreshActive();
                     } catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}
                 >
-                  <span>📦</span> <span>কুরিয়ার বুকিং</span>
+                  <span>📦</span> <span>{t("inbox.courierBooking")}</span>
                 </button>
 
                 <button
@@ -3081,13 +3073,13 @@ export default function InboxPage() {
                   disabled={busy !== ""}
                   onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
-                    const reason = window.prompt("রিফান্ড অনুরোধের কারণ (বিলিং মালিক দেখবেন):") ?? "";
+                    const reason = window.prompt(t("inbox.refundReasonPrompt")) ?? "";
                     setBusy("refund");
-                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice("রিফান্ড অনুরোধ বিলিং মালিকের কাছে পাঠানো হয়েছে (নোটে সংরক্ষিত)"); await refreshActive(); }
+                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/refund-request`, { method: "POST", body: JSON.stringify({ reason }) }); setNotice(t("inbox.refundSent")); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); } finally { setBusy(""); }
                   }}
                 >
-                  <span>💸</span> <span>রিফান্ড</span>
+                  <span>💸</span> <span>{t("inbox.refundWord")}</span>
                 </button>
 
                 <button
@@ -3099,10 +3091,10 @@ export default function InboxPage() {
                       const token = localStorage.getItem("accessToken");
                       const base = (window as any).location.origin;
                       const res = await fetch(`${base}/backend/organizations/${orgId}/inbox/conversations/${active.id}/export?format=csv`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-                      if (!res.ok) throw new Error("Export ব্যর্থ");
+                      if (!res.ok) throw new Error(t("inbox.exportFailed"));
                       const blob = await res.blob();
                       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `conversation-${active.id}.csv`; a.click(); URL.revokeObjectURL(a.href);
-                    } catch (e) { setError(e instanceof Error ? e.message : "Export ব্যর্থ"); }
+                    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.exportFailed")); }
                   }}
                 >
                   <span>⬇️</span> <span>CSV</span>
@@ -3111,7 +3103,7 @@ export default function InboxPage() {
                 <button
                   className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 font-semibold text-red-600 hover:bg-red-100 transition disabled:opacity-50"
                   disabled={busy !== ""}
-                  onClick={() => { if (window.confirm("এই কথোপকথন Spam হিসেবে চিহ্নিত করে বন্ধ করবেন?")) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}
+                  onClick={() => { if (window.confirm(t("inbox.spamConfirm"))) void patchConversation({ spamFlag: true, status: "closed", outcome: "spam" }); }}
                 >
                   <span>🚫</span> <span>Spam</span>
                 </button>
@@ -3122,25 +3114,23 @@ export default function InboxPage() {
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 shadow-xs"
                       value={closeOutcome}
                       onChange={(e) => setCloseOutcome(e.target.value)}
-                      title="বন্ধ করার ফলাফল (Outcome)"
+                      title={t("inbox.closeWithOutcome")}
                     >
-                      <option value="sale">🛒 Sale হয়েছে</option>
-                      <option value="no_sale_price">💰 No-sale: দাম</option>
-                      <option value="no_sale_stock">📦 No-sale: স্টক নেই</option>
-                      <option value="no_sale_undecided">🤔 No-sale: সিদ্ধান্ত নেয়নি</option>
-                      <option value="support_resolved">🛠️ Support সমাধান</option>
+                      <option value="sale">{t("inbox.outcomeSale")}</option>
+                      <option value="no_sale_price">{t("inbox.outcomeNoSalePrice")}</option>
+                      <option value="no_sale_stock">{t("inbox.outcomeNoSaleStock")}</option>
+                      <option value="no_sale_undecided">{t("inbox.outcomeNoSaleUndecided")}</option>
+                      <option value="support_resolved">{t("inbox.outcomeSupport")}</option>
                       <option value="spam">🚫 Spam</option>
-                      <option value="other">• অন্যান্য</option>
+                      <option value="other">{t("inbox.outcomeOther")}</option>
                     </select>
                     <button
                       className="rounded-lg bg-slate-900 px-3 py-1 font-semibold text-white shadow-xs hover:bg-slate-800 transition"
                       onClick={() => patchConversation({ status: "closed", outcome: closeOutcome })}
-                    >
-                      ✓ ক্লোজ
-                    </button>
+                    >{t("inbox.closeCheck")}</button>
                   </div>
                 ) : active.outcome ? (
-                  <span className="ml-auto font-medium text-slate-500">ফলাফল: {active.outcome}</span>
+                  <span className="ml-auto font-medium text-slate-500">{t("inbox.outcomeLabel")} {active.outcome}</span>
                 ) : null}
               </div>
 
@@ -3156,26 +3146,26 @@ export default function InboxPage() {
                   <div ref={threadScrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
               {active.autoReplyPaused ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 ring-1 ring-red-100">
-                  <span>⏸️ Autopilot এই কথোপকথনে থেমে আছে (Escalation) — এখন মানুষ উত্তর দেবে।</span>
-                  <button className="rounded-lg bg-white px-2 py-1 font-semibold text-red-600 ring-1 ring-red-200" onClick={() => patchConversation({ autoReplyPaused: false })}>▶️ আবার চালু করুন</button>
+                  <span>{t("inbox.autopilotPaused")}</span>
+                  <button className="rounded-lg bg-white px-2 py-1 font-semibold text-red-600 ring-1 ring-red-200" onClick={() => patchConversation({ autoReplyPaused: false })}>{t("inbox.resumeBtn")}</button>
                 </div>
               ) : null}
 
               {active.channel === "whatsapp" ? (
                 active.whatsappWindow?.open ? (
-                  <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">WhatsApp Window খোলা আছে · আরও {windowLeft(active.whatsappWindow)} ফ্রি-ফর্ম বার্তা পাঠানো যাবে।</p>
+                  <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{t("inbox.inbZWaWindowOpen", { left: windowLeft(active.whatsappWindow) })}</p>
                 ) : (
                   <div className="space-y-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                    <p className="font-semibold">WhatsApp ২৪ ঘণ্টার Window বন্ধ। ফ্রি-ফর্ম বার্তা যাবে না, শুধু অনুমোদিত Template পাঠানো যাবে।</p>
+                    <p className="font-semibold">{t("inbox.waWindowClosed")}</p>
                     {templates.length ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <select className="input !w-auto flex-1 bg-white" value={tplId} onChange={(e) => setTplId(e.target.value)}>
                           {templates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.language})</option>)}
                         </select>
-                        <input className="input !w-auto flex-1 bg-white" placeholder="ভেরিয়েবল, কমা দিয়ে ({{1}}, {{2}}...)" value={tplVars} onChange={(e) => setTplVars(e.target.value)} />
-                        <button className="btn-warning btn-sm" disabled={busy !== ""} onClick={sendTemplate}>{busy === "template" ? "পাঠাচ্ছি..." : "Template পাঠান"}</button>
+                        <input className="input !w-auto flex-1 bg-white" placeholder={t("inbox.inbZTplVarsPlaceholder")} value={tplVars} onChange={(e) => setTplVars(e.target.value)} />
+                        <button className="btn-warning btn-sm" disabled={busy !== ""} onClick={sendTemplate}>{busy === "template" ? t("inbox.sendingDots") : t("inbox.templateSendBtn")}</button>
                       </div>
-                    ) : <p>কোনো Template রেজিস্ট্রি করা নেই। নিচের "WhatsApp Template রেজিস্ট্রি" অংশে Meta-অনুমোদিত Template যোগ করুন।</p>}
+                    ) : <p>{t("inbox.noTemplatesReg")}</p>}
                   </div>
                 )
               ) : null}
@@ -3190,7 +3180,7 @@ export default function InboxPage() {
                 if (!merged.length) return null;
                 return (
                   <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 ring-1 ring-amber-100">
-                    ⚠️ {merged.map((o) => o.typing ? `${o.name} উত্তর লিখছেন ✍️` : `${o.name} এই কথোপকথনটি দেখছেন 👁`).join(" · ")} — ডুপ্লিকেট উত্তর এড়াতে সমন্বয় করুন।
+                    ⚠️ {merged.map((o) => o.typing ? t("inbox.inbZTypingNow", { name: o.name }) : t("inbox.inbZViewingNow", { name: o.name })).join(" · ")}{t("inbox.inbZPresenceSuffix")}
                   </p>
                 );
               })()}
@@ -3199,7 +3189,7 @@ export default function InboxPage() {
                 <div className="rounded-xl bg-amber-50 px-2.5 py-1.5 ring-1 ring-amber-200">
                   <div className="text-[10px] font-bold text-amber-700">📌 Pinned ({pinnedMessages.length})</div>
                   {pinnedMessages.map((p) => (
-                    <button key={p.id} type="button" className="block w-full truncate text-left text-[11px] text-amber-800 hover:underline" title="এই মেসেজে যান" onClick={() => jumpToMessage(p.id)}>{p.snippet}</button>
+                    <button key={p.id} type="button" className="block w-full truncate text-left text-[11px] text-amber-800 hover:underline" title={t("inbox.goToMessage")} onClick={() => jumpToMessage(p.id)}>{p.snippet}</button>
                   ))}
                 </div>
               ) : null}
@@ -3211,7 +3201,7 @@ export default function InboxPage() {
                     <div className="flex items-center gap-3 py-2">
                       <div className="h-px flex-1 bg-slate-200" />
                       <span className="rounded-full bg-white px-3 py-0.5 text-[11px] font-semibold text-slate-400 shadow-xs ring-1 ring-slate-200/60">
-                        {dayLabel(item.at)}
+                        {dayLabel(item.at, locale)}
                       </span>
                       <div className="h-px flex-1 bg-slate-200" />
                     </div>
@@ -3226,10 +3216,10 @@ export default function InboxPage() {
                           <div className="w-full max-w-[88%] rounded-2xl border border-amber-200/90 bg-gradient-to-br from-amber-50 to-amber-100/60 p-3 shadow-xs">
                             <div className="flex items-center justify-between text-[11px]">
                               <span className="flex items-center gap-1 font-bold text-amber-800">
-                                <span>🔒</span> <span>টিম প্রাইভেট নোট (গ্রাহক দেখবে না)</span>
+                                <span>🔒</span> <span>{t("inbox.teamPrivateNote")}</span>
                               </span>
                               <span className="text-[10px] text-amber-600/80 font-medium">
-                                {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {fmtTime(locale, n.createdAt)}
                               </span>
                             </div>
                             <div className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800 font-normal">
@@ -3255,35 +3245,35 @@ export default function InboxPage() {
                       {isIncoming ? (<div className="mb-1 shrink-0"><ContactAvatar name={active.contactName ?? active.contactPhone} channel={active.channel} size="sm" /></div>) : null}
                     <div className={`max-w-[80%] ${m.direction === "in" ? "inbox-msg-in" : m.status === "failed" ? "inbox-msg-failed" : "inbox-msg-out"}${m.status === "sending" ? " opacity-70" : ""}${highlightMsgId === m.id ? " ring-2 ring-amber-400" : ""}`}>
                       {m.quote ? (
-                        <button type="button" className="mb-1 block w-full rounded border-l-4 border-indigo-300 bg-white/60 px-1.5 py-1 text-left text-[11px] text-slate-500" title="আসল মেসেজে যান" onClick={() => jumpToMessage(m.quote!.id)}>
-                          {m.quote.unavailable ? "↩️ quote করা মেসেজটি পাওয়া যাচ্ছে না" : <>↩️ {m.quote.direction === "in" ? "গ্রাহক" : "আপনি"}: {m.quote.snippet}</>}
+                        <button type="button" className="mb-1 block w-full rounded border-l-4 border-indigo-300 bg-white/60 px-1.5 py-1 text-left text-[11px] text-slate-500" title={t("inbox.goToOriginal")} onClick={() => jumpToMessage(m.quote!.id)}>
+                          {m.quote.unavailable ? t("inbox.quoteNotFound") : <>↩️ {m.quote.direction === "in" ? t("inbox.customerFallback") : t("inbox.quoteYou")}: {m.quote.snippet}</>}
                         </button>
                       ) : null}
                       {(m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type !== "text" ? <div className="mb-1"><MediaView convId={active.id} message={m} /></div> : null}
                       {m.content ? <div className="whitespace-pre-wrap">{m.type === "template" ? `🧩 ${m.content}` : m.content}</div> : (m.mediaId || m.mediaUrl || m.mediaStorageKey) ? null : <div>[{m.type}]</div>}
                       <div className={`mt-0.5 text-[10px] ${m.direction === "in" ? "text-slate-400" : "opacity-75"}`}>
-                        {new Date(m.createdAt).toLocaleTimeString()}{(() => { const t = m.direction === "out" ? deliveryTick(active.channel, m) : null; return t?.blue ? <span className="font-bold text-sky-500">{` · ${t.glyph} ${t.label}`}</span> : statusIcon(m); })()}{m.sentByAiDraft ? " · AI Draft থেকে" : ""}{m.autoReply ? " · 🤖 অটো-রিপ্লাই" : ""}{!m.autoReply && !m.sentByAiDraft && m.sentWithAiAssist ? " · AI-সহায়তায়" : ""}
-                        {m.direction === "in" && m.intent && m.intent !== "other" ? <span className="ml-1 rounded bg-indigo-50 px-1 py-px font-semibold text-indigo-600" title={`আস্থা ${m.intentConfidence ?? 0}%`}>{m.intent} · {m.intentConfidence}%</span> : null}
-                        {m.direction === "in" && m.content ? <button className="ml-1 font-semibold text-indigo-500 hover:underline" onClick={() => translateMsg(m)}>অনুবাদ</button> : null}
+                        {fmtDateTime(locale, m.createdAt)}{(() => { const t = m.direction === "out" ? deliveryTick(active.channel, m, locale) : null; return t?.blue ? <span className="font-bold text-sky-500">{` · ${t.glyph} ${t.label}`}</span> : statusIcon(m); })()}{m.sentByAiDraft ? t("inbox.inbZFromAiDraft") : ""}{m.autoReply ? t("inbox.inbZAutoReplyMark") : ""}{!m.autoReply && !m.sentByAiDraft && m.sentWithAiAssist ? t("inbox.inbZAiAssistedMark") : ""}
+                        {m.direction === "in" && m.intent && m.intent !== "other" ? <span className="ml-1 rounded bg-indigo-50 px-1 py-px font-semibold text-indigo-600" title={t("inbox.inbZConfidenceTitle", { pct: fmtNumber(locale, m.intentConfidence ?? 0) })}>{m.intent} · {fmtNumber(locale, m.intentConfidence ?? 0)}%</span> : null}
+                        {m.direction === "in" && m.content ? <button className="ml-1 font-semibold text-indigo-500 hover:underline" onClick={() => translateMsg(m)}>{t("inbox.translateBtn")}</button> : null}
                         {m.error ? <div className="text-red-600">{m.error}</div> : null}
-                        {m.status === "failed" && m.id.startsWith("local-") ? <button className="ml-1 font-bold text-red-600 underline hover:text-red-700" onClick={() => void retryLocalSend(m.id)}>↻ আবার পাঠান</button> : null}
+                        {m.status === "failed" && m.id.startsWith("local-") ? <button className="ml-1 font-bold text-red-600 underline hover:text-red-700" onClick={() => void retryLocalSend(m.id)}>{t("inbox.retrySend")}</button> : null}
                       </div>
                       {(() => { const rs = parseMessageReactions(m.reactions); return rs.length ? (
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {rs.map((r, i) => <span key={i} className="rounded-full bg-white/80 px-1.5 py-px text-[11px] ring-1 ring-slate-200" title={r.actor === "page" ? "আপনাদের reaction" : "গ্রাহকের reaction"}>{r.emoji}</span>)}
+                          {rs.map((r, i) => <span key={i} className="rounded-full bg-white/80 px-1.5 py-px text-[11px] ring-1 ring-slate-200" title={r.actor === "page" ? t("inbox.yourReaction") : t("inbox.customerReaction")}>{r.emoji}</span>)}
                         </div>
                       ) : null; })()}
                       {!m.id.startsWith("local-") ? (
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-400">
-                          <button type="button" className="hover:text-indigo-600" title="এই মেসেজ quote করে উত্তর দিন" onClick={() => { setQuoteTarget(m); setComposerMode("reply"); replyRef.current?.focus(); }}>↩️ Quote</button>
-                          <button type="button" className="hover:text-indigo-600" title={m.pinnedAt ? "Pin তোলা" : "Pin করুন"} onClick={() => void togglePin(m)}>{m.pinnedAt ? "📌 Pinned · তোলা" : "📌 Pin"}</button>
+                          <button type="button" className="hover:text-indigo-600" title={t("inbox.quoteReply")} onClick={() => { setQuoteTarget(m); setComposerMode("reply"); replyRef.current?.focus(); }}>↩️ Quote</button>
+                          <button type="button" className="hover:text-indigo-600" title={m.pinnedAt ? t("inbox.unpin") : t("inbox.pin")} onClick={() => void togglePin(m)}>{m.pinnedAt ? t("inbox.pinnedRemove") : t("inbox.pinnedWord")}</button>
                           {canSendReaction(active.channel) ? (
                             <span className="relative">
-                              <button type="button" className="hover:text-indigo-600" title="Reaction পাঠান (Messenger/Instagram)" onClick={() => setReactionFor(reactionFor === m.id ? null : m.id)}>😊 React</button>
+                              <button type="button" className="hover:text-indigo-600" title={t("inbox.reactionSend")} onClick={() => setReactionFor(reactionFor === m.id ? null : m.id)}>😊 React</button>
                               {reactionFor === m.id ? (
                                 <span className="absolute bottom-5 left-0 z-20 flex gap-0.5 rounded-full bg-white px-1.5 py-1 shadow ring-1 ring-slate-200">
                                   {AGENT_REACTIONS.map((e) => <button key={e} type="button" className="text-sm hover:scale-125" onClick={() => void sendReaction(m, e)}>{e}</button>)}
-                                  {parseMessageReactions(m.reactions).some((r) => r.actor === "page") ? <button type="button" className="text-[10px] text-red-500" onClick={() => void sendReaction(m, null)}>তোলা</button> : null}
+                                  {parseMessageReactions(m.reactions).some((r) => r.actor === "page") ? <button type="button" className="text-[10px] text-red-500" onClick={() => void sendReaction(m, null)}>{t("inbox.removeWord")}</button> : null}
                                 </span>
                               ) : null}
                             </span>
@@ -3292,8 +3282,8 @@ export default function InboxPage() {
                       ) : null}
                       {translations[m.id] ? <div className="mt-1 rounded bg-white/70 px-1.5 py-1 text-[11px] italic text-slate-600">🌐 {translations[m.id]}</div> : null}
                       {m.transcription ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-600">🎙️ {m.transcription} <span className="text-slate-400">({m.transcriptionProvider})</span></div> : null}
-                      {!m.transcription && m.transcriptionStatus === "failed" ? <div className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[11px] text-amber-700">🎙️ ভয়েস মেসেজ — ট্রান্সক্রিপ্ট পাওয়া যায়নি</div> : null}
-                      {!m.transcription && m.transcriptionStatus === "unavailable" ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-500">🎙️ ভয়েস মেসেজ — ট্রান্সক্রিপ্ট উপলব্ধ নয়</div> : null}
+                      {!m.transcription && m.transcriptionStatus === "failed" ? <div className="mt-1 rounded bg-amber-50 px-1.5 py-1 text-[11px] text-amber-700">{t("inbox.voiceNoTranscript")}</div> : null}
+                      {!m.transcription && m.transcriptionStatus === "unavailable" ? <div className="mt-1 rounded bg-slate-100 px-1.5 py-1 text-[11px] text-slate-500">{t("inbox.voiceTranscriptNA")}</div> : null}
                       {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "audio" && !m.transcription ? (
                         <button className="mt-1 text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={async () => {
                           const orgId = getOrganizationId(); if (!orgId || !active) return;
@@ -3301,13 +3291,13 @@ export default function InboxPage() {
                           try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/transcribe`, { method: "POST" }); await refreshActive(); }
                           catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
                           finally { setBusy(""); }
-                        }}>🎙️ ভয়েস লেখায় রূপান্তর করুন</button>
+                        }}>{t("inbox.voiceToText")}</button>
                       ) : null}
                       {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (() => {
                         const v = verifications.find((x) => x.messageId === m.id);
                         return v ? (
                           <div className={`mt-1 rounded px-1.5 py-1 text-[11px] font-medium ${v.verdict === "matched" ? "bg-green-100 text-green-800" : v.verdict === "amount_mismatch" || v.verdict === "duplicate_trxid" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                            💳 যাচাই: {v.verdict}{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ${money(v.amountMinor)}` : ""}{v.expectedAmountMinor ? ` / প্রত্যাশিত ${money(v.expectedAmountMinor)}` : ""}{v.flags?.length ? ` · ⚠️ ${v.flags.join(", ")}` : ""}
+                            💳 {t("inbox.verifyWord")} {v.verdict}{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ${money(v.amountMinor, "BDT", locale)}` : ""}{v.expectedAmountMinor ? t("inbox.inbZExpectedPart", { amount: money(v.expectedAmountMinor, "BDT", locale) }) : ""}{v.flags?.length ? ` · ⚠️ ${v.flags.join(", ")}` : ""}
                           </div>
                         ) : (
                           <button className="mt-1 text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={async () => {
@@ -3316,21 +3306,21 @@ export default function InboxPage() {
                             try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/messages/${m.id}/verify-payment`, { method: "POST" }); await refreshActive(); }
                             catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
                             finally { setBusy(""); }
-                          }}>💳 পেমেন্ট স্ক্রিনশট যাচাই করুন</button>
+                          }}>{t("inbox.verifyPayment")}</button>
                         );
                       })() : null}
                                               {m.direction === "in" && (m.mediaId || m.mediaUrl || m.mediaStorageKey) && m.type === "image" ? (
                         <div className="mt-1">
                           <button className="text-[11px] font-semibold text-indigo-600 hover:underline" disabled={busy !== "" || productMatch?.loading} onClick={() => void findProductsForMessage(m)}>
-                            {productMatch?.messageId === m.id && productMatch.loading ? "🔍 ছবি পড়া হচ্ছে..." : "🔍 ছবি দিয়ে প্রোডাক্ট খুঁজুন"}
+                            {productMatch?.messageId === m.id && productMatch.loading ? t("inbox.readingImage") : t("inbox.findProductByImage")}
                           </button>
                           {productMatch?.messageId === m.id && !productMatch.loading ? (
                             <div className="mt-1 space-y-1.5 rounded bg-white/80 px-2 py-2 text-[11px] text-slate-700">
-                              <p className="font-medium text-slate-500">{PRODUCT_MATCH_HONESTY}</p>
+                              <p className="font-medium text-slate-500">{productMatchHonesty(locale)}</p>
                               {productMatch.available === false ? (
-                                <p className="text-amber-700">{productMatch.message ?? "AI ছবি পড়া এখন সেটআপ করা নেই"}</p>
+                                <p className="text-amber-700">{productMatch.message ?? t("inbox.visionUnavailable")}</p>
                               ) : (productMatch.candidates ?? []).length === 0 ? (
-                                <p>এই ছবির বর্ণনার সাথে catalog-এ কোনো প্রোডাক্ট মেলেনি। প্রোডাক্ট তালিকা (🛍️) থেকে হাতে বেছে নিন।</p>
+                                <p>{t("inbox.noProductMatch")}</p>
                               ) : (
                                 (productMatch.candidates ?? []).map((c) => (
                                   <div key={c.productId} className="flex items-center gap-2 rounded bg-slate-50 px-1.5 py-1">
@@ -3340,11 +3330,11 @@ export default function InboxPage() {
                                       <span className="block">{c.priceText}</span>
                                       <span className="block text-slate-400">{c.reasons.join(" · ")}</span>
                                     </span>
-                                    <button className="shrink-0 rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white hover:bg-indigo-500" title="কম্পোজারে খসড়া বসান — পাঠানো হবে না, আপনি দেখে তবেই পাঠাবেন" onClick={() => insertProductMatchDraft(c)}>কম্পোজারে বসান</button>
+                                    <button className="shrink-0 rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white hover:bg-indigo-500" title={t("inbox.draftInComposer")} onClick={() => insertProductMatchDraft(c)}>{t("inbox.putInComposer")}</button>
                                   </div>
                                 ))
                               )}
-                              <button className="text-slate-400 hover:underline" onClick={() => setProductMatch(null)}>বন্ধ করুন</button>
+                              <button className="text-slate-400 hover:underline" onClick={() => setProductMatch(null)}>{t("inbox.closeBtn")}</button>
                             </div>
                           ) : null}
                         </div>
@@ -3354,16 +3344,16 @@ export default function InboxPage() {
                     </React.Fragment>
                   );
                 })}
-                {timeline.length === 0 ? <p className="text-center py-6 text-sm text-slate-400 font-medium">কোনো বার্তা নেই</p> : null}
+                {timeline.length === 0 ? <p className="text-center py-6 text-sm text-slate-400 font-medium">{t("inbox.noMessages")}</p> : null}
               </div>
 
               {drafts.map((d) => (
                 <div key={d.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-amber-700">AI Draft {d.provider === "dev-template" ? "(Dev Template)" : `(${d.provider})`} · পাঠানো হয়নি, আপনার অনুমোদন দরকার</div>
+                    <div className="text-xs font-semibold text-amber-700">AI Draft {d.provider === "dev-template" ? "(Dev Template)" : `(${d.provider})`}{t("inbox.inbZDraftNotSent")}</div>
                     <div className="flex gap-2">
-                      <button className="rounded bg-amber-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sendDraft(d)}>অনুমোদন ও পাঠান</button>
-                      <button className="text-xs text-slate-500" onClick={() => dismissDraft(d.id)}>বাদ দিন</button>
+                      <button className="rounded bg-amber-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" disabled={busy !== ""} onClick={() => sendDraft(d)}>{t("inbox.approveSend")}</button>
+                      <button className="text-xs text-slate-500" onClick={() => dismissDraft(d.id)}>{t("inbox.dismiss")}</button>
                     </div>
                   </div>
                   <p className="mt-1 whitespace-pre-wrap text-sm">{d.content}</p>
@@ -3388,7 +3378,7 @@ export default function InboxPage() {
                       }`}
                       onClick={() => setComposerMode("reply")}
                     >
-                      <span>💬</span> <span>গ্রাহককে উত্তর</span>
+                      <span>💬</span> <span>{t("inbox.replyToCustomer")}</span>
                     </button>
                     <button
                       type="button"
@@ -3405,28 +3395,28 @@ export default function InboxPage() {
                         ghostForRef.current = "";
                       }}
                     >
-                      <span>🔒</span> <span>টিম নোট (Whisper)</span>
+                      <span>🔒</span> <span>{t("inbox.teamNoteWhisper")}</span>
                     </button>
                   </div>
                   {composerMode === "note" ? (
-                    <span className="text-[11px] font-semibold text-amber-700">🔒 গোপনীয় — গ্রাহক কখনোই দেখবে না</span>
+                    <span className="text-[11px] font-semibold text-amber-700">{t("inbox.confidential")}</span>
                   ) : active.whatsappWindow?.open ? (
-                    <span className="text-[11px] text-emerald-600 font-medium">🟢 উইন্ডো খোলা ({windowLeft(active.whatsappWindow)})</span>
+                    <span className="text-[11px] text-emerald-600 font-medium">{t("inbox.inbZWindowOpenChip", { left: windowLeft(active.whatsappWindow) })}</span>
                   ) : null}
                 </div>
                 {composerMode === "reply" && quoteTarget ? (
                   <div className="mb-2 flex items-start gap-2 rounded-lg border-l-4 border-indigo-300 bg-indigo-50 px-2 py-1.5 text-xs text-slate-600">
                     <span className="min-w-0 flex-1">
-                      <span className="block font-semibold text-indigo-700">↩️ {quoteTarget.direction === "in" ? "গ্রাহকের" : "আপনার"} মেসেজে quote করে উত্তর</span>
+                      <span className="block font-semibold text-indigo-700">↩️ {quoteTarget.direction === "in" ? t("inbox.quoteCustomerGen") : t("inbox.quoteYourGen")}{t("inbox.inbZQuoteReplySuffix")}</span>
                       <span className="block truncate">{String(quoteTarget.content ?? `[${quoteTarget.type}]`).slice(0, 140)}</span>
-                      {active && !quoteReachesCustomer(active.channel) ? <span className="block text-amber-600">এই চ্যানেলে quote শুধু আমাদের থ্রেডেই দেখা যাবে — গ্রাহকের কাছে quote হিসেবে যাবে না।</span> : null}
+                      {active && !quoteReachesCustomer(active.channel) ? <span className="block text-amber-600">{t("inbox.quoteChannelNote")}</span> : null}
                     </span>
-                    <button type="button" className="shrink-0 font-bold text-slate-400 hover:text-slate-600" title="Quote বাদ দিন" onClick={() => setQuoteTarget(null)}>✕</button>
+                    <button type="button" className="shrink-0 font-bold text-slate-400 hover:text-slate-600" title={t("inbox.dropQuote")} onClick={() => setQuoteTarget(null)}>✕</button>
                   </div>
                 ) : null}
                 {composerMode === "reply" && showQuick && quickMatches.length ? (
                   <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-52 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                    <div className="px-2 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">⚡ কুইক রিপ্লাই মিল</div>
+                    <div className="px-2 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">{t("inbox.quickReplyMatch")}</div>
                     {quickMatches.map((q) => (
                       <button key={q.id} className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-brand-50 transition" onClick={() => { setReply(renderQuick(q.content, active)); setShowQuick(false); focusComposer(); }}>
                         <span className="font-semibold text-slate-800">{q.title}</span>
@@ -3444,7 +3434,7 @@ export default function InboxPage() {
 
                 {composerMode === "note" && members.length > 1 ? (
                   <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-medium text-amber-700">টিম মেম্বার Mention:</span>
+                    <span className="text-[11px] font-medium text-amber-700">{t("inbox.mentionLabel")}</span>
                     {members.filter((mb) => mb.user.id !== myId).slice(0, 6).map((mb) => (
                       <button key={mb.user.id} type="button" className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-amber-200 hover:bg-amber-100 transition" onClick={() => { setReply((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}@${mb.user.name ?? mb.user.email} `); focusComposer(); }}>
                         @{mb.user.name ?? mb.user.email}
@@ -3459,7 +3449,7 @@ export default function InboxPage() {
                         <span className="invisible">{reply}</span><span className="text-slate-400">{ghost}</span>
                       </div>
                     ) : null}
-                    <textarea id="inbox-reply" ref={replyRef} rows={2} className={`input relative z-10 max-h-36 w-full flex-1 resize-y ${ghostVisible ? "bg-transparent" : ""} ${composerMode === "note" ? "border-amber-300 bg-amber-50 focus:border-amber-400 focus:ring-amber-400/20" : ""}`} placeholder={composerMode === "note" ? "টিমের জন্য প্রাইভেট নোট লিখুন — গ্রাহক কখনোই দেখবে না…" : "উত্তর লিখুন... ( / চাপলে Quick Reply · Enter = পাঠান, Shift+Enter = নতুন লাইন )"} value={reply}
+                    <textarea id="inbox-reply" ref={replyRef} rows={2} className={`input relative z-10 max-h-36 w-full flex-1 resize-y ${ghostVisible ? "bg-transparent" : ""} ${composerMode === "note" ? "border-amber-300 bg-amber-50 focus:border-amber-400 focus:ring-amber-400/20" : ""}`} placeholder={composerMode === "note" ? t("inbox.notePlaceholder") : t("inbox.replyPlaceholder")} value={reply}
                       onChange={(e) => { const v = e.target.value; setReply(v); setGhost(""); ghostForRef.current = ""; setPrevReply(null); setUsedQuickReplyId(null); setShowQuick(composerMode === "reply" && v.startsWith("/")); setIAmTyping(composerMode === "reply" && v.length > 0); }}
                       onBlur={() => setIAmTyping(false)}
                       onFocus={() => { if (composerMode === "reply" && reply.startsWith("/")) setShowQuick(true); }}
@@ -3474,55 +3464,53 @@ export default function InboxPage() {
                         if (e.key === "Escape") { setGhost(""); ghostForRef.current = ""; setShowQuick(false); setShowEmoji(false); setShowToneMenu(false); }
                       }} />
                   </div>
-                  <button className={`${composerMode === "note" ? "btn-warning" : "btn-primary"} disabled:opacity-50`} disabled={busy !== ""} onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}>{composerMode === "note" ? (busy === "note" ? "যোগ হচ্ছে..." : "নোট যোগ করুন") : busy === "send" ? "পাঠাচ্ছি..." : "পাঠান"}</button>
+                  <button className={`${composerMode === "note" ? "btn-warning" : "btn-primary"} disabled:opacity-50`} disabled={busy !== ""} onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}>{composerMode === "note" ? (busy === "note" ? t("inbox.inbZNoteAdding") : t("inbox.addNote")) : busy === "send" ? t("inbox.sendingDots") : t("inbox.sendBtn")}</button>
                 </div>
                 {composerMode === "note" ? (
-                  <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-amber-700" title="চালু থাকলে নোট সংরক্ষণের আগেই ফোন নম্বর, কার্ড-জাতীয় সংখ্যা ও TrxID মাস্ক হয়ে যাবে — আসল লেখা কোথাও থাকবে না। টাকার অঙ্ক ও অর্ডার নম্বর মাস্ক হয় না।">
-                    <input type="checkbox" checked={noteMask} onChange={(e) => setNoteMask(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" />
-                    🔒 সংবেদনশীল তথ্য মাস্ক করুন (ফোন / TrxID / কার্ড)
-                  </label>
+                  <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-[11px] text-amber-700" title={t("inbox.inbZMaskTitle")}>
+                    <input type="checkbox" checked={noteMask} onChange={(e) => setNoteMask(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" />{t("inbox.maskToggle")}</label>
                 ) : null}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="composer-group"><span className="composer-group-label">যোগ করুন</span>
-                  <button className="btn-secondary btn-sm" title="Quick Reply ( / চাপলেও আসে )" onClick={() => setShowQuick((s) => !s)}>⚡</button>
-                  <button className="btn-secondary btn-sm" title="ইমোজি" onClick={() => setShowEmoji((s) => !s)}>😀</button>
+                  <span className="composer-group"><span className="composer-group-label">{t("inbox.addWord")}</span>
+                  <button className="btn-secondary btn-sm" title={t("inbox.quickReplySlash")} onClick={() => setShowQuick((s) => !s)}>⚡</button>
+                  <button className="btn-secondary btn-sm" title={t("inbox.emojiWord")} onClick={() => setShowEmoji((s) => !s)}>😀</button>
                   {active.channel === "whatsapp" ? (
                     <>
-                      <button className="btn-secondary btn-sm font-bold" title="বোল্ড — *লেখা* (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("bold")}>B</button>
-                      <button className="btn-secondary btn-sm italic" title="ইটালিক — _লেখা_ (WhatsApp-এ রেন্ডার হয়)" onClick={() => applyFormat("italic")}>I</button>
-                      <button className="btn-secondary btn-sm" title="বুলেট তালিকা" onClick={() => applyFormat("list")}>• লিস্ট</button>
+                      <button className="btn-secondary btn-sm font-bold" title={t("inbox.boldHint")} onClick={() => applyFormat("bold")}>B</button>
+                      <button className="btn-secondary btn-sm italic" title={t("inbox.italicHint")} onClick={() => applyFormat("italic")}>I</button>
+                      <button className="btn-secondary btn-sm" title={t("inbox.bulletList")} onClick={() => applyFormat("list")}>{t("inbox.listWord")}</button>
                     </>
                   ) : null}
-                  <button className="btn-secondary btn-sm" title="পণ্য বেছে স্নিপেট বসান" onClick={() => setShowPicker((s) => !s)}>🛍️</button>
-                  <button className="btn-secondary btn-sm" title="URL দিয়ে ছবি পাঠান" onClick={() => setShowImage((s) => !s)}>🖼️</button>
+                  <button className="btn-secondary btn-sm" title={t("inbox.productSnippetPick")} onClick={() => setShowPicker((s) => !s)}>🛍️</button>
+                  <button className="btn-secondary btn-sm" title={t("inbox.imageByUrl")} onClick={() => setShowImage((s) => !s)}>🖼️</button>
                   </span><span className="composer-group composer-group-ai"><span className="composer-group-label">AI</span>
                   <button className="btn-ai btn-sm" disabled={busy !== ""} onClick={suggestDraft}>{busy === "draft" ? "..." : "AI Draft"}</button>
                   <span className="relative inline-flex">
-                    <button className="btn-ai btn-sm" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>✨ টোন বদলান</button>
+                    <button className="btn-ai btn-sm" disabled={!reply.trim() || busy !== ""} onClick={() => setShowToneMenu((s) => !s)}>{t("inbox.toneChange")}</button>
                     {showToneMenu ? (
                       <span className="absolute bottom-full left-0 z-20 mb-1 flex w-40 flex-col gap-1 rounded-xl border bg-white p-1.5 shadow-lg">
-                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("polite")}>মার্জিত</button>
-                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("professional")}>পেশাদার</button>
-                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("sales")}>সেলস-বান্ধব</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("polite")}>{t("inbox.tonePolite")}</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("professional")}>{t("inbox.toneProfessional")}</button>
+                        <button className="rounded-lg px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-100" disabled={busy !== ""} onClick={() => void applyTone("sales")}>{t("inbox.toneSales")}</button>
                       </span>
                     ) : null}
                   </span>
                   {prevReply !== null ? (
-                    <button className="btn-secondary btn-sm" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>↩ আগের লেখায় ফিরুন</button>
+                    <button className="btn-secondary btn-sm" onClick={() => { const prev = prevReply; setPrevReply(null); setReply(prev); setGhost(""); ghostForRef.current = ""; }}>{t("inbox.inbZBackToPrevDraft")}</button>
                   ) : null}
-                  {busy === "media" ? <span className="text-xs font-medium text-slate-500">ফাইল পাঠানো হচ্ছে…</span> : null}
-                  {busy === "tone" ? <span className="text-xs font-medium text-slate-500">টোন বদলানো হচ্ছে…</span> : null}
+                  {busy === "media" ? <span className="text-xs font-medium text-slate-500">{t("inbox.fileSending")}</span> : null}
+                  {busy === "tone" ? <span className="text-xs font-medium text-slate-500">{t("inbox.toneChanging")}</span> : null}
                   </span>
                 </div>
 
                 {ghostVisible ? (
                   <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-brand-600 bg-brand-50/60 px-2.5 py-1 rounded-lg">
                     <span>✨</span>
-                    <span>AI সাজেশন পাওয়া গেছে —</span>
+                    <span>{t("inbox.aiSuggestionFound")}</span>
                     <kbd className="rounded bg-white px-1.5 py-0.5 text-[10px] font-bold shadow-xs">Tab</kbd>
-                    <span>চাপলে গ্রহণ হবে ·</span>
+                    <span>{t("inbox.pressAccept")}</span>
                     <kbd className="rounded bg-white px-1.5 py-0.5 text-[10px] font-bold shadow-xs">Esc</kbd>
-                    <span>চাপলে বাতিল</span>
+                    <span>{t("inbox.pressDismiss")}</span>
                   </div>
                 ) : null}
 
@@ -3535,7 +3523,7 @@ export default function InboxPage() {
                         <button
                           type="button"
                           className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
-                          title="কুইক রিপ্লাই ( / চাপলেও আসে )"
+                          title={t("inbox.quickReplyTitle")}
                           onClick={() => { setShowQuick((s) => !s); setAttachMenuOpen(false); setAiMenuOpen(false); }}
                         >
                           ⚡
@@ -3543,7 +3531,7 @@ export default function InboxPage() {
                         <button
                           type="button"
                           className="rounded-xl p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
-                          title="ইমোজি বাছুন"
+                          title={t("inbox.pickEmoji")}
                           onClick={() => { setShowEmoji((s) => !s); setAttachMenuOpen(false); setAiMenuOpen(false); }}
                         >
                           😀
@@ -3565,10 +3553,10 @@ export default function InboxPage() {
                               setAiMenuOpen(false);
                               setFormatMenuOpen(false);
                             }}
-                            title="ফাইল, প্রোডাক্ট বা ছবি যুক্ত করুন"
+                            title={t("inbox.attachTitle")}
                           >
                             <span>📎</span>
-                            <span className="hidden sm:inline">সংযুক্তি</span>
+                            <span className="hidden sm:inline">{t("inbox.attachmentWord")}</span>
                             <span className="text-[10px]">▾</span>
                           </button>
 
@@ -3581,8 +3569,8 @@ export default function InboxPage() {
                               >
                                 <span className="text-base">📁</span>
                                 <div>
-                                  <div>ফাইল / ছবি আপলোড</div>
-                                  <div className="text-[10px] text-slate-400">সর্বোচ্চ 2MB</div>
+                                  <div>{t("inbox.fileUpload")}</div>
+                                  <div className="text-[10px] text-slate-400">{t("inbox.max2mb")}</div>
                                 </div>
                               </button>
                               <button
@@ -3592,8 +3580,8 @@ export default function InboxPage() {
                               >
                                 <span className="text-base">🛍️</span>
                                 <div>
-                                  <div>প্রোডাক্ট ক্যাটালগ</div>
-                                  <div className="text-[10px] text-slate-400">পণ্যের কার্ড পাঠান</div>
+                                  <div>{t("inbox.productCatalog")}</div>
+                                  <div className="text-[10px] text-slate-400">{t("inbox.sendProductCardHint")}</div>
                                 </div>
                               </button>
                               <button
@@ -3603,8 +3591,8 @@ export default function InboxPage() {
                               >
                                 <span className="text-base">🖼️</span>
                                 <div>
-                                  <div>ছবির লিঙ্ক (URL)</div>
-                                  <div className="text-[10px] text-slate-400">পাবলিক URL থেকে পাঠান</div>
+                                  <div>{t("inbox.imageLink")}</div>
+                                  <div className="text-[10px] text-slate-400">{t("inbox.sendFromPublicUrl")}</div>
                                 </div>
                               </button>
                             </div>
@@ -3620,7 +3608,7 @@ export default function InboxPage() {
                             <button
                               type="button"
                               className="rounded-xl px-2 py-1 text-xs font-serif font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
-                              title="টেক্সট ফরম্যাটিং"
+                              title={t("inbox.textFormatting")}
                               onClick={() => { setFormatMenuOpen((v) => !v); setAttachMenuOpen(false); setAiMenuOpen(false); }}
                             >
                               𝑩▾
@@ -3628,13 +3616,13 @@ export default function InboxPage() {
                             {formatMenuOpen && (
                               <div className="absolute bottom-full left-0 z-40 mb-2 flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl animate-in fade-in">
                                 <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold hover:bg-slate-100" onClick={() => { applyFormat("bold"); setFormatMenuOpen(false); }}>
-                                  <span>B</span> <span>বোল্ড (*লেখা*)</span>
+                                  <span>B</span> <span>{t("inbox.boldFmt")}</span>
                                 </button>
                                 <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs italic hover:bg-slate-100" onClick={() => { applyFormat("italic"); setFormatMenuOpen(false); }}>
-                                  <span>I</span> <span>ইটালিক (_লেখা_)</span>
+                                  <span>I</span> <span>{t("inbox.italicFmt")}</span>
                                 </button>
                                 <button type="button" className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs hover:bg-slate-100" onClick={() => { applyFormat("list"); setFormatMenuOpen(false); }}>
-                                  <span>•</span> <span>বুলেট তালিকা</span>
+                                  <span>•</span> <span>{t("inbox.bulletList")}</span>
                                 </button>
                               </div>
                             )}
@@ -3658,7 +3646,7 @@ export default function InboxPage() {
                           onClick={() => { setAiMenuOpen((v) => !v); setAttachMenuOpen(false); setFormatMenuOpen(false); }}
                         >
                           <span>✨</span>
-                          <span className="hidden sm:inline">{busy === "draft" ? "লিখছি..." : "AI টুলস"}</span>
+                          <span className="hidden sm:inline">{busy === "draft" ? t("inbox.writingDots") : t("inbox.aiTools")}</span>
                           <span className="text-[10px]">▾</span>
                         </button>
 
@@ -3672,13 +3660,13 @@ export default function InboxPage() {
                             >
                               <span>✨</span>
                               <div>
-                                <div>AI রিপ্লাই সাজেস্ট</div>
-                                <div className="text-[10px] font-normal text-slate-400">স্মার্ট উত্তর ড্রাফট করুন</div>
+                                <div>{t("inbox.aiReplySuggest")}</div>
+                                <div className="text-[10px] font-normal text-slate-400">{t("inbox.smartDraft")}</div>
                               </div>
                             </button>
 
                             <div className="my-1 border-t border-slate-100" />
-                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">টোন পরিবর্তন</div>
+                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.toneChangeTitle")}</div>
 
                             <button
                               type="button"
@@ -3686,7 +3674,7 @@ export default function InboxPage() {
                               disabled={!reply.trim() || busy !== ""}
                               onClick={() => { setAiMenuOpen(false); void applyTone("polite"); }}
                             >
-                              <span>🌸</span> <span>মার্জিত টোন</span>
+                              <span>🌸</span> <span>{t("inbox.politeTone")}</span>
                             </button>
                             <button
                               type="button"
@@ -3694,7 +3682,7 @@ export default function InboxPage() {
                               disabled={!reply.trim() || busy !== ""}
                               onClick={() => { setAiMenuOpen(false); void applyTone("professional"); }}
                             >
-                              <span>💼</span> <span>পেশাদার টোন</span>
+                              <span>💼</span> <span>{t("inbox.professionalTone")}</span>
                             </button>
                             <button
                               type="button"
@@ -3702,7 +3690,7 @@ export default function InboxPage() {
                               disabled={!reply.trim() || busy !== ""}
                               onClick={() => { setAiMenuOpen(false); void applyTone("sales"); }}
                             >
-                              <span>🎯</span> <span>সেলস-বান্ধব টোন</span>
+                              <span>🎯</span> <span>{t("inbox.salesTone")}</span>
                             </button>
 
                             {prevReply !== null && (
@@ -3718,7 +3706,7 @@ export default function InboxPage() {
                                   setAiMenuOpen(false);
                                 }}
                               >
-                                <span>↩</span> <span>আগের লেখায় ফিরুন</span>
+                                <span>↩</span> <span>{t("inbox.revertText")}</span>
                               </button>
                             )}
                           </div>
@@ -3736,9 +3724,9 @@ export default function InboxPage() {
                       }`}
                       disabled={busy !== "" || !reply.trim()}
                       onClick={() => { if (composerMode === "note") { void addNote(); } else { void sendReply(); } }}
-                      title="Enter চাপলে পাঠানো হবে"
+                      title={t("inbox.enterToSend")}
                     >
-                      <span>{composerMode === "note" ? "নোট সংরক্ষণ" : "পাঠান"}</span>
+                      <span>{composerMode === "note" ? t("inbox.saveNoteBtn") : t("inbox.sendBtn")}</span>
                       <span>🚀</span>
                     </button>
                   </div>
@@ -3746,15 +3734,15 @@ export default function InboxPage() {
               </div>
               {showPicker && composerMode === "reply" ? (
                 <div className="max-h-44 shrink-0 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-                  {products.length === 0 ? <p className="px-1 py-2 text-xs text-slate-400">কোনো পণ্য নেই</p> : products.map((prod) => (
+                  {products.length === 0 ? <p className="px-1 py-2 text-xs text-slate-400">{t("inbox.noProducts")}</p> : products.map((prod) => (
                     <div key={prod.id} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-indigo-50">
                       <span className="min-w-0">
                         <span className="block truncate font-medium">{prod.name}</span>
-                        <span className="text-slate-500">{money(prod.priceMinor, prod.currency)}{prod.stockQuantity != null ? ` · স্টক ${prod.stockQuantity}` : ""}</span>
+                        <span className="text-slate-500">{money(prod.priceMinor, prod.currency, locale)}{prod.stockQuantity != null ? t("inbox.inbZStockSuffix", { count: fmtNumber(locale, prod.stockQuantity) }) : ""}</span>
                       </span>
                       <span className="flex shrink-0 gap-1">
-                        <button className="rounded-md bg-slate-100 px-2 py-1 font-semibold hover:bg-slate-200" title="পণ্যের তথ্য কম্পোজারে টেক্সট হিসেবে বসান" onClick={() => insertProductSnippet(prod)}>টেক্সট বসান</button>
-                        <button className="rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white disabled:opacity-50 hover:bg-indigo-500" disabled={busy === "product-card"} title="ছবিসহ প্রোডাক্ট কার্ড সরাসরি পাঠান (কম্পোজারের লেখা ক্যাপশন হিসেবে যাবে)" onClick={() => sendProductCard(prod)}>🃏 কার্ড পাঠান</button>
+                        <button className="rounded-md bg-slate-100 px-2 py-1 font-semibold hover:bg-slate-200" title={t("inbox.insertProductText")} onClick={() => insertProductSnippet(prod)}>{t("inbox.insertTextBtn")}</button>
+                        <button className="rounded-md bg-indigo-600 px-2 py-1 font-semibold text-white disabled:opacity-50 hover:bg-indigo-500" disabled={busy === "product-card"} title={t("inbox.sendCardHint")} onClick={() => sendProductCard(prod)}>{t("inbox.sendCardBtn")}</button>
                       </span>
                     </div>
                   ))}
@@ -3762,16 +3750,16 @@ export default function InboxPage() {
               ) : null}
               {showImage && composerMode === "reply" ? (
                 <div className="flex shrink-0 flex-wrap gap-2 rounded-xl bg-slate-50 p-3">
-                  <input className="input flex-1" placeholder="ছবির পাবলিক https URL" value={imageForm.url} onChange={(e) => setImageForm({ ...imageForm, url: e.target.value })} />
-                  <input className="input flex-1" placeholder="ক্যাপশন (ঐচ্ছিক)" value={imageForm.caption} onChange={(e) => setImageForm({ ...imageForm, caption: e.target.value })} />
-                  <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? "পাঠাচ্ছি..." : "ছবি পাঠান"}</button>
+                  <input className="input flex-1" placeholder={t("inbox.imageUrlPlaceholder")} value={imageForm.url} onChange={(e) => setImageForm({ ...imageForm, url: e.target.value })} />
+                  <input className="input flex-1" placeholder={t("inbox.captionOptional")} value={imageForm.caption} onChange={(e) => setImageForm({ ...imageForm, caption: e.target.value })} />
+                  <button className="btn-primary btn-sm" disabled={busy !== ""} onClick={sendImage}>{busy === "image" ? t("inbox.sendingDots") : t("inbox.sendImageBtn")}</button>
                 </div>
               ) : null}
             </div>
                 </>
               )}
             </div>
-          ) : <p className="card flex-1 p-5 text-sm text-slate-500">বাম দিক থেকে একটি কথোপকথন বেছে নিন।</p>}
+          ) : <p className="card flex-1 p-5 text-sm text-slate-500">{t("inbox.pickConversation")}</p>}
         </div>
 
         {/* ---- Customer context + controls + notes ----
@@ -3785,12 +3773,12 @@ export default function InboxPage() {
           >
             <div className="h-full w-[340px] max-w-[94vw] space-y-4 overflow-y-auto bg-[#f6f7fb] p-3 shadow-2xl xl:h-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:bg-transparent xl:p-0 xl:shadow-none">
               <div className="flex items-center justify-between xl:hidden">
-                <span className="text-sm font-bold">গ্রাহক ও নিয়ন্ত্রণ</span>
-                <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>✕ বন্ধ করুন</button>
+                <span className="text-sm font-bold">{t("inbox.customerControls")}</span>
+                <button className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-semibold shadow-sm" onClick={() => setCtxOpen(false)}>{t("inbox.closePanelBtn")}</button>
               </div>
             <div className="card space-y-4 p-4 shadow-sm border border-slate-200/80">
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">👤 কাস্টমার প্রোফাইল</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("inbox.customerProfile")}</span>
                 {context?.lead ? <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200/60">Lead: {context.lead.stage}</span> : null}
               </div>
 
@@ -3814,19 +3802,19 @@ export default function InboxPage() {
                   {context.lifetime ? (
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">মোট অর্ডার</div>
-                        <div className="mt-1 text-lg font-black text-slate-900">{context.lifetime.orderCount}টি</div>
+                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">{t("inbox.totalOrders")}</div>
+                        <div className="mt-1 text-lg font-black text-slate-900">{t("inbox.orderCountTi", { count: fmtNumber(locale, context.lifetime.orderCount) })}</div>
                       </div>
                       <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">Lifetime স্পেন্ড</div>
-                        <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency)}</div>
+                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-slate-400">{t("inbox.lifetimeSpend")}</div>
+                        <div className="mt-1 text-lg font-black text-emerald-600">{money(context.lifetime.totalSpentMinor, context.lifetime.currency, locale)}</div>
                       </div>
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div className="rounded-xl bg-slate-50 p-3 text-center text-xs text-slate-500">
-                  কোনো Customer রেকর্ডের সাথে যুক্ত নয়{context?.lead ? "" : " (নতুন কন্ট্যাক্ট হলে Lead তৈরি হয়েছে)"}।
+                  {t("inbox.notLinkedCustomer")}{context?.lead ? "" : ` ${t("inbox.leadCreatedSuffix")}`}
                 </div>
               )}
 
@@ -3834,28 +3822,28 @@ export default function InboxPage() {
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   <span className="badge-brand">Lead: {context.lead.stage}</span>
                   <span className="badge-slate">{context.lead.source}</span>
-                  {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor)}</span> : null}
+                  {context.lead.valueMinor ? <span className="badge-green">{money(context.lead.valueMinor, "BDT", locale)}</span> : null}
                   {(context.lead.tags ?? []).map((t) => <span key={t} className="badge-amber">{t}</span>)}
                 </div>
               ) : null}
               {context?.orders?.length ? (
                 <div>
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">সাম্প্রতিক অর্ডার</div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.recentOrders")}</div>
                   <div className="space-y-1.5">
                     {context.orders.map((o) => (
                       <div key={o.id} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
                         <div className="flex items-center justify-between">
                           <span className="font-medium">#{o.externalNumber ?? o.id.slice(0, 6)} · {o.status}{o.isCod ? " · COD" : ""}</span>
-                          <span className="font-semibold">{money(o.totalMinor, o.currency)}</span>
+                          <span className="font-semibold">{money(o.totalMinor, o.currency, locale)}</span>
                         </div>
                         {o.shipment ? <ShipmentWidget shipment={o.shipment} currency={o.currency} syncing={busy === `sync:${o.shipment.id}`} onSync={() => syncShipment(o.shipment!.id)} /> : null}
                         {o.isCod ? (
                           <div className="mt-1 flex items-center gap-2">
-                            {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">কনফার্ম অপেক্ষমাণ</span>
-                              : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">✓ COD কনফার্মড</span>
-                              : o.codConfirmationStatus === "declined" ? <span className="badge-red">✗ গ্রাহক বাতিল করেছে</span>
+                            {o.codConfirmationStatus === "awaiting" ? <span className="badge-amber">{t("inbox.codAwaiting")}</span>
+                              : o.codConfirmationStatus === "confirmed" ? <span className="badge-green">{t("inbox.codConfirmed")}</span>
+                              : o.codConfirmationStatus === "declined" ? <span className="badge-red">{t("inbox.codDeclined")}</span>
                               : ["pending", "on-hold", "processing"].includes(o.status) ? (
-                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? "পাঠাচ্ছি..." : "COD কনফার্ম পাঠান"}</button>
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => requestCod(o.id)}>{busy === "cod" ? t("inbox.sendingDots") : t("inbox.codSendBtn")}</button>
                               ) : null}
                           </div>
                         ) : null}
@@ -3871,24 +3859,24 @@ export default function InboxPage() {
                 <div className="space-y-2">
                   {context.identity.duplicates.length ? (
                     <div className="rounded-xl bg-amber-50 p-2.5 ring-1 ring-amber-200">
-                      <div className="text-xs font-semibold text-amber-800">⚠️ সম্ভাব্য একই গ্রাহক</div>
-                      <p className="mt-0.5 text-[11px] text-amber-700">ফোন/ইমেইল মিলে অন্য রেকর্ড পাওয়া গেছে। নিশ্চিত হলেই মার্জ করুন — মার্জে কিছু মোছে না এবং পরে আনমার্জ করা যায়।</p>
+                      <div className="text-xs font-semibold text-amber-800">{t("inbox.possibleSameCustomer")}</div>
+                      <p className="mt-0.5 text-[11px] text-amber-700">{t("inbox.possibleSameHint")}</p>
                       <div className="mt-2 space-y-1.5">
                         {context.identity.duplicates.map((d, i) => (
                           <div key={`${d.customerId ?? d.conversationId ?? i}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/70 px-2 py-1.5 text-xs ring-1 ring-amber-100">
                             <span className="min-w-0">
-                              <span className="font-semibold">{d.customerName ?? d.contactName ?? "নাম নেই"}</span>
-                              <span className="text-slate-500"> · {d.matchReasons.includes("phone") ? "ফোন মিলেছে" : ""}{d.matchReasons.includes("phone") && d.matchReasons.includes("email") ? " + " : ""}{d.matchReasons.includes("email") ? "ইমেইল মিলেছে" : ""}{d.channel ? ` · ${d.channel}` : ""}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</span>
+                              <span className="font-semibold">{d.customerName ?? d.contactName ?? t("inbox.noNamePlain")}</span>
+                              <span className="text-slate-500"> · {d.matchReasons.includes("phone") ? t("inbox.phoneMatched") : ""}{d.matchReasons.includes("phone") && d.matchReasons.includes("email") ? " + " : ""}{d.matchReasons.includes("email") ? t("inbox.inbZEmailMatched") : ""}{d.channel ? ` · ${d.channel}` : ""}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</span>
                             </span>
                             <span className="flex shrink-0 gap-1.5">
                               {d.conversationId ? (
-                                <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" onClick={() => void openConversation({ id: d.conversationId } as Conversation)}>থ্রেড দেখুন</button>
+                                <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" onClick={() => void openConversation({ id: d.conversationId } as Conversation)}>{t("inbox.viewThread")}</button>
                               ) : null}
                               {d.customerId && context.identity?.customerId && d.customerId !== context.identity.customerId ? (
-                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void mergeDuplicate(d.customerId!, d.customerName ?? d.contactName ?? "গ্রাহক")}>এখানে মার্জ করুন</button>
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void mergeDuplicate(d.customerId!, d.customerName ?? d.contactName ?? t("inbox.customerFallback"))}>{t("inbox.mergeHere")}</button>
                               ) : null}
                               {d.customerId && !context.identity?.customerId ? (
-                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void linkToCustomer(d.customerId!, d.customerName ?? d.contactName ?? "গ্রাহক")}>এই Customer-এ যুক্ত করুন</button>
+                                <button className="btn-warning btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void linkToCustomer(d.customerId!, d.customerName ?? d.contactName ?? t("inbox.customerFallback"))}>{t("inbox.linkToThisCustomer")}</button>
                               ) : null}
                             </span>
                           </div>
@@ -3898,7 +3886,7 @@ export default function InboxPage() {
                   ) : null}
                   {context.identity.linkedConversations.length ? (
                     <div>
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">এই গ্রাহকের অন্য চ্যানেল</div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.otherChannels")}</div>
                       <div className="space-y-1">
                         {context.identity.linkedConversations.map((c) => (
                           <button key={c.id} className="flex w-full items-center justify-between rounded-xl bg-slate-50 px-2 py-1.5 text-left text-xs ring-1 ring-inset ring-slate-200/50 transition hover:bg-slate-100"
@@ -3912,12 +3900,12 @@ export default function InboxPage() {
                   ) : null}
                   {context.identity.merges.length ? (
                     <div>
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">মার্জ করা রেকর্ড</div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.mergedRecords")}</div>
                       <div className="space-y-1">
                         {context.identity.merges.map((m) => (
                           <div key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-2 py-1.5 text-xs ring-1 ring-inset ring-slate-200/50">
-                            <span>{m.sourceName ?? "নাম নেই"}{m.sourcePhone ? ` · ${m.sourcePhone}` : ""} <span className="text-slate-400">({m.ordersMoved} অর্ডার, {m.conversationsMoved} কথোপকথন এসেছে)</span></span>
-                            <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void unmergeCustomer(m.sourceCustomerId, m.sourceName ?? "গ্রাহক")}>আনমার্জ</button>
+                            <span>{m.sourceName ?? t("inbox.noNamePlain")}{m.sourcePhone ? ` · ${m.sourcePhone}` : ""} <span className="text-slate-400">{t("inbox.inbZMovedCounts", { orders: fmtNumber(locale, m.ordersMoved), convs: fmtNumber(locale, m.conversationsMoved) })}</span></span>
+                            <button className="btn-secondary btn-sm !px-2 !py-0.5 !text-[11px]" disabled={busy !== ""} onClick={() => void unmergeCustomer(m.sourceCustomerId, m.sourceName ?? t("inbox.customerFallback"))}>{t("inbox.unmergeBtn")}</button>
                           </div>
                         ))}
                       </div>
@@ -3932,13 +3920,13 @@ export default function InboxPage() {
                 <div className="section-title">🎯 Command Profile</div>
                 <div className="flex flex-wrap gap-1.5 text-[11px]">
                   <span className="badge-indigo">Stage: {profile.conversation.pipelineStage}</span>
-                  {profile.rfm ? <span className="badge-green">RFM: {profile.rfm.segment} · {profile.rfm.frequency}টি অর্ডার · শেষ {profile.rfm.recencyDays} দিন আগে</span> : <span className="badge-slate">RFM: এখনো অর্ডার নেই</span>}
-                  {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">📣 Click-to-WhatsApp Ad থেকে এসেছে</span> : null}
+                  {profile.rfm ? <span className="badge-green">{t("inbox.inbZRfmBadge", { segment: profile.rfm.segment, freq: fmtNumber(locale, profile.rfm.frequency), days: fmtNumber(locale, profile.rfm.recencyDays) })}</span> : <span className="badge-slate">{t("inbox.rfmNoOrders")}</span>}
+                  {profile.adOrigin?.ctwaSourceId ? <span className="badge-amber">{t("inbox.ctwaAd")}</span> : null}
                   {profile.adOrigin?.leadSource ? <span className="badge-slate">Lead Source: {profile.adOrigin.leadSource}</span> : null}
                 </div>
                 {profile.conversations?.length > 1 ? (
                   <div>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">সব চ্যানেলে কথোপকথন</div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.allChannelConvs")}</div>
                     <div className="space-y-1">
                       {profile.conversations.map((c: any) => (
                         <button key={c.id} className="flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1 text-left text-xs hover:bg-slate-100"
@@ -3952,10 +3940,10 @@ export default function InboxPage() {
                 ) : null}
                 {profile.payments?.verifications?.length ? (
                   <div>
-                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">পেমেন্ট যাচাই (Screenshot)</div>
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">{t("inbox.paymentVerify")}</div>
                     {profile.payments.verifications.map((v: any) => (
                       <div key={v.id} className="rounded-lg bg-slate-50 px-2 py-1 text-xs">
-                        {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ৳${(Number(v.amountMinor) / 100).toLocaleString("bn-BD")}` : ""}
+                        {v.provider ?? "?"} · <b>{v.verdict}</b>{v.trxId ? ` · TrxID ${v.trxId}` : ""}{v.amountMinor ? ` · ${money(v.amountMinor, "BDT", locale)}` : ""}
                       </div>
                     ))}
                   </div>
@@ -3965,7 +3953,7 @@ export default function InboxPage() {
 
             {/* Quick Action Tiles (Matching Demo 3 & 4) */}
             <div className="card p-4 space-y-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">⚡ দ্রুত কার্যক্রম</div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">{t("inbox.quickActions")}</div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <button
                   type="button"
@@ -3973,15 +3961,15 @@ export default function InboxPage() {
                   onClick={() => setOrderOpen((v) => !v)}
                 >
                   <span className="text-base">📄</span>
-                  <span>ইনভয়েস পাঠান</span>
+                  <span>{t("inbox.sendInvoice")}</span>
                 </button>
                 <button
                   type="button"
                   className="flex flex-col items-center justify-center gap-1.5 rounded-2xl border border-slate-200/90 bg-white p-3 font-semibold text-slate-700 shadow-2xs hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition"
-                  onClick={() => setNotice("টাস্ক তৈরি উইন্ডো খোলা হচ্ছে...")}
+                  onClick={() => setNotice(t("inbox.taskWindowOpening"))}
                 >
                   <span className="text-base">📋</span>
-                  <span>টাস্ক তৈরি</span>
+                  <span>{t("inbox.createTask")}</span>
                 </button>
                 <button
                   type="button"
@@ -3989,7 +3977,7 @@ export default function InboxPage() {
                   onClick={() => { setComposerMode("note"); focusComposer(); }}
                 >
                   <span className="text-base">📝</span>
-                  <span>নোট যোগ করুন</span>
+                  <span>{t("inbox.addNote")}</span>
                 </button>
                 <button
                   type="button"
@@ -3997,7 +3985,7 @@ export default function InboxPage() {
                   onClick={() => patchConversation({ status: active.status === "closed" ? "open" : "closed" })}
                 >
                   <span className="text-base">✓</span>
-                  <span>{active.status === "closed" ? "পুনরায় খুলুন" : "চ্যাট সমাধান"}</span>
+                  <span>{active.status === "closed" ? t("inbox.reopenChat") : t("inbox.resolveChat")}</span>
                 </button>
               </div>
             </div>
@@ -4007,14 +3995,14 @@ export default function InboxPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
                   <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-600 text-[10px]">✨</span>
-                  <span>AI কনভারসেশন সামারি</span>
+                  <span>{t("inbox.aiSummaryTitle")}</span>
                 </div>
                 <button
                   className="text-[11px] font-bold text-indigo-600 hover:underline disabled:opacity-50"
                   disabled={busy !== ""}
                   onClick={summarize}
                 >
-                  {busy === "summary" ? "তৈরি হচ্ছে…" : active.summaryText ? "রিফ্রেশ" : "তৈরি করুন"}
+                  {busy === "summary" ? t("inbox.generating") : active.summaryText ? t("inbox.refresh") : t("inbox.create")}
                 </button>
               </div>
 
@@ -4023,57 +4011,55 @@ export default function InboxPage() {
                   {active.summaryText}
                   <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10px] text-slate-400">
                     <span>{active.summaryProvider ?? "AI Engine"}</span>
-                    <span>{active.summaryAt ? new Date(active.summaryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
+                    <span>{active.summaryAt ? fmtTime(locale, active.summaryAt) : ""}</span>
                   </div>
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">
-                  গ্রাহকের পুরো কথোপকথন পড়ে এক নজরে সারসংক্ষেপ পেতে ওপরের বাটনে ক্লিক করুন।
-                </div>
+                <div className="rounded-xl border border-dashed border-indigo-200 p-3 text-center text-xs text-indigo-600/80">{t("inbox.summaryHint")}</div>
               )}
             </div>
 
             <div className="card space-y-3 p-4">
-              <div className="section-title">দায়িত্ব ও Tag</div>
+              <div className="section-title">{t("inbox.responsibilityTags")}</div>
               {active.spamFlag ? (
                 <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
-                  <div className="text-xs font-semibold text-amber-800">🚫 Spam সন্দেহভাজন</div>
+                  <div className="text-xs font-semibold text-amber-800">{t("inbox.spamSuspect")}</div>
                   <p className="mt-0.5 text-xs text-amber-700">{active.spamReason ?? ""}</p>
-                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>Spam নয়, ঠিক আছে</button>
+                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => patchConversation({ spamFlag: false })}>{t("inbox.spamNotOk")}</button>
                 </div>
               ) : null}
               {/* IN10a: block — আমাদের সিস্টেমের ব্লক, প্ল্যাটফর্মের নয়। */}
               {active.blockedAt ? (
                 <div className="rounded-xl bg-red-50 p-3 ring-1 ring-red-200">
-                  <div className="text-xs font-semibold text-red-800">⛔ এই গ্রাহক ব্লক করা — শুধু আমাদের সিস্টেমে</div>
+                  <div className="text-xs font-semibold text-red-800">{t("inbox.blockedBanner")}</div>
                   <p className="mt-0.5 text-xs text-red-700">
-                    {active.blockReason ? `কারণ: ${active.blockReason} · ` : ""}ভবিষ্যৎ মেসেজ Spam কিউতে যাচ্ছে; Bot/AI এই থ্রেডে চলছে না। প্ল্যাটফর্মে (Messenger/WhatsApp) গ্রাহক ব্লক হননি।
+                    {active.blockReason ? t("inbox.inbZReasonPrefix", { reason: active.blockReason }) : ""}{t("inbox.inbZBlockBannerBody")}
                   </p>
-                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => void setBlocked(false)}>{busy === "block" ? "হচ্ছে..." : "ব্লক তুলুন"}</button>
+                  <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={() => void setBlocked(false)}>{busy === "block" ? t("inbox.doingDots") : t("inbox.unblockBtn")}</button>
                 </div>
               ) : (
                 <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
-                  <div className="text-xs font-semibold text-slate-700">⛔ গ্রাহক ব্লক (শুধু আমাদের সিস্টেমে)</div>
-                  <p className="mt-0.5 text-[11px] text-slate-500">ব্লক করলে ভবিষ্যৎ মেসেজ Spam কিউতে যাবে এবং Bot/AI চলবে না — প্ল্যাটফর্মে কোনো ব্লক হবে না। আপনি নিজে উত্তর দিতে পারবেন।</p>
+                  <div className="text-xs font-semibold text-slate-700">{t("inbox.blockCustomerBtn")}</div>
+                  <p className="mt-0.5 text-[11px] text-slate-500">{t("inbox.blockExplain")}</p>
                   <div className="mt-2 flex gap-1.5">
-                    <input className="input !py-1.5 text-xs" placeholder="কারণ (ঐচ্ছিক)" value={blockReason} onChange={(e) => setBlockReason(e.target.value)} maxLength={300} />
-                    <button className="btn-danger btn-sm shrink-0" disabled={busy !== ""} onClick={() => void setBlocked(true)}>{busy === "block" ? "হচ্ছে..." : "ব্লক করুন"}</button>
+                    <input className="input !py-1.5 text-xs" placeholder={t("inbox.reasonOptional")} value={blockReason} onChange={(e) => setBlockReason(e.target.value)} maxLength={300} />
+                    <button className="btn-danger btn-sm shrink-0" disabled={busy !== ""} onClick={() => void setBlocked(true)}>{busy === "block" ? t("inbox.doingDots") : t("inbox.blockBtn")}</button>
                   </div>
                 </div>
               )}
               {botSession?.status === "active" ? (
                 <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
-                  <div className="text-xs font-semibold text-indigo-800">🤖 অর্ডার Bot চলছে — ধাপ: {botSession.state}</div>
-                  <p className="mt-0.5 text-xs text-indigo-600">গ্রাহক নিজে "এজেন্ট" লিখলে বা আপনি উত্তর দিলেই বট থেমে যাবে।</p>
+                  <div className="text-xs font-semibold text-indigo-800">{t("inbox.botRunning", { state: botSession.state })}</div>
+                  <p className="mt-0.5 text-xs text-indigo-600">{t("inbox.inbZBotStopNote")}</p>
                   <button className="btn-secondary btn-sm mt-2" disabled={busy !== ""} onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId || !active) return;
-                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice("বট থামানো হয়েছে।"); await refreshActive(); }
+                    try { await apiFetch(`/organizations/${orgId}/inbox/conversations/${active.id}/bot/stop`, { method: "POST" }); setNotice(t("inbox.botStopped")); await refreshActive(); }
                     catch (e) { setError(e instanceof Error ? e.message : "Failed"); }
-                  }}>বট থামান</button>
+                  }}>{t("inbox.stopBot")}</button>
                 </div>
               ) : null}
               {active.csatRating ? (
-                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">⭐ CSAT রেটিং: {active.csatRating}/5</div>
+                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">{t("inbox.inbZCsatRating", { rating: fmtNumber(locale, active.csatRating ?? 0) })}</div>
               ) : null}
               {/* IN7b/c: AI next-action card — proposal only.
                   Nothing runs or is applied without a click;
@@ -4081,8 +4067,8 @@ export default function InboxPage() {
                   persisted nothing). */}
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">🤖 AI-এর পরের পদক্ষেপ</span>
-                  <button className="text-xs font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={loadNextAction}>{busy === "next-action" ? "ভাবছে..." : nextAction ? "আবার দেখুন" : "প্রস্তাব দেখুন"}</button>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.aiNextStep")}</span>
+                  <button className="text-xs font-semibold text-indigo-600 hover:underline" disabled={busy !== ""} onClick={loadNextAction}>{busy === "next-action" ? t("inbox.thinkingDots") : nextAction ? t("inbox.seeAgain") : t("inbox.seeProposal")}</button>
                 </div>
                 {nextAction?.proposal ? (
                   <div className="ctx-subcard space-y-1.5 text-xs text-slate-600">
@@ -4090,57 +4076,57 @@ export default function InboxPage() {
                     {nextAction.proposal.reason ? <p>{nextAction.proposal.reason}</p> : null}
                     {(nextAction.proposal.tags.length > 0 || nextAction.proposal.pipelineStage) ? (
                       <p className="text-slate-500">
-                        প্রস্তাবিত{nextAction.proposal.tags.length ? ` Tag: ${nextAction.proposal.tags.join(", ")}` : ""}{nextAction.proposal.pipelineStage ? ` · Stage: ${nextAction.proposal.pipelineStage}` : ""}
+                        {t("inbox.inbZProposedWord")}{nextAction.proposal.tags.length ? ` Tag: ${nextAction.proposal.tags.join(", ")}` : ""}{nextAction.proposal.pipelineStage ? ` · Stage: ${nextAction.proposal.pipelineStage}` : ""}
                       </p>
                     ) : null}
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {isRunnableAction(nextAction.proposal.action) ? (
                         <button className="btn-primary !px-2.5 !py-1 !text-xs" disabled={busy !== ""} onClick={() => void runNextAction()}>{nextAction.proposal.label}</button>
                       ) : (
-                        <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-500">কিছু করার নেই — গ্রাহকের উত্তরের অপেক্ষা</span>
+                        <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-500">{t("inbox.nothingToDo")}</span>
                       )}
                       {proposalAcceptPatch(nextAction.proposal, active.tags ?? []) ? (
-                        <button className="btn-secondary !px-2.5 !py-1 !text-xs" disabled={busy !== ""} onClick={() => void acceptNextActionProposal()}>Tag/Stage গ্রহণ করুন</button>
+                        <button className="btn-secondary !px-2.5 !py-1 !text-xs" disabled={busy !== ""} onClick={() => void acceptNextActionProposal()}>{t("inbox.acceptProposal")}</button>
                       ) : null}
-                      <button className="rounded-lg px-2 py-1 font-medium text-slate-400 hover:text-slate-600" onClick={() => setNextAction(null)}>প্রত্যাখ্যান</button>
+                      <button className="rounded-lg px-2 py-1 font-medium text-slate-400 hover:text-slate-600" onClick={() => setNextAction(null)}>{t("inbox.rejectBtn")}</button>
                     </div>
                   </div>
                 ) : nextAction ? (
-                  <p className="text-xs text-slate-400">{nextAction.reason ?? "কোনো প্রস্তাব তৈরি হয়নি।"}</p>
+                  <p className="text-xs text-slate-400">{nextAction.reason ?? t("inbox.noProposalMade")}</p>
                 ) : (
-                  <p className="text-xs text-slate-400">Thread খুলে AI-এর প্রস্তাবিত পরের পদক্ষেপ দেখুন — কিছুই নিজে থেকে চলবে না।</p>
+                  <p className="text-xs text-slate-400">{t("inbox.nextStepHint")}</p>
                 )}
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">চ্যাট থেকে Order</span>
-                  <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? "বন্ধ করুন" : "＋ তৈরি করুন"}</button>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.orderFromChat")}</span>
+                  <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderOpen(!orderOpen)}>{orderOpen ? t("inbox.closeBtn") : t("inbox.createPlusBtn")}</button>
                 </div>
                 {orderOpen ? (
                   <div className="space-y-2 rounded-xl bg-slate-50 p-2.5">
                     {orderItems.map((it, idx) => (
                       <div key={idx} className="flex items-center gap-1.5">
                         <select className="input flex-1 !py-1.5 !text-xs" value={it.productId} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, productId: e.target.value } : x))}>
-                          {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency)}</option>)}
+                          {products.map((prod) => <option key={prod.id} value={prod.id}>{prod.name} — {money(prod.priceMinor, prod.currency, locale)}</option>)}
                         </select>
                         <input className="input !w-14 !py-1.5 !text-xs" type="number" min={1} max={99} value={it.quantity} onChange={(e) => setOrderItems(orderItems.map((x, j) => j === idx ? { ...x, quantity: Number(e.target.value) || 1 } : x))} />
                         <button className="text-slate-400 hover:text-red-500" onClick={() => setOrderItems(orderItems.filter((_, j) => j !== idx))}>✕</button>
                       </div>
                     ))}
-                    <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>＋ পণ্য যোগ করুন</button>
-                    <label className="block text-xs">ডেলিভারির ঠিকানা<input className="input mt-0.5 !py-1.5 !text-xs" placeholder="বাসা, রোড, এলাকা, জেলা" value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
+                    <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOrderItems([...orderItems, { productId: products[0]?.id ?? "", quantity: 1 }])}>{t("inbox.addProductBtn")}</button>
+                    <label className="block text-xs">{t("inbox.deliveryAddressLabel")}<input className="input mt-0.5 !py-1.5 !text-xs" placeholder={t("inbox.addressPlaceholder")} value={orderAddress} onChange={(e) => setOrderAddress(e.target.value)} /></label>
                     <div className="flex items-end gap-2">
-                      <label className="flex-1 text-xs">ডেলিভারি (৳)<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
+                      <label className="flex-1 text-xs">{t("inbox.deliveryTakaLabel")}<input className="input mt-0.5 !py-1.5 !text-xs" type="number" min={0} value={orderShip} onChange={(e) => setOrderShip(e.target.value)} /></label>
                       <label className="flex items-center gap-1.5 pb-2 text-xs"><input type="checkbox" checked={orderCod} onChange={(e) => setOrderCod(e.target.checked)} /> COD</label>
                     </div>
-                    <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? "তৈরি হচ্ছে..." : "Order তৈরি করুন"}</button>
-                    <p className="text-[10px] text-slate-400">দাম ক্যাটালগ থেকেই হিসাব হয়। WooCommerce যুক্ত থাকলে অর্ডারটি স্টোরেও পাঠানোর চেষ্টা করা হয়, ফলাফল জানিয়ে দেওয়া হয়।</p>
+                    <button className="btn-primary w-full !py-2 !text-xs" disabled={busy !== "" || orderItems.length === 0} onClick={createChatOrder}>{busy === "order" ? t("inbox.creatingDots") : t("inbox.createOrderBtn")}</button>
+                    <p className="text-[10px] text-slate-400">{t("inbox.orderPriceNote")}</p>
                   </div>
                 ) : null}
               </div>
               <label className="block text-sm">Assignee
                 <select className="input mt-1" value={active.assignedUserId ?? ""} onChange={(e) => patchConversation({ assignedUserId: e.target.value || null })}>
-                  <option value="">কেউ নয়</option>
+                  <option value="">{t("inbox.nobodyPlain")}</option>
                   {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email} ({m.role})</option>)}
                 </select>
               </label>
@@ -4149,10 +4135,10 @@ export default function InboxPage() {
                   {(active.tags ?? []).map((t) => (
                     <span key={t} className="badge-brand">{t}<button className="ml-1 font-bold" onClick={() => patchConversation({ tags: (active.tags ?? []).filter((x) => x !== t) })}>×</button></span>
                   ))}
-                  {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">কোনো Tag নেই</span> : null}
+                  {(active.tags ?? []).length === 0 ? <span className="text-xs text-slate-400">{t("inbox.noTags")}</span> : null}
                 </div>
                 <div className="flex gap-1.5">
-                  <input className="input flex-1" placeholder="নতুন Tag লিখে Enter" value={tagInput}
+                  <input className="input flex-1" placeholder={t("inbox.newTagPlaceholder")} value={tagInput}
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && tagInput.trim()) { patchConversation({ tags: [...(active.tags ?? []), tagInput.trim()] }); setTagInput(""); } }} />
                 </div>
@@ -4169,12 +4155,12 @@ export default function InboxPage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/80 bg-white/80 p-2 shadow-xs backdrop-blur-md">
             {[
-              { id: "settings", label: "🤖 অটোপাইলট ও SLA", icon: "⚙️" },
-              { id: "teams", label: "👥 টিম ও এজেন্ট", icon: "👥" },
-              { id: "report", label: "📊 টিম রিপোর্ট", icon: "📊" },
-              { id: "performance", label: "🙋 আমার পারফরম্যান্স", icon: "🎯" },
-              { id: "channels", label: "🔌 চ্যানেল সংযোগ", icon: "🔌" },
-              { id: "quick", label: "⚡ কুইক রিপ্লাই ও টেমপ্লেট", icon: "⚡" },
+              { id: "settings", label: t("inbox.settingsAutopilot"), icon: "⚙️" },
+              { id: "teams", label: t("inbox.settingsTeam"), icon: "👥" },
+              { id: "report", label: t("inbox.settingsReport"), icon: "📊" },
+              { id: "performance", label: t("inbox.settingsMyPerf"), icon: "🎯" },
+              { id: "channels", label: t("inbox.settingsChannels"), icon: "🔌" },
+              { id: "quick", label: t("inbox.settingsQuick"), icon: "⚡" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -4194,153 +4180,126 @@ export default function InboxPage() {
 
           <div className="grid gap-4 xl:grid-cols-2">
             <div className={`card space-y-3 p-5 ${manageTab === "settings" ? "block xl:col-span-2" : "hidden"}`}>
-          <div className="section-title">🤖 Auto-Reply ও Inbox সেটিংস</div>
-          <p className="text-xs text-slate-500">অটো-রিপ্লাই শুধুমাত্র যাচাই করা ডেটা (আসল দাম/স্টক, নিজের Policy, আসল Order Status) দিয়ে উত্তর দেয়। ডেটা না মিললে কিছুই পাঠায় না। Complaint ও অজানা প্রশ্নে কখনো অটো-রিপ্লাই হয় না।</p>
+          <div className="section-title">{t("inbox.autoReplySettings")}</div>
+          <p className="text-xs text-slate-500">{t("inbox.inbZAutoReplyNote")}</p>
           {settings ? (
             <div className="space-y-2.5 text-sm">
               <div className="grid grid-cols-2 gap-2">
-                <label className="block">মোড
-                  <select className="input mt-1" value={settings.autoReplyMode} onChange={(e) => saveSettings({ autoReplyMode: e.target.value })}>
-                    <option value="off">বন্ধ</option><option value="draft">শুধু Draft সাজেস্ট</option><option value="auto">অটো পাঠান</option>
+                <label className="block">{t("inbox.modeLabel")}<select className="input mt-1" value={settings.autoReplyMode} onChange={(e) => saveSettings({ autoReplyMode: e.target.value })}>
+                    <option value="off">{t("inbox.stClosedPlain")}</option><option value="draft">{t("inbox.modeDraftOnly")}</option><option value="auto">{t("inbox.modeAutoSend")}</option>
                   </select>
                 </label>
-                <label className="block">আস্থার থ্রেশহোল্ড (%)
-                  <input className="input mt-1" type="number" min={0} max={100} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} onBlur={() => saveSettings({ confidenceThreshold: settings.confidenceThreshold })} />
+                <label className="block">{t("inbox.confidenceThreshold")}<input className="input mt-1" type="number" min={0} max={100} value={settings.confidenceThreshold} onChange={(e) => setSettings({ ...settings, confidenceThreshold: Number(e.target.value) })} onBlur={() => saveSettings({ confidenceThreshold: settings.confidenceThreshold })} />
                 </label>
                 <label className="block">Smart Assignment
                   <select className="input mt-1" value={settings.smartAssign} onChange={(e) => saveSettings({ smartAssign: e.target.value })}>
-                    <option value="off">বন্ধ</option><option value="round_robin">Round-robin</option><option value="least_busy">কম ব্যস্তজনকে</option>
+                    <option value="off">{t("inbox.stClosedPlain")}</option><option value="round_robin">Round-robin</option><option value="least_busy">{t("inbox.leastBusy")}</option>
                   </select>
                 </label>
-                <label className="block">অর্ডার Bot
-                  <select className="input mt-1" value={settings.botEnabled ? "on" : "off"} onChange={(e) => saveSettings({ botEnabled: e.target.value === "on" })}>
-                    <option value="off">বন্ধ</option><option value="on">চালু (Order নেবে)</option>
+                <label className="block">{t("inbox.orderBotLabel")}<select className="input mt-1" value={settings.botEnabled ? "on" : "off"} onChange={(e) => saveSettings({ botEnabled: e.target.value === "on" })}>
+                    <option value="off">{t("inbox.stClosedPlain")}</option><option value="on">{t("inbox.orderBotOn")}</option>
                   </select>
                 </label>
-                <label className="block">Bot ডেলিভারি চার্জ (৳, ফাঁকা = টিম জানাবে)
-                  <input className="input mt-1" type="number" min={0} value={settings.botDeliveryChargeMinor != null ? Math.round(settings.botDeliveryChargeMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, botDeliveryChargeMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ botDeliveryChargeMinor: settings.botDeliveryChargeMinor ?? null })} />
+                <label className="block">{t("inbox.botDeliveryCharge")}<input className="input mt-1" type="number" min={0} value={settings.botDeliveryChargeMinor != null ? Math.round(settings.botDeliveryChargeMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, botDeliveryChargeMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ botDeliveryChargeMinor: settings.botDeliveryChargeMinor ?? null })} />
                 </label>
-                <label className="block">SLA প্রথম উত্তর (মিনিট)
-                  <input className="input mt-1" type="number" min={1} value={settings.slaFirstResponseMinutes} onChange={(e) => setSettings({ ...settings, slaFirstResponseMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaFirstResponseMinutes: settings.slaFirstResponseMinutes })} />
+                <label className="block">{t("inbox.slaFirstResponse")}<input className="input mt-1" type="number" min={1} value={settings.slaFirstResponseMinutes} onChange={(e) => setSettings({ ...settings, slaFirstResponseMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaFirstResponseMinutes: settings.slaFirstResponseMinutes })} />
                 </label>
-                <label className="block">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)
-                  <input className="input mt-1" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} />
+                <label className="block">{t("inbox.awayReassign")}<input className="input mt-1" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} />
                 </label>
                 {/* IN4: layered SLA + the active escalation chain.
                     Priority: VIP সীমা → Channel সীমা → উপরের সাধারণ
                     সীমা। Chain চলতে Automations-এ "Inbox SLA Sweep"
                     job চালু থাকতে হবে। */}
                 <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-2.5">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">⏰ SLA স্তর ও Escalation Chain (IN4)</div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">{t("inbox.slaTiersTitle")}</div>
                   <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                     {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
                       <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
-                        <input className="input mt-0.5" type="number" min={1} max={10080} placeholder="সাধারণ" value={settings.slaByChannel?.[ch] ?? ""} onChange={(e) => {
+                        <input className="input mt-0.5" type="number" min={1} max={10080} placeholder={t("inbox.sentNeutral")} value={settings.slaByChannel?.[ch] ?? ""} onChange={(e) => {
                           const slaByChannel = { ...(settings.slaByChannel ?? {}) };
                           const parsed = parseSlaMinutesInput(e.target.value);
                           if (parsed === null) delete slaByChannel[ch]; else if (parsed !== undefined) slaByChannel[ch] = parsed;
                           setSettings({ ...settings, slaByChannel });
                         }} onBlur={() => saveSettings({ slaByChannel: settings.slaByChannel ?? {} })} />
-                        <span className="text-[10px] text-slate-400">মিনিট (ফাঁকা = সাধারণ সীমা)</span>
+                        <span className="text-[10px] text-slate-400">{t("inbox.minutesEmptyGeneral")}</span>
                       </label>
                     ))}
                   </div>
                   <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-                    <label className="block text-xs">VIP সীমা (মিনিট, ফাঁকা = স্তর নেই)
-                      <input className="input mt-0.5" type="number" min={1} max={10080} placeholder="—" value={settings.slaVipMinutes ?? ""} onChange={(e) => setSettings({ ...settings, slaVipMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ slaVipMinutes: settings.slaVipMinutes ?? null })} />
-                      <span className="text-[10px] text-slate-400">VIP = Escalation থ্রেশহোল্ডের ওপরের অর্ডারওয়ালা কথোপকথন</span>
+                    <label className="block text-xs">{t("inbox.vipLimitLabel")}<input className="input mt-0.5" type="number" min={1} max={10080} placeholder="—" value={settings.slaVipMinutes ?? ""} onChange={(e) => setSettings({ ...settings, slaVipMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ slaVipMinutes: settings.slaVipMinutes ?? null })} />
+                      <span className="text-[10px] text-slate-400">{t("inbox.vipExplain")}</span>
                     </label>
-                    <label className="block text-xs">Breach-এর কত মিনিট পর Escalation
-                      <input className="input mt-0.5" type="number" min={1} max={1440} value={settings.slaEscalateAfterMinutes ?? 30} onChange={(e) => setSettings({ ...settings, slaEscalateAfterMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaEscalateAfterMinutes: settings.slaEscalateAfterMinutes ?? 30 })} />
+                    <label className="block text-xs">{t("inbox.escalationAfterLabel")}<input className="input mt-0.5" type="number" min={1} max={1440} value={settings.slaEscalateAfterMinutes ?? 30} onChange={(e) => setSettings({ ...settings, slaEscalateAfterMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ slaEscalateAfterMinutes: settings.slaEscalateAfterMinutes ?? 30 })} />
                     </label>
                   </div>
                   <label className="mt-2 flex items-center gap-2 text-xs">
-                    <input type="checkbox" checked={settings.slaLeadAlertEnabled ?? true} onChange={(e) => { setSettings({ ...settings, slaLeadAlertEnabled: e.target.checked }); saveSettings({ slaLeadAlertEnabled: e.target.checked }); }} />
-                    Escalation-এ Team Lead-কে জরুরি সতর্কতা (Escalation টিমের Lead; না থাকলে কথোপকথনের টিমের Lead, তারপর Owner/Admin)
-                  </label>
+                    <input type="checkbox" checked={settings.slaLeadAlertEnabled ?? true} onChange={(e) => { setSettings({ ...settings, slaLeadAlertEnabled: e.target.checked }); saveSettings({ slaLeadAlertEnabled: e.target.checked }); }} />{t("inbox.escalationAlertLabel")}</label>
                   <label className="mt-1.5 flex items-center gap-2 text-xs">
-                    <input type="checkbox" checked={settings.slaAutoReassignEnabled ?? false} onChange={(e) => { setSettings({ ...settings, slaAutoReassignEnabled: e.target.checked }); saveSettings({ slaAutoReassignEnabled: e.target.checked }); }} />
-                    Auto-Reassign — Escalation পয়েন্টে কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে (Away/ছুটির-সময়ের বাইরের এজেন্ট কখনো নয়)
-                  </label>
-                  <p className="mt-1.5 text-[11px] text-slate-500">সীমার ৭৫% পেরোলেই দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পান (কার্ডে হলুদ ⏰ চিহ্ন)। Chain কার্যকর হতে Automations পেজ থেকে &apos;Inbox SLA Sweep&apos; job চালু থাকতে হবে — প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় ও Audit-এ থাকে।</p>
+                    <input type="checkbox" checked={settings.slaAutoReassignEnabled ?? false} onChange={(e) => { setSettings({ ...settings, slaAutoReassignEnabled: e.target.checked }); saveSettings({ slaAutoReassignEnabled: e.target.checked }); }} />{t("inbox.autoReassignLabel")}</label>
+                  <p className="mt-1.5 text-[11px] text-slate-500">{t("inbox.inbZSlaAlertNote")}</p>
                 </div>
-                <label className="setting-row"><span className="setting-row-label">Away এজেন্ট থেকে পুনঃঅ্যাসাইন (মিনিট)</span>
+                <label className="setting-row"><span className="setting-row-label">{t("inbox.awayReassign")}</span>
                   <span className="setting-row-control"><input className="input" type="number" min={5} placeholder="30" value={settings.reassignAfterMinutes ?? ""} onChange={(e) => setSettings({ ...settings, reassignAfterMinutes: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ reassignAfterMinutes: settings.reassignAfterMinutes ?? null })} /></span>
                 </label>
-                <label className="block">Retention — বন্ধ কথোপকথন মোছা (দিন, ফাঁকা = কখনো নয়)
-                  <input className="input mt-1" type="number" min={7} max={3650} placeholder="বন্ধ" value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} />
-                  <span className="text-[11px] text-slate-400">Automation এ "Inbox Retention" Job চালালে মেয়াদ শেষ বন্ধ Thread মুছে যাবে (খোলা Thread কখনো নয়)।</span>
+                <label className="block">{t("inbox.retentionLabel")}<input className="input mt-1" type="number" min={7} max={3650} placeholder={t("inbox.stClosedPlain")} value={settings.retentionDays ?? ""} onChange={(e) => setSettings({ ...settings, retentionDays: e.target.value === "" ? null : Number(e.target.value) })} onBlur={() => saveSettings({ retentionDays: settings.retentionDays ?? null })} />
+                  <span className="text-[11px] text-slate-400">{t("inbox.inbZRetentionNote")}</span>
                 </label>
-                <label className="block">Escalation টিম (অভিযোগ/জরুরি)
-                  <select className="input mt-1" value={settings.escalationTeamId ?? ""} onChange={(e) => saveSettings({ escalationTeamId: e.target.value || null })}>
-                    <option value="">কোনোটিই নয়</option>
+                <label className="block">{t("inbox.escalationTeamLabel")}<select className="input mt-1" value={settings.escalationTeamId ?? ""} onChange={(e) => saveSettings({ escalationTeamId: e.target.value || null })}>
+                    <option value="">{t("inbox.noneOption")}</option>
                     {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </label>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">⏳ উত্তরের আগে অপেক্ষা</div>
-                <label className="block text-xs">অপেক্ষা (সেকেন্ড, 0–600)
-                  <input className="input mt-0.5" type="number" min={0} max={600} value={settings.aiReplyDelaySeconds ?? 0} onChange={(e) => setSettings({ ...settings, aiReplyDelaySeconds: Number(e.target.value) })} onBlur={() => saveSettings({ aiReplyDelaySeconds: settings.aiReplyDelaySeconds ?? 0 })} />
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.waitBeforeReply")}</div>
+                <label className="block text-xs">{t("inbox.waitSecondsLabel")}<input className="input mt-0.5" type="number" min={0} max={600} value={settings.aiReplyDelaySeconds ?? 0} onChange={(e) => setSettings({ ...settings, aiReplyDelaySeconds: Number(e.target.value) })} onBlur={() => saveSettings({ aiReplyDelaySeconds: settings.aiReplyDelaySeconds ?? 0 })} />
                 </label>
-                <p className="mt-1 text-[11px] text-slate-400">0 = সঙ্গে সঙ্গে উত্তর (আগের আচরণ)। 30–60 সেকেন্ড রাখলে customer পরপর কয়েকটি message পাঠালে AI সবগুলো পড়ে একটাই উত্তর দেবে। কার্যকর হতে Automations পেজ থেকে &apos;Inbox Auto-Reply Sweep&apos; job চালু থাকতে হবে। অভিযোগ বা মানুষের অনুরোধ এলে অপেক্ষা না করে সঙ্গে সঙ্গে টিমের কাছে যাবে।</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZReplyDelayNote")}</p>
                 <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                   {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
                     <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
-                      <input className="input mt-0.5" type="number" min={0} max={600} placeholder="গ্লোবাল" value={settings.aiReplyDelayByChannel?.[ch] ?? ""} onChange={(e) => {
+                      <input className="input mt-0.5" type="number" min={0} max={600} placeholder={t("inbox.globalWord")} value={settings.aiReplyDelayByChannel?.[ch] ?? ""} onChange={(e) => {
                         const aiReplyDelayByChannel = { ...(settings.aiReplyDelayByChannel ?? {}) };
                         if (e.target.value === "" || Number(e.target.value) === 0) delete aiReplyDelayByChannel[ch]; else aiReplyDelayByChannel[ch] = Number(e.target.value);
                         setSettings({ ...settings, aiReplyDelayByChannel });
                       }} onBlur={() => saveSettings({ aiReplyDelayByChannel: settings.aiReplyDelayByChannel ?? {} })} />
-                      <span className="text-[10px] text-slate-400">সেকেন্ড (ফাঁকা/0 = org মান)</span>
+                      <span className="text-[10px] text-slate-400">{t("inbox.secondsOrgDefault")}</span>
                     </label>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">⭐ ডেলিভারির পর রিভিউ রিকোয়েস্ট</div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.reviewRequestTitle")}</div>
                 <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={settings.reviewRequestEnabled ?? false} onChange={(e) => { setSettings({ ...settings, reviewRequestEnabled: e.target.checked }); saveSettings({ reviewRequestEnabled: e.target.checked }); }} />
-                  রিভিউ রিকোয়েস্ট চালু — ডেলিভারি হলে গ্রাহককে রেটিং চাওয়া হবে (চ্যাটে, না থাকলে SMS/ইমেইলে রিভিউ লিংক)
+                  <input type="checkbox" checked={settings.reviewRequestEnabled ?? false} onChange={(e) => { setSettings({ ...settings, reviewRequestEnabled: e.target.checked }); saveSettings({ reviewRequestEnabled: e.target.checked }); }} />{t("inbox.reviewOnNote")}</label>
+                <label className="mt-2 block text-xs">{t("inbox.reviewHoursLabel")}<input className="input mt-0.5" type="number" min={0} max={168} value={settings.reviewRequestDelayHours ?? 24} onChange={(e) => setSettings({ ...settings, reviewRequestDelayHours: Number(e.target.value) })} onBlur={() => saveSettings({ reviewRequestDelayHours: settings.reviewRequestDelayHours ?? 24 })} />
                 </label>
-                <label className="mt-2 block text-xs">ডেলিভারির কত ঘণ্টা পর জিজ্ঞাসা পাঠানো হবে (0–168)
-                  <input className="input mt-0.5" type="number" min={0} max={168} value={settings.reviewRequestDelayHours ?? 24} onChange={(e) => setSettings({ ...settings, reviewRequestDelayHours: Number(e.target.value) })} onBlur={() => saveSettings({ reviewRequestDelayHours: settings.reviewRequestDelayHours ?? 24 })} />
-                </label>
-                <p className="mt-1 text-[11px] text-slate-400">কার্যকর হতে Automations পেজ থেকে &apos;Review Request Sweep&apos; job চালু থাকতে হবে। গ্রাহক চ্যাটে শুধু ১–৫ (বা ১-৫) সংখ্যা পাঠালে রেটিং রেকর্ড হয়; পরের একটি বার্তা মন্তব্য হিসেবে থাকে। যেসব অর্ডারে কোনো চ্যানেলই নেই, সেগুলোর রিকোয়েস্ট Orders পেজে &quot;এখনো পাঠানো হয়নি&quot; হিসেবে দেখা যাবে — পাঠানো হয়েছে বলে দেখানো হবে না।</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZReviewNote")}</p>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">🎯 To Chase — থেমে যাওয়া অর্ডারের অনুস্মারক</div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.toChaseTitle")}</div>
                 <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={settings.chaseEnabled ?? false} onChange={(e) => { setSettings({ ...settings, chaseEnabled: e.target.checked }); saveSettings({ chaseEnabled: e.target.checked }); }} />
-                  To Chase চালু — অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া গ্রাহককে আলতো করে মনে করিয়ে দেওয়া হবে
-                </label>
+                  <input type="checkbox" checked={settings.chaseEnabled ?? false} onChange={(e) => { setSettings({ ...settings, chaseEnabled: e.target.checked }); saveSettings({ chaseEnabled: e.target.checked }); }} />{t("inbox.chaseOnNote")}</label>
                 <div className="mt-2 grid grid-cols-3 gap-2">
-                  <label className="block text-xs">প্রথম অনুস্মারক কত মিনিট পর (15–1440)
-                    <input className="input mt-0.5" type="number" min={15} max={1440} value={settings.chaseFirstDelayMinutes ?? 60} onChange={(e) => setSettings({ ...settings, chaseFirstDelayMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseFirstDelayMinutes: settings.chaseFirstDelayMinutes ?? 60 })} />
+                  <label className="block text-xs">{t("inbox.chaseFirstLabel")}<input className="input mt-0.5" type="number" min={15} max={1440} value={settings.chaseFirstDelayMinutes ?? 60} onChange={(e) => setSettings({ ...settings, chaseFirstDelayMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseFirstDelayMinutes: settings.chaseFirstDelayMinutes ?? 60 })} />
                   </label>
-                  <label className="block text-xs">পরের অনুস্মারকের ব্যবধান (মিনিট, 60–2880)
-                    <input className="input mt-0.5" type="number" min={60} max={2880} value={settings.chaseIntervalMinutes ?? 240} onChange={(e) => setSettings({ ...settings, chaseIntervalMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseIntervalMinutes: settings.chaseIntervalMinutes ?? 240 })} />
+                  <label className="block text-xs">{t("inbox.chaseGapLabel")}<input className="input mt-0.5" type="number" min={60} max={2880} value={settings.chaseIntervalMinutes ?? 240} onChange={(e) => setSettings({ ...settings, chaseIntervalMinutes: Number(e.target.value) })} onBlur={() => saveSettings({ chaseIntervalMinutes: settings.chaseIntervalMinutes ?? 240 })} />
                   </label>
-                  <label className="block text-xs">সর্বোচ্চ কতবার (1–5)
-                    <input className="input mt-0.5" type="number" min={1} max={5} value={settings.chaseMaxAttempts ?? 3} onChange={(e) => setSettings({ ...settings, chaseMaxAttempts: Number(e.target.value) })} onBlur={() => saveSettings({ chaseMaxAttempts: settings.chaseMaxAttempts ?? 3 })} />
+                  <label className="block text-xs">{t("inbox.chaseMaxLabel")}<input className="input mt-0.5" type="number" min={1} max={5} value={settings.chaseMaxAttempts ?? 3} onChange={(e) => setSettings({ ...settings, chaseMaxAttempts: Number(e.target.value) })} onBlur={() => saveSettings({ chaseMaxAttempts: settings.chaseMaxAttempts ?? 3 })} />
                   </label>
                 </div>
                 <label className="mt-2 flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={settings.chaseQuietHoursRespect ?? true} onChange={(e) => { setSettings({ ...settings, chaseQuietHoursRespect: e.target.checked }); saveSettings({ chaseQuietHoursRespect: e.target.checked }); }} />
-                  Quiet Hours সম্মান করুন — এই সময়ে কোনো অনুস্মারক যাবে না (আপনার দোকানের সময় অঞ্চল অনুযায়ী)
-                </label>
+                  <input type="checkbox" checked={settings.chaseQuietHoursRespect ?? true} onChange={(e) => { setSettings({ ...settings, chaseQuietHoursRespect: e.target.checked }); saveSettings({ chaseQuietHoursRespect: e.target.checked }); }} />{t("inbox.quietHoursLabel")}</label>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                  <label className="block text-xs">Quiet শুরু (ঘণ্টা, 0–23)
-                    <input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietStartHour ?? 22} onChange={(e) => setSettings({ ...settings, chaseQuietStartHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietStartHour: settings.chaseQuietStartHour ?? 22 })} />
+                  <label className="block text-xs">{t("inbox.quietStartLabel")}<input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietStartHour ?? 22} onChange={(e) => setSettings({ ...settings, chaseQuietStartHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietStartHour: settings.chaseQuietStartHour ?? 22 })} />
                   </label>
-                  <label className="block text-xs">Quiet শেষ (ঘণ্টা, 0–23)
-                    <input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietEndHour ?? 8} onChange={(e) => setSettings({ ...settings, chaseQuietEndHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietEndHour: settings.chaseQuietEndHour ?? 8 })} />
+                  <label className="block text-xs">{t("inbox.quietEndLabel")}<input className="input mt-0.5" type="number" min={0} max={23} value={settings.chaseQuietEndHour ?? 8} onChange={(e) => setSettings({ ...settings, chaseQuietEndHour: Number(e.target.value) })} onBlur={() => saveSettings({ chaseQuietEndHour: settings.chaseQuietEndHour ?? 8 })} />
                   </label>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">কার্যকর হতে Automations পেজ থেকে &apos;Order Chase Sweep&apos; job চালু থাকতে হবে। গ্রাহক উত্তর দিলে, অর্ডার সম্পূর্ণ হলে, কোনো এজেন্ট দায়িত্ব নিলে, অথবা গ্রাহক &quot;থামুন&quot; জাতীয় কিছু লিখলে অনুসরণ সঙ্গে সঙ্গে বন্ধ হয়ে যায়। পাঠাতে ব্যর্থ হলে সেই চেষ্টা গণনা হয় না — পরের Sweep-এ আবার চেষ্টা হবে। তালিকা Orders পেজের &quot;🎯 To Chase&quot; অংশে দেখা যাবে।</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZChaseNote")}</p>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">🗓️ Channelভিত্তিক AI সময়সূচি</div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.channelScheduleTitle")}</div>
                 {(() => {
                   const draft: AiScheduleMap = scheduleDraft ?? settings.aiScheduleByChannel ?? {};
                   const setEntry = (ch: string, entry: AiScheduleEntry) => setScheduleDraft({ ...draft, [ch]: entry });
@@ -4354,13 +4313,13 @@ export default function InboxPage() {
                             <div className="flex items-center justify-between gap-2">
                               <ChannelChip channel={ch} />
                               <label className="flex items-center gap-1.5 text-xs">
-                                <input type="checkbox" checked={entry.enabled} onChange={(e) => setEntry(ch, { ...entry, enabled: e.target.checked })} /> সময়সূচি চালু
+                                <input type="checkbox" checked={entry.enabled} onChange={(e) => setEntry(ch, { ...entry, enabled: e.target.checked })} /> {t("inbox.inbZScheduleOn")}
                               </label>
                             </div>
                             {entry.windows.map((w, wi) => (
                               <div key={wi} className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
                                 <span className="flex flex-wrap gap-1">
-                                  {(["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"] as const).map((label, d) => {
+                                  {([t("inbox.daySun"), t("inbox.dayMon"), t("inbox.dayTue"), t("inbox.dayWed"), t("inbox.dayThu"), t("inbox.dayFri"), t("inbox.daySat")] as const).map((label, d) => {
                                     const on = w.days.includes(d);
                                     return (
                                       <button key={d} type="button" className={`rounded px-1.5 py-0.5 ring-1 ring-inset ${on ? "bg-brand-500 font-semibold text-white ring-brand-500" : "bg-slate-100 text-slate-600 ring-slate-200"}`} onClick={() => setWindow(wi, { ...w, days: on ? w.days.filter((x) => x !== d) : [...w.days, d].sort((a, b) => a - b) })}>{label}</button>
@@ -4370,21 +4329,21 @@ export default function InboxPage() {
                                 <input className="input w-auto" type="time" value={w.start} onChange={(e) => setWindow(wi, { ...w, start: e.target.value })} />
                                 <span className="text-slate-400">–</span>
                                 <input className="input w-auto" type="time" value={w.end} onChange={(e) => setWindow(wi, { ...w, end: e.target.value })} />
-                                <button type="button" className="rounded bg-slate-100 px-2 py-1 font-medium text-slate-600" onClick={() => setEntry(ch, { ...entry, windows: entry.windows.filter((_, i) => i !== wi) })}>✕ সরান</button>
+                                <button type="button" className="rounded bg-slate-100 px-2 py-1 font-medium text-slate-600" onClick={() => setEntry(ch, { ...entry, windows: entry.windows.filter((_, i) => i !== wi) })}>{t("inbox.removeX")}</button>
                               </div>
                             ))}
-                            <button type="button" className="mt-2 rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700" onClick={() => setEntry(ch, { ...entry, windows: [...entry.windows, { days: [0, 1, 2, 3, 4], start: "09:00", end: "22:00" }] })}>+ সময় যোগ করুন</button>
+                            <button type="button" className="mt-2 rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700" onClick={() => setEntry(ch, { ...entry, windows: [...entry.windows, { days: [0, 1, 2, 3, 4], start: "09:00", end: "22:00" }] })}>{t("inbox.inbZAddWindowBtn")}</button>
                           </div>
                         );
                       })}
-                      <button type="button" className="mt-2 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white" onClick={async () => { await saveSettings({ aiScheduleByChannel: draft }); setScheduleDraft(null); }}>💾 সময়সূচি সেভ করুন</button>
-                      <p className="mt-1 text-[11px] text-slate-400">সময়সূচি চালু থাকলে AI শুধু নির্ধারিত সময়েই auto-reply ও order নেবে। সময়ের বাইরে message এলে AI উত্তর দেবে না — টিমের জন্য অপেক্ষা করবে (পরে নিজে থেকে উত্তর যাবে না)। অভিযোগ/মানুষের অনুরোধের escalation সময়সূচির বাইরেও সঙ্গে সঙ্গে হবে। Organization-এর timezone অনুযায়ী সময় ধরা হয়। চালু করে কোনো সময় না দিলে AI ওই channel-এ বন্ধ থাকবে।</p>
+                      <button type="button" className="mt-2 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white" onClick={async () => { await saveSettings({ aiScheduleByChannel: draft }); setScheduleDraft(null); }}>{t("inbox.saveSchedule")}</button>
+                      <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZScheduleNote")}</p>
                     </>
                   );
                 })()}
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Channel অনুযায়ী Autopilot মোড (ফাঁকা = গ্লোবাল)</div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.channelModeLabel")}</div>
                 <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                   {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
                     <label key={ch} className="block text-xs"><ChannelChip channel={ch} />
@@ -4393,18 +4352,18 @@ export default function InboxPage() {
                         if (e.target.value) perChannelModes[ch] = e.target.value; else delete perChannelModes[ch];
                         saveSettings({ perChannelModes });
                       }}>
-                        <option value="">গ্লোবাল</option><option value="off">বন্ধ</option><option value="draft">Draft</option><option value="auto">অটো</option>
+                        <option value="">{t("inbox.globalWord")}</option><option value="off">{t("inbox.stClosedPlain")}</option><option value="draft">Draft</option><option value="auto">{t("inbox.inbZAutoOption")}</option>
                       </select>
                     </label>
                   ))}
                 </div>
-                <label className="mt-2 block text-xs">উচ্চ-মূল্যের অর্ডারে Escalation (৳, ফাঁকা = বন্ধ) — এর বেশি মূল্যের খোলা অর্ডার থাকলে Autopilot থেমে মানুষের কাছে যাবে
+                <label className="mt-2 block text-xs">{t("inbox.inbZEscalationLabel")}
                   <input className="input mt-0.5" type="number" min={0} value={settings.escalationThresholdMinor != null ? Math.round(settings.escalationThresholdMinor / 100) : ""} onChange={(e) => setSettings({ ...settings, escalationThresholdMinor: e.target.value === "" ? null : Number(e.target.value) * 100 })} onBlur={() => saveSettings({ escalationThresholdMinor: settings.escalationThresholdMinor ?? null })} />
                 </label>
-                <p className="mt-1 text-[11px] text-slate-400">Escalation হয়: অভিযোগ/নেতিবাচক ভাব, "এজেন্ট চাই" জাতীয় অনুরোধ, পরপর ২টি বোঝা-যায়নি বার্তা, উচ্চ-মূল্যের অর্ডার। থামলে Thread এ ব্যানার আসবে; মানুষের উত্তর দিলেই আবার চালু হয়। LLM Tier শুধু যাচাই করা তথ্যই বলতে পারে — সংখ্যা মিল না খেলে পাঠানো হয় না।</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZEscalationNote")}</p>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Intent অনুযায়ী মোড (ফাঁকা = গ্লোবাল)</div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("inbox.intentModeLabel")}</div>
                 <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                   {(["price", "stock", "delivery", "order_status", "payment"] as const).map((intent) => (
                     <label key={intent} className="block text-xs">{intent}
@@ -4413,110 +4372,110 @@ export default function InboxPage() {
                         if (e.target.value) perIntent[intent] = e.target.value; else delete perIntent[intent];
                         saveSettings({ perIntent });
                       }}>
-                        <option value="">গ্লোবাল</option><option value="off">বন্ধ</option><option value="draft">Draft</option><option value="auto">অটো</option>
+                        <option value="">{t("inbox.globalWord")}</option><option value="off">{t("inbox.stClosedPlain")}</option><option value="draft">Draft</option><option value="auto">{t("inbox.inbZAutoOption")}</option>
                       </select>
                     </label>
                   ))}
                 </div>
               </div>
             </div>
-          ) : <p className="text-xs text-slate-400">সেটিংস লোড হচ্ছে...</p>}
+          ) : <p className="text-xs text-slate-400">{t("inbox.settingsLoading")}</p>}
         </div>
 
         <div className={`card space-y-4 p-5 ${manageTab === "performance" ? "block xl:col-span-2" : "hidden"}`}>
-          <div className="section-title">🙋 আমার পারফরম্যান্স ও স্বাক্ষর</div>
+          <div className="section-title">{t("inbox.myPerfTitle")}</div>
           {myPerf?.me ? (
             <div className="space-y-4">
               {/* Performance KPI Cards */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">সূচক স্কোর</div>
-                  <div className="mt-1 text-2xl font-black text-indigo-700">{myPerf.me.indicator}<span className="text-xs font-normal text-indigo-400">/১০০</span></div>
-                  {myPerf.rank ? <div className="mt-0.5 text-[10px] font-semibold text-indigo-600">র‍্যাংক #{myPerf.rank}/{myPerf.totalAgents}</div> : null}
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">{t("inbox.indexScore")}</div>
+                  <div className="mt-1 text-2xl font-black text-indigo-700">{myPerf.me.indicator}<span className="text-xs font-normal text-indigo-400">{t("inbox.of100")}</span></div>
+                  {myPerf.rank ? <div className="mt-0.5 text-[10px] font-semibold text-indigo-600">{t("inbox.rankLine", { rank: fmtNumber(locale, myPerf.rank), total: fmtNumber(locale, myPerf.totalAgents) })}</div> : null}
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">দায়িত্বপ্রাপ্ত</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.assignedWord")}</div>
                   <div className="mt-1 text-xl font-black text-slate-800">{myPerf.me.current.assigned}</div>
-                  <div className="text-[10px] text-slate-400">মোট হ্যান্ডেল করা</div>
+                  <div className="text-[10px] text-slate-400">{t("inbox.totalHandled")}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">বন্ধ / সমাধান</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.closedResolved")}</div>
                   <div className="mt-1 text-xl font-black text-emerald-600">{myPerf.me.current.closed}</div>
-                  <div className="text-[10px] text-slate-400">সফল রেজোলিউশন</div>
+                  <div className="text-[10px] text-slate-400">{t("inbox.successfulResolution")}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">মোট রিপ্লাই</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.totalReplies")}</div>
                   <div className="mt-1 text-xl font-black text-slate-800">{myPerf.me.current.replies}</div>
-                  <div className="text-[10px] text-slate-400">প্রেরিত বার্তা</div>
+                  <div className="text-[10px] text-slate-400">{t("inbox.sentMessages")}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">গড় প্রথম উত্তর</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.avgFirstResponse")}</div>
                   <div className="mt-1 text-xl font-black text-slate-800">{myPerf.me.current.avgFirstResponseMinutes != null ? `${myPerf.me.current.avgFirstResponseMinutes}m` : "—"}</div>
-                  <div className="text-[10px] text-slate-400">SLA স্পিড</div>
+                  <div className="text-[10px] text-slate-400">{t("inbox.slaSpeed")}</div>
                 </div>
                 <div className="rounded-2xl border border-amber-100 bg-amber-50/50 p-3 text-center">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-500">CSAT রেটিং</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-500">{t("inbox.csatLabel")}</div>
                   <div className="mt-1 text-xl font-black text-amber-700">{myPerf.me.current.csatAvg != null ? `⭐ ${myPerf.me.current.csatAvg}` : "—"}</div>
-                  <div className="text-[10px] text-amber-600/80">গ্রাহক সন্তুষ্টি</div>
+                  <div className="text-[10px] text-amber-600/80">{t("inbox.customerSatisfaction")}</div>
                 </div>
               </div>
 
               {myPerf.today ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50/80 px-3.5 py-2.5 text-xs ring-1 ring-slate-100">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">আজকের স্থিতি:</span>
+                    <span className="font-semibold text-slate-700">{t("inbox.todayStatus")}</span>
                     <span className="rounded-full bg-white px-2.5 py-0.5 font-bold shadow-2xs ring-1 ring-slate-200">
-                      {myPerf.today.state === "active" ? "🟢 সক্রিয়" : myPerf.today.state === "idle" ? "🟡 অলস" : myPerf.today.state === "away" ? "⚪ দূরে" : "⚫ অফলাইন"}
+                      {myPerf.today.state === "active" ? t("inbox.stActive") : myPerf.today.state === "idle" ? t("inbox.stIdle") : myPerf.today.state === "away" ? t("inbox.stAway") : t("inbox.stOffline")}
                     </span>
                     <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">আজকের জবাব: <strong className="text-slate-800">{myPerf.today.repliesToday}টি</strong></span>
+                    <span className="text-slate-600">{t("inbox.todayReplies")}<strong className="text-slate-800">{t("inbox.countTiSuffix", { count: fmtNumber(locale, myPerf.today.repliesToday) })}</strong></span>
                     <span className="text-slate-400">|</span>
-                    <span className="text-slate-600">আজ বন্ধ: <strong className="text-slate-800">{myPerf.today.closedToday}টি</strong></span>
+                    <span className="text-slate-600">{t("inbox.todayClosed")}<strong className="text-slate-800">{t("inbox.countTiSuffix", { count: fmtNumber(locale, myPerf.today.closedToday) })}</strong></span>
                   </div>
                   <span className="rounded-md bg-amber-100 px-2 py-0.5 font-bold text-amber-800">
-                    এখন খোলা: {myPerf.today.openNow}টি
+                    {t("inbox.openNowLine", { n: fmtNumber(locale, myPerf.today.openNow) })}
                   </span>
                 </div>
               ) : null}
             </div>
-          ) : <p className="text-xs text-slate-400">আপনার Role টি এজেন্ট হিসেবে গণনা হয় না, তাই নিজের স্কোরকার্ড নেই — পুরো হিসাব Team Performance পেজে।</p>}
+          ) : <p className="text-xs text-slate-400">{t("inbox.noScorecard")}</p>}
 
           <div className="border-t border-slate-100 pt-3">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
               <input type="checkbox" checked={mySig.enabled} onChange={(e) => setMySig({ ...mySig, enabled: e.target.checked })} />
-              <span>আমার পাঠানো বার্তায় স্বাক্ষর যোগ করুন</span>
+              <span>{t("inbox.signatureToggle")}</span>
             </label>
-            <textarea className="input mt-2" rows={2} maxLength={300} placeholder={"যেমন:\n— রাফি, সাপোর্ট টিম, Qosprey"} value={mySig.signature} onChange={(e) => setMySig({ ...mySig, signature: e.target.value })} />
+            <textarea className="input mt-2" rows={2} maxLength={300} placeholder={t("inbox.inbZSignaturePlaceholder")} value={mySig.signature} onChange={(e) => setMySig({ ...mySig, signature: e.target.value })} />
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <button className="btn-secondary btn-sm" onClick={async () => {
                 const orgId = getOrganizationId(); if (!orgId) return;
                 try {
                   const saved = await apiFetch<any>(`/organizations/${orgId}/inbox/my-signature`, { method: "PUT", body: JSON.stringify(mySig) });
                   setMySig({ signature: saved.signature ?? "", enabled: Boolean(saved.enabled) });
-                  setNotice("আপনার স্বাক্ষর সংরক্ষণ হয়েছে — এখন থেকে আপনার নিজের পাঠানো বার্তায় এটি যোগ হবে।");
-                } catch (e) { setError(e instanceof Error ? e.message : "স্বাক্ষর সংরক্ষণ ব্যর্থ"); }
-              }}>স্বাক্ষর সংরক্ষণ</button>
-              <span className="text-[11px] text-slate-400">শুধু নিজের হাতে পাঠানো বার্তায় যোগ হয় — স্বয়ংক্রিয়/সিস্টেম বার্তায় নয়।</span>
+                  setNotice(t("inbox.signatureSaved"));
+                } catch (e) { setError(e instanceof Error ? e.message : t("inbox.signatureSaveFailed")); }
+              }}>{t("inbox.signatureSaveBtn")}</button>
+              <span className="text-[11px] text-slate-400">{t("inbox.signatureNote")}</span>
             </div>
           </div>
         </div>
 
         <div className={`card space-y-4 p-5 ${manageTab === "report" ? "block xl:col-span-2" : "hidden"}`}>
-          <div className="section-title">📊 টিম রিপোর্ট (শেষ ৭ দিন)</div>
+          <div className="section-title">{t("inbox.teamReportTitle")}</div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-500 font-medium">পরিসর:</span>
+              <span className="text-slate-500 font-medium">{t("inbox.rangeLabel")}</span>
               <select className="input w-52 py-1 text-xs" defaultValue="" onChange={async (e) => {
                 const orgId = getOrganizationId(); if (!orgId) return;
                 const tid = e.target.value;
                 try {
                   setReport(await apiFetch<any>(`/organizations/${orgId}/inbox/team-report?days=7${tid ? `&teamId=${tid}` : ""}`));
-                } catch (err) { setError(err instanceof Error ? err.message : "রিপোর্ট লোড ব্যর্থ"); }
+                } catch (err) { setError(err instanceof Error ? err.message : t("inbox.reportLoadFailed")); }
               }}>
-                <option value="">সব টিম (পুরো Organization)</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name} টিম</option>)}
+                <option value="">{t("inbox.allTeamsOrg")}</option>
+                {teams.map((team) => <option key={team.id} value={team.id}>{team.name} {t("inbox.teamWordSuffix")}</option>)}
               </select>
-              {report?.scopedTeamName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 ring-1 ring-indigo-200">শুধু "{report.scopedTeamName}" টিম</span> : null}
+              {report?.scopedTeamName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 ring-1 ring-indigo-200">{t("inbox.inbZOnlyTeam", { name: report.scopedTeamName })}</span> : null}
             </div>
           </div>
 
@@ -4524,19 +4483,19 @@ export default function InboxPage() {
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-center">
-                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">নতুন কথোপকথন</div>
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.newConvsLabel")}</div>
                   <div className="mt-1 text-2xl font-black text-slate-900">{report.opened}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-center">
-                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">বন্ধ হয়েছে</div>
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.closedLabel")}</div>
                   <div className="mt-1 text-2xl font-black text-emerald-600">{report.closed}</div>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 text-center">
-                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">গড় প্রথম উত্তর</div>
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.avgFirstResponse")}</div>
                   <div className="mt-1 text-2xl font-black text-slate-900">{report.avgFirstResponseMinutes != null ? `${report.avgFirstResponseMinutes}m` : "—"}</div>
                 </div>
                 <div className={`rounded-2xl border p-3.5 text-center ${report.currentBreaches > 0 ? "border-red-200 bg-red-50/80" : "border-slate-100 bg-slate-50/70"}`}>
-                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">SLA ভঙ্গ (এখন)</div>
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400">{t("inbox.slaBreachNow")}</div>
                   <div className={`mt-1 text-2xl font-black ${report.currentBreaches > 0 ? "text-red-600" : "text-slate-900"}`}>{report.currentBreaches}</div>
                 </div>
               </div>
@@ -4545,37 +4504,37 @@ export default function InboxPage() {
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3.5 text-xs text-emerald-800">
                 <div className="flex items-center gap-2">
                   <span className="text-base">🛒</span>
-                  <span>চ্যাট থেকে অর্জিত মোট অর্ডার: <strong className="font-bold text-slate-900">{report.chatLinkedOrders}টি</strong></span>
+                  <span>{t("inbox.chatOrdersEarned")}<strong className="font-bold text-slate-900">{t("inbox.countTiSuffix", { count: fmtNumber(locale, report.chatLinkedOrders) })}</strong></span>
                 </div>
                 <div className="text-sm font-black text-emerald-700">
-                  মোট আয়: {money(report.chatLinkedRevenueMinor, report.chatLinkedCurrency)}
+                  {t("inbox.totalRevenuePrefix")} {money(report.chatLinkedRevenueMinor, report.chatLinkedCurrency, locale)}
                 </div>
               </div>
 
               {report.autopilot ? (
                 <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 text-xs text-indigo-900">
                   <div className="font-bold mb-1 flex items-center gap-1.5">
-                    <span>🤖</span> <span>Autopilot কার্যকারিতা</span>
+                    <span>🤖</span> <span>{t("inbox.autopilotEffectiveness")}</span>
                   </div>
                   <div className="flex flex-wrap gap-3 text-slate-600">
-                    <span>অটো প্রেরিত: <strong className="text-slate-800">{report.autopilot.autoSent}টি</strong> (LLM {report.autopilot.llmSent}টি)</span>
-                    <span>সাজেস্টেড ড্রাফট: <strong className="text-slate-800">{report.autopilot.draftsSuggested}টি</strong></span>
-                    <span>হাতে স্থানান্তর (Escalated): <strong className="text-amber-700">{report.autopilot.escalatedNow}টি</strong></span>
+                    <span>{t("inbox.autoSentLabel")}<strong className="text-slate-800">{t("inbox.countTiSuffix", { count: fmtNumber(locale, report.autopilot.autoSent) })}</strong> {t("inbox.llmSuffix", { n: fmtNumber(locale, report.autopilot.llmSent) })}</span>
+                    <span>{t("inbox.draftsSuggestedLabel")}<strong className="text-slate-800">{t("inbox.countTiSuffix", { count: fmtNumber(locale, report.autopilot.draftsSuggested) })}</strong></span>
+                    <span>{t("inbox.escalatedLabel")}<strong className="text-amber-700">{t("inbox.countTiSuffix", { count: fmtNumber(locale, report.autopilot.escalatedNow) })}</strong></span>
                   </div>
                 </div>
               ) : null}
 
               {(report.perAgent ?? []).length ? (
                 <div className="space-y-1.5 pt-1">
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">👤 এজেন্টদের একক পারফরম্যান্স</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t("inbox.agentPerfTitle")}</div>
                   <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200/80 bg-white">
                     {report.perAgent.map((a: any) => (
                       <div key={a.userId} className="flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs hover:bg-slate-50 transition">
                         <span className="font-bold text-slate-800">{memberName(a.userId)}</span>
                         <div className="flex flex-wrap items-center gap-2 text-slate-600">
-                          <span className="rounded bg-slate-100 px-2 py-0.5">দায়িত্ব {a.assigned}</span>
-                          <span className="rounded bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5">বন্ধ {a.closed}</span>
-                          <span>গড় উত্তর: {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes}m` : "—"}</span>
+                          <span className="rounded bg-slate-100 px-2 py-0.5">{t("inbox.assignedShort", { n: fmtNumber(locale, a.assigned) })}</span>
+                          <span className="rounded bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5">{t("inbox.closedShort", { n: fmtNumber(locale, a.closed) })}</span>
+                          <span>{t("inbox.avgReplyShort")} {a.avgFirstResponseMinutes != null ? `${a.avgFirstResponseMinutes}m` : "—"}</span>
                           {a.csatAvg != null ? <span className="rounded bg-amber-50 text-amber-700 font-bold px-2 py-0.5">⭐ {a.csatAvg}</span> : null}
                         </div>
                       </div>
@@ -4586,19 +4545,19 @@ export default function InboxPage() {
 
               {(report.perTeam ?? []).length ? (
                 <div className="space-y-1.5 pt-2">
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">👥 টিম অনুযায়ী হিসাব</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t("inbox.teamsBreakdown")}</div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {report.perTeam.map((t: any) => (
                       <div key={t.teamId} className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-3 text-xs">
                         <div className="flex items-center justify-between font-bold text-slate-800">
-                          <span>{t.name} টিম</span>
-                          <span className="text-[11px] font-normal text-slate-500">{t.memberCount} জন সদস্য</span>
+                          <span>{t.name} {dictT("inbox.teamWordSuffix")}</span>
+                          <span className="text-[11px] font-normal text-slate-500">{t("inbox.membersSuffix", { n: fmtNumber(locale, t.memberCount) })}</span>
                         </div>
-                        {t.leadUserId ? <div className="text-[11px] text-slate-400 mt-0.5">লিড: {memberName(t.leadUserId)}</div> : null}
+                        {t.leadUserId ? <div className="text-[11px] text-slate-400 mt-0.5">{t("inbox.leadShort")} {memberName(t.leadUserId)}</div> : null}
                         <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs">দায়িত্ব {t.assigned}</span>
-                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs">খোলা {t.openNow}</span>
-                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs text-emerald-700 font-bold">বন্ধ {t.closed}</span>
+                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs">{t("inbox.assignedShort", { n: fmtNumber(locale, t.assigned) })}</span>
+                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs">{t("inbox.openShort", { n: fmtNumber(locale, t.openNow) })}</span>
+                          <span className="rounded bg-white px-1.5 py-0.5 shadow-2xs text-emerald-700 font-bold">{t("inbox.closedShort", { n: fmtNumber(locale, t.closed) })}</span>
                           {t.csatAvg != null ? <span className="rounded bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5">⭐ {t.csatAvg}</span> : null}
                         </div>
                       </div>
@@ -4609,14 +4568,14 @@ export default function InboxPage() {
 
               {(report.dailyTrend ?? []).length ? (
                 <div className="border-t border-slate-100 pt-3">
-                  <div className="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">📈 প্রতিদিনের ধারা (দৈনিক নতুন বনাম সমাধান)</div>
+                  <div className="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">{t("inbox.dailyTrend")}</div>
                   <div className="flex flex-wrap gap-2">
                     {report.dailyTrend.map((d: any) => (
                       <div key={d.date} className="rounded-xl border border-slate-100 bg-slate-50/70 p-2 text-center text-xs min-w-[90px]">
                         <div className="text-[10px] font-bold text-slate-400">{d.date.slice(5)}</div>
                         <div className="mt-1 flex items-center justify-center gap-1.5 text-[11px]">
-                          <span className="font-semibold text-slate-800" title="নতুন">+{d.created}</span>
-                          <span className="font-bold text-emerald-600" title="বন্ধ">✓{d.closed}</span>
+                          <span className="font-semibold text-slate-800" title={t("inbox.newWord")}>+{d.created}</span>
+                          <span className="font-bold text-emerald-600" title={t("inbox.stClosedPlain")}>✓{d.closed}</span>
                         </div>
                       </div>
                     ))}
@@ -4624,7 +4583,7 @@ export default function InboxPage() {
                 </div>
               ) : null}
             </div>
-          ) : <p className="text-xs text-slate-400">রিপোর্ট লোড হচ্ছে...</p>}
+          ) : <p className="text-xs text-slate-400">{t("inbox.reportLoading")}</p>}
         </div>
 
         {/* IN10c: Analytics v2 — সব সংখ্যা আসল row থেকে
@@ -4632,40 +4591,40 @@ export default function InboxPage() {
         <div id="inbox-manage-analytics" className="manage-card fade-rise scroll-mt-20 space-y-3">
           <div className="manage-head"><span className="manage-icon" aria-hidden="true">📈</span><div className="section-title">Inbox Analytics v2</div></div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-500">পরিসর:</span>
+            <span className="text-slate-500">{t("inbox.rangeLabel")}</span>
             {[7, 30].map((d) => (
-              <button key={d} className={`rounded-lg px-2.5 py-1 font-semibold ring-1 ${analyticsDays === d ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`} disabled={busy !== ""} onClick={() => void loadAnalytics(d)}>শেষ {d} দিন</button>
+              <button key={d} className={`rounded-lg px-2.5 py-1 font-semibold ring-1 ${analyticsDays === d ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`} disabled={busy !== ""} onClick={() => void loadAnalytics(d)}>{t("inbox.inbZLastDays", { days: fmtNumber(locale, d) })}</button>
             ))}
-            <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void loadAnalytics(analyticsDays)}>{busy === "analytics" ? "লোড হচ্ছে..." : analytics ? "↻ আবার লোড" : "লোড করুন"}</button>
-            {analytics ? <span className="text-slate-400">সময় অঞ্চল: {analytics.timezone} · হিসাব সরাসরি সংরক্ষিত মেসেজ/অর্ডার থেকে</span> : null}
+            <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => void loadAnalytics(analyticsDays)}>{busy === "analytics" ? t("inbox.loadingBtn") : analytics ? t("inbox.reloadBtn") : t("inbox.loadBtn")}</button>
+            {analytics ? <span className="text-slate-400">{t("inbox.inbZTimezoneNote", { tz: analytics.timezone })}</span> : null}
           </div>
           {analytics ? (
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div className="ctx-tile"><div className="ctx-tile-label">আগত মেসেজ</div><div className="ctx-tile-value">{analytics.totals.inboundMessages}</div></div>
-                <div className="ctx-tile"><div className="ctx-tile-label">নতুন কথোপকথন</div><div className="ctx-tile-value">{analytics.totals.conversationsStarted}</div></div>
-                <div className="ctx-tile"><div className="ctx-tile-label">চ্যাট-লিংকড অর্ডার</div><div className="ctx-tile-value">{analytics.totals.chatOrders}</div></div>
-                <div className="ctx-tile"><div className="ctx-tile-label">Intent শনাক্ত মেসেজ</div><div className="ctx-tile-value">{analytics.totals.classifiedMessages}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">{t("inbox.incomingMessages")}</div><div className="ctx-tile-value">{analytics.totals.inboundMessages}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">{t("inbox.newConvsLabel")}</div><div className="ctx-tile-value">{analytics.totals.conversationsStarted}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">{t("inbox.chatLinkedOrders")}</div><div className="ctx-tile-value">{analytics.totals.chatOrders}</div></div>
+                <div className="ctx-tile"><div className="ctx-tile-label">{t("inbox.intentDetected")}</div><div className="ctx-tile-value">{analytics.totals.classifiedMessages}</div></div>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold text-slate-500">🔥 ব্যস্ত সময় (ঘণ্টা অনুযায়ী আগত মেসেজ){analytics.heatmap.peakHour ? <span className="font-normal text-slate-400"> — সবচেয়ে ব্যস্ত: {analytics.heatmap.peakHour.hour}:০০ ({analytics.heatmap.peakHour.count}টি)</span> : null}</div>
+                <div className="mb-1 text-xs font-semibold text-slate-500">{t("inbox.inbZHeatmapTitle")}{analytics.heatmap.peakHour ? <span className="font-normal text-slate-400">{t("inbox.inbZPeakPart", { hour: fmtNumber(locale, analytics.heatmap.peakHour.hour), count: fmtNumber(locale, analytics.heatmap.peakHour.count) })}</span> : null}</div>
                 {(() => { const max = Math.max(1, ...analytics.heatmap.hourTotals); return (
-                  <div className="flex h-16 items-end gap-[2px]" role="img" aria-label="ঘণ্টা অনুযায়ী মেসেজের বার চার্ট">
+                  <div className="flex h-16 items-end gap-[2px]" role="img" aria-label={t("inbox.heatmapAria")}>
                     {analytics.heatmap.hourTotals.map((n, h) => (
-                      <div key={h} className="flex flex-1 flex-col items-center gap-0.5" title={`${h}:০০ — ${n}টি মেসেজ`}>
+                      <div key={h} className="flex flex-1 flex-col items-center gap-0.5" title={t("inbox.inbZHeatHourTitle", { hour: fmtNumber(locale, h), count: fmtNumber(locale, n) })}>
                         <div className="w-full rounded-t bg-indigo-500/80" style={{ height: `${Math.max(4, (n / max) * 100)}%` }} />
                         <span className="text-[9px] text-slate-400">{h % 3 === 0 ? h : ""}</span>
                       </div>
                     ))}
                   </div>
                 ); })()}
-                {(() => { const max = Math.max(1, ...analytics.heatmap.matrix.flat()); const dayNames = ["রবি", "সোম", "মঙ্গল", "বুধ", "বৃহস্পতি", "শুক্র", "শনি"]; return (
-                  <div className="mt-2 space-y-[2px]" aria-label="সপ্তাহের দিন ও ঘণ্টার হিটম্যাপ">
+                {(() => { const max = Math.max(1, ...analytics.heatmap.matrix.flat()); const dayNames = [t("inbox.daySun"), t("inbox.dayMon"), t("inbox.dayTue"), t("inbox.dayWed"), t("inbox.dayThu"), t("inbox.dayFri"), t("inbox.daySat")]; return (
+                  <div className="mt-2 space-y-[2px]" aria-label={t("inbox.heatmapWeekAria")}>
                     {analytics.heatmap.matrix.map((row, wd) => (
                       <div key={wd} className="flex items-center gap-[2px]">
                         <span className="w-12 shrink-0 text-[10px] text-slate-400">{dayNames[wd]}</span>
                         {row.map((n, h) => (
-                          <span key={h} className="h-3 flex-1 rounded-[3px]" style={{ backgroundColor: `rgba(79,70,229,${n === 0 ? 0.05 : 0.15 + 0.85 * (n / max)})` }} title={`${dayNames[wd]} ${h}:০০ — ${n}টি`} />
+                          <span key={h} className="h-3 flex-1 rounded-[3px]" style={{ backgroundColor: `rgba(79,70,229,${n === 0 ? 0.05 : 0.15 + 0.85 * (n / max)})` }} title={t("inbox.inbZHeatCellTitle", { day: dayNames[wd], hour: fmtNumber(locale, h), count: fmtNumber(locale, n) })} />
                         ))}
                       </div>
                     ))}
@@ -4674,9 +4633,9 @@ export default function InboxPage() {
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div>
-                  <div className="mb-1 text-xs font-semibold text-slate-500">চ্যানেল অনুযায়ী কনভার্সন (সক্রিয় কথোপকথনের মধ্যে চ্যাট-লিংকড অর্ডারসহ)</div>
+                  <div className="mb-1 text-xs font-semibold text-slate-500">{t("inbox.channelConversionTitle")}</div>
                   <table className="w-full text-xs">
-                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">চ্যানেল</th><th className="py-1 pr-2 font-semibold">সক্রিয়</th><th className="py-1 pr-2 font-semibold">অর্ডার হয়েছে</th><th className="py-1 font-semibold">হার</th></tr></thead>
+                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">{t("inbox.channelLabel")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.inbZColActive")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.inbZColOrdered")}</th><th className="py-1 font-semibold">{t("inbox.inbZColRate")}</th></tr></thead>
                     <tbody>
                       {analytics.channels.map((c) => (
                         <tr key={c.channel} className="border-t border-slate-100">
@@ -4686,54 +4645,54 @@ export default function InboxPage() {
                           <td className="py-1 font-semibold">{c.conversionPct != null ? `${c.conversionPct}%` : "—"}</td>
                         </tr>
                       ))}
-                      {analytics.channels.length === 0 ? <tr><td colSpan={4} className="py-2 text-slate-400">এই পরিসরে কোনো কথোপকথন নেই</td></tr> : null}
+                      {analytics.channels.length === 0 ? <tr><td colSpan={4} className="py-2 text-slate-400">{t("inbox.noConvsInRange")}</td></tr> : null}
                     </tbody>
                   </table>
                 </div>
                 <div>
-                  <div className="mb-1 text-xs font-semibold text-slate-500">Intent ভাঙন (শনাক্ত মেসেজের মধ্যে)</div>
+                  <div className="mb-1 text-xs font-semibold text-slate-500">{t("inbox.inbZIntentTitle")}</div>
                   <div className="space-y-1">
                     {analytics.intents.map((it) => (
                       <div key={it.intent} className="flex items-center gap-2 text-xs">
                         <span className="w-24 shrink-0 truncate font-medium">{it.intent}</span>
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full bg-emerald-500/80" style={{ width: `${it.pct ?? 0}%` }} /></span>
-                        <span className="w-16 shrink-0 text-right text-slate-500">{it.count}টি{it.pct != null ? ` · ${it.pct}%` : ""}</span>
+                        <span className="w-16 shrink-0 text-right text-slate-500">{t("inbox.inbZCountTi", { count: fmtNumber(locale, it.count) })}{it.pct != null ? ` · ${fmtNumber(locale, it.pct)}%` : ""}</span>
                       </div>
                     ))}
-                    {analytics.intents.length === 0 ? <p className="text-xs text-slate-400">এই পরিসরে শনাক্ত intent নেই</p> : null}
+                    {analytics.intents.length === 0 ? <p className="text-xs text-slate-400">{t("inbox.inbZIntentEmpty")}</p> : null}
                   </div>
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-xs font-semibold text-slate-500">প্রতিদিনের প্রবণতা (প্রথম উত্তর ও সমাধান)</div>
+                <div className="mb-1 text-xs font-semibold text-slate-500">{t("inbox.inbZDailyTrendTitle")}</div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">তারিখ</th><th className="py-1 pr-2 font-semibold">নতুন</th><th className="py-1 pr-2 font-semibold">আগত মেসেজ</th><th className="py-1 pr-2 font-semibold">গড় প্রথম উত্তর</th><th className="py-1 pr-2 font-semibold">সমাধান</th><th className="py-1 font-semibold">গড় সমাধান সময়</th></tr></thead>
+                    <thead><tr className="text-left text-slate-500"><th className="py-1 pr-2 font-semibold">{t("inbox.dateLabel")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.newWord")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.incomingMessages")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.avgFirstResponse")}</th><th className="py-1 pr-2 font-semibold">{t("inbox.cmtBulkResolve")}</th><th className="py-1 font-semibold">{t("inbox.inbZAvgResolution")}</th></tr></thead>
                     <tbody>
                       {analytics.trend.map((r) => (
                         <tr key={r.date} className="border-t border-slate-100">
                           <td className="py-1 pr-2 font-medium">{r.date}</td>
                           <td className="py-1 pr-2">{r.newConversations}</td>
                           <td className="py-1 pr-2">{r.inboundMessages}</td>
-                          <td className="py-1 pr-2">{r.avgFirstResponseMinutes != null ? `${r.avgFirstResponseMinutes} মিনিট` : "—"}</td>
+                          <td className="py-1 pr-2">{r.avgFirstResponseMinutes != null ? t("inbox.inbZMinutesWord", { count: fmtNumber(locale, r.avgFirstResponseMinutes) }) : "—"}</td>
                           <td className="py-1 pr-2">{r.resolvedCount}</td>
-                          <td className="py-1">{r.avgResolutionMinutes != null ? `${r.avgResolutionMinutes} মিনিট` : "—"}</td>
+                          <td className="py-1">{r.avgResolutionMinutes != null ? t("inbox.inbZMinutesWord", { count: fmtNumber(locale, r.avgResolutionMinutes) }) : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">গড় শুধু যেসব কথোপকথনে সেই মাপ আছে তাদের ওপর — নমুনা না থাকলে "—"। বাতিল অর্ডার কনভার্সনে ধরা হয় না।</p>
+                <p className="mt-1 text-[11px] text-slate-400">{t("inbox.inbZAvgNote")}</p>
               </div>
             </div>
-          ) : <p className="text-xs text-slate-400">"লোড করুন" চাপলে এই পরিসরের আসল মেসেজ/কথোপকথন/অর্ডার থেকে হিসাব দেখা যাবে।</p>}
+          ) : <p className="text-xs text-slate-400">{t("inbox.inbZLoadHint", { load: t("inbox.loadBtn") })}</p>}
         </div>
 
         <div id="inbox-manage-teams" className="manage-card fade-rise scroll-mt-20 space-y-3">
-          <div className="manage-head"><span className="manage-icon" aria-hidden="true">👥</span><div className="section-title">টিম ও এজেন্ট</div></div>
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">👥</span><div className="section-title">{t("inbox.inbZTeamAgentsTitle")}</div></div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-slate-500">আমার অবস্থা:</span>
-            {([["online", "🟢 Online"], ["busy", "🟠 ব্যস্ত"], ["away", "⚪ Away"]] as const).map(([v, label]) => (
+            <span className="text-slate-500">{t("inbox.inbZMyStatusLabel")}</span>
+            {([["online", "🟢 Online"], ["busy", t("inbox.inbZStatusBusy")], ["away", "⚪ Away"]] as const).map(([v, label]) => (
               <button key={v} className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${myStatus === v ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-600 ring-slate-200"}`}
                 onClick={async () => {
                   setMyStatus(v);
@@ -4742,21 +4701,21 @@ export default function InboxPage() {
                   loadTeams();
                 }}>{label}</button>
             ))}
-            <span className="text-xs text-slate-400">Away থাকলে নতুন অ্যাসাইনমেন্ট আসবে না; পুরনো খোলা কথোপকথন Sweep এ সরে যাবে।</span>
+            <span className="text-xs text-slate-400">{t("inbox.inbZAwayNote")}</span>
           </div>
           {agentStates.length ? (
             <div className="space-y-1">
               {agentStates.map((a) => (
                 <div key={a.userId} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
-                  <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span>{a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-slate-600">অফ-শিফট</span> : null}</span>
-                  <span>খোলা {a.openCount}/{a.capacity}{a.teams?.length ? ` · ${a.teams.join(", ")}` : ""}</span>
+                  <span className="font-medium">{a.status === "away" ? "⚪" : a.status === "busy" ? "🟠" : "🟢"} {a.name} <span className="text-slate-400">({a.role})</span>{a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-slate-600">{t("inbox.inbZOffShift")}</span> : null}</span>
+                  <span>{t("inbox.inbZAgentOpen", { open: fmtNumber(locale, a.openCount), cap: fmtNumber(locale, a.capacity) })}{a.teams?.length ? ` · ${a.teams.join(", ")}` : ""}</span>
                 </div>
               ))}
             </div>
-          ) : <p className="text-xs text-slate-400">এজেন্ট তালিকা লোড হচ্ছে...</p>}
+          ) : <p className="text-xs text-slate-400">{t("inbox.inbZAgentsLoading")}</p>}
           <div className="space-y-2 border-t pt-3">
             <div className="flex flex-wrap gap-2">
-              <input className="input w-44" placeholder="নতুন টিমের নাম (যেমন: সেলস)" value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} />
+              <input className="input w-44" placeholder={t("inbox.inbZNewTeamPlaceholder")} value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} />
               {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
                 <label key={ch} className="flex items-center gap-1 text-xs">
                   <input type="checkbox" checked={teamForm.channels.includes(ch)} onChange={(e) => setTeamForm({ ...teamForm, channels: e.target.checked ? [...teamForm.channels, ch] : teamForm.channels.filter((x) => x !== ch) })} />
@@ -4766,70 +4725,70 @@ export default function InboxPage() {
               <button className="btn-primary btn-sm" disabled={!teamForm.name.trim() || busy !== ""} onClick={async () => {
                 const orgId = getOrganizationId(); if (!orgId) return;
                 setBusy("team");
-                try { await apiFetch(`/organizations/${orgId}/inbox/teams`, { method: "POST", body: JSON.stringify(teamForm) }); setTeamForm({ name: "", channels: [] }); loadTeams(); setNotice("টিম তৈরি হয়েছে।"); }
-                catch (e) { setError(e instanceof Error ? e.message : "টিম তৈরি ব্যর্থ"); }
+                try { await apiFetch(`/organizations/${orgId}/inbox/teams`, { method: "POST", body: JSON.stringify(teamForm) }); setTeamForm({ name: "", channels: [] }); loadTeams(); setNotice(t("inbox.inbZTeamCreated")); }
+                catch (e) { setError(e instanceof Error ? e.message : t("inbox.inbZTeamCreateFailed")); }
                 finally { setBusy(""); }
-              }}>টিম তৈরি</button>
+              }}>{t("inbox.inbZCreateTeamBtn")}</button>
             </div>
-            <p className="text-[11px] text-slate-400">চ্যানেল না বাছলে টিম সব চ্যানেল নেবে। Smart Assignment চালু থাকলে নতুন কথোপকথন টিমের সদস্যদের মধ্যে ভাগ হয় — Capacity পূর্ণ বা Away সদস্য বাদ পড়ে।</p>
-            {teams.map((t) => (
-              <div key={t.id} className="rounded-xl border p-3">
+            <p className="text-[11px] text-slate-400">{t("inbox.inbZTeamNote")}</p>
+            {teams.map((team) => (
+              <div key={team.id} className="rounded-xl border p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold">{t.name} <span className="ml-1 font-normal text-xs text-slate-400">খোলা {t.openCount}টি</span></div>
-                  <div className="flex flex-wrap gap-1">{(t.channels ?? []).length ? (t.channels as string[]).map((ch) => <ChannelChip key={ch} channel={ch} />) : <span className="text-[11px] text-slate-400">সব চ্যানেল</span>}</div>
+                  <div className="text-sm font-semibold">{team.name} <span className="ml-1 font-normal text-xs text-slate-400">{t("inbox.inbZTeamOpenCount", { count: fmtNumber(locale, team.openCount) })}</span></div>
+                  <div className="flex flex-wrap gap-1">{(team.channels ?? []).length ? (team.channels as string[]).map((ch) => <ChannelChip key={ch} channel={ch} />) : <span className="text-[11px] text-slate-400">{t("inbox.inbZAllChannels")}</span>}</div>
                 </div>
                 <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
                   {members.map((mb) => {
-                    const draft = teamDraft[t.id] ?? {};
+                    const draft = teamDraft[team.id] ?? {};
                     const on = mb.user.id in draft;
                     return (
                       <label key={mb.user.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2 py-1.5 text-xs">
                         <input type="checkbox" checked={on} onChange={(e) => {
-                          const next = { ...(teamDraft[t.id] ?? {}) };
+                          const next = { ...(teamDraft[team.id] ?? {}) };
                           if (e.target.checked) next[mb.user.id] = next[mb.user.id] ?? 20; else delete next[mb.user.id];
-                          setTeamDraft({ ...teamDraft, [t.id]: next });
+                          setTeamDraft({ ...teamDraft, [team.id]: next });
                         }} />
                         <span className="flex-1 truncate">{mb.user.name ?? mb.user.email}</span>
-                        <span className="text-slate-400">ধারণক্ষমতা</span>
+                        <span className="text-slate-400">{t("inbox.inbZCapacityWord")}</span>
                         <input type="number" min={1} max={200} className="w-16 rounded border px-1.5 py-0.5" disabled={!on} value={draft[mb.user.id] ?? 20}
-                          onChange={(e) => setTeamDraft({ ...teamDraft, [t.id]: { ...(teamDraft[t.id] ?? {}), [mb.user.id]: Number(e.target.value) || 20 } })} />
+                          onChange={(e) => setTeamDraft({ ...teamDraft, [team.id]: { ...(teamDraft[team.id] ?? {}), [mb.user.id]: Number(e.target.value) || 20 } })} />
                       </label>
                     );
                   })}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-slate-500">টিম লিড:</span>
+                  <span className="text-slate-500">{t("inbox.inbZTeamLeadLabel")}</span>
                   {["OWNER", "ADMIN"].includes(agentStates.find((a) => a.userId === myId)?.role ?? "") ? (
-                    <select className="input w-52" value={t.leadUserId ?? ""} onChange={async (e) => {
+                    <select className="input w-52" value={team.leadUserId ?? ""} onChange={async (e) => {
                       const orgId = getOrganizationId(); if (!orgId) return;
                       try {
-                        await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}`, { method: "PATCH", body: JSON.stringify({ leadUserId: e.target.value || null }) });
-                        loadTeams(); setNotice("টিম লিড হালনাগাদ হয়েছে।");
-                      } catch (err) { setError(err instanceof Error ? err.message : "লিড সেট করা যায়নি"); }
+                        await apiFetch(`/organizations/${orgId}/inbox/teams/${team.id}`, { method: "PATCH", body: JSON.stringify({ leadUserId: e.target.value || null }) });
+                        loadTeams(); setNotice(t("inbox.inbZLeadUpdated"));
+                      } catch (err) { setError(err instanceof Error ? err.message : t("inbox.inbZLeadSetFailed")); }
                     }}>
-                      <option value="">কেউ না</option>
+                      <option value="">{t("inbox.nobodyShort")}</option>
                       {members.map((mb) => <option key={mb.user.id} value={mb.user.id}>{mb.user.name ?? mb.user.email}</option>)}
                     </select>
                   ) : (
-                    <span className="font-medium">{t.leadName ?? "কেউ না"}</span>
+                    <span className="font-medium">{team.leadName ?? t("inbox.nobodyShort")}</span>
                   )}
-                  <span className="text-slate-400">লিড নিজের টিমের সদস্য সাজাতে ও শুধু নিজের টিমের রিপোর্ট/স্কোরকার্ড দেখতে পারেন</span>
+                  <span className="text-slate-400">{t("inbox.leadTeamNote")}</span>
                 </div>
                 <div className="mt-2 flex gap-2">
                   <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                     const orgId = getOrganizationId(); if (!orgId) return;
                     setBusy("team");
                     try {
-                      await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}/members`, { method: "POST", body: JSON.stringify({ members: Object.entries(teamDraft[t.id] ?? {}).map(([userId, capacity]) => ({ userId, capacity })) }) });
-                      loadTeams(); setNotice("টিমের সদস্য সংরক্ষণ হয়েছে।");
-                    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ ব্যর্থ"); }
+                      await apiFetch(`/organizations/${orgId}/inbox/teams/${team.id}/members`, { method: "POST", body: JSON.stringify({ members: Object.entries(teamDraft[team.id] ?? {}).map(([userId, capacity]) => ({ userId, capacity })) }) });
+                      loadTeams(); setNotice(t("inbox.memberSaved"));
+                    } catch (e) { setError(e instanceof Error ? e.message : t("inbox.saveFailed")); }
                     finally { setBusy(""); }
-                  }}>সদস্য সংরক্ষণ</button>
+                  }}>{t("inbox.memberSaveBtn")}</button>
                   <button className="text-xs text-red-500" onClick={async () => {
-                    const orgId = getOrganizationId(); if (!orgId || !window.confirm(`"${t.name}" টিম মুছে ফেলবেন?`)) return;
-                    await apiFetch(`/organizations/${orgId}/inbox/teams/${t.id}`, { method: "DELETE" }).catch(() => undefined);
+                    const orgId = getOrganizationId(); if (!orgId || !window.confirm(t("inbox.inbZDeleteTeamConfirm", { name: team.name }))) return;
+                    await apiFetch(`/organizations/${orgId}/inbox/teams/${team.id}`, { method: "DELETE" }).catch(() => undefined);
                     loadTeams();
-                  }}>টিম মুছুন</button>
+                  }}>{t("inbox.teamDeleteBtn")}</button>
                 </div>
               </div>
             ))}
@@ -4839,39 +4798,39 @@ export default function InboxPage() {
 
       <div className={`${viewMode === "manage" && manageTab === "channels" ? "block" : "hidden"} space-y-4`}>
         <div className="rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-800 ring-1 ring-inset ring-indigo-100">
-          🔗 <b>কানেক্ট সেন্টার:</b> সব চ্যানেল ও অ্যাকাউন্ট এখন এক জায়গা থেকেও কানেক্ট করা যায় —{" "}
-          <Link href="/dashboard/connections#cc-forms-messaging" className="font-semibold underline">কানেক্ট সেন্টারে চ্যানেল কানেক্ট করুন →</Link>{" "}
-          (WhatsApp/Messenger/Instagram, Telegram, Email — পাশাপাশি স্টোর, কুরিয়ার, বিজ্ঞাপন অ্যাকাউন্ট ও নিজের অ্যাপের কনফিগও সেখানে। এই পেজের ফ্লো আগের মতোই চলবে।)
+          🔗 <b>{t("inbox.connectCenterLabel")}</b>{t("inbox.inbZConnectCenterNoteA")}{" "}
+          <Link href="/dashboard/connections#cc-forms-messaging" className="font-semibold underline">{t("inbox.connectCenterLink")}</Link>{" "}
+          {t("inbox.inbZConnectCenterNoteB")}
         </div>
         <div className="card space-y-4 p-5">
-          <div className="section-title">🔌 আরও চ্যানেল (Telegram · Email · TikTok)</div>
+          <div className="section-title">{t("inbox.moreChannels")}</div>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="space-y-2 rounded-xl border p-3">
               <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="telegram" lg /> Bot Channel</div>
-              <p className="text-xs text-slate-500">BotFather থেকে পাওয়া Bot Token দিন — যাচাই (getMe) সফল হলেই কানেক্ট হবে। Message এই Inbox এই আসবে, একই Assignment/Autopilot চলবে।</p>
+              <p className="text-xs text-slate-500">{t("inbox.inbZTelegramNote")}</p>
               <input className="input" type="password" placeholder="Bot Token (123456:ABC...)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
               <button className="btn-primary btn-sm" disabled={!tgToken || busy !== ""} onClick={async () => {
                 const orgId = getOrganizationId(); if (!orgId) return;
                 setBusy("tg"); setTgResult("");
                 try {
                   const r = await apiFetch<any>(`/organizations/${orgId}/inbox/connect/telegram`, { method: "POST", body: JSON.stringify({ botToken: tgToken }) });
-                  setTgResult(`কানেক্ট হয়েছে: ${r.bot} · Webhook: ${r.webhook?.registered ? "নিবন্ধিত ✅" : `হয়নি — ${r.webhook?.error ?? ""}`}`);
+                  setTgResult(t("inbox.inbZConnectedBot", { bot: r.bot, webhook: r.webhook?.registered ? t("inbox.inbZWebhookRegistered") : t("inbox.inbZWebhookFailed", { error: r.webhook?.error ?? "" }) }));
                   setTgToken("");
-                } catch (e) { setTgResult(e instanceof Error ? e.message : "কানেক্ট ব্যর্থ"); }
+                } catch (e) { setTgResult(e instanceof Error ? e.message : t("inbox.connectFailed")); }
                 finally { setBusy(""); }
-              }}>{busy === "tg" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট"}</button>
+              }}>{busy === "tg" ? t("inbox.verifying") : t("inbox.verifyConnect")}</button>
               {tgResult ? <p className="text-xs text-slate-600">{tgResult}</p> : null}
             </div>
             <div className="space-y-2 rounded-xl border p-3">
               <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="email" lg /> Mailbox Lane</div>
-              <p className="text-xs text-slate-500">নিজের Mailbox এর IMAP + SMTP দিন — দুই দিকই যাচাই সফল হলেই কানেক্ট হবে। অপঠিত মেইল Sync হয়ে এই Inbox এ আসবে (Automation এ "email_sync" Job চালু করুন)।</p>
+              <p className="text-xs text-slate-500">{t("inbox.inbZEmailConnectNote")}</p>
               <div className="grid grid-cols-2 gap-1.5">
                 <input className="input !text-xs" placeholder="IMAP Host" value={emailForm.imapHost} onChange={(e) => setEmailForm({ ...emailForm, imapHost: e.target.value })} />
                 <input className="input !text-xs" type="number" placeholder="IMAP Port" value={emailForm.imapPort} onChange={(e) => setEmailForm({ ...emailForm, imapPort: Number(e.target.value) || 993 })} />
                 <input className="input !text-xs" placeholder="SMTP Host" value={emailForm.smtpHost} onChange={(e) => setEmailForm({ ...emailForm, smtpHost: e.target.value })} />
                 <input className="input !text-xs" type="number" placeholder="SMTP Port" value={emailForm.smtpPort} onChange={(e) => setEmailForm({ ...emailForm, smtpPort: Number(e.target.value) || 587 })} />
               </div>
-              <input className="input" placeholder="ইমেইল ঠিকানা" value={emailForm.user} onChange={(e) => setEmailForm({ ...emailForm, user: e.target.value })} />
+              <input className="input" placeholder={t("inbox.emailAddressLabel")} value={emailForm.user} onChange={(e) => setEmailForm({ ...emailForm, user: e.target.value })} />
               <input className="input" type="password" placeholder="Password / App Password" value={emailForm.password} onChange={(e) => setEmailForm({ ...emailForm, password: e.target.value })} />
               <div className="flex gap-2">
                 <button className="btn-primary btn-sm" disabled={!emailForm.imapHost || !emailForm.user || busy !== ""} onClick={async () => {
@@ -4879,124 +4838,122 @@ export default function InboxPage() {
                   setBusy("email"); setEmailResult("");
                   try {
                     const r = await apiFetch<any>(`/organizations/${orgId}/inbox/connect/email`, { method: "POST", body: JSON.stringify(emailForm) });
-                    setEmailResult(`কানেক্ট হয়েছে: ${r.mailbox}`);
-                  } catch (e) { setEmailResult(e instanceof Error ? e.message : "কানেক্ট ব্যর্থ"); }
+                    setEmailResult(t("inbox.inbZConnectedMailbox", { mailbox: r.mailbox }));
+                  } catch (e) { setEmailResult(e instanceof Error ? e.message : t("inbox.connectFailed")); }
                   finally { setBusy(""); }
-                }}>{busy === "email" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট"}</button>
+                }}>{busy === "email" ? t("inbox.verifying") : t("inbox.verifyConnect")}</button>
                 <button className="btn-secondary btn-sm" disabled={busy !== ""} onClick={async () => {
                   const orgId = getOrganizationId(); if (!orgId) return;
                   setBusy("emailsync");
                   try {
                     const r = await apiFetch<any>(`/organizations/${orgId}/inbox/email/sync`, { method: "POST" });
-                    setEmailResult(`Sync: ${r.stored}টি নতুন, ${r.duplicates}টি আগের`);
-                  } catch (e) { setEmailResult(e instanceof Error ? e.message : "Sync ব্যর্থ"); }
+                    setEmailResult(t("inbox.inbZSyncResult", { stored: fmtNumber(locale, r.stored), dup: fmtNumber(locale, r.duplicates) }));
+                  } catch (e) { setEmailResult(e instanceof Error ? e.message : t("inbox.syncFailed")); }
                   finally { setBusy(""); }
-                }}>এখন Sync</button>
+                }}>{t("inbox.syncNowBtn")}</button>
               </div>
               {emailResult ? <p className="text-xs text-slate-600">{emailResult}</p> : null}
             </div>
             <div className="space-y-2 rounded-xl border border-dashed p-3">
               <div className="flex items-center gap-2 text-sm font-semibold"><ChannelChip channel="tiktok" lg /> Business Messaging</div>
-              <p className="text-xs text-amber-700">⏳ Partner অনুমোদন প্রয়োজন — TikTok এই API Self-serve দেয় না।</p>
+              <p className="text-xs text-amber-700">{t("inbox.tiktokPartner")}</p>
               {tiktokPack ? (
                 <ol className="list-decimal space-y-1 pl-4 text-xs text-slate-500">
                   {(tiktokPack.steps as string[]).map((step: string, i: number) => <li key={i}>{step}</li>)}
                 </ol>
-              ) : <p className="text-xs text-slate-400">তথ্য লোড হচ্ছে...</p>}
+              ) : <p className="text-xs text-slate-400">{t("inbox.infoLoading")}</p>}
             </div>
           </div>
         </div>
 
         <form onSubmit={connect} className="card space-y-3 p-5">
-          <div className="section-title">WhatsApp / Messenger কানেক্ট করুন</div>
+          <div className="section-title">{t("inbox.connectWaMsgr")}</div>
           <p className="text-sm text-slate-500">
-            Meta App থেকে Page/System-User Access Token, App Secret ও নিজের পছন্দের Verify Token লাগবে। Token যাচাই ব্যর্থ হলে কিছুই সেভ হয় না।
-            কানেক্টের পর Meta App এর Webhook সেটিংসে Callback URL দিন: <code className="rounded bg-slate-100 px-1">https://আপনার-ডোমেইন/webhooks/meta/ইন্টিগ্রেশন-ID</code>, একই Verify Token ব্যবহার করুন এবং <span className="font-medium">messages</span> ফিল্ড সাবস্ক্রাইব করুন।
-            বর্তমান কানেকশন: {integrations.length ? integrations.map((i) => `${i.provider} (${i.externalAccountId})`).join(", ") : "নেই"}
+            {t("inbox.inbZMetaConnectA")}
+            {t("inbox.inbZMetaConnectB1")} <code className="rounded bg-slate-100 px-1">{t("inbox.connectYourDomain")}</code>{t("inbox.inbZMetaConnectB2")} <span className="font-medium">messages</span>{t("inbox.inbZMetaConnectB3")}
+            {t("inbox.inbZCurrentConnection")}{integrations.length ? integrations.map((i) => `${i.provider} (${i.externalAccountId})`).join(", ") : t("inbox.noneWordShort")}
           </p>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <label className="block text-sm">চ্যানেল
-              <select className={inputCls} value={connectForm.channel} onChange={(e) => setConnectForm({ ...connectForm, channel: e.target.value })}>
+            <label className="block text-sm">{t("inbox.channelLabel")}<select className={inputCls} value={connectForm.channel} onChange={(e) => setConnectForm({ ...connectForm, channel: e.target.value })}>
                 <option value="whatsapp">WhatsApp</option><option value="messenger">Messenger</option><option value="instagram">Instagram</option>
               </select>
             </label>
             <label className="block text-sm">Access Token<input className={inputCls} type="password" value={connectForm.accessToken} onChange={(e) => setConnectForm({ ...connectForm, accessToken: e.target.value })} required /></label>
-            <label className="block text-sm">App Secret (প্ল্যাটফর্ম অ্যাপ ব্যবহার করলে খালি রাখুন)<input className={inputCls} type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder="নিজের Meta অ্যাপ থাকলে দিন" /></label>
-            <label className="block text-sm">কোন অ্যাপ দিয়ে কানেক্ট?
-              <select className={inputCls} value={connectForm.appSource} onChange={(e) => setConnectForm({ ...connectForm, appSource: e.target.value })}>
-                <option value="platform">আমাদের (প্ল্যাটফর্মের) Meta অ্যাপ</option>
-                <option value="own">নিজের Meta অ্যাপ (কানেক্ট সেন্টারে কনফিগার করা)</option>
+            <label className="block text-sm">{t("inbox.appSecretLabel")}<input className={inputCls} type="password" value={connectForm.appSecret} onChange={(e) => setConnectForm({ ...connectForm, appSecret: e.target.value })} placeholder={t("inbox.appSecretPlaceholder")} /></label>
+            <label className="block text-sm">{t("inbox.whichApp")}<select className={inputCls} value={connectForm.appSource} onChange={(e) => setConnectForm({ ...connectForm, appSource: e.target.value })}>
+                <option value="platform">{t("inbox.platformApp")}</option>
+                <option value="own">{t("inbox.ownApp")}</option>
               </select>
-              {connectForm.appSource === "own" ? <span className="mt-1 block text-xs text-slate-400">নিজের অ্যাপ বেছে নিলে App Secret লাগবে না — কানেক্ট সেন্টারে সেভ করা আপনার অ্যাপের Secret-ই ব্যবহৃত হবে। সেখানে অ্যাপ কনফিগার করা না থাকলে কানেক্ট ব্যর্থ হবে।</span> : null}
+              {connectForm.appSource === "own" ? <span className="mt-1 block text-xs text-slate-400">{t("inbox.inbZOwnAppNote")}</span> : null}
             </label>
-            <label className="block text-sm">Verify Token (নিজে ঠিক করুন)<input className={inputCls} value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></label>
+            <label className="block text-sm">{t("inbox.verifyTokenLabel")}<input className={inputCls} value={connectForm.verifyToken} onChange={(e) => setConnectForm({ ...connectForm, verifyToken: e.target.value })} required /></label>
             <label className="block text-sm">Phone Number ID (WhatsApp)<input className={inputCls} value={connectForm.phoneNumberId} onChange={(e) => setConnectForm({ ...connectForm, phoneNumberId: e.target.value })} /></label>
             <label className="block text-sm">Page ID (Messenger/Instagram)<input className={inputCls} value={connectForm.pageId} onChange={(e) => setConnectForm({ ...connectForm, pageId: e.target.value })} /></label>
           </div>
-          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "connect" ? "যাচাই হচ্ছে..." : "যাচাই করে কানেক্ট করুন"}</button>
+          <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>{busy === "connect" ? t("inbox.verifying") : t("inbox.verifyConnectLong")}</button>
         </form>
       </div>
 
       <div className={`${viewMode === "manage" && manageTab === "quick" ? "block" : "hidden"} grid gap-4 xl:grid-cols-2`}>
         <div className="card space-y-3 p-5">
           <div className="section-title">⚡ Quick Replies</div>
-          <p className="text-xs text-slate-500">বারবার লিখতে হয় এমন উত্তরের লাইব্রেরি। {"{{firstName}}"}, {"{{contactName}}"}, {"{{phone}}"} ব্যবহার করা যায়, পাঠানোর আগে আসল তথ্য বসে যাবে। Reply বক্সে / চাপলেই তালিকা আসবে।</p>
+          <p className="text-xs text-slate-500">{t("inbox.inbZQuickReplyIntroA")}{"{{firstName}}"}, {"{{contactName}}"}, {"{{phone}}"}{t("inbox.inbZQuickReplyIntroB")}</p>
           <div className="space-y-1.5">
             {quickReplies.map((q) => (
               <div key={q.id} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
                 <div className="min-w-0"><span className="font-semibold">{q.title}</span><span className="block truncate text-xs text-slate-500">{q.content}</span></div>
-                <button className="text-xs text-red-500" onClick={() => deleteQr(q.id)}>মুছুন</button>
+                <button className="text-xs text-red-500" onClick={() => deleteQr(q.id)}>{t("inbox.deleteBtn")}</button>
               </div>
             ))}
-            {quickReplies.length === 0 ? <p className="text-xs text-slate-400">এখনো কোনো Quick Reply নেই।</p> : null}
+            {quickReplies.length === 0 ? <p className="text-xs text-slate-400">{t("inbox.noQuickReplies")}</p> : null}
           </div>
           <form onSubmit={addQr} className="space-y-2">
-            <input className="input" placeholder="শিরোনাম (যেমন: ডেলিভারি চার্জ)" value={qrForm.title} onChange={(e) => setQrForm({ ...qrForm, title: e.target.value })} required />
-            <textarea className="input" rows={2} placeholder="উত্তরের লেখা..." value={qrForm.content} onChange={(e) => setQrForm({ ...qrForm, content: e.target.value })} required />
-            <button className="btn-secondary btn-sm">যোগ করুন</button>
+            <input className="input" placeholder={t("inbox.qrTitlePlaceholder")} value={qrForm.title} onChange={(e) => setQrForm({ ...qrForm, title: e.target.value })} required />
+            <textarea className="input" rows={2} placeholder={t("inbox.qrBodyPlaceholder")} value={qrForm.content} onChange={(e) => setQrForm({ ...qrForm, content: e.target.value })} required />
+            <button className="btn-secondary btn-sm">{t("inbox.addWord")}</button>
           </form>
         </div>
 
         <div className="manage-card fade-rise space-y-3">
-          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🎬</span><div className="section-title">ম্যাক্রো — এক click-এ ধারাবাহিক কাজ</div></div>
-          <p className="text-xs text-slate-500">প্রতিদিনের পুনরাবৃত্ত কাজ একবার বানিয়ে রাখুন: কথোপকথন খুলে ⚡ ম্যাক্রো থেকে চালালেই ধাপগুলো একে একে হবে (উত্তর পাঠানো, অ্যাসাইন, ট্যাগ, স্টেজ, বন্ধ, Snooze)। কোনো ধাপ ব্যর্থ হলে ম্যাক্রো সেখানেই থামবে এবং কোন ধাপে কেন থেমেছে তা দেখাবে — অর্ধেক চলাকে সফল বলা হবে না। শেয়ার করা ম্যাক্রো টিমের সবাই চালাতে পারে, বদলাতে পারে শুধু যিনি বানিয়েছেন।</p>
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🎬</span><div className="section-title">{t("inbox.macroTitle")}</div></div>
+          <p className="text-xs text-slate-500">{t("inbox.inbZMacroIntro")}</p>
           <div className="space-y-1.5">
             {macros.map((m) => (
               <div key={m.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50">
                 <div className="min-w-0">
                   <span className="font-semibold">{m.name}</span>
-                  {m.shared ? <span className="badge-slate ml-1">টিম</span> : null}
-                  {!m.mine ? <span className="badge-slate ml-1">অন্যের তৈরি</span> : null}
+                  {m.shared ? <span className="badge-slate ml-1">{t("inbox.teamWordSuffix")}</span> : null}
+                  {!m.mine ? <span className="badge-slate ml-1">{t("inbox.madeByOther")}</span> : null}
                   <span className="block truncate text-xs text-slate-500">{m.steps.map((s) => macroStepSummary(s, { quickReplyTitle: (id) => quickReplies.find((q) => q.id === id)?.title, memberName: (id) => members.find((mm) => mm.user.id === id)?.user.name ?? undefined })).join(" → ")}</span>
                 </div>
-                {m.mine ? <button className="shrink-0 text-xs text-red-500" disabled={busy === "macro-delete"} onClick={() => void deleteMacroById(m)}>মুছুন</button> : null}
+                {m.mine ? <button className="shrink-0 text-xs text-red-500" disabled={busy === "macro-delete"} onClick={() => void deleteMacroById(m)}>{t("inbox.deleteBtn")}</button> : null}
               </div>
             ))}
-            {macros.length === 0 ? <p className="text-xs text-slate-400">এখনো কোনো ম্যাক্রো নেই — নিচে প্রথমটি বানান।</p> : null}
+            {macros.length === 0 ? <p className="text-xs text-slate-400">{t("inbox.noMacrosYet")}</p> : null}
           </div>
           <div className="space-y-2 rounded-xl bg-indigo-50/60 p-2.5 ring-1 ring-indigo-100">
-            <input className="input" placeholder="ম্যাক্রোর নাম (যেমন: অর্ডার কনফার্ম + ফলোআপ)" value={macroName} onChange={(e) => setMacroName(e.target.value)} maxLength={80} />
+            <input className="input" placeholder={t("inbox.macroNamePlaceholder")} value={macroName} onChange={(e) => setMacroName(e.target.value)} maxLength={80} />
             <div className="space-y-1.5">
               {macroDraft.map((d, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="w-12 shrink-0 font-semibold text-slate-500">ধাপ {i + 1}</span>
+                  <span className="w-12 shrink-0 font-semibold text-slate-500">{t("inbox.inbZStepN", { n: fmtNumber(locale, i + 1) })}</span>
                   <select className="input !w-auto !py-1" value={d.type} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, type: e.target.value } : x)))}>
-                    {Object.entries(MACRO_STEP_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                    {Object.entries(macroStepLabels(locale)).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
                   </select>
                   {d.type === "reply" ? (
                     <select className="input !w-auto !py-1" value={d.quickReplyId} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, quickReplyId: e.target.value } : x)))}>
-                      <option value="">— Quick Reply বেছে নিন —</option>
+                      <option value="">{t("inbox.pickQuickReplyDash")}</option>
                       {quickReplies.map((q) => <option key={q.id} value={q.id}>{q.title}</option>)}
                     </select>
                   ) : null}
                   {d.type === "assign" ? (
                     <select className="input !w-auto !py-1" value={d.assignedUserId} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, assignedUserId: e.target.value } : x)))}>
-                      <option value="me">নিজেকে (যিনি চালাবেন)</option>
-                      <option value="__none__">অ্যাসাইন তুলে নিন</option>
+                      <option value="me">{t("inbox.selfRunner")}</option>
+                      <option value="__none__">{t("inbox.unassignAction")}</option>
                       {members.map((m) => <option key={m.user.id} value={m.user.id}>{m.user.name ?? m.user.email}</option>)}
                     </select>
                   ) : null}
-                  {d.type === "tag" ? <input className="input !w-32 !py-1" placeholder="ট্যাগ…" value={d.tag} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, tag: e.target.value } : x)))} /> : null}
+                  {d.type === "tag" ? <input className="input !w-32 !py-1" placeholder={t("inbox.tagDots")} value={d.tag} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, tag: e.target.value } : x)))} /> : null}
                   {d.type === "pipeline" ? (
                     <select className="input !w-auto !py-1" value={d.stage} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, stage: e.target.value } : x)))}>
                       {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -5004,49 +4961,48 @@ export default function InboxPage() {
                   ) : null}
                   {d.type === "close" ? (
                     <select className="input !w-auto !py-1" value={d.outcome} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, outcome: e.target.value } : x)))}>
-                      <option value="">Outcome ছাড়া</option>
+                      <option value="">{t("inbox.noOutcomeOption")}</option>
                       {CONVERSATION_OUTCOMES.map((o) => <option key={o} value={o}>{o}</option>)}
                     </select>
                   ) : null}
                   {d.type === "snooze" ? (
-                    <input className="input !w-24 !py-1" type="number" min={5} max={10080} value={d.minutes} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, minutes: Number(e.target.value) } : x)))} aria-label="Snooze মিনিট" />
+                    <input className="input !w-24 !py-1" type="number" min={5} max={10080} value={d.minutes} onChange={(e) => setMacroDraft((prev) => prev.map((x, xi) => (xi === i ? { ...x, minutes: Number(e.target.value) } : x)))} aria-label={t("inbox.snoozeMinutes")} />
                   ) : null}
                   {macroDraft.length > 1 ? <button className="text-red-500" onClick={() => setMacroDraft((prev) => prev.filter((_, xi) => xi !== i))}>✕</button> : null}
                 </div>
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="btn-secondary btn-sm" disabled={macroDraft.length >= 10} onClick={() => setMacroDraft((prev) => [...prev, emptyMacroStep()])}>＋ ধাপ যোগ করুন</button>
+              <button className="btn-secondary btn-sm" disabled={macroDraft.length >= 10} onClick={() => setMacroDraft((prev) => [...prev, emptyMacroStep()])}>{t("inbox.addStepBtn")}</button>
               <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                <input type="checkbox" checked={macroShared} onChange={(e) => setMacroShared(e.target.checked)} /> টিমের সবাই চালাতে পারবে
-              </label>
-              <button className="btn-primary btn-sm" disabled={busy === "macro-create"} onClick={() => void createMacroFromBuilder()}>ম্যাক্রো তৈরি করুন</button>
+                <input type="checkbox" checked={macroShared} onChange={(e) => setMacroShared(e.target.checked)} />{t("inbox.teamCanRun")}</label>
+              <button className="btn-primary btn-sm" disabled={busy === "macro-create"} onClick={() => void createMacroFromBuilder()}>{t("inbox.createMacroBtn")}</button>
             </div>
           </div>
         </div>
 
         <div className="manage-card fade-rise space-y-3">
-          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🧩</span><div className="section-title">WhatsApp Template রেজিস্ট্রি</div></div>
-          <p className="text-xs text-slate-500">Meta তে আগে থেকে অনুমোদিত Template গুলো এখানে রেজিস্ট্রি করুন (নাম ও ভাষা হুবহু Meta এর মতো হতে হবে)। ২৪ ঘণ্টার Window বন্ধ থাকলে Inbox থেকে এগুলোই পাঠানো যাবে। Template আসলে অনুমোদিত না হলে Meta এর এররটাই দেখানো হবে। Meta থেকে Template Sync ও নতুন Template জমা (Submit) করা যায় Messaging পেজের &quot;WhatsApp Templates (Meta)&quot; অংশে — অবস্থা (Status) ব্যাজ এখানেও দেখা যায়।</p>
+          <div className="manage-head"><span className="manage-icon" aria-hidden="true">🧩</span><div className="section-title">{t("inbox.waTplRegistry")}</div></div>
+          <p className="text-xs text-slate-500">{t("inbox.inbZTemplateRegistryNote")}</p>
           <div className="space-y-1.5">
-            {templates.map((t) => (
-              <div key={t.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50 transition hover:ring-slate-300">
-                <div className="min-w-0"><span className="font-semibold">{t.name}</span> <span className="badge-slate">{t.language}</span> {t.category ? <span className="badge-brand">{t.category}</span> : null} {t.status === "APPROVED" ? <span className="badge-green">✅ Meta অনুমোদিত</span> : t.status === "PENDING" ? <span className="badge-amber">⏳ অপেক্ষমাণ</span> : t.status === "REJECTED" ? <span className="badge-red">❌ প্রত্যাখ্যাত</span> : t.status === "NOT_ON_META" ? <span className="badge-slate">Meta-তে আর নেই</span> : t.status ? <span className="badge-slate">{t.status}</span> : <span className="badge-slate">Meta-তে যাচাই হয়নি</span>}{t.qualityRating ? <span className="badge-slate">মান: {t.qualityRating}</span> : null}<span className="block truncate text-xs text-slate-500">{t.bodyText ?? ""}</span></div>
-                <button className="text-xs text-red-500" onClick={() => deleteTpl(t.id)}>মুছুন</button>
+            {templates.map((tpl) => (
+              <div key={tpl.id} className="flex items-start justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-inset ring-slate-200/50 transition hover:ring-slate-300">
+                <div className="min-w-0"><span className="font-semibold">{tpl.name}</span> <span className="badge-slate">{tpl.language}</span> {tpl.category ? <span className="badge-brand">{tpl.category}</span> : null} {tpl.status === "APPROVED" ? <span className="badge-green">{t("inbox.tplApproved")}</span> : tpl.status === "PENDING" ? <span className="badge-amber">{t("inbox.tplPending")}</span> : tpl.status === "REJECTED" ? <span className="badge-red">{t("inbox.tplRejected")}</span> : tpl.status === "NOT_ON_META" ? <span className="badge-slate">{t("inbox.tplGoneFromMeta")}</span> : tpl.status ? <span className="badge-slate">{tpl.status}</span> : <span className="badge-slate">{t("inbox.tplNotVerified")}</span>}{tpl.qualityRating ? <span className="badge-slate">{t("inbox.inbZQualityPrefix", { rating: tpl.qualityRating })}</span> : null}<span className="block truncate text-xs text-slate-500">{tpl.bodyText ?? ""}</span></div>
+                <button className="text-xs text-red-500" onClick={() => deleteTpl(tpl.id)}>{t("inbox.deleteBtn")}</button>
               </div>
             ))}
-            {templates.length === 0 ? <p className="text-xs text-slate-400">এখনো কোনো Template রেজিস্ট্রি করা নেই।</p> : null}
+            {templates.length === 0 ? <p className="text-xs text-slate-400">{t("inbox.noTplRegistered")}</p> : null}
           </div>
           <form onSubmit={addTpl} className="space-y-2">
             <div className="grid grid-cols-2 gap-2">
-              <input className="input" placeholder="Template নাম (Meta অনুযায়ী)" value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} required />
-              <input className="input" placeholder="ভাষা কোড (bn / en_US)" value={tplForm.language} onChange={(e) => setTplForm({ ...tplForm, language: e.target.value })} required />
+              <input className="input" placeholder={t("inbox.tplNameLabel")} value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} required />
+              <input className="input" placeholder={t("inbox.tplLangLabel")} value={tplForm.language} onChange={(e) => setTplForm({ ...tplForm, language: e.target.value })} required />
             </div>
             <select className="input" value={tplForm.category} onChange={(e) => setTplForm({ ...tplForm, category: e.target.value })}>
               <option value="UTILITY">UTILITY</option><option value="MARKETING">MARKETING</option><option value="AUTHENTICATION">AUTHENTICATION</option>
             </select>
-            <textarea className="input" rows={2} placeholder={"Body প্রিভিউ (যেমন: আপনার অর্ডার {{1}} কনফার্ম হয়েছে)"} value={tplForm.bodyText} onChange={(e) => setTplForm({ ...tplForm, bodyText: e.target.value })} />
-            <button className="btn-secondary btn-sm">যোগ করুন</button>
+            <textarea className="input" rows={2} placeholder={t("inbox.inbZTemplateBodyPlaceholder")} value={tplForm.bodyText} onChange={(e) => setTplForm({ ...tplForm, bodyText: e.target.value })} />
+            <button className="btn-secondary btn-sm">{t("inbox.addWord")}</button>
           </form>
         </div>
       </div>
@@ -5080,7 +5036,7 @@ export default function InboxPage() {
           isOpen={quickActionsOpen}
           onClose={() => setQuickActionsOpen(false)}
           onOpenOrder={() => setOrderOpen(true)}
-          onAddTaskNotice={() => setNotice("টাস্ক উইন্ডো খোলা হচ্ছে...")}
+          onAddTaskNotice={() => setNotice(t("inbox.taskWindowOpeningShort"))}
           onAddNote={() => { setComposerMode("note"); focusComposer(); }}
           onToggleResolve={() => { if (active) patchConversation({ status: active.status === "closed" ? "open" : "closed" }); }}
         />
@@ -5094,14 +5050,14 @@ export default function InboxPage() {
           setForm={setNewMsgForm}
           onSend={(channel) => {
             setNewMsgOpen(false);
-            setNotice(`${channel.toUpperCase()} এ বার্তা প্রেরণের প্রসেসিং শুরু হয়েছে।`);
+            setNotice(t("inbox.inbZSendProcessing", { channel: channel.toUpperCase() }));
             setNewMsgForm({ channel: "whatsapp", recipient: "", message: "" });
           }}
         />
       ) : null}
 
       {/* 📱 Mobile Bottom Navigation Bar (Hidden during active chat so composer is never covered) */}
-      <nav aria-label="মোবাইল ইনবক্স মেনু" className={`fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 py-2 backdrop-blur-lg sm:hidden shadow-lg ${mobileChat ? "hidden" : ""}`}>
+      <nav aria-label={t("inbox.mobileInboxMenu")} className={`fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 py-2 backdrop-blur-lg sm:hidden shadow-lg ${mobileChat ? "hidden" : ""}`}>
         <button
           onClick={() => { setViewMode("list"); setMobileChat(false); }}
           className={`flex flex-col items-center gap-0.5 text-[10px] font-semibold transition ${
@@ -5109,7 +5065,7 @@ export default function InboxPage() {
           }`}
         >
           <span className="text-lg">💬</span>
-          <span>কথোপকথন</span>
+          <span>{t("inbox.tabConversations")}</span>
         </button>
         <button
           onClick={() => { setViewMode("board"); setMobileChat(false); }}
@@ -5118,14 +5074,14 @@ export default function InboxPage() {
           }`}
         >
           <span className="text-lg">🗂️</span>
-          <span>পাইপলাইন</span>
+          <span>{t("inbox.tabPipeline")}</span>
         </button>
         <button
           onClick={() => setQuickActionsOpen(true)}
           className="flex flex-col items-center gap-0.5 text-[10px] font-semibold text-slate-700"
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-sm shadow-md">⚡</span>
-          <span>অ্যাকশন</span>
+          <span>{t("inbox.actionsWord")}</span>
         </button>
         <button
           onClick={() => { setViewMode("media"); setMobileChat(false); }}
@@ -5134,7 +5090,7 @@ export default function InboxPage() {
           }`}
         >
           <span className="text-lg">🖼️</span>
-          <span>মিডিয়া</span>
+          <span>{t("inbox.tabMedia")}</span>
         </button>
         <button
           onClick={() => { setViewMode("manage"); setMobileChat(false); }}
@@ -5143,7 +5099,7 @@ export default function InboxPage() {
           }`}
         >
           <span className="text-lg">⚙️</span>
-          <span>সেটিংস ও টিম</span>
+          <span>{t("inbox.tabSettingsTeam")}</span>
         </button>
       </nav>
     </div>

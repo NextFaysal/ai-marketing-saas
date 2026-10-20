@@ -198,7 +198,7 @@ describe("RM7 media library — list", () => {
     expect(files.items[0].key).toBe("org-1/inbox/doc.pdf");
     expect((await svc.list("org-1", { q: "hero" })).total).toBe(1);
     expect((await svc.list("org-1", { surface: "inbox", kind: "image" })).total).toBe(1);
-    await expect(svc.list("org-1", { kind: "audio" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.list("org-1", { kind: "audio" })).rejects.toMatchObject({ code: "storage.kindMustBeImageVideoOr" });
   });
 
   it("DTO: sizeBytes is a string; public -> CDN URL, private -> presigned GET, local mode -> null", async () => {
@@ -225,10 +225,10 @@ describe("RM7 media library — upload", () => {
     const { svc, storage } = makeService();
     await expect(
       svc.presignUpload("org-1", "u1", { contentType: "image/gif", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.onlyPngJpegOrWebpImages" });
     await expect(
       svc.presignUpload("org-1", "u1", { contentType: "image/png", sizeBytes: MEDIA_LIBRARY_UPLOAD_MAX_BYTES + 1 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.theFileIsTooLargeAt" });
 
     const ok = await svc.presignUpload("org-1", "u1", { fileName: "a.png", contentType: "image/png", sizeBytes: 100 });
     expect(ok.key.startsWith("_quarantine/org-1/library/")).toBe(true);
@@ -237,7 +237,7 @@ describe("RM7 media library — upload", () => {
     storage.mode = "local";
     await expect(
       svc.presignUpload("org-1", "u1", { contentType: "image/png", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.directFileUploadIsNotOn" });
   });
 
   it("complete registers the file (surface=library, sha256) and drops the quarantine object", async () => {
@@ -267,7 +267,7 @@ describe("RM7 media library — upload", () => {
     await storage.put("public", pre1.key, HTML);
     await expect(
       svc.completeUpload("org-1", "u1", { key: pre1.key, contentType: "image/png", sizeBytes: HTML.length }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.theUploadedFileSRealFormat" });
     expect(storage.objects.has(pre1.key)).toBe(false);
     expect(storedFile.rows.length).toBe(0);
 
@@ -275,7 +275,7 @@ describe("RM7 media library — upload", () => {
     await storage.put("public", pre2.key, PNG);
     await expect(
       svc.completeUpload("org-1", "u1", { key: pre2.key, contentType: "image/png", sizeBytes: PNG.length + 5 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.theUploadedFileSSizeDoes" });
     expect(storage.objects.has(pre2.key)).toBe(false);
     expect(storedFile.rows.length).toBe(0);
   });
@@ -284,10 +284,10 @@ describe("RM7 media library — upload", () => {
     const { svc } = makeService();
     await expect(
       svc.completeUpload("org-1", "u1", { key: "_quarantine/org-2/library/abc", contentType: "image/png", sizeBytes: 10 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.theUploadKeyIsNotValid" });
     await expect(
       svc.completeUpload("org-1", "u1", { key: "org-1/library/abc.png", contentType: "image/png", sizeBytes: 10 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "storage.theUploadKeyIsNotValid" });
   });
 });
 
@@ -297,8 +297,8 @@ describe("RM7 media library — trash", () => {
     const mine = await seed(storedFile, { key: "org-1/library/mine.png", surface: "library" });
     const theirs = await seed(storedFile, { key: "org-2/library/theirs.png", organizationId: "org-2", surface: "library" });
 
-    await expect(svc.trash("org-1", "u1", theirs.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.trash("org-1", "u1", "no-such-id")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.trash("org-1", "u1", theirs.id)).rejects.toMatchObject({ code: "storage.theFileWasNotFound" });
+    await expect(svc.trash("org-1", "u1", "no-such-id")).rejects.toMatchObject({ code: "storage.theFileWasNotFound" });
 
     const out = await svc.trash("org-1", "u1", mine.id);
     expect(out).toEqual({ id: mine.id, key: "org-1/library/mine.png", trashed: true });

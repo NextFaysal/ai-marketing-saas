@@ -15,6 +15,7 @@ import { LinkedInClient, type LinkedinTokenSet, type LinkedinAppCreds } from "./
 import { TelegramClient } from "./telegram.client";
 import { ThreadsClient, type ThreadsTokenSet, type ThreadsAppCreds } from "./threads.client";
 import { PermanentPublishError } from "./social-publish.service";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * SP8/SP9 — OAuth connect plumbing for the OPERATOR-APP social
@@ -471,7 +472,7 @@ export class SocialOAuthService {
    */
   async tiktokConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
     if (appSource != null && !["platform", "own"].includes(appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("social.appsourceMustBePlatformOrOwn");
     }
     // CC4: the tenant's OWN TikTok app (CC3 TenantAppConfig). The
     // choice is bound into the OAuth state's payload, so the
@@ -644,7 +645,7 @@ export class SocialOAuthService {
    */
   async youtubeConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
     if (appSource != null && !["platform", "own"].includes(appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("social.appsourceMustBePlatformOrOwn");
     }
     // CC28: the tenant's OWN Google app (TenantAppConfig
     // "google"). The choice is bound into the OAuth state's
@@ -767,7 +768,7 @@ export class SocialOAuthService {
   async getYouTubePickInfo(organizationId: string, userId: string, stateId: string) {
     const row = await this.peekPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Channel বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — YouTube Connect আবার শুরু করুন।");
+      throw badRequest("social.theChannelSelectionLinkHasExpired");
     }
     const channels = Array.isArray(row.payload?.channels) ? row.payload.channels : [];
     return { channels };
@@ -781,22 +782,22 @@ export class SocialOAuthService {
     const stateId = typeof dto?.state === "string" ? dto.state : "";
     const row = await this.peekPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Channel বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — YouTube Connect আবার শুরু করুন।");
+      throw badRequest("social.theChannelSelectionLinkHasExpired");
     }
     const channels: YouTubeChannel[] = Array.isArray(row.payload?.channels) ? row.payload.channels : [];
     const chosen = channels.find((c) => c.id === dto?.channelId);
     if (!chosen) {
-      throw new BadRequestException("নির্বাচিত Channelটি এই Connect-এর তালিকায় নেই — তালিকা থেকে একটি Channel বেছে নিন।");
+      throw badRequest("social.theSelectedChannelIsNotIn");
     }
     const consumed = await this.consumeState(stateId, "youtube", "channel_pick");
     if (!consumed) {
-      throw new BadRequestException("Channel বেছে নেওয়ার লিংকটি ইতিমধ্যে ব্যবহৃত হয়েছে — Social Posts পেজে অ্যাকাউন্টটি যুক্ত হয়েছে কিনা দেখুন, না হলে আবার Connect করুন।");
+      throw badRequest("social.theChannelSelectionLinkHasAlready");
     }
     let cred: Record<string, any>;
     try {
       cred = decryptJson<Record<string, any>>(String(row.payload?.sealed ?? ""));
     } catch {
-      throw new BadRequestException("Connect-এর তথ্য পড়া যাচ্ছে না — YouTube Connect আবার শুরু করুন।");
+      throw badRequest("social.theConnectInformationCouldNotBe3");
     }
     const account = await this.persistOAuthAccount({
       organizationId, actorId: userId,
@@ -840,7 +841,7 @@ export class SocialOAuthService {
    * the platform path is byte-identical to CC20. */
   async linkedinConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
     if (appSource != null && !["platform", "own"].includes(appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("social.appsourceMustBePlatformOrOwn");
     }
     const creds = await this.linkedinCredsFor(organizationId, appSource ?? "platform");
     if (!creds) {
@@ -931,7 +932,7 @@ export class SocialOAuthService {
   async getLinkedInPickInfo(organizationId: string, userId: string, stateId: string) {
     const row = await this.peekLinkedinPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — LinkedIn Connect আবার শুরু করুন।");
+      throw badRequest("social.pageLinkedinConnect");
     }
     const organizations = Array.isArray(row.payload?.organizations) ? row.payload.organizations : [];
     return { organizations };
@@ -943,22 +944,22 @@ export class SocialOAuthService {
     const stateId = typeof dto?.state === "string" ? dto.state : "";
     const row = await this.peekLinkedinPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — LinkedIn Connect আবার শুরু করুন।");
+      throw badRequest("social.pageLinkedinConnect");
     }
     const orgs: { id: string; name: string }[] = Array.isArray(row.payload?.organizations) ? row.payload.organizations : [];
     const chosen = orgs.find((o) => o.id === dto?.organizationId);
     if (!chosen) {
-      throw new BadRequestException("নির্বাচিত Pageটি এই Connect-এর তালিকায় নেই — তালিকা থেকে একটি Page বেছে নিন।");
+      throw badRequest("social.theSelectedPageIsNotIn");
     }
     const consumed = await this.consumeState(stateId, "linkedin", "org_pick");
     if (!consumed) {
-      throw new BadRequestException("Page বেছে নেওয়ার লিংকটি ইতিমধ্যে ব্যবহৃত হয়েছে — কানেক্ট সেন্টারে অ্যাকাউন্টটি যুক্ত হয়েছে কিনা দেখুন, না হলে আবার Connect করুন।");
+      throw badRequest("social.pageConnect");
     }
     let cred: Record<string, any>;
     try {
       cred = decryptJson<Record<string, any>>(String(row.payload?.sealed ?? ""));
     } catch {
-      throw new BadRequestException("Connect-এর তথ্য পড়া যাচ্ছে না — LinkedIn Connect আবার শুরু করুন।");
+      throw badRequest("social.theConnectInformationCouldNotBe2");
     }
     const account = await this.persistOAuthAccount({
       organizationId, actorId: userId,
@@ -1001,38 +1002,38 @@ export class SocialOAuthService {
     const botToken = String(dto?.botToken ?? "").trim();
     const channelInput = String(dto?.channel ?? "").trim();
     if (!botToken) {
-      throw new BadRequestException("Bot Token প্রয়োজন — Telegram-এ @BotFather দিয়ে একটি Bot বানিয়ে তার Token-টি দিন।");
+      throw badRequest("social.aBotTokenIsRequiredCreate");
     }
     if (!channelInput) {
-      throw new BadRequestException("Channel-এর Username (যেমন @mychannel) অথবা numeric Chat ID প্রয়োজন।");
+      throw badRequest("social.aChannelUsernameEGMychannel");
     }
     let bot: { id: number; username: string | null };
     try {
       bot = await this.telegram.getMe(botToken);
     } catch (e) {
-      throw new BadRequestException(`Bot যাচাই ব্যর্থ হয়েছে — Token-টি সঠিক কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("social.botVerificationFailedCheckWhetherThe", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     let chat: { id: number; type: string; title: string | null; username: string | null };
     try {
       chat = await this.telegram.getChat(botToken, channelInput);
     } catch (e) {
-      throw new BadRequestException(`Channel পাওয়া যায়নি — Username/ID সঠিক কিনা এবং Bot-টি Channel-এ যোগ করা হয়েছে কিনা দেখুন। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("social.channelNotFoundCheckWhetherThe", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     if (chat.type !== "channel") {
-      throw new BadRequestException(`এটি একটি Channel নয় (ধরন: ${chat.type || "unknown"}) — Telegram পোস্টিং এই সংস্করণে শুধু Channel-এ হয়। Channel-এর Username/ID দিন।`);
+      throw badRequest("social.thisIsNotAChannelType", { p1: chat.type || "unknown" });
     }
     let member: { status: string; canPostMessages: boolean | null };
     try {
       member = await this.telegram.getChatMember(botToken, String(chat.id), bot.id);
     } catch (e) {
-      throw new BadRequestException(`Bot-এর Channel-সদস্যতা যাচাই করা যায়নি। Telegram-এর বার্তা: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("social.theBotSChannelMembershipCould", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     const isAdmin = member.status === "administrator" || member.status === "creator";
     if (!isAdmin) {
-      throw new BadRequestException(`Bot-টি এই Channel-এর Admin নয় (বর্তমান অবস্থা: ${member.status || "member নয়"}) — Channel Settings → Administrators-এ Bot-টিকে Admin করুন, তারপর আবার চেষ্টা করুন।`);
+      throw badRequest("social.theBotIsNotAnAdmin", { p1: member.status || "member নয়" });
     }
     if (member.canPostMessages === false) {
-      throw new BadRequestException("Bot-টি Admin হলেও Channel-এ পোস্ট করার অনুমতি (Post Messages) বন্ধ আছে — Channel-এর Admin সেটিংসে Bot-এর 'Post Messages' অনুমতি চালু করুন, তারপর আবার চেষ্টা করুন।");
+      throw badRequest("social.theBotIsAnAdminBut");
     }
     const account = await this.persistOAuthAccount({
       organizationId, actorId: userId,
@@ -1069,7 +1070,7 @@ export class SocialOAuthService {
    * tenant's OWN Threads app (CC28 discipline). */
   async threadsConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
     if (appSource != null && !["platform", "own"].includes(appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("social.appsourceMustBePlatformOrOwn");
     }
     const creds = await this.threadsCredsFor(organizationId, appSource ?? "platform");
     if (!creds) {
@@ -1208,7 +1209,7 @@ export class SocialOAuthService {
    */
   async googleBusinessConnectUrl(organizationId: string, userId: string, appSource?: string): Promise<{ url: string }> {
     if (appSource != null && !["platform", "own"].includes(appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("social.appsourceMustBePlatformOrOwn");
     }
     const creds = await this.gbpCredsFor(organizationId, appSource ?? "platform");
     if (!creds) {
@@ -1314,7 +1315,7 @@ export class SocialOAuthService {
   async getGoogleBusinessPickInfo(organizationId: string, userId: string, stateId: string) {
     const row = await this.peekGbpPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — Google Business Profile Connect আবার শুরু করুন।");
+      throw badRequest("social.locationGoogleBusinessProfileConnect");
     }
     const locations = (Array.isArray(row.payload?.locations) ? row.payload.locations : [])
       .map((l: any) => ({ id: l.parent, title: l.title, accountLabel: l.accountLabel ?? null }));
@@ -1329,23 +1330,23 @@ export class SocialOAuthService {
     const stateId = typeof dto?.state === "string" ? dto.state : "";
     const row = await this.peekGbpPickState(organizationId, userId, stateId);
     if (!row) {
-      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি মেয়াদোত্তীর্ণ বা অবৈধ — Google Business Profile Connect আবার শুরু করুন।");
+      throw badRequest("social.locationGoogleBusinessProfileConnect");
     }
     const locations: GbpLocation[] = (Array.isArray(row.payload?.locations) ? row.payload.locations : [])
       .map((l: any) => ({ parent: l.parent, locationName: l.locationName, accountName: l.accountName, title: l.title, accountLabel: l.accountLabel ?? null }));
     const chosen = locations.find((l) => l.parent === dto?.locationId);
     if (!chosen) {
-      throw new BadRequestException("নির্বাচিত Locationটি এই Connect-এর তালিকায় নেই — তালিকা থেকে একটি Location বেছে নিন।");
+      throw badRequest("social.theSelectedLocationIsNotIn");
     }
     const consumed = await this.consumeState(stateId, GBP_PLATFORM, "location_pick");
     if (!consumed) {
-      throw new BadRequestException("Location বেছে নেওয়ার লিংকটি ইতিমধ্যে ব্যবহৃত হয়েছে — Social Posts পেজে অ্যাকাউন্টটি যুক্ত হয়েছে কিনা দেখুন, না হলে আবার Connect করুন।");
+      throw badRequest("social.locationSocialPostsConnect");
     }
     let cred: Record<string, any>;
     try {
       cred = decryptJson<Record<string, any>>(String(row.payload?.sealed ?? ""));
     } catch {
-      throw new BadRequestException("Connect-এর তথ্য পড়া যাচ্ছে না — Google Business Profile Connect আবার শুরু করুন।");
+      throw badRequest("social.theConnectInformationCouldNotBe");
     }
     const account = await this.persistOAuthAccount({
       organizationId, actorId: userId,

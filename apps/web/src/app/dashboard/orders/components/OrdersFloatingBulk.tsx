@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import type { Order } from "./types";
 
 interface OrdersFloatingBulkProps {
@@ -41,6 +42,7 @@ export function OrdersFloatingBulk({
   onBulkLabels,
   onClearSelection,
 }: OrdersFloatingBulkProps) {
+  const { dict, t, locale } = useLocale();
   if (selected.length === 0) return null;
 
   return (
@@ -51,8 +53,7 @@ export function OrdersFloatingBulk({
             {selected.length}
           </span>
           <span className="text-xs font-bold text-slate-800">
-            টি অর্ডার নির্বাচিত (সর্বোচ্চ ৫০টি)
-          </span>
+            {dict.orders.ordersSelectedMax50}</span>
         </div>
 
         {/* Controls */}
@@ -68,7 +69,7 @@ export function OrdersFloatingBulk({
               return (
                 <option key={p} value={p} disabled={!connected}>
                   {p === "steadfast" ? "Steadfast" : p === "pathao" ? "Pathao" : "RedX"}
-                  {connected ? "" : " (যুক্ত নেই)"}
+                  {connected ? "" : dict.orders.notLinked2}
                 </option>
               );
             })}
@@ -83,7 +84,7 @@ export function OrdersFloatingBulk({
                 onRAreaChange(e.target.value, area?.name ?? "");
               }}
             >
-              <option value="">RedX ডেলিভারি এলাকা বেছে নিন</option>
+              <option value="">{dict.orders.selectARedXDeliveryArea}</option>
               {rAreas.map((a: any) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -99,7 +100,7 @@ export function OrdersFloatingBulk({
             className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 active:scale-95 disabled:opacity-50"
           >
             <span>🚚</span>
-            {bulkBusy ? "বুক হচ্ছে..." : "একসাথে বুক করুন"}
+            {bulkBusy ? dict.orders.booking2 : dict.orders.bookTogether}
           </button>
 
           <button
@@ -107,26 +108,24 @@ export function OrdersFloatingBulk({
             onClick={onBulkLabels}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95"
           >
-            <span>🏷️</span> লেবেল PDF
-          </button>
+            <span>🏷️</span> {dict.orders.labelPDF}</button>
 
           <button
             type="button"
             onClick={onClearSelection}
             className="inline-flex items-center rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800"
           >
-            ✕ বাতিল
-          </button>
+            {dict.orders.cancel3}</button>
         </div>
       </div>
 
       {bulkResults && (
         <div className="mt-3 border-t border-slate-100 pt-2 text-xs">
           <div className="flex items-center gap-2 font-semibold text-slate-800">
-            <span>ফলাফল:</span>
-            <span className="text-emerald-700">{bulkResults.booked}টি বুকড</span> ·
-            <span className="text-amber-700">{bulkResults.skipped}টি পূর্বে বুক ছিল</span> ·
-            <span className="text-red-600">{bulkResults.failed}টি ব্যর্থ</span>
+            <span>{dict.orders.result}</span>
+            <span className="text-emerald-700">{bulkResults.booked}{dict.orders.booked}</span> ·
+            <span className="text-amber-700">{bulkResults.skipped}{dict.orders.previouslyBooked}</span> ·
+            <span className="text-red-600">{bulkResults.failed}{dict.orders.failed2}</span>
           </div>
           <ul className="mt-1.5 max-h-24 space-y-0.5 overflow-y-auto text-[11px]">
             {bulkResults.results.map((r) => {

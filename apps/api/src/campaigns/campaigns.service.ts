@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { isMemberConnectionDenied } from "../common/permission-catalog";
 import { createAgentNotification } from "../common/agent-notify";
@@ -18,6 +18,8 @@ import { PublicMediaService } from "../storage/public-media.service";
 import { CreativesService } from "../creatives/creatives.service";
 import { LandingsService } from "../landings/landings.service";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+import { ApiException, badRequest, forbidden, notFound } from "../i18n/api-exception";
+import { catalogText, resolveDocumentLocale } from "../i18n/catalog/send-locale";
 
 export const OBJECTIVES = ["OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_AWARENESS", "OUTCOME_APP_PROMOTION"] as const;
 export const OPTIMIZATION_GOALS = ["LINK_CLICKS", "OFFSITE_CONVERSIONS", "LEAD_GENERATION", "REACH", "LANDING_PAGE_VIEWS", "VALUE", "CONVERSATIONS", "APP_INSTALLS"] as const;
@@ -25,32 +27,37 @@ const EDITABLE = ["draft", "rejected"];
 
 export const BLUEPRINTS = [
   {
-    key: "advantage_plus_sales", name: "Advantage+ Sales (Meta AI)", objective: "OUTCOME_SALES", advantagePlus: true,
+    key: "advantage_plus_sales", name: "Advantage+ Sales (Meta AI)", nameEn: "Advantage+ Sales (Meta AI)", objective: "OUTCOME_SALES", advantagePlus: true,
     description: "Meta এর Advantage+ Sales: বাজেট ক্যাম্পেইন পর্যায়ে, Audience সম্প্রসারণে Meta এর AI। বিস্তৃত টার্গেটিং রাখুন — সংকীর্ণ Interest Advantage+ এর বিরুদ্ধে যায়। বাজেটটি শুরুর মান, নিজে ঠিক করে নিন।",
+    descriptionEn: "Meta's Advantage+ Sales: budget at campaign level, audience expansion by Meta's AI. Keep targeting broad — narrow Interests go against Advantage+. The budget is a starting value, adjust it yourself.",
     adSet: { name: "BD Broad (Advantage+)", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 },
     ad: { name: "Advantage+ Ad", primaryText: "সারা দেশে হোম ডেলিভারি। অর্ডার করতে লিংকে ক্লিক করুন।", headline: "এখনই অর্ডার করুন", linkUrl: "https://example.com/product", callToAction: "SHOP_NOW" },
   },
   {
-    key: "cod_sales", name: "COD Sales (বাংলাদেশ)", objective: "OUTCOME_SALES",
+    key: "cod_sales", name: "COD Sales (বাংলাদেশ)", nameEn: "COD Sales (Bangladesh)", objective: "OUTCOME_SALES",
     description: "ক্যাশ অন ডেলিভারি বিক্রির জন্য ওয়েবসাইট কনভার্সন ক্যাম্পেইন। বাজেটটি শুরুর মান, নিজে ঠিক করে নিন।",
+    descriptionEn: "A website conversion campaign for cash on delivery sales. The budget is a starting value, adjust it yourself.",
     adSet: { name: "BD Broad 18-65", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 },
     ad: { name: "Sales Ad", primaryText: "সারা দেশে ক্যাশ অন ডেলিভারি। অর্ডার করতে লিংকে ক্লিক করুন।", headline: "এখনই অর্ডার করুন", linkUrl: "https://example.com/product", callToAction: "SHOP_NOW" },
   },
   {
-    key: "ctwa", name: "Click to WhatsApp (Link Ad)", objective: "OUTCOME_ENGAGEMENT",
+    key: "ctwa", name: "Click to WhatsApp (Link Ad)", nameEn: "Click to WhatsApp (Link Ad)", objective: "OUTCOME_ENGAGEMENT",
     description: "এটি একটি সাধারণ Link Ad (wa.me লিংক) — আসল Click-to-WhatsApp Destination নয়। আসল CTWA পেতে Ad Set-এ WhatsApp Destination বাছাই করুন (CN13): সেখানে নম্বরটি Organization-এর Connected WhatsApp থেকে আসে এবং Publish Meta-তে destination_type=WHATSAPP পাঠায়। এই Blueprint-এর কথোপকথনও ইনবক্সে আসে, সেখান থেকে অর্ডার করা যায়।",
+    descriptionEn: "This is a plain Link Ad (wa.me link) — not a real Click-to-WhatsApp Destination. For real CTWA, choose the WhatsApp Destination on the Ad Set (CN13): there the number comes from the Organization's Connected WhatsApp and Publish sends destination_type=WHATSAPP to Meta. This Blueprint's conversations also arrive in the Inbox, from where orders can be taken.",
     adSet: { name: "BD WhatsApp", dailyBudget: "300", optimizationGoal: "LINK_CLICKS", countries: ["BD"], ageMin: 18, ageMax: 55 },
     ad: { name: "Chat Ad", primaryText: "যেকোনো প্রশ্নে WhatsApp এ মেসেজ করুন, আমরা সাথে সাথে উত্তর দেব।", headline: "WhatsApp এ অর্ডার করুন", linkUrl: "https://wa.me/8801700000000", callToAction: "SEND_WHATSAPP_MESSAGE" },
   },
   {
-    key: "catalog_sales", name: "Catalog Sales (Advantage ধাঁচের)", objective: "OUTCOME_SALES",
+    key: "catalog_sales", name: "Catalog Sales (Advantage ধাঁচের)", nameEn: "Catalog Sales (Advantage style)", objective: "OUTCOME_SALES",
     description: "ক্যাটালগের পণ্য দিয়ে বিক্রির ক্যাম্পেইন কাঠামো। CN3 থেকে Ad Set-এ Catalog + Product Set বাছাই করলেই Publish আসল product_set_id পাঠায় (Set টি আগে Catalogs পেজ থেকে Meta-তে Publish করা থাকতে হবে)। বাজেট শুরুর মান।",
+    descriptionEn: "A sales campaign structure with catalog products. From CN3, once a Catalog + Product Set is chosen on the Ad Set, Publish sends the real product_set_id (the Set must already be Published to Meta from the Catalogs page). The budget is a starting value.",
     adSet: { name: "BD Catalog Broad", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", countries: ["BD"], ageMin: 18, ageMax: 65 },
     ad: { name: "Catalog Ad", primaryText: "আমাদের কালেকশন দেখুন — সারা দেশে ক্যাশ অন ডেলিভারি।", headline: "কালেকশন দেখুন", linkUrl: "https://example.com", callToAction: "SHOP_NOW" },
   },
   {
-    key: "lead_form", name: "Lead Form", objective: "OUTCOME_LEADS",
+    key: "lead_form", name: "Lead Form", nameEn: "Lead Form", objective: "OUTCOME_LEADS",
     description: "Facebook লিড ফর্মের জন্য ক্যাম্পেইন কাঠামো। CN4 থেকে Form Builder-এই বানিয়ে Ad Set-এ যুক্ত করুন — Publish-এর সময় ফর্মটি Meta-তে তৈরি হয়, আর লিড এলে Form-এর Field Mapping অনুযায়ী CRM Lead-এ বসে।",
+    descriptionEn: "A campaign structure for a Facebook lead form. Build it in the Form Builder from CN4 and attach it to the Ad Set — at Publish time the form is created on Meta, and when a lead arrives it lands in a CRM Lead according to the Form's Field Mapping.",
     adSet: { name: "BD Leads", dailyBudget: "300", optimizationGoal: "LEAD_GENERATION", countries: ["BD"], ageMin: 20, ageMax: 60 },
     ad: { name: "Lead Ad", primaryText: "আগ্রহী হলে ফর্মটি পূরণ করুন, আমাদের টিম যোগাযোগ করবে।", headline: "ফর্মটি পূরণ করুন", linkUrl: "https://example.com", callToAction: "SIGN_UP" },
   },
@@ -158,7 +165,7 @@ export class CampaignsService implements OnModuleInit {
   // ---------- helpers ----------
   private async getPlanOrThrow(organizationId: string, planId: string) {
     const plan = await (this.prisma as any).campaignPlan.findFirst({ where: { id: planId, organizationId } });
-    if (!plan) throw new NotFoundException("Campaign plan not found in this organization");
+    if (!plan) throw notFound("campaigns.campaignPlanNotFoundInThis");
     return plan;
   }
 
@@ -222,7 +229,7 @@ export class CampaignsService implements OnModuleInit {
 
   private assertEditable(plan: any) {
     if (!EDITABLE.includes(plan.status)) {
-      throw new BadRequestException(`Plan is "${plan.status}" and can no longer be edited. Only draft/rejected plans are editable.`);
+      throw badRequest("campaigns.planIsAndCanNoLonger", { planStatus: plan.status });
     }
   }
 
@@ -236,15 +243,15 @@ export class CampaignsService implements OnModuleInit {
   /** CN2: budget mode vocabulary. */
   private parseBudgetMode(v?: string): "abo" | "cbo" {
     if (v === undefined || v === "") return "abo";
-    if (v !== "abo" && v !== "cbo") throw new BadRequestException(`budgetMode must be "abo" or "cbo" (got "${v}")`);
+    if (v !== "abo" && v !== "cbo") throw badRequest("campaigns.budgetmodeMustBeAboOrCbo", { v: v });
     return v;
   }
 
   async createPlan(organizationId: string, actorId: string, dto: { name: string; objective: string; adAccountId: string; budgetMode?: string; campaignDailyBudget?: string; campaignLifetimeBudget?: string; useNamingTemplate?: boolean }) {
-    if (!(OBJECTIVES as readonly string[]).includes(dto.objective)) throw new BadRequestException("Invalid objective");
+    if (!(OBJECTIVES as readonly string[]).includes(dto.objective)) throw badRequest("campaigns.invalidObjective");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
-    if (!account) throw new BadRequestException("Ad account not found in this organization");
-    if (account.platform !== "meta") throw new BadRequestException("Milestone 9 publishing supports Meta ad accounts only");
+    if (!account) throw badRequest("campaigns.adAccountNotFoundInThis");
+    if (account.platform !== "meta") throw badRequest("campaigns.milestone9PublishingSupportsMetaAd");
     // CA13: naming convention — only for a blank name or an
     // explicit opt-in; a typed name is never overwritten.
     const name = await this.nameAtCreate(organizationId, dto.name, {
@@ -357,7 +364,7 @@ export class CampaignsService implements OnModuleInit {
   async updatePlan(organizationId: string, planId: string, dto: { name?: string; objective?: string; dailyBudgetCap?: string | null; budgetMode?: string; campaignDailyBudget?: string | null; campaignLifetimeBudget?: string | null }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
-    if (dto.objective && !(OBJECTIVES as readonly string[]).includes(dto.objective)) throw new BadRequestException("Invalid objective");
+    if (dto.objective && !(OBJECTIVES as readonly string[]).includes(dto.objective)) throw badRequest("campaigns.invalidObjective");
     const data: any = { ...(dto.name ? { name: dto.name } : {}), ...(dto.objective ? { objective: dto.objective } : {}) };
     // CB2: plan-level daily budget cap (taka string in,
     // minor units stored; empty/null clears).
@@ -432,7 +439,7 @@ export class CampaignsService implements OnModuleInit {
     const cap = BigInt(full.dailyBudgetCapMinor);
     const daily = BigInt(this.budgetTotals(full).effectiveDailyMinor);
     if (daily > cap) {
-      throw new BadRequestException(`Plan daily budget cap exceeded: ${this.isCbo(full) ? "campaign daily budget" : "ad sets total"} ${daily.toString()} minor units per day, cap is ${cap.toString()}. Lower a budget or raise the cap.`);
+      throw badRequest("campaigns.planDailyBudgetCapExceededMinor", { p1: this.isCbo(full) ? "campaign daily budget" : "ad sets total", p2: daily.toString(), p3: cap.toString() });
     }
   }
 
@@ -508,7 +515,7 @@ export class CampaignsService implements OnModuleInit {
       if (!dto.roasGoal) roasAverageFloor = null;
       else {
         const n = Number(dto.roasGoal);
-        if (!Number.isFinite(n) || n <= 0) throw new BadRequestException("roasGoal must be a positive number like \"2.0\"");
+        if (!Number.isFinite(n) || n <= 0) throw badRequest("campaigns.roasgoalMustBeAPositiveNumber");
         roasAverageFloor = Math.round(n * 10000); // Meta's raw floor: ROAS x 10000
       }
     } else roasAverageFloor = wholesale ? null : (base?.roasAverageFloor ?? null);
@@ -689,18 +696,18 @@ export class CampaignsService implements OnModuleInit {
    *  number is used; readiness warns, nothing is invented). */
   private async resolveWhatsAppRef(organizationId: string, whatsappIntegrationId: string): Promise<{ integration: any; phoneNumberId: string; phoneNumber: string | null }> {
     if (!(this.prisma as any).integration?.findFirst) {
-      throw new BadRequestException("WhatsApp connections are not available in this deployment — connect WhatsApp in the Connect Center first");
+      throw badRequest("campaigns.whatsappConnectionsAreNotAvailableIn");
     }
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: whatsappIntegrationId, organizationId, provider: "whatsapp" },
       include: { credential: true },
     }).catch(() => null);
-    if (!integration) throw new BadRequestException("That WhatsApp connection was not found in this organization — pick one of the organization's connected WhatsApp numbers");
+    if (!integration) throw badRequest("campaigns.thatWhatsappConnectionWasNotFound");
     if (integration.status !== "CONNECTED") {
-      throw new BadRequestException(`That WhatsApp connection is ${String(integration.status).toLowerCase()} — reconnect it in the Connect Center before running Click-to-WhatsApp ads on it`);
+      throw badRequest("campaigns.thatWhatsappConnectionIsReconnectIt", { p1: String(integration.status).toLowerCase() });
     }
     const phoneNumberId = integration.externalAccountId ? String(integration.externalAccountId) : "";
-    if (!phoneNumberId) throw new BadRequestException("That WhatsApp connection has no phone number id recorded — reconnect it in the Connect Center");
+    if (!phoneNumberId) throw badRequest("campaigns.thatWhatsappConnectionHasNoPhone");
     let phoneNumber: string | null = null;
     if (integration.credential?.encryptedData) {
       try {
@@ -785,14 +792,14 @@ export class CampaignsService implements OnModuleInit {
    *  rows getPlanFull resolved. */
   private async resolveCatalogRefs(organizationId: string, s: { catalogRecordId?: string | null; productSetId?: string | null }): Promise<{ catalog: any; set: any } | null> {
     if (!s.catalogRecordId && !s.productSetId) return null;
-    if (!s.catalogRecordId || !s.productSetId) throw new BadRequestException("Catalog ads need BOTH a catalog and a product set (catalogRecordId + productSetId)");
+    if (!s.catalogRecordId || !s.productSetId) throw badRequest("campaigns.catalogAdsNeedBothACatalog");
     const catalog = await (this.prisma as any).catalogRecord.findFirst({ where: { id: s.catalogRecordId, organizationId } });
-    if (!catalog) throw new BadRequestException("Catalog not found in this organization");
+    if (!catalog) throw badRequest("campaigns.catalogNotFoundInThisOrganization");
     const set = await (this.prisma as any).productSet.findFirst({ where: { id: s.productSetId, organizationId } });
-    if (!set) throw new BadRequestException("Product set not found in this organization");
-    if (set.catalogRecordId !== s.catalogRecordId) throw new BadRequestException("That product set belongs to a different catalog — pick a set from the chosen catalog");
+    if (!set) throw badRequest("campaigns.productSetNotFoundInThis");
+    if (set.catalogRecordId !== s.catalogRecordId) throw badRequest("campaigns.thatProductSetBelongsToA");
     if (!set.externalSetId || set.status !== "created") {
-      throw new BadRequestException(`Product set "${set.name}" is not created on Meta yet (status: ${set.status}) — publish it from the Catalogs page first; a local-only set cannot run catalog ads`);
+      throw badRequest("campaigns.productSetIsNotCreatedOn", { setName: set.name, setStatus: set.status });
     }
     return { catalog, set };
   }
@@ -803,9 +810,9 @@ export class CampaignsService implements OnModuleInit {
   private async resolveLeadFormRef(organizationId: string, s: { leadFormId?: string | null; pageId?: string | null }): Promise<any | null> {
     if (!s.leadFormId) return null;
     const form = await (this.prisma as any).leadForm.findFirst({ where: { id: s.leadFormId, organizationId } });
-    if (!form) throw new BadRequestException("Lead form not found in this organization");
+    if (!form) throw badRequest("campaigns.leadFormNotFoundInThis");
     if (s.pageId && form.pageId !== s.pageId) {
-      throw new BadRequestException(`Lead form "${form.name}" belongs to Page ${form.pageId}, but this ad set uses Page ${s.pageId} — a form can only run on its own Page`);
+      throw badRequest("campaigns.leadFormBelongsToPageBut", { formName: form.name, formPageId: form.pageId, sPageId: s.pageId });
     }
     return form;
   }
@@ -1121,32 +1128,32 @@ export class CampaignsService implements OnModuleInit {
   private async validateLeadFormShape(organizationId: string, dto: {
     name?: string; pageId?: string; privacyPolicyUrl?: string; questions?: any[]; fieldMapping?: Record<string, string> | null;
   }): Promise<{ questions: any[]; fieldMapping: Record<string, string> | null }> {
-    if (!dto.name?.trim()) throw new BadRequestException("Lead form name is required");
-    if (!dto.pageId?.trim()) throw new BadRequestException("Lead form needs the Meta Page id that owns it (pageId)");
+    if (!dto.name?.trim()) throw badRequest("campaigns.leadFormNameIsRequired");
+    if (!dto.pageId?.trim()) throw badRequest("campaigns.leadFormNeedsTheMetaPage");
     if (!dto.privacyPolicyUrl?.trim() || !/^https:\/\//i.test(dto.privacyPolicyUrl)) {
-      throw new BadRequestException("A lead form needs a Privacy Policy URL (https://...) — Meta will not run a lead form without one");
+      throw badRequest("campaigns.aLeadFormNeedsAPrivacy");
     }
     const questions = dto.questions ?? [];
-    if (!Array.isArray(questions) || questions.length === 0) throw new BadRequestException("A lead form needs at least one question");
-    if (questions.length > 12) throw new BadRequestException("A lead form carries at most 12 questions in this builder");
+    if (!Array.isArray(questions) || questions.length === 0) throw badRequest("campaigns.aLeadFormNeedsAtLeast");
+    if (questions.length > 12) throw badRequest("campaigns.aLeadFormCarriesAtMost");
     const seen = new Set<string>();
     const out: any[] = [];
     for (const q of questions) {
-      if (!q || typeof q.key !== "string" || !q.key.trim()) throw new BadRequestException("Each lead form question needs a key");
+      if (!q || typeof q.key !== "string" || !q.key.trim()) throw badRequest("campaigns.eachLeadFormQuestionNeedsA");
       const key = q.key.trim();
-      if (seen.has(key)) throw new BadRequestException(`Duplicate question key: ${key}`);
+      if (seen.has(key)) throw badRequest("campaigns.duplicateQuestionKey", { key: key });
       seen.add(key);
       if (!(CampaignsService.LEAD_QUESTION_TYPES as readonly string[]).includes(q.type)) {
-        throw new BadRequestException(`Question "${key}": type "${q.type}" is not a Meta lead form question type`);
+        throw badRequest("campaigns.questionTypeIsNotAMeta", { key: key, qType: q.type });
       }
       const row: any = { type: q.type, key };
       if (q.type === "CUSTOM") {
-        if (!q.label?.toString().trim()) throw new BadRequestException(`Question "${key}": a CUSTOM question needs a label`);
+        if (!q.label?.toString().trim()) throw badRequest("campaigns.questionACustomQuestionNeedsA", { key: key });
         row.label = String(q.label).trim().slice(0, 200);
         if (Array.isArray(q.options) && q.options.length) {
-          if (q.options.length > 10) throw new BadRequestException(`Question "${key}": at most 10 options`);
+          if (q.options.length > 10) throw badRequest("campaigns.questionAtMost10Options", { key: key });
           row.options = q.options.map((o: any, i: number) => {
-            if (!o?.value?.toString().trim()) throw new BadRequestException(`Question "${key}": each option needs a value`);
+            if (!o?.value?.toString().trim()) throw badRequest("campaigns.questionEachOptionNeedsAValue", { key: key });
             return { key: o.key?.toString().trim() || `opt${i + 1}`, value: String(o.value).trim().slice(0, 100) };
           });
         }
@@ -1161,13 +1168,13 @@ export class CampaignsService implements OnModuleInit {
         : [];
       const liveKeys = new Set((defs ?? []).filter((d: any) => !d.archivedAt).map((d: any) => d.key));
       for (const [qk, target] of Object.entries(dto.fieldMapping)) {
-        if (!seen.has(qk)) throw new BadRequestException(`fieldMapping names question "${qk}", which is not one of this form's questions`);
+        if (!seen.has(qk)) throw badRequest("campaigns.fieldmappingNamesQuestionWhichIsNot", { qk: qk });
         if ((CampaignsService.LEAD_MAPPING_TARGETS as readonly string[]).includes(target)) fieldMapping[qk] = target;
         else if (typeof target === "string" && target.startsWith("custom:")) {
           const ck = target.slice("custom:".length);
-          if (!liveKeys.has(ck)) throw new BadRequestException(`fieldMapping for "${qk}" targets custom field "${ck}", which is not a live lead Custom Field in this organization — create it in CRM first`);
+          if (!liveKeys.has(ck)) throw badRequest("campaigns.fieldmappingForTargetsCustomFieldWhich", { qk: qk, ck: ck });
           fieldMapping[qk] = target;
-        } else throw new BadRequestException(`fieldMapping for "${qk}": target must be name, email, phone, notes or custom:<fieldKey>`);
+        } else throw badRequest("campaigns.fieldmappingForTargetMustBeName", { qk: qk });
       }
     }
     return { questions: out, fieldMapping };
@@ -1200,7 +1207,7 @@ export class CampaignsService implements OnModuleInit {
 
   async getLeadForm(organizationId: string, formId: string) {
     const form = await (this.prisma as any).leadForm.findFirst({ where: { id: formId, organizationId } });
-    if (!form) throw new NotFoundException("Lead form not found in this organization");
+    if (!form) throw notFound("campaigns.leadFormNotFoundInThis");
     return form;
   }
 
@@ -1382,7 +1389,7 @@ export class CampaignsService implements OnModuleInit {
     const form = await this.getLeadForm(organizationId, formId);
     if (form.externalFormId && form.status === "created") return { ...form, alreadyCreated: true };
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
-    if (!account) throw new BadRequestException("Ad account not found in this organization");
+    if (!account) throw badRequest("campaigns.adAccountNotFoundInThis");
     const client = await this.metaClientForAccount(organizationId, account);
     await this.createLeadFormOnMeta(organizationId, actorId, form, client);
     return this.getLeadForm(organizationId, formId);
@@ -1408,16 +1415,16 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     if (!["product_viewers", "add_to_cart"].includes(dto.kind)) {
-      throw new BadRequestException(`Unknown retargeting preset "${dto.kind}" (allowed: product_viewers, add_to_cart)`);
+      throw badRequest("campaigns.unknownRetargetingPresetAllowedProductViewers", { dtoKind: dto.kind });
     }
     const table = (this.prisma as any).audienceRecord;
     let record: any = null;
     if (dto.audienceRecordId) {
       record = table?.findFirst ? await table.findFirst({ where: { id: dto.audienceRecordId, organizationId } }) : null;
-      if (!record) throw new BadRequestException("Audience record not found in this organization");
-      if (record.adAccountId !== plan.adAccountId) throw new BadRequestException("That audience belongs to a different ad account than this plan");
-      if (!record.externalAudienceId) throw new BadRequestException(`Audience "${record.name}" has no Meta audience id yet — it cannot be targeted`);
-      if (record.status !== "ready") throw new BadRequestException(`Audience "${record.name}" is not ready (status: ${record.status})`);
+      if (!record) throw badRequest("campaigns.audienceRecordNotFoundInThis");
+      if (record.adAccountId !== plan.adAccountId) throw badRequest("campaigns.thatAudienceBelongsToADifferent");
+      if (!record.externalAudienceId) throw badRequest("campaigns.audienceHasNoMetaAudienceId", { recordName: record.name });
+      if (record.status !== "ready") throw badRequest("campaigns.audienceIsNotReadyStatus", { recordName: record.name, recordStatus: record.status });
     } else {
       const rows = table?.findMany ? await table.findMany({ where: { organizationId, adAccountId: plan.adAccountId } }) : [];
       const ready = (rows ?? []).filter((r: any) => r.externalAudienceId && r.status === "ready");
@@ -1467,13 +1474,13 @@ export class CampaignsService implements OnModuleInit {
   };
 
   private requireAudiences(): AudiencesService {
-    if (!this.audiences) throw new BadRequestException("Audience Studio is not wired in this deployment (AudiencesService unavailable)");
+    if (!this.audiences) throw badRequest("campaigns.audienceStudioIsNotWiredIn");
     return this.audiences;
   }
 
   private async getAdSetOrThrow(planId: string, adSetId: string) {
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet) throw new NotFoundException("Ad set not found in this plan");
+    if (!adSet) throw notFound("campaigns.adSetNotFoundInThis");
     return adSet;
   }
 
@@ -1574,7 +1581,7 @@ export class CampaignsService implements OnModuleInit {
     this.assertEditable(plan);
     const adSet = await this.getAdSetOrThrow(planId, adSetId);
     const country = String(dto.country ?? "").trim().toUpperCase();
-    if (!/^[A-Z]{2}$/.test(country)) throw new BadRequestException(`country must be an ISO 2-letter code (e.g. "BD") — got "${dto.country}"`);
+    if (!/^[A-Z]{2}$/.test(country)) throw badRequest("campaigns.countryMustBeAnIso2", { dtoCountry: dto.country });
     const audiences = this.requireAudiences();
     const record = await audiences.createLookalike(organizationId, actorId, {
       adAccountId: plan.adAccountId, name: dto.name, sourceAudienceRecordId: dto.sourceAudienceRecordId, country, ratio: dto.ratio,
@@ -1602,7 +1609,7 @@ export class CampaignsService implements OnModuleInit {
     this.assertEditable(plan);
     const adSet = await this.getAdSetOrThrow(planId, adSetId);
     const def = CampaignsService.EXCLUSION_PRESETS[dto.preset];
-    if (!def) throw new BadRequestException(`preset must be one of ${Object.keys(CampaignsService.EXCLUSION_PRESETS).join(", ")}`);
+    if (!def) throw badRequest("campaigns.presetMustBeOneOf", { p1: Object.keys(CampaignsService.EXCLUSION_PRESETS).join(", ") });
     const audiences = this.requireAudiences();
     let record: any = null;
     if ((this.prisma as any).audienceRecord?.findMany) {
@@ -1759,7 +1766,7 @@ export class CampaignsService implements OnModuleInit {
 
   async deletePlan(organizationId: string, planId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (plan.status === "published") throw new BadRequestException("Published plans cannot be deleted (they exist on Meta). Archive them instead.");
+    if (plan.status === "published") throw badRequest("campaigns.publishedPlansCannotBeDeletedThey");
     await (this.prisma as any).campaignPlan.delete({ where: { id: planId } });
     return { deleted: true };
   }
@@ -1774,7 +1781,7 @@ export class CampaignsService implements OnModuleInit {
   private validatePlacements(dto: { platforms?: string[]; positions?: string[]; devices?: string[] }) {
     const check = (values: string[] | undefined, allowed: readonly string[], label: string) => {
       for (const v of values ?? []) {
-        if (!allowed.includes(v)) throw new BadRequestException(`Invalid ${label}: ${v} (allowed: ${allowed.join(", ")})`);
+        if (!allowed.includes(v)) throw badRequest("campaigns.invalidAllowed", { label: label, v: v, p3: allowed.join(", ") });
       }
     };
     check(dto.platforms, CampaignsService.PLATFORMS, "platform");
@@ -1798,7 +1805,7 @@ export class CampaignsService implements OnModuleInit {
   private normalizeEntry(e: any, label: string): any {
     if (typeof e === "string") {
       const name = e.trim();
-      if (!name) throw new BadRequestException(`${label}: empty entry`);
+      if (!name) throw badRequest("campaigns.emptyEntry", { label: label });
       return name;
     }
     if (e && typeof e === "object" && typeof e.name === "string" && e.name.trim()) {
@@ -1806,7 +1813,7 @@ export class CampaignsService implements OnModuleInit {
       if (e.id !== undefined && e.id !== null && String(e.id).trim()) out.id = String(e.id).trim();
       return out;
     }
-    throw new BadRequestException(`${label}: each entry must be a name or { id, name }`);
+    throw badRequest("campaigns.eachEntryMustBeAName", { label: label });
   }
 
   private normalizeEntries(list: any[] | undefined, label: string): any[] | undefined {
@@ -1825,35 +1832,35 @@ export class CampaignsService implements OnModuleInit {
   }) {
     for (const lt of dto.locationTypes ?? []) {
       if (!(CampaignsService.LOCATION_TYPES as readonly string[]).includes(lt)) {
-        throw new BadRequestException(`Invalid location type: ${lt} (allowed: ${CampaignsService.LOCATION_TYPES.join(", ")})`);
+        throw badRequest("campaigns.invalidLocationTypeAllowed", { lt: lt, p2: CampaignsService.LOCATION_TYPES.join(", ") });
       }
     }
     for (const c of dto.cities ?? []) {
-      if (!c || typeof c.key !== "string" || !c.key.trim()) throw new BadRequestException("Each city needs its Meta location key (use Targeting Search to find it)");
+      if (!c || typeof c.key !== "string" || !c.key.trim()) throw badRequest("campaigns.eachCityNeedsItsMetaLocation");
       if (c.radius !== undefined && (!Number.isFinite(Number(c.radius)) || Number(c.radius) < 1 || Number(c.radius) > 80)) {
-        throw new BadRequestException(`City "${c.key}": radius must be between 1 and 80`);
+        throw badRequest("campaigns.cityRadiusMustBeBetween1", { cKey: c.key });
       }
       if (c.distanceUnit !== undefined && !["mile", "kilometer"].includes(c.distanceUnit)) {
-        throw new BadRequestException(`City "${c.key}": distanceUnit must be "mile" or "kilometer"`);
+        throw badRequest("campaigns.cityDistanceunitMustBeMileOr", { cKey: c.key });
       }
     }
     for (const z of dto.postcodes ?? []) {
-      if (typeof z !== "string" || !z.trim()) throw new BadRequestException("Each postcode must be its Meta zip key (e.g. US:90210 — find it via Targeting Search)");
+      if (typeof z !== "string" || !z.trim()) throw badRequest("campaigns.eachPostcodeMustBeItsMeta");
     }
     for (const l of dto.locales ?? []) {
-      if (!Number.isInteger(l) || l <= 0) throw new BadRequestException(`Invalid locale id: ${l} (Meta locale ids are positive integers — find them via Targeting Search)`);
+      if (!Number.isInteger(l) || l <= 0) throw badRequest("campaigns.invalidLocaleIdMetaLocaleIds", { l: l });
     }
     const demo = dto.demographics;
     if (demo !== undefined && demo !== null) {
-      if (typeof demo !== "object" || Array.isArray(demo)) throw new BadRequestException("demographics must be an object");
+      if (typeof demo !== "object" || Array.isArray(demo)) throw badRequest("campaigns.demographicsMustBeAnObject");
       for (const k of Object.keys(demo)) {
         if (!["educationStatuses", "relationshipStatuses", "lifeEvents", "workPositions"].includes(k)) {
-          throw new BadRequestException(`Unknown demographics field: ${k} (allowed: educationStatuses, relationshipStatuses, lifeEvents, workPositions)`);
+          throw badRequest("campaigns.unknownDemographicsFieldAllowedEducationstatusesRelation", { k: k });
         }
       }
       for (const k of ["educationStatuses", "relationshipStatuses"] as const) {
         for (const v of (demo as any)[k] ?? []) {
-          if (!Number.isInteger(v) || v <= 0) throw new BadRequestException(`demographics.${k} must be positive integer ids`);
+          if (!Number.isInteger(v) || v <= 0) throw badRequest("campaigns.demographicsMustBePositiveIntegerIds", { k: k });
         }
       }
     }
@@ -1908,7 +1915,7 @@ export class CampaignsService implements OnModuleInit {
     try {
       ({ client, account } = await this.publishClient(organizationId, plan));
     } catch (e) {
-      throw new BadRequestException(`Targeting ID যাচাই করা যায়নি: ${e instanceof Error ? e.message : "Meta connection unavailable"} — ID-সহ Entry সেভ করতে আগে Meta Connect করুন, অথবা ID ছাড়া শুধু নাম দিন (নাম-ভিত্তিক Entry Readiness এ অযাচাইকৃত হিসেবে চিহ্নিত থাকবে)।`);
+      throw badRequest("campaigns.theTargetingIdCouldNotBe", { p1: e instanceof Error ? e.message : "Meta connection unavailable" });
     }
     const seen = new Set<string>();
     for (const entry of entries) {
@@ -1920,10 +1927,10 @@ export class CampaignsService implements OnModuleInit {
       try {
         rows = await client.targetingSearch(account.externalId, { type, query: entry.name });
       } catch (e) {
-        throw new BadRequestException(`Targeting "${entry.name}" (id ${entry.id}) Meta দিয়ে যাচাই করা যায়নি: ${e instanceof Error ? e.message.slice(0, 160) : "search failed"} — যাচাই ছাড়া এটি সেভ করা হবে না।`);
+        throw badRequest("campaigns.targetingIdCouldNotBeVerified", { entryName: entry.name, entryId: entry.id, p3: e instanceof Error ? e.message.slice(0, 160) : "search failed" });
       }
       if (!rows.some((r: any) => String(r?.id) === entry.id)) {
-        throw new BadRequestException(`Targeting "${entry.name}" (id ${entry.id}) Meta তে পাওয়া যায়নি — ID টি ভুল হতে পারে। Targeting Search দিয়ে সঠিক Entry বেছে নিন।`);
+        throw badRequest("campaigns.targetingIdWasNotFoundOn", { entryName: entry.name, entryId: entry.id });
       }
     }
   }
@@ -2018,11 +2025,11 @@ export class CampaignsService implements OnModuleInit {
   }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
-    if (!(OPTIMIZATION_GOALS as readonly string[]).includes(dto.optimizationGoal)) throw new BadRequestException("Invalid optimization goal");
+    if (!(OPTIMIZATION_GOALS as readonly string[]).includes(dto.optimizationGoal)) throw badRequest("campaigns.invalidOptimizationGoal");
     // CN2: on a CBO plan the budget lives on the campaign,
     // so an ad set legitimately carries none.
-    if (!dto.dailyBudget && !dto.lifetimeBudget && plan.budgetMode !== "cbo") throw new BadRequestException("Either a daily or a lifetime budget is required");
-    if (!dto.countries?.length) throw new BadRequestException("At least one target country is required");
+    if (!dto.dailyBudget && !dto.lifetimeBudget && plan.budgetMode !== "cbo") throw badRequest("campaigns.eitherADailyOrALifetime");
+    if (!dto.countries?.length) throw badRequest("campaigns.atLeastOneTargetCountryIs");
     this.validatePlacements(dto);
     this.validateTargetingShape(dto);
     const targeting = this.buildTargeting({
@@ -2046,7 +2053,7 @@ export class CampaignsService implements OnModuleInit {
     // CN3: catalog refs resolve against the real records now.
     await this.resolveCatalogRefs(organizationId, dto);
     if (dto.catalogRecordId && dto.conversionEvent) {
-      throw new BadRequestException("A catalog ad set optimizes on its product set — conversionEvent is not sent for catalog ads; clear one of them");
+      throw badRequest("campaigns.aCatalogAdSetOptimizesOn");
     }
     // CN4: a lead form ref must exist and match the Page.
     await this.resolveLeadFormRef(organizationId, dto);
@@ -2125,11 +2132,11 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet) throw new NotFoundException("Ad set not found in this plan");
+    if (!adSet) throw notFound("campaigns.adSetNotFoundInThis");
     if (dto.optimizationGoal !== undefined && !(OPTIMIZATION_GOALS as readonly string[]).includes(dto.optimizationGoal)) {
-      throw new BadRequestException("Invalid optimization goal");
+      throw badRequest("campaigns.invalidOptimizationGoal");
     }
-    if (dto.countries !== undefined && !dto.countries.length) throw new BadRequestException("At least one target country is required");
+    if (dto.countries !== undefined && !dto.countries.length) throw badRequest("campaigns.atLeastOneTargetCountryIs");
     this.validatePlacements(dto);
     this.validateTargetingShape(dto);
     // CN1: only the entries THIS edit carries are
@@ -2149,7 +2156,7 @@ export class CampaignsService implements OnModuleInit {
     if (dto.appStoreUrl !== undefined) data.appStoreUrl = dto.appStoreUrl?.trim() || null;
     if (dto.pixelId !== undefined) data.pixelId = dto.pixelId || null;
     if (dto.dailyBudget !== undefined || dto.lifetimeBudget !== undefined) {
-      if (!dto.dailyBudget && !dto.lifetimeBudget) throw new BadRequestException("Either a daily or a lifetime budget is required");
+      if (!dto.dailyBudget && !dto.lifetimeBudget) throw badRequest("campaigns.eitherADailyOrALifetime");
       data.dailyBudgetMinor = dto.dailyBudget ? parseMoneyToMinor(dto.dailyBudget) : null;
       data.lifetimeBudgetMinor = dto.lifetimeBudget ? parseMoneyToMinor(dto.lifetimeBudget) : null;
     }
@@ -2193,7 +2200,7 @@ export class CampaignsService implements OnModuleInit {
       if (cnTouched) {
         await this.resolveCatalogRefs(organizationId, merged);
         if (merged.catalogRecordId && merged.conversionEvent) {
-          throw new BadRequestException("A catalog ad set optimizes on its product set — conversionEvent is not sent for catalog ads; clear one of them");
+          throw badRequest("campaigns.aCatalogAdSetOptimizesOn");
         }
         await this.resolveLeadFormRef(organizationId, merged);
         if (dto.conversionEvent !== undefined) data.conversionEvent = merged.conversionEvent;
@@ -2328,7 +2335,7 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const src = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId }, include: { ads: true } });
-    if (!src) throw new NotFoundException("Ad set not found in this plan");
+    if (!src) throw notFound("campaigns.adSetNotFoundInThis");
     const copy = await (this.prisma as any).campaignAdSet.create({
       data: this.adSetCopyData(planId, src, { name: `${src.name} (কপি)` }),
     });
@@ -2402,9 +2409,9 @@ export class CampaignsService implements OnModuleInit {
     const headlines = lead(this.cleanOptionList(input.headlines), base.headline, explicit.headline);
     const descriptions = lead(this.cleanOptionList(input.descriptions), base.description, explicit.description);
     const caps = CampaignsService.TEXT_OPTION_CAPS;
-    if (primaryTexts.length > caps.primaryTexts) throw new BadRequestException(`At most ${caps.primaryTexts} primary text options (Meta's dynamic creative limit)`);
-    if (headlines.length > caps.headlines) throw new BadRequestException(`At most ${caps.headlines} headline options`);
-    if (descriptions.length > caps.descriptions) throw new BadRequestException(`At most ${caps.descriptions} description options`);
+    if (primaryTexts.length > caps.primaryTexts) throw badRequest("campaigns.atMostPrimaryTextOptionsMeta", { capsPrimaryTexts: caps.primaryTexts });
+    if (headlines.length > caps.headlines) throw badRequest("campaigns.atMostHeadlineOptions", { capsHeadlines: caps.headlines });
+    if (descriptions.length > caps.descriptions) throw badRequest("campaigns.atMostDescriptionOptions", { capsDescriptions: caps.descriptions });
     if (!primaryTexts.length) return null;
     // CA4: locale-labelled translations live under
     // `locales` inside the same JSON — a client round-trip
@@ -2462,19 +2469,19 @@ export class CampaignsService implements OnModuleInit {
     const out: Record<string, any> = {};
     for (const [group, ref] of Object.entries(input)) {
       if (!(CampaignsService.PLACEMENT_GROUPS as readonly string[]).includes(group)) {
-        throw new BadRequestException(`placementAssets group "${group}" is not supported (allowed: ${CampaignsService.PLACEMENT_GROUPS.join(", ")})`);
+        throw badRequest("campaigns.placementassetsGroupIsNotSupportedAllowed", { group: group, p2: CampaignsService.PLACEMENT_GROUPS.join(", ") });
       }
       if (!ref || typeof ref !== "object" || (!ref.imageAssetId && !ref.videoAssetId && !ref.imageUrl)) {
-        throw new BadRequestException(`placementAssets.${group} needs an imageAssetId, videoAssetId or imageUrl`);
+        throw badRequest("campaigns.placementassetsNeedsAnImageassetidVideoassetidOr", { group: group });
       }
       if (format === "video") {
-        if (!ref.videoAssetId || ref.imageAssetId || ref.imageUrl) throw new BadRequestException(`placementAssets.${group}: a video ad's placement override must be a videoAssetId from the creative library`);
+        if (!ref.videoAssetId || ref.imageAssetId || ref.imageUrl) throw badRequest("campaigns.placementassetsAVideoAdSPlacement", { group: group });
         out[group] = { videoAssetId: ref.videoAssetId };
       } else if (format === "link") {
-        if (ref.videoAssetId) throw new BadRequestException(`placementAssets.${group}: a link ad's placement override must be an image (imageAssetId or imageUrl), not a video`);
+        if (ref.videoAssetId) throw badRequest("campaigns.placementassetsALinkAdSPlacement", { group: group });
         out[group] = { ...(ref.imageAssetId ? { imageAssetId: ref.imageAssetId } : {}), ...(ref.imageUrl ? { imageUrl: ref.imageUrl } : {}) };
       } else {
-        throw new BadRequestException(`placementAssets are not supported for format "${format}" — carousel cards carry their own images`);
+        throw badRequest("campaigns.placementassetsAreNotSupportedForFormat", { format: format });
       }
     }
     return Object.keys(out).length ? out : null;
@@ -2485,9 +2492,9 @@ export class CampaignsService implements OnModuleInit {
     const out: Record<string, boolean> = {};
     for (const [k, v] of Object.entries(input)) {
       if (!(CampaignsService.ENHANCEMENT_FEATURES as readonly string[]).includes(k)) {
-        throw new BadRequestException(`creativeEnhancements key "${k}" is not a Meta creative feature this builder can map (allowed: ${CampaignsService.ENHANCEMENT_FEATURES.join(", ")})`);
+        throw badRequest("campaigns.creativeenhancementsKeyIsNotAMeta", { k: k, p2: CampaignsService.ENHANCEMENT_FEATURES.join(", ") });
       }
-      if (typeof v !== "boolean") throw new BadRequestException(`creativeEnhancements.${k} must be true or false`);
+      if (typeof v !== "boolean") throw badRequest("campaigns.creativeenhancementsMustBeTrueOrFalse", { k: k });
       out[k] = v;
     }
     return Object.keys(out).length ? out : null;
@@ -2524,15 +2531,15 @@ export class CampaignsService implements OnModuleInit {
     whatsappWelcome?: { greetingText?: string; prefillMessage?: string; iceBreakers?: string[] } | null;
   }) {
     const format = dto.format ?? "link";
-    if (!["link", "video", "carousel"].includes(format)) throw new BadRequestException("format must be link, video or carousel");
-    if (format === "video" && !dto.videoAssetId) throw new BadRequestException("A video ad needs a videoAssetId from the creative library");
+    if (!["link", "video", "carousel"].includes(format)) throw badRequest("campaigns.formatMustBeLinkVideoOr");
+    if (format === "video" && !dto.videoAssetId) throw badRequest("campaigns.aVideoAdNeedsAVideoassetid");
     if (format === "carousel" && (!dto.carouselCards || dto.carouselCards.length < 2 || dto.carouselCards.length > 10)) {
-      throw new BadRequestException("A carousel ad needs 2-10 cards");
+      throw badRequest("campaigns.aCarouselAdNeeds210");
     }
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet) throw new NotFoundException("Ad set not found in this plan");
+    if (!adSet) throw notFound("campaigns.adSetNotFoundInThis");
     // CN5: normalize creative v2 inputs; the legacy columns
     // are written FROM option index 0 (byte-compat invariant).
     const textOptions = this.normalizeTextOptions(dto.textOptions, dto, { primaryText: true, headline: dto.headline !== undefined, description: dto.description !== undefined });
@@ -2594,13 +2601,13 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
-    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    if (!ad) throw notFound("campaigns.adNotFoundInThisPlan");
     const merged = { ...ad, ...dto };
     const format = merged.format ?? "link";
-    if (!["link", "video", "carousel"].includes(format)) throw new BadRequestException("format must be link, video or carousel");
-    if (format === "video" && !merged.videoAssetId) throw new BadRequestException("A video ad needs a videoAssetId from the creative library");
+    if (!["link", "video", "carousel"].includes(format)) throw badRequest("campaigns.formatMustBeLinkVideoOr");
+    if (format === "video" && !merged.videoAssetId) throw badRequest("campaigns.aVideoAdNeedsAVideoassetid");
     if (format === "carousel" && (!Array.isArray(merged.carouselCards) || merged.carouselCards.length < 2 || merged.carouselCards.length > 10)) {
-      throw new BadRequestException("A carousel ad needs 2-10 cards");
+      throw badRequest("campaigns.aCarouselAdNeeds210");
     }
     const data: any = {};
     for (const key of ["name", "primaryText", "headline", "description", "linkUrl", "callToAction", "imageUrl", "productId", "format", "imageAssetId", "videoAssetId", "carouselCards"] as const) {
@@ -2698,7 +2705,7 @@ export class CampaignsService implements OnModuleInit {
   private async adForVersions(organizationId: string, planId: string, adId: string) {
     await this.getPlanOrThrow(organizationId, planId);
     const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
-    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    if (!ad) throw notFound("campaigns.adNotFoundInThisPlan");
     return ad;
   }
 
@@ -2721,9 +2728,9 @@ export class CampaignsService implements OnModuleInit {
   async adVersionDiff(organizationId: string, planId: string, adId: string, versionId: string) {
     const ad = await this.adForVersions(organizationId, planId, adId);
     const table = (this.prisma as any).campaignAdVersion;
-    if (!table?.findFirst) throw new BadRequestException("Version table পাওয়া যাচ্ছে না — Migration বাকি থাকতে পারে।");
+    if (!table?.findFirst) throw badRequest("campaigns.theVersionTableIsNotAvailable");
     const row = await table.findFirst({ where: { id: versionId, adId } });
-    if (!row) throw new NotFoundException("Ad version not found");
+    if (!row) throw notFound("campaigns.adVersionNotFound");
     const current = CampaignsService.adContentOf(ad);
     const snap = (row.snapshot ?? {}) as Record<string, unknown>;
     const changes = CampaignsService.AD_CONTENT_FIELDS
@@ -2743,9 +2750,9 @@ export class CampaignsService implements OnModuleInit {
     this.assertEditable(plan);
     const ad = await this.adForVersions(organizationId, planId, adId);
     const table = (this.prisma as any).campaignAdVersion;
-    if (!table?.findFirst) throw new BadRequestException("Version table পাওয়া যাচ্ছে না — Migration বাকি থাকতে পারে।");
+    if (!table?.findFirst) throw badRequest("campaigns.theVersionTableIsNotAvailable");
     const row = await table.findFirst({ where: { id: versionId, adId } });
-    if (!row) throw new NotFoundException("Ad version not found");
+    if (!row) throw notFound("campaigns.adVersionNotFound");
     await this.snapshotAdVersion(organizationId, ad, actorId, "restore");
     const snap = (row.snapshot ?? {}) as Record<string, unknown>;
     const data: Record<string, unknown> = {};
@@ -2771,12 +2778,12 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
-    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    if (!ad) throw notFound("campaigns.adNotFoundInThisPlan");
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: ad.adSetId, planId } });
     const setId = dto.productSetId ?? adSet?.productSetId;
-    if (!setId) throw new BadRequestException("এই Ad Set-এ কোনো Product Set যুক্ত নেই — আগে Ad Set-এ Catalog Product Set বাছাই করুন, অথবা productSetId পাঠান।");
+    if (!setId) throw badRequest("campaigns.noProductSetIsAttachedTo");
     const set = await (this.prisma as any).productSet?.findFirst?.({ where: { id: setId, organizationId } }).catch(() => null) ?? null;
-    if (!set) throw new NotFoundException("Product set not found in this organization");
+    if (!set) throw notFound("campaigns.productSetNotFoundInThis");
     const where: any = { organizationId, status: "ACTIVE" };
     if (set.category) where.category = set.category;
     if (set.maxPriceMinor != null) where.priceMinor = { lte: set.maxPriceMinor };
@@ -2785,7 +2792,7 @@ export class CampaignsService implements OnModuleInit {
     const limit = Math.min(Math.max(dto.limit ?? 10, 2), 10);
     const products = (rows as any[]).filter(inStock).slice(0, limit);
     if (products.length < 2) {
-      throw new BadRequestException(`এই Product Set-এর শর্তে যথেষ্ট Product পাওয়া যায়নি (পাওয়া গেছে ${products.length}টি, Carousel-এ কমপক্ষে ২টি লাগে) — Set-এর শর্ত শিথিল করুন বা Product যোগ করুন।`);
+      throw badRequest("campaigns.notEnoughProductsWereFoundFor", { productsLength: products.length });
     }
     const cards = products.map((p: any) => ({
       title: String(p.name).slice(0, 120),
@@ -2841,7 +2848,7 @@ export class CampaignsService implements OnModuleInit {
    * machinery's own status vocabulary either way. */
   async createPlanLanding(organizationId: string, actorId: string, planId: string, dto: { adId?: string; productId?: string; publish?: boolean }) {
     if (!this.landings) {
-      throw new BadRequestException("Landing Service এই Build-এ যুক্ত নয় — Builder থেকে Landing তৈরি করা যাচ্ছে না (Landings পেজ থেকে তৈরি করা যাবে)।");
+      throw badRequest("campaigns.theLandingServiceIsNotWired");
     }
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
@@ -2852,7 +2859,7 @@ export class CampaignsService implements OnModuleInit {
         const ad = (s.ads ?? []).find((a: any) => a.id === dto.adId);
         if (ad) { productId = (ad as any).productId ?? null; break; }
       }
-      if (!productId) throw new BadRequestException("বেছে নেওয়া Ad-টিতে কোনো Product যুক্ত নেই — Landing Page Product ছাড়া তৈরি হয় না। Ad-তে Product বাছাই করুন, অথবা Product-সহ অন্য Ad বেছে নিন।");
+      if (!productId) throw badRequest("campaigns.theSelectedAdHasNoProduct");
     }
     if (!productId) {
       for (const s of full.adSets ?? []) {
@@ -2860,9 +2867,9 @@ export class CampaignsService implements OnModuleInit {
         if (ad) { productId = (ad as any).productId; break; }
       }
     }
-    if (!productId) throw new BadRequestException("এই Plan-এর কোনো Ad-তেই Product যুক্ত নেই — Landing Page Product ছাড়া তৈরি হয় না।");
+    if (!productId) throw badRequest("campaigns.noAdInThisPlanHas");
     const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("campaigns.productNotFoundInThisOrganization");
     const landing = await this.landings.create(organizationId, actorId, {
       productId, title: String(product.name).slice(0, 200),
       status: dto.publish ? "published" : "draft",
@@ -2897,13 +2904,13 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const landing = await (this.prisma as any).landingPage?.findFirst?.({ where: { id: landingId, organizationId } }).catch(() => null) ?? null;
-    if (!landing) throw new NotFoundException("Landing page not found in this organization");
+    if (!landing) throw notFound("campaigns.landingPageNotFoundInThis");
     if (landing.status !== "published") {
-      throw new BadRequestException(`এই Landing টি এখন "${landing.status}" অবস্থায় আছে — Publish করা Landing ছাড়া Ad-এ বসানো যায় না, কারণ Public পেজ শুধু Published Landing-ই দেখায়। আগে Landings পেজ থেকে Publish করুন।`);
+      throw badRequest("campaigns.thisLandingIsNowInStatus", { landingStatus: landing.status });
     }
     const { url, path } = this.landingUrlFor(landing.slug);
     if (!url) {
-      throw new BadRequestException("সার্ভারে WEB_PUBLIC_URL/APP_PUBLIC_URL সেট নেই — Landing-এর পূর্ণ URL জানা যাচ্ছে না, তাই Ad-এ বসানো হয়নি (আপেক্ষিক Path Meta-র কাছে পৌঁছাবে না)।");
+      throw badRequest("campaigns.webPublicUrlAppPublicUrl");
     }
     const updated = await this.updateAd(organizationId, planId, adId, actorId, { linkUrl: url });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.landing_applied_to_ad", entityType: "CampaignAd", entityId: adId, metadata: { landingId, slug: landing.slug, path } }).catch(() => undefined);
@@ -2915,7 +2922,7 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const src = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
-    if (!src) throw new NotFoundException("Ad not found in this plan");
+    if (!src) throw notFound("campaigns.adNotFoundInThisPlan");
     const copy = await (this.prisma as any).campaignAd.create({
       data: {
         adSetId: src.adSetId, name: `${src.name} (কপি)`, primaryText: src.primaryText, headline: src.headline ?? undefined,
@@ -2953,9 +2960,9 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const src = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, adSet: { planId } } });
-    if (!src) throw new NotFoundException("Ad not found in this plan");
+    if (!src) throw notFound("campaigns.adNotFoundInThisPlan");
     if (!!dto.creativeAssetId === !!dto.mediaAssetId) {
-      throw new BadRequestException("Choose exactly one asset: creativeAssetId (creative library) or mediaAssetId (social/studio library)");
+      throw badRequest("campaigns.chooseExactlyOneAssetCreativeassetidCreative");
     }
     const base: any = {
       adSetId: src.adSetId, primaryText: src.primaryText, headline: src.headline ?? undefined,
@@ -2967,19 +2974,19 @@ export class CampaignsService implements OnModuleInit {
     let variant: any;
     if (dto.creativeAssetId) {
       const asset = await (this.prisma as any).creativeAsset.findFirst({ where: { id: dto.creativeAssetId, organizationId } });
-      if (!asset) throw new NotFoundException("Creative asset not found in this organization");
+      if (!asset) throw notFound("campaigns.creativeAssetNotFoundInThis");
       if (asset.kind === "image") {
         variant = await (this.prisma as any).campaignAd.create({ data: { ...base, name: dto.name ?? `${src.name} — Variant (${asset.name})`, format: "link", imageAssetId: asset.id, videoAssetId: null, imageUrl: null, carouselCards: undefined } });
       } else if (asset.kind === "video") {
         variant = await (this.prisma as any).campaignAd.create({ data: { ...base, name: dto.name ?? `${src.name} — Variant (${asset.name})`, format: "video", videoAssetId: asset.id, imageAssetId: null, imageUrl: null, carouselCards: undefined } });
-      } else throw new BadRequestException(`Creative asset kind "${asset.kind}" cannot carry an ad variant`);
+      } else throw badRequest("campaigns.creativeAssetKindCannotCarryAn", { assetKind: asset.kind });
     } else {
       const asset = await (this.prisma as any).mediaAsset?.findFirst?.({ where: { id: dto.mediaAssetId, organizationId } }).catch(() => null);
-      if (!asset) throw new NotFoundException("Media asset not found in this organization");
+      if (!asset) throw notFound("campaigns.mediaAssetNotFoundInThis");
       if (asset.kind !== "image") {
-        throw new BadRequestException("A video from the Social/Studio library cannot run as a Meta video ad directly — Meta needs a video uploaded through the Creative Library (which creates its Meta video id). Upload it there, then make the variant from the creative asset.");
+        throw badRequest("campaigns.aVideoFromTheSocialStudio");
       }
-      if (!asset.publicToken) throw new BadRequestException("This media asset has no public link token — Meta could not fetch the image. Re-import it from the Social library so it carries a public URL.");
+      if (!asset.publicToken) throw badRequest("campaigns.thisMediaAssetHasNoPublic");
       // RB4/RM8 item 6: prefer the CDN URL when the public-media
       // helper can ensure one (object storage on; the bytes are
       // copied to the public bucket first). The token above stays
@@ -3003,7 +3010,7 @@ export class CampaignsService implements OnModuleInit {
       }
       if (!imageUrl) {
         const apiBase = process.env.API_PUBLIC_URL?.replace(/\/$/, "");
-        if (!apiBase) throw new BadRequestException("API_PUBLIC_URL is not configured on this deployment — Meta could not fetch the media image, so the variant was not created");
+        if (!apiBase) throw badRequest("campaigns.apiPublicUrlIsNotConfigured");
         imageUrl = `${apiBase}/public/media/${asset.publicToken}`;
       }
       variant = await (this.prisma as any).campaignAd.create({ data: { ...base, name: dto.name ?? `${src.name} — Variant (${asset.name})`, format: "link", imageUrl, imageAssetId: null, videoAssetId: null, carouselCards: undefined } });
@@ -3249,10 +3256,10 @@ export class CampaignsService implements OnModuleInit {
 
   async submitForApproval(organizationId: string, actorId: string, planId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (!EDITABLE.includes(plan.status)) throw new BadRequestException(`Plan in status "${plan.status}" cannot be submitted`);
+    if (!EDITABLE.includes(plan.status)) throw badRequest("campaigns.planInStatusCannotBeSubmitted", { planStatus: plan.status });
     const full = await this.getPlanFull(organizationId, planId);
     const { valid, errors } = this.validatePlan(full);
-    if (!valid) throw new BadRequestException(`Plan is not ready for approval: ${errors.join("; ")}`);
+    if (!valid) throw badRequest("campaigns.planIsNotReadyForApproval", { p1: errors.join("; ") });
     this.assertWithinCap(full);
     // CB4: freeze exactly what is being approved.
     const snapshot = this.definitionOf(full);
@@ -3353,7 +3360,7 @@ export class CampaignsService implements OnModuleInit {
   async addComment(organizationId: string, planId: string, authorId: string, body: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     const text = String(body ?? "").trim();
-    if (!text) throw new BadRequestException("Comment cannot be empty");
+    if (!text) throw badRequest("campaigns.commentCannotBeEmpty");
     const row = await (this.prisma as any).campaignPlanComment.create({
       data: { organizationId, planId, authorId, body: text.slice(0, 2000) },
     });
@@ -3387,7 +3394,7 @@ export class CampaignsService implements OnModuleInit {
   private async getVersionOrThrow(organizationId: string, planId: string, versionId: string) {
     const table = (this.prisma as any).campaignPlanVersion;
     const row = table?.findFirst ? await table.findFirst({ where: { id: versionId, planId, organizationId } }).catch(() => null) : null;
-    if (!row) throw new NotFoundException("Plan version not found in this organization");
+    if (!row) throw notFound("campaigns.planVersionNotFoundInThis");
     return row;
   }
 
@@ -3397,7 +3404,7 @@ export class CampaignsService implements OnModuleInit {
   async createVersionSnapshot(organizationId: string, actorId: string, planId: string) {
     await this.getPlanOrThrow(organizationId, planId);
     const table = (this.prisma as any).campaignPlanVersion;
-    if (!table?.create) throw new BadRequestException("Plan versions are not available in this context (CampaignPlanVersion table missing)");
+    if (!table?.create) throw badRequest("campaigns.planVersionsAreNotAvailableIn");
     const full = await this.getPlanFull(organizationId, planId);
     const row = await table.create({
       data: { organizationId, planId, kind: "manual", definition: this.definitionOf(full), createdById: actorId },
@@ -3469,7 +3476,7 @@ export class CampaignsService implements OnModuleInit {
     const version = await this.getVersionOrThrow(organizationId, planId, versionId);
     const def = version.definition;
     if (!def || typeof def !== "object" || !Array.isArray(def.adSets)) {
-      throw new BadRequestException("This version does not carry a restorable plan definition");
+      throw badRequest("campaigns.thisVersionDoesNotCarryA");
     }
     const p = this.prisma as any;
     const restored = await p.campaignPlan.create({
@@ -3509,7 +3516,7 @@ export class CampaignsService implements OnModuleInit {
 
   async setApprovalChainSetting(organizationId: string, actorId: string, dto: { twoStepApproval: boolean }) {
     const table = (this.prisma as any).campaignApprovalSetting;
-    if (!table?.create || !table?.findFirst) throw new BadRequestException("Approval settings are not available in this context (CampaignApprovalSetting table missing)");
+    if (!table?.create || !table?.findFirst) throw badRequest("campaigns.approvalSettingsAreNotAvailableIn");
     const twoStepApproval = dto?.twoStepApproval === true;
     const existing = await table.findFirst({ where: { organizationId } }).catch(() => null);
     if (existing) await table.update({ where: { id: existing.id }, data: { twoStepApproval } });
@@ -3534,7 +3541,7 @@ export class CampaignsService implements OnModuleInit {
     if (!live.length) return [];
     for (const s of live) {
       if (BigInt(s.dailyBudgetMinor) + deltaMinor <= 0n) {
-        throw new BadRequestException(`Fixed adjust ${deltaMinor} would take ad set "${s.name}" to <= 0 — refused, nothing changed`);
+        throw badRequest("campaigns.fixedAdjustWouldTakeAdSet", { deltaMinor: deltaMinor, sName: s.name });
       }
     }
     const out: { adSetId: string; beforeMinor: string; afterMinor: string; metaWriteOk: boolean }[] = [];
@@ -3565,21 +3572,21 @@ export class CampaignsService implements OnModuleInit {
   async bulkPlanAction(organizationId: string, actorId: string, dto: { planIds?: string[]; action?: string; percent?: number; fixedMinor?: string }) {
     const action = String(dto.action ?? "");
     if (!["pause", "activate", "budget_percent", "budget_fixed", "duplicate"].includes(action)) {
-      throw new BadRequestException("action must be pause, activate, budget_percent, budget_fixed or duplicate");
+      throw badRequest("campaigns.actionMustBePauseActivateBudget");
     }
     const planIds = [...new Set((dto.planIds ?? []).map((x) => String(x)).filter(Boolean))];
-    if (!planIds.length) throw new BadRequestException("planIds is required");
-    if (planIds.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি Plan");
+    if (!planIds.length) throw badRequest("campaigns.planidsIsRequired");
+    if (planIds.length > 50) throw badRequest("campaigns.atMost50PlansAtA");
     let percent = 0;
     let delta = 0n;
     if (action === "budget_percent") {
       percent = Math.trunc(Number(dto.percent));
-      if (!Number.isFinite(percent) || percent === 0) throw new BadRequestException("percent must be a non-zero number");
-      if (percent < -90 || percent > 900) throw new BadRequestException("percent must be between -90 and +900");
+      if (!Number.isFinite(percent) || percent === 0) throw badRequest("campaigns.percentMustBeANonZero");
+      if (percent < -90 || percent > 900) throw badRequest("campaigns.percentMustBeBetween90And");
     }
     if (action === "budget_fixed") {
-      try { delta = BigInt(String(dto.fixedMinor ?? "")); } catch { throw new BadRequestException("fixedMinor must be an integer minor-unit amount"); }
-      if (delta === 0n) throw new BadRequestException("fixedMinor must be non-zero");
+      try { delta = BigInt(String(dto.fixedMinor ?? "")); } catch { throw badRequest("campaigns.fixedminorMustBeAnIntegerMinor"); }
+      if (delta === 0n) throw badRequest("campaigns.fixedminorMustBeNonZero");
     }
     const results: { planId: string; ok: boolean; result?: any; error?: string }[] = [];
     for (const planId of planIds) {
@@ -3637,14 +3644,14 @@ export class CampaignsService implements OnModuleInit {
 
   async setNamingTemplate(organizationId: string, actorId: string, dto: { template?: string | null }) {
     const table = (this.prisma as any).businessProfile;
-    if (!table?.findUnique) throw new BadRequestException("Naming settings are not available in this context (BusinessProfile table missing)");
+    if (!table?.findUnique) throw badRequest("campaigns.namingSettingsAreNotAvailableIn");
     const raw = dto?.template == null ? null : String(dto.template).trim();
     if (raw !== null) {
-      if (raw.length > 200) throw new BadRequestException("Template সর্বোচ্চ ২০০ অক্ষরের হতে পারে");
+      if (raw.length > 200) throw badRequest("campaigns.theTemplateCanBeAtMost");
       const used = [...raw.matchAll(/\{([a-zA-Z]+)\}/g)].map((m) => m[1].toLowerCase());
       const unknown = used.filter((t) => !(NAMING_TOKENS as readonly string[]).includes(t));
-      if (unknown.length) throw new BadRequestException(`অজানা token: ${unknown.map((t) => `{${t}}`).join(", ")} — ব্যবহারযোগ্য token: ${NAMING_TOKENS.map((t) => `{${t}}`).join(" ")}`);
-      if (!used.length) throw new BadRequestException("Template-এ অন্তত একটি token থাকতে হবে — নইলে সব নাম একই হয়ে যাবে");
+      if (unknown.length) throw badRequest("campaigns.unknownTokenUsableTokens", { p1: unknown.map((t) => `{${t}}`).join(", "), p2: NAMING_TOKENS.map((t) => `{${t}}`).join(" ") });
+      if (!used.length) throw badRequest("campaigns.theTemplateMustContainAtLeast");
     }
     const template = raw === "" ? null : raw;
     const existing = await table.findUnique({ where: { organizationId } }).catch(() => null);
@@ -3712,7 +3719,7 @@ export class CampaignsService implements OnModuleInit {
    * make of this plan's tree. Nothing is renamed here. */
   async previewNamingApply(organizationId: string, planId: string) {
     const template = await this.namingTemplate(organizationId);
-    if (!template) throw new BadRequestException("কোনো Naming Template সেট করা নেই — আগে Organization Settings / Campaign Settings-এ Template বসান");
+    if (!template) throw badRequest("campaigns.noNamingTemplateIsSetSet");
     const full = await this.getPlanFull(organizationId, planId);
     const raw = await this.namingItemsForPlan(organizationId, full);
     const items = raw.map((it) => {
@@ -3735,7 +3742,7 @@ export class CampaignsService implements OnModuleInit {
     const preview = await this.previewNamingApply(organizationId, planId);
     const fresh = new Map(preview.items.map((i: any) => [`${i.level}:${i.id}`, i]));
     const requested = (dto.items ?? []).filter((i) => i?.id && i?.level).slice(0, 200);
-    if (!requested.length) throw new BadRequestException("প্রয়োগের জন্য অন্তত একটি নাম পাঠাতে হবে");
+    if (!requested.length) throw badRequest("campaigns.atLeastOneNameMustBe");
     const results: any[] = [];
     const appliedDiffs: any[] = [];
     for (const item of requested) {
@@ -3805,13 +3812,13 @@ export class CampaignsService implements OnModuleInit {
 
   async createSavedView(organizationId: string, userId: string, dto: { name: string; filters: Record<string, unknown> }) {
     const name = String(dto?.name ?? "").trim().slice(0, 200);
-    if (!name) throw new BadRequestException("Saved view needs a name — একটি নাম দিন");
+    if (!name) throw badRequest("campaigns.savedViewNeedsANamePlease");
     if (!dto?.filters || typeof dto.filters !== "object" || Array.isArray(dto.filters)) {
-      throw new BadRequestException("Saved view filters must be an object (the hub's filter state)");
+      throw badRequest("campaigns.savedViewFiltersMustBeAn");
     }
-    if (JSON.stringify(dto.filters).length > 10000) throw new BadRequestException("Saved view filters are too large (max 10000 characters of JSON)");
+    if (JSON.stringify(dto.filters).length > 10000) throw badRequest("campaigns.savedViewFiltersAreTooLarge");
     const table = (this.prisma as any).campaignSavedView;
-    if (!table?.create) throw new BadRequestException("Saved views are not available in this context (CampaignSavedView table missing)");
+    if (!table?.create) throw badRequest("campaigns.savedViewsAreNotAvailableIn");
     const row = await table.create({ data: { organizationId, userId, name, filters: dto.filters } });
     await this.audit.log({ organizationId, userId, action: "campaign.saved_view_created", entityType: "CampaignSavedView", entityId: row.id }).catch(() => undefined);
     return row;
@@ -3822,7 +3829,7 @@ export class CampaignsService implements OnModuleInit {
   async deleteSavedView(organizationId: string, userId: string, viewId: string) {
     const table = (this.prisma as any).campaignSavedView;
     const row = table?.findFirst ? await table.findFirst({ where: { id: viewId, organizationId, userId } }).catch(() => null) : null;
-    if (!row) throw new NotFoundException("Saved view not found");
+    if (!row) throw notFound("campaigns.savedViewNotFound");
     await table.delete({ where: { id: viewId } });
     await this.audit.log({ organizationId, userId, action: "campaign.saved_view_deleted", entityType: "CampaignSavedView", entityId: viewId }).catch(() => undefined);
     return { deleted: true };
@@ -3830,7 +3837,7 @@ export class CampaignsService implements OnModuleInit {
 
   async approve(organizationId: string, actorId: string, planId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (plan.status !== "pending_approval") throw new BadRequestException(`Only pending_approval plans can be approved (current: ${plan.status})`);
+    if (plan.status !== "pending_approval") throw badRequest("campaigns.onlyPendingApprovalPlansCanBe", { planStatus: plan.status });
     // CN11: two-step chain. Setting OFF = the exact
     // pre-CN11 single-approval path below, untouched.
     if ((await this.getApprovalChainSetting(organizationId)).twoStepApproval) {
@@ -3850,7 +3857,7 @@ export class CampaignsService implements OnModuleInit {
         return { ...full, approvalState: { twoStep: true, step: 1, awaitingSecond: true } };
       }
       if (plan.firstApproverId === actorId) {
-        throw new BadRequestException("দুই ধাপের অনুমোদনে দ্বিতীয় অনুমোদনটি অন্য একজন Approver-এর হতে হবে — Two-step approval requires a DIFFERENT second approver; your step-1 approval is already recorded.");
+        throw badRequest("campaigns.inTwoStepApprovalTheSecond");
       }
       // Step 2 of 2: a different approver completes it,
       // exactly like a single approval, with the chain
@@ -3876,7 +3883,7 @@ export class CampaignsService implements OnModuleInit {
 
   async reject(organizationId: string, actorId: string, planId: string, reason: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (plan.status !== "pending_approval") throw new BadRequestException(`Only pending_approval plans can be rejected (current: ${plan.status})`);
+    if (plan.status !== "pending_approval") throw badRequest("campaigns.onlyPendingApprovalPlansCanBe2", { planStatus: plan.status });
     await (this.prisma as any).campaignPlan.update({
       where: { id: planId }, data: { status: "rejected", rejectionReason: reason.slice(0, 500), firstApproverId: null, firstApprovedAt: null },
     });
@@ -3891,9 +3898,9 @@ export class CampaignsService implements OnModuleInit {
   /** Resolve a Meta client for ONE ad account record
    *  (shared by publish + CN1 targeting search). */
   private async metaClientForAccount(organizationId: string, account: any): Promise<MetaPublishClient> {
-    if (!account?.integrationId) throw new BadRequestException("This ad account has no Meta API connection (it was created for CSV/manual data) and cannot publish. Connect Meta first.");
+    if (!account?.integrationId) throw badRequest("campaigns.thisAdAccountHasNoMeta");
     const integration = await (this.prisma as any).integration.findUnique({ where: { id: account.integrationId }, include: { credential: true } });
-    if (!integration?.credential) throw new BadRequestException("Meta integration credentials are missing");
+    if (!integration?.credential) throw badRequest("campaigns.metaIntegrationCredentialsAreMissing");
     const secrets = decryptJson<{ accessToken: string }>(integration.credential.encryptedData);
     return new MetaPublishClient(secrets.accessToken);
   }
@@ -3912,7 +3919,7 @@ export class CampaignsService implements OnModuleInit {
 
   private async publishClient(organizationId: string, plan: any): Promise<{ client: MetaPublishClient; account: any }> {
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: plan.adAccountId, organizationId } });
-    if (!account) throw new BadRequestException("Ad account no longer exists");
+    if (!account) throw badRequest("campaigns.adAccountNoLongerExists");
     const client = await this.metaClientForAccount(organizationId, account);
     return { client, account };
   }
@@ -3927,11 +3934,11 @@ export class CampaignsService implements OnModuleInit {
    */
   async searchTargeting(organizationId: string, dto: { adAccountId: string; kind: string; query: string }) {
     const type = CampaignsService.TARGETING_SEARCH_TYPES[dto.kind];
-    if (!type) throw new BadRequestException(`kind must be one of: ${Object.keys(CampaignsService.TARGETING_SEARCH_TYPES).join(", ")}`);
-    if (!dto.query?.trim()) throw new BadRequestException("A search query is required");
+    if (!type) throw badRequest("campaigns.kindMustBeOneOf", { p1: Object.keys(CampaignsService.TARGETING_SEARCH_TYPES).join(", ") });
+    if (!dto.query?.trim()) throw badRequest("campaigns.aSearchQueryIsRequired");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found in this organization");
-    if (account.platform !== "meta") throw new BadRequestException("Targeting search is a Meta feature");
+    if (!account) throw notFound("campaigns.adAccountNotFoundInThis");
+    if (account.platform !== "meta") throw badRequest("campaigns.targetingSearchIsAMetaFeature");
     try {
       const client = await this.metaClientForAccount(organizationId, account);
       const rows = await client.targetingSearch(account.externalId, { type, query: dto.query.trim() });
@@ -4164,15 +4171,29 @@ export class CampaignsService implements OnModuleInit {
   /** CA26: the shape every blueprint source (DB row or
    * the pre-migration const fallback) is normalized to. */
   private blueprintShape(row: any) {
+    // MB4 (a2, D-MB4-8/D7): *En companions ride along for
+    // locale-aware rendering. DB rows predate the companions,
+    // so platform rows fall back to the seed const by key;
+    // org clones are merchant-authored and keep null (D-MB4-5).
+    const fb: any = row.organizationId ? undefined : BLUEPRINTS.find((b) => b.key === row.key);
+    const ad = row.ad
+      ? {
+          ...row.ad,
+          primaryTextEn: row.ad.primaryTextEn ?? fb?.ad?.primaryTextEn ?? null,
+          headlineEn: row.ad.headlineEn ?? fb?.ad?.headlineEn ?? null,
+        }
+      : row.ad;
     return {
       id: row.id ?? null,
       key: row.key,
       name: row.name,
+      nameEn: row.nameEn ?? fb?.nameEn ?? null,
       objective: row.objective,
       advantagePlus: !!row.advantagePlus,
       description: row.description,
+      descriptionEn: row.descriptionEn ?? fb?.descriptionEn ?? null,
       adSet: row.adSet,
-      ad: row.ad,
+      ad,
       scope: row.organizationId ? "org" : "platform",
       editable: !!row.organizationId,
       version: row.version ?? 1,
@@ -4227,9 +4248,9 @@ export class CampaignsService implements OnModuleInit {
    * modified by orgs. */
   async cloneBlueprint(organizationId: string, actorId: string, key: string) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    if (!table?.findFirst) throw badRequest("campaigns.blueprintDataIsNotAvailableYet");
     const platform = await table.findFirst({ where: { key, organizationId: null } });
-    if (!platform) throw new NotFoundException("Platform blueprint not found");
+    if (!platform) throw notFound("campaigns.platformBlueprintNotFound");
     const existing = await table.findFirst({ where: { key, organizationId } });
     if (existing) return this.blueprintShape(existing);
     const copy = await table.create({
@@ -4250,11 +4271,11 @@ export class CampaignsService implements OnModuleInit {
    * the audit trail (no silent rewrites). */
   async updateOrgBlueprint(organizationId: string, actorId: string, rowId: string, dto: { name?: string; description?: string; objective?: string; advantagePlus?: boolean; adSet?: any; ad?: any; category?: string | null; tags?: string[] }) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    if (!table?.findFirst) throw badRequest("campaigns.blueprintDataIsNotAvailableYet");
     const row = await table.findFirst({ where: { id: rowId } });
-    if (!row) throw new NotFoundException("Blueprint not found");
+    if (!row) throw notFound("campaigns.blueprintNotFound");
     if (row.organizationId !== organizationId) {
-      throw new ForbiddenException("এটি Platform Blueprint — বদলাতে হলে আগে নিজের কপি বানান (Clone)।");
+      throw forbidden("campaigns.thisIsAPlatformBlueprintClone");
     }
     const data: any = { version: (row.version ?? 1) + 1 };
     if (dto.name !== undefined) data.name = String(dto.name).slice(0, 200);
@@ -4274,11 +4295,11 @@ export class CampaignsService implements OnModuleInit {
    * rows refuse — they are the platform team's data). */
   async deleteOrgBlueprint(organizationId: string, actorId: string, rowId: string) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.findFirst) throw new BadRequestException("Blueprint data এখনো পাওয়া যাচ্ছে না (Migration বাকি)।");
+    if (!table?.findFirst) throw badRequest("campaigns.blueprintDataIsNotAvailableYet");
     const row = await table.findFirst({ where: { id: rowId } });
-    if (!row) throw new NotFoundException("Blueprint not found");
+    if (!row) throw notFound("campaigns.blueprintNotFound");
     if (row.organizationId !== organizationId) {
-      throw new ForbiddenException("Platform Blueprint মুছা যায় না — এটি Platform-এর সম্পত্তি।");
+      throw forbidden("campaigns.platformBlueprintsCannotBeDeletedThey");
     }
     await table.delete({ where: { id: rowId } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.blueprint_deleted", entityType: "CampaignBlueprint", entityId: rowId, metadata: { key: row.key } });
@@ -4291,13 +4312,13 @@ export class CampaignsService implements OnModuleInit {
    * ad copy in its real catalog name and price. */
   async instantiateBlueprint(organizationId: string, actorId: string, dto: { blueprintKey: string; adAccountId: string; productId?: string; blueprintId?: string }) {
     const bp = await this.blueprintFor(organizationId, dto.blueprintKey, dto.blueprintId);
-    if (!bp) throw new BadRequestException("Unknown blueprint");
+    if (!bp) throw badRequest("campaigns.unknownBlueprint");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found");
+    if (!account) throw notFound("campaigns.adAccountNotFound");
     let product: any = null;
     if (dto.productId) {
       product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
-      if (!product) throw new NotFoundException("Product not found");
+      if (!product) throw notFound("campaigns.productNotFound");
     }
     const plan = await this.createPlan(organizationId, actorId, { name: bp.name, objective: bp.objective, adAccountId: dto.adAccountId });
     if ((bp as any).advantagePlus) {
@@ -4375,7 +4396,7 @@ export class CampaignsService implements OnModuleInit {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Meta lead form creation failed";
       await (this.prisma as any).leadForm.update({ where: { id: form.id }, data: { status: "failed", error: message } }).catch(() => undefined);
-      throw new BadRequestException(`Meta lead form creation did NOT succeed: ${message}`);
+      throw badRequest("campaigns.metaLeadFormCreationDidNot", { message: message });
     }
   }
 
@@ -4437,7 +4458,7 @@ export class CampaignsService implements OnModuleInit {
     if (adSet.optimizationGoal === "LEAD_GENERATION") {
       if (adSet.leadFormId) {
         const form = (adSet as any).__leadForm ?? (await this.resolveLeadFormRef(organizationId, adSet));
-        if (!form) throw new BadRequestException(`Ad set "${adSet.name}": the attached lead form no longer exists`);
+        if (!form) throw badRequest("campaigns.adSetTheAttachedLeadForm", { adSetName: adSet.name });
         let externalFormId = form.externalFormId as string | null;
         if (!externalFormId) {
           try {
@@ -4482,7 +4503,7 @@ export class CampaignsService implements OnModuleInit {
     const accountId = plan?.adAccountId ?? null;
     if (!accountId) return;
     if (await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, accountId)) {
-      throw new ForbiddenException("এই বিজ্ঞাপন অ্যাকাউন্টে ক্যাম্পেইন চালু/প্রকাশ করার অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+      throw forbidden("campaigns.youHaveNotBeenGivenPermission");
     }
   }
 
@@ -4493,11 +4514,11 @@ export class CampaignsService implements OnModuleInit {
     // only that they lack access to this account).
     await this.assertCampaignAccountAccess(organizationId, actorId, plan);
     if (!["approved", "publish_failed"].includes(plan.status)) {
-      throw new ForbiddenException(`Plan must be approved before publishing (current: ${plan.status}). Publishing without recorded approval is not possible.`);
+      throw forbidden("campaigns.planMustBeApprovedBeforePublishing", { planStatus: plan.status });
     }
     const full = await this.getPlanFull(organizationId, planId);
     const { valid, errors } = this.validatePlan(full);
-    if (!valid) throw new BadRequestException(`Plan no longer validates: ${errors.join("; ")}`);
+    if (!valid) throw badRequest("campaigns.planNoLongerValidates", { p1: errors.join("; ") });
     this.assertWithinCap(full);
     // CB4 integrity: what was approved is what gets
     // published. (Edits are already locked after
@@ -4506,7 +4527,7 @@ export class CampaignsService implements OnModuleInit {
     if ((plan as any).submissionSnapshot) {
       const current = this.definitionOf(full);
       if (this.stableStringify(current) !== this.stableStringify((plan as any).submissionSnapshot)) {
-        throw new BadRequestException("Plan changed since approval — the published content must match the approved snapshot. Re-submit for approval first.");
+        throw badRequest("campaigns.planChangedSinceApprovalThePublished");
       }
     }
     const { client, account } = await this.publishClient(organizationId, plan);
@@ -4524,7 +4545,7 @@ export class CampaignsService implements OnModuleInit {
       if (!campaignExternalId) {
         const cb = this.campaignBudgets(full);
         if (cbo && cb.dailyMinor == null && cb.lifetimeMinor == null) {
-          throw new BadRequestException("Campaign budget (CBO) needs a campaign daily or lifetime budget on the plan (Advantage+ without one needs an ad set with a daily budget)");
+          throw badRequest("campaigns.campaignBudgetCboNeedsACampaign");
         }
         // CA23: an Advantage+ plan sends the budget lever
         // explicitly — campaign budget + the ONE derived
@@ -4695,7 +4716,7 @@ export class CampaignsService implements OnModuleInit {
       await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { status: "publish_failed" } });
       await this.logStep(planId, actorId, "publish", "error", { error: message });
       await this.audit.log({ organizationId, userId: actorId, action: "campaign.publish_failed", entityType: "CampaignPlan", entityId: planId, metadata: { error: message } });
-      throw new BadRequestException(`Publishing did NOT complete: ${message}. Already-created objects are saved; retrying Publish resumes without duplicating them.`);
+      throw badRequest("campaigns.publishingDidNotCompleteAlreadyCreated", { message: message });
     }
 
     await (this.prisma as any).campaignPlan.update({
@@ -4710,21 +4731,21 @@ export class CampaignsService implements OnModuleInit {
    * after Meta accepts. OWNER/ADMIN enforced at the controller. */
   async updateAdSetBudget(organizationId: string, actorId: string, planId: string, adSetId: string, dto: { dailyBudget?: string; lifetimeBudget?: string }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (plan.status !== "published") throw new BadRequestException("Only published plans have live budgets to edit");
+    if (plan.status !== "published") throw badRequest("campaigns.onlyPublishedPlansHaveLiveBudgets");
     // CN2: a CBO campaign's budget lives on the campaign —
     // there is no per-ad-set budget on Meta to edit.
-    if (this.isCbo(plan)) throw new BadRequestException("This plan uses a campaign-level budget (CBO) — ad sets carry no budget of their own on Meta, so there is no ad set budget to edit");
+    if (this.isCbo(plan)) throw badRequest("campaigns.thisPlanUsesACampaignLevel");
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet?.externalAdSetId) throw new BadRequestException("This ad set has no Meta ad set id (not published)");
+    if (!adSet?.externalAdSetId) throw badRequest("campaigns.thisAdSetHasNoMeta2");
     const toMinor = (v?: string) => {
       if (!v) return undefined;
       const n = Math.round(Number(v) * 100);
-      if (!Number.isFinite(n) || n <= 0) throw new BadRequestException("Budget must be a positive amount");
+      if (!Number.isFinite(n) || n <= 0) throw badRequest("campaigns.budgetMustBeAPositiveAmount");
       return BigInt(n);
     };
     const daily = toMinor(dto.dailyBudget);
     const lifetime = toMinor(dto.lifetimeBudget);
-    if (daily === undefined && lifetime === undefined) throw new BadRequestException("Provide dailyBudget or lifetimeBudget");
+    if (daily === undefined && lifetime === undefined) throw badRequest("campaigns.provideDailybudgetOrLifetimebudget");
     const { client } = await this.publishClient(organizationId, plan);
     await client.updateAdSetBudget(adSet.externalAdSetId, { dailyBudgetMinor: daily, lifetimeBudgetMinor: lifetime });
     const before = { dailyBudgetMinor: adSet.dailyBudgetMinor?.toString() ?? null, lifetimeBudgetMinor: adSet.lifetimeBudgetMinor?.toString() ?? null };
@@ -4750,7 +4771,7 @@ export class CampaignsService implements OnModuleInit {
    * assumed. */
   async syncObjectStatuses(organizationId: string, actorId: string, planId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (!plan.externalCampaignId) throw new BadRequestException("This plan has no Meta campaign yet (not published)");
+    if (!plan.externalCampaignId) throw badRequest("campaigns.thisPlanHasNoMetaCampaign");
     const full = await this.getPlanFull(organizationId, planId);
     const { client } = await this.publishClient(organizationId, plan);
     const issues: { level: string; name: string; status: string; info?: unknown }[] = [];
@@ -4813,7 +4834,7 @@ export class CampaignsService implements OnModuleInit {
     // assertCampaignAccountAccess).
     if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, plan);
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet?.externalAdSetId) throw new BadRequestException("This ad set has no Meta ad set id");
+    if (!adSet?.externalAdSetId) throw badRequest("campaigns.thisAdSetHasNoMeta");
     const { client } = await this.publishClient(organizationId, plan);
     await client.setObjectStatus(adSet.externalAdSetId, target);
     return { adSetId, target };
@@ -4825,7 +4846,7 @@ export class CampaignsService implements OnModuleInit {
     // CC27: activation gated, pause always allowed.
     if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, plan);
     const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId } });
-    if (!ad?.externalAdId) throw new BadRequestException("This ad has no Meta ad id");
+    if (!ad?.externalAdId) throw badRequest("campaigns.thisAdHasNoMetaAd");
     const { client } = await this.publishClient(organizationId, plan);
     await client.setObjectStatus(ad.externalAdId, target);
     await (this.prisma as any).campaignAd.update({ where: { id: adId }, data: { effectiveStatus: target === "ACTIVE" ? "ACTIVE" : "PAUSED" } }).catch(() => undefined);
@@ -4840,7 +4861,7 @@ export class CampaignsService implements OnModuleInit {
     await this.getPlanOrThrow(organizationId, planId);
     for (const w of dto.windows ?? []) {
       if (w.day < 0 || w.day > 6 || w.startHour < 0 || w.startHour > 23 || w.endHour < 1 || w.endHour > 24 || w.startHour >= w.endHour) {
-        throw new BadRequestException("Each window needs day 0-6, startHour 0-23 and endHour 1-24 with start < end");
+        throw badRequest("campaigns.eachWindowNeedsDay06");
       }
     }
     await (this.prisma as any).campaignAdSet.update({
@@ -5504,8 +5525,8 @@ export class CampaignsService implements OnModuleInit {
    *  across currencies (the CN8 rule). */
   async budgetSimulator(organizationId: string, dto: { objective: string; dailyBudget: string; days?: number }) {
     const daily = Number(dto.dailyBudget);
-    if (!dto.objective || !(OBJECTIVES as readonly string[]).includes(dto.objective)) throw new BadRequestException("A valid plan objective is required");
-    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("dailyBudget must be a positive amount (taka)");
+    if (!dto.objective || !(OBJECTIVES as readonly string[]).includes(dto.objective)) throw badRequest("campaigns.aValidPlanObjectiveIsRequired");
+    if (!Number.isFinite(daily) || daily <= 0) throw badRequest("campaigns.dailybudgetMustBeAPositiveAmount");
     const days = Math.min(90, Math.max(1, Math.floor(dto.days ?? 30) || 30));
     const method = CampaignsService.SIM_METHOD;
     const refuse = (reason: string, sample: { campaigns: number; campaignDays: number }) => ({ available: false, reason, method, windowDays: CampaignsService.SIM_WINDOW_DAYS, objective: dto.objective, sample });
@@ -5584,11 +5605,11 @@ export class CampaignsService implements OnModuleInit {
     const competitor = p.competitor?.findFirst
       ? await p.competitor.findFirst({ where: { id: dto.competitorId, organizationId } }).catch(() => null)
       : null;
-    if (!competitor) throw new NotFoundException("Competitor not found in this organization");
+    if (!competitor) throw notFound("campaigns.competitorNotFoundInThisOrganization");
     const product = p.product?.findFirst
       ? await p.product.findFirst({ where: { id: dto.productId, organizationId } }).catch(() => null)
       : null;
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("campaigns.productNotFoundInThisOrganization");
     const insights = p.competitorInsight?.findMany
       ? await p.competitorInsight.findMany({ where: { organizationId, competitorId: competitor.id }, take: 50 }).catch(() => [])
       : [];
@@ -5673,11 +5694,11 @@ export class CampaignsService implements OnModuleInit {
    *  NOT auto-paused — that stays an explicit action. */
   async promoteWinner(organizationId: string, planId: string, actorId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (!plan.abGroupId) throw new BadRequestException("This plan is not part of an A/B test");
+    if (!plan.abGroupId) throw badRequest("campaigns.thisPlanIsNotPartOf");
     const groups = await this.abTestResults(organizationId);
     const group = groups.find((g: any) => g.groupId === plan.abGroupId);
     if (!group || !group.winnerPlanId) {
-      throw new BadRequestException(`No winner yet (verdict: ${group?.verdict ?? "unknown"}) — every variant needs spend and conversion data first`);
+      throw badRequest("campaigns.noWinnerYetVerdictEveryVariant", { p1: group?.verdict ?? "unknown" });
     }
     const draft = await this.duplicatePlan(organizationId, actorId, group.winnerPlanId, { name: undefined });
     await (this.prisma as any).campaignPlan.update({
@@ -5697,10 +5718,10 @@ export class CampaignsService implements OnModuleInit {
       await this.audit.log({ organizationId, userId: actorId, action: "campaign.launch_unscheduled", entityType: "CampaignPlan", entityId: planId }).catch(() => undefined);
       return this.getPlanFull(organizationId, planId);
     }
-    if (plan.status !== "approved") throw new BadRequestException(`Only approved plans can be scheduled to launch (current: ${plan.status})`);
+    if (plan.status !== "approved") throw badRequest("campaigns.onlyApprovedPlansCanBeScheduled", { planStatus: plan.status });
     const when = new Date(publishAt);
     if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 30_000) {
-      throw new BadRequestException("Launch time must be at least 30 seconds in the future");
+      throw badRequest("campaigns.launchTimeMustBeAtLeast");
     }
     await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { publishAt: when } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.launch_scheduled", entityType: "CampaignPlan", entityId: planId, metadata: { publishAt: when.toISOString() } }).catch(() => undefined);
@@ -5775,11 +5796,11 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     const pauseAt = dto.pauseAt ? new Date(dto.pauseAt) : null;
     const resumeAt = dto.resumeAt ? new Date(dto.resumeAt) : null;
-    if (pauseAt && Number.isNaN(pauseAt.getTime())) throw new BadRequestException("pauseAt সঠিক সময় নয়");
-    if (resumeAt && Number.isNaN(resumeAt.getTime())) throw new BadRequestException("resumeAt সঠিক সময় নয়");
+    if (pauseAt && Number.isNaN(pauseAt.getTime())) throw badRequest("campaigns.pauseatIsNotAValidTime");
+    if (resumeAt && Number.isNaN(resumeAt.getTime())) throw badRequest("campaigns.resumeatIsNotAValidTime");
     if (pauseAt || resumeAt) {
-      if (plan.status !== "published") throw new BadRequestException("শুধু Published Plan-এ Pause Window বসানো যায় — Pause Live Campaign-এর জন্যই অর্থবহ");
-      if (pauseAt && resumeAt && resumeAt.getTime() <= pauseAt.getTime()) throw new BadRequestException("Resume-এর সময় Pause-এর পরে হতে হবে");
+      if (plan.status !== "published") throw badRequest("campaigns.pauseWindowsCanOnlyBeSet");
+      if (pauseAt && resumeAt && resumeAt.getTime() <= pauseAt.getTime()) throw badRequest("campaigns.resumeTimeMustBeAfterThe");
     }
     await (this.prisma as any).campaignPlan.update({
       where: { id: planId },
@@ -6074,14 +6095,14 @@ export class CampaignsService implements OnModuleInit {
     // live campaign is untouched; launching it stays a
     // human decision through the normal plan flows.
     if (!["draft", "rejected"].includes(plan.status) && !(plan.status === "published" && plan.externalCampaignId)) {
-      throw new BadRequestException(`Plan is "${plan.status}" — Region Draft শুধু Draft/Rejected অথবা Live Campaign-ওয়ালা Published Plan-এ বানানো যায়`);
+      throw badRequest("campaigns.planIsARegionDraftCan", { planStatus: plan.status });
     }
     const source = await this.getAdSetOrThrow(planId, dto.sourceAdSetId);
     const perf = await this.planRegionPerformance(organizationId, planId);
     if (!perf.available) throw new BadRequestException((perf as any).reason ?? "Region Performance পাওয়া যাচ্ছে না");
     const topN = Math.min(5, Math.max(1, Math.floor(Number(dto.topN ?? 3)) || 3));
     const top = perf.regions.filter((r) => r.conversions > 0).slice(0, topN);
-    if (!top.length) throw new BadRequestException("কোনো Region-এই কনভার্সন নেই — শীর্ষ Region দিয়ে Draft বানানো যাচ্ছে না");
+    if (!top.length) throw badRequest("campaigns.noRegionHasAnyConversionA");
     let client: { client: MetaPublishClient; account: any } | null = null;
     try { client = await this.publishClient(organizationId, plan); } catch { client = null; }
     const resolved: { key: string; name: string }[] = [];
@@ -6099,7 +6120,7 @@ export class CampaignsService implements OnModuleInit {
       else notCarried.push(`${r.region}: Meta Region Key resolve হয়নি — এই Region-টি Draft-এ যোগ হয়নি (আন্দাজে Key বসানো হয় না)`);
     }
     if (!resolved.length) {
-      throw new BadRequestException(`কোনো Region-এরই Meta Key resolve হয়নি — Draft বানানো যাচ্ছে না। ${notCarried.join("; ")}`);
+      throw badRequest("campaigns.noRegionSMetaKeyCould", { p1: notCarried.join("; ") });
     }
     const targeting = { ...(source.targeting ?? {}), regions: resolved };
     const created = await (this.prisma as any).campaignAdSet.create({
@@ -6198,24 +6219,24 @@ export class CampaignsService implements OnModuleInit {
   }) {
     await this.getPlanOrThrow(organizationId, planId);
     const p = this.prisma as any;
-    if (!p.planGeoHoldout?.create) throw new BadRequestException("Geo Holdout Store পাওয়া যাচ্ছে না");
+    if (!p.planGeoHoldout?.create) throw badRequest("campaigns.geoHoldoutStoreNotFound");
     const test = this.normalizeRegionNames(dto.testRegions);
     const holdout = this.normalizeRegionNames(dto.holdoutRegions);
-    if (!test.length) throw new BadRequestException("অন্তত একটি Test Region দিতে হবে");
-    if (!holdout.length) throw new BadRequestException("অন্তত একটি Holdout Region দিতে হবে");
+    if (!test.length) throw badRequest("campaigns.atLeastOneTestRegionMust");
+    if (!holdout.length) throw badRequest("campaigns.atLeastOneHoldoutRegionMust");
     const holdoutKeys = new Set(holdout.map((n) => n.toLowerCase()));
     const overlap = test.filter((n) => holdoutKeys.has(n.toLowerCase()));
-    if (overlap.length) throw new BadRequestException(`একই Region দুই দলেই আছে: ${overlap.join(", ")} — একটি Region হয় Test, নয় Holdout`);
+    if (overlap.length) throw badRequest("campaigns.theSameRegionIsInBoth", { p1: overlap.join(", ") });
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : null;
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
-    if (!startsAt || Number.isNaN(startsAt.getTime())) throw new BadRequestException("startsAt সঠিক তারিখ নয়");
-    if (!endsAt || Number.isNaN(endsAt.getTime())) throw new BadRequestException("endsAt সঠিক তারিখ নয়");
-    if (endsAt.getTime() <= startsAt.getTime()) throw new BadRequestException("Window-এর শেষ শুরুর পরে হতে হবে");
+    if (!startsAt || Number.isNaN(startsAt.getTime())) throw badRequest("campaigns.startsatIsNotAValidDate");
+    if (!endsAt || Number.isNaN(endsAt.getTime())) throw badRequest("campaigns.endsatIsNotAValidDate");
+    if (endsAt.getTime() <= startsAt.getTime()) throw badRequest("campaigns.theWindowSEndMustBe");
     if (endsAt.getTime() - startsAt.getTime() > CampaignsService.HOLDOUT_MAX_WINDOW_DAYS * 86_400_000) {
-      throw new BadRequestException(`Holdout Window সর্বোচ্চ ${CampaignsService.HOLDOUT_MAX_WINDOW_DAYS} দিন হতে পারে`);
+      throw badRequest("campaigns.holdoutWindowCanBeAtMost", { CampaignsServiceHOLDOUT_MAX_WINDOW_DAYS: CampaignsService.HOLDOUT_MAX_WINDOW_DAYS });
     }
     const existing = await p.planGeoHoldout.findFirst({ where: { organizationId, planId, status: "active" } }).catch(() => null);
-    if (existing) throw new BadRequestException("এই Plan-এ ইতিমধ্যে একটি Active Holdout Definition আছে — নতুন বানাতে চাইলে আগেরটি শেষ (End) করুন");
+    if (existing) throw badRequest("campaigns.thisPlanAlreadyHasAnActive");
     const row = await p.planGeoHoldout.create({
       data: {
         organizationId, planId, status: "active",
@@ -6233,8 +6254,8 @@ export class CampaignsService implements OnModuleInit {
     await this.getPlanOrThrow(organizationId, planId);
     const p = this.prisma as any;
     const row = p.planGeoHoldout?.findFirst ? await p.planGeoHoldout.findFirst({ where: { id: holdoutId, organizationId, planId } }).catch(() => null) : null;
-    if (!row) throw new NotFoundException("Holdout definition not found in this organization");
-    if (row.status !== "active") throw new BadRequestException("এই Holdout Definition আগেই শেষ করা হয়েছে");
+    if (!row) throw notFound("campaigns.holdoutDefinitionNotFoundInThis");
+    if (row.status !== "active") throw badRequest("campaigns.thisHoldoutDefinitionHasAlreadyBeen");
     await p.planGeoHoldout.update({ where: { id: row.id }, data: { status: "ended" } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.geo_holdout_ended", entityType: "CampaignPlan", entityId: planId, metadata: { holdoutId: row.id } }).catch(() => undefined);
     return this.getGeoHoldout(organizationId, planId);
@@ -6254,21 +6275,23 @@ export class CampaignsService implements OnModuleInit {
   async getGeoHoldout(organizationId: string, planId: string) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     const p = this.prisma as any;
+    // MB4 (ML10): method/note/reasons render in the org locale.
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
     const base = {
-      method: CampaignsService.HOLDOUT_METHOD,
-      deliveryNote: CampaignsService.HOLDOUT_DELIVERY_NOTE,
+      method: catalogText("campaigns.geoHoldoutMethod", locale),
+      deliveryNote: catalogText("campaigns.geoHoldoutDeliveryNote", locale),
       spikeVerdict: "not_creatable_via_ad_study",
     };
-    if (!p.planGeoHoldout?.findMany) return { ...base, available: false, reason: "Geo Holdout Store পাওয়া যাচ্ছে না", holdout: null, measurement: null };
+    if (!p.planGeoHoldout?.findMany) return { ...base, available: false, reason: catalogText("campaigns.geoHoldoutStoreUnavailable", locale), holdout: null, measurement: null };
     const rows = await p.planGeoHoldout.findMany({ where: { organizationId, planId }, orderBy: { createdAt: "desc" }, take: 5 }).catch(() => []);
     const latest = (rows as any[])[0];
-    if (!latest) return { ...base, available: false, reason: "এই Plan-এ কোনো Geo Holdout Definition নেই", holdout: null, measurement: null };
+    if (!latest) return { ...base, available: false, reason: catalogText("campaigns.geoHoldoutNoneDefined", locale), holdout: null, measurement: null };
     const holdout = this.geoHoldoutJson(latest);
     if (!plan.externalCampaignId) {
-      return { ...base, available: true, holdout, measurement: { available: false, reason: "Plan এখনো Publish হয়নি — Measurement শুধু Publish হওয়া Campaign-এর সংরক্ষিত Breakdown Row থেকে আসে" } };
+      return { ...base, available: true, holdout, measurement: { available: false, reason: catalogText("campaigns.geoHoldoutPlanNotPublished", locale) } };
     }
     if (!p.dailyAdBreakdown?.findMany) {
-      return { ...base, available: true, holdout, measurement: { available: false, reason: "Breakdown Store পাওয়া যাচ্ছে না" } };
+      return { ...base, available: true, holdout, measurement: { available: false, reason: catalogText("campaigns.geoHoldoutBreakdownStoreUnavailable", locale) } };
     }
     const allRows = await p.dailyAdBreakdown.findMany({ where: { organizationId, campaignExternalId: plan.externalCampaignId, dimension: "region" } }).catch(() => []);
     const startMs = new Date(latest.startsAt).getTime();
@@ -6355,7 +6378,7 @@ export class CampaignsService implements OnModuleInit {
 
   async builderSignalOrThrow(organizationId: string, signalId: string) {
     const row = await (this.prisma as any).builderInboxSignal.findFirst({ where: { id: signalId, organizationId } });
-    if (!row) throw new NotFoundException("Builder inbox signal not found");
+    if (!row) throw notFound("campaigns.builderInboxSignalNotFound");
     return row;
   }
 
@@ -6388,11 +6411,11 @@ export class CampaignsService implements OnModuleInit {
   async createBuilderSignal(organizationId: string, actorId: string, dto: { text: string; productId?: string }) {
     const p = this.prisma as any;
     const text = String(dto.text ?? "").trim();
-    if (text.length < CampaignsService.BUILDER_SIGNAL_MIN_CHARS) throw new BadRequestException(`সিগন্যালের লেখা কমপক্ষে ${CampaignsService.BUILDER_SIGNAL_MIN_CHARS} অক্ষরের হতে হবে`);
-    if (text.length > CampaignsService.BUILDER_SIGNAL_MAX_CHARS) throw new BadRequestException(`সিগন্যালের লেখা সর্বোচ্চ ${CampaignsService.BUILDER_SIGNAL_MAX_CHARS} অক্ষর`);
+    if (text.length < CampaignsService.BUILDER_SIGNAL_MIN_CHARS) throw badRequest("campaigns.theSignalTextMustBeAt", { CampaignsServiceBUILDER_SIGNAL_MIN_CHARS: CampaignsService.BUILDER_SIGNAL_MIN_CHARS });
+    if (text.length > CampaignsService.BUILDER_SIGNAL_MAX_CHARS) throw badRequest("campaigns.theSignalTextCanBeAt", { CampaignsServiceBUILDER_SIGNAL_MAX_CHARS: CampaignsService.BUILDER_SIGNAL_MAX_CHARS });
     if (dto.productId) {
       const product = await p.product.findFirst({ where: { id: dto.productId, organizationId } });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("campaigns.productNotFoundInThisOrganization");
     }
     const signal = await p.builderInboxSignal.create({
       data: { organizationId, source: "manual", text, productId: dto.productId ?? null, status: "new", createdById: actorId },
@@ -6412,7 +6435,7 @@ export class CampaignsService implements OnModuleInit {
     const source = String(dto.source ?? "");
     const ref = String(dto.sourceRefId ?? "");
     if (!["competitor_insight", "competitor_price", "competitor_ad"].includes(source) || !ref) {
-      throw new BadRequestException("source must be competitor_insight | competitor_price | competitor_ad with a sourceRefId");
+      throw badRequest("campaigns.sourceMustBeCompetitorInsightCompetitor");
     }
     const existing = await p.builderInboxSignal.findMany({ where: { organizationId, source, sourceRefId: ref }, take: 50 }).catch(() => []);
     const live = (existing as any[]).find((s) => s.status !== "dismissed");
@@ -6427,13 +6450,13 @@ export class CampaignsService implements OnModuleInit {
     };
     if (source === "competitor_insight") {
       const row = p.competitorInsight?.findFirst ? await p.competitorInsight.findFirst({ where: { id: ref, organizationId } }).catch(() => null) : null;
-      if (!row) throw new NotFoundException("Competitor insight not found in this organization");
+      if (!row) throw notFound("campaigns.competitorInsightNotFoundInThis");
       competitorId = row.competitorId ?? null;
       productId = row.productId ?? null;
       text = `প্রতিযোগীর Insight (${String(row.kind ?? "insight")}): "${String(row.title ?? "")}" — ${String(row.detail ?? "")}`.slice(0, CampaignsService.BUILDER_SIGNAL_MAX_CHARS);
     } else if (source === "competitor_price") {
       const row = p.competitorPriceObservation?.findFirst ? await p.competitorPriceObservation.findFirst({ where: { id: ref, organizationId } }).catch(() => null) : null;
-      if (!row) throw new NotFoundException("Competitor price observation not found in this organization");
+      if (!row) throw notFound("campaigns.competitorPriceObservationNotFoundIn");
       competitorId = row.competitorId ?? null;
       const name = await compNameOf(competitorId);
       text = `প্রতিযোগী ${name} "${String(row.productName ?? "")}" ৳${(Number(row.priceMinor ?? 0) / 100).toLocaleString("en-IN")} দামে বিক্রি করছে (সংরক্ষিত Price Observation থেকে)`;
@@ -6441,9 +6464,9 @@ export class CampaignsService implements OnModuleInit {
       productId = matched?.id ?? null;
     } else {
       const row = p.competitorAd?.findFirst ? await p.competitorAd.findFirst({ where: { id: ref } }).catch(() => null) : null;
-      if (!row || !row.competitorId) throw new NotFoundException("Competitor ad not found");
+      if (!row || !row.competitorId) throw notFound("campaigns.competitorAdNotFound");
       const comp = p.competitor?.findFirst ? await p.competitor.findFirst({ where: { id: row.competitorId, organizationId } }).catch(() => null) : null;
-      if (!comp) throw new NotFoundException("Competitor ad not found in this organization");
+      if (!comp) throw notFound("campaigns.competitorAdNotFoundInThis");
       competitorId = row.competitorId;
       const days = row.startedAt ? Math.floor((Date.now() - new Date(row.startedAt).getTime()) / 86_400_000) : 0;
       // NOTE: row.creativeText is deliberately never read here.
@@ -6460,7 +6483,7 @@ export class CampaignsService implements OnModuleInit {
     const p = this.prisma as any;
     const signal = await this.builderSignalOrThrow(organizationId, signalId);
     if (signal.status === "dismissed") return { signal };
-    if (signal.status !== "new") throw new BadRequestException("শুধু 'new' অবস্থার সিগন্যাল Dismiss করা যায় — Drafted সিগন্যালের ইতিহাস থাকে");
+    if (signal.status !== "new") throw badRequest("campaigns.onlyNewSignalsCanBeDismissed");
     const updated = await p.builderInboxSignal.update({ where: { id: signalId }, data: { status: "dismissed" } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_dismissed", entityType: "BuilderInboxSignal", entityId: signalId, metadata: {} }).catch(() => undefined);
     return { signal: updated };
@@ -6475,8 +6498,8 @@ export class CampaignsService implements OnModuleInit {
   async draftFromSignal(organizationId: string, actorId: string, signalId: string, dto: { adAccountId: string; totalDailyBudget: string }) {
     const p = this.prisma as any;
     const signal = await this.builderSignalOrThrow(organizationId, signalId);
-    if (signal.status === "drafted") throw new BadRequestException("এই সিগন্যাল থেকে ইতিমধ্যে Draft তৈরি হয়েছে");
-    if (signal.status !== "new") throw new BadRequestException("Dismissed সিগন্যাল থেকে Draft তৈরি হয় না");
+    if (signal.status === "drafted") throw badRequest("campaigns.aDraftHasAlreadyBeenCreated");
+    if (signal.status !== "new") throw badRequest("campaigns.dismissedSignalsDoNotProduceDrafts");
     let productId = signal.productId ?? null;
     if (!productId) {
       const matched = await this.matchProductByName(organizationId, signal.text);
@@ -6487,7 +6510,7 @@ export class CampaignsService implements OnModuleInit {
     });
     const plan = suggestion?.plan;
     if (!plan?.id || plan.status !== "draft") {
-      throw new BadRequestException("suggestPlan একটি Draft তৈরি করেনি — সিগন্যাল অপরিবর্তিত রাখা হলো");
+      throw badRequest("campaigns.suggestplanDidNotCreateADraft");
     }
     const updated = await p.builderInboxSignal.update({ where: { id: signalId }, data: { status: "drafted", draftPlanId: plan.id, productId: productId ?? signal.productId ?? null } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.builder_signal_drafted", entityType: "BuilderInboxSignal", entityId: signalId, metadata: { draftPlanId: plan.id, productId, productMatched: Boolean(productId) } }).catch(() => undefined);
@@ -6781,11 +6804,11 @@ export class CampaignsService implements OnModuleInit {
   }): Promise<any> {
     if (dto.kind === "budget_shift") return this.applyBudgetShiftRecommendation(organizationId, actorId, planId, dto);
     if (dto.kind !== "create_fresh_draft") {
-      throw new BadRequestException("এই সুপারিশ এখান থেকে প্রয়োগ হয় না — Budget Shift-এর জন্য Recommendation-এর Apply বোতাম (বা Live Budget Edit), Pause-এর জন্য Ad Set Pause বোতাম ব্যবহার করুন (সবই বিদ্যমান স্পষ্ট পথ)।");
+      throw badRequest("campaigns.thisRecommendationIsNotAppliedFrom");
     }
     const full = await this.getPlanFull(organizationId, planId);
     const ad = (full.adSets ?? []).flatMap((s: any) => (s.ads ?? []).map((a: any) => ({ ...a, adSetId: s.id }))).find((a: any) => a.id === dto.adId);
-    if (!ad) throw new BadRequestException("Ad টি এই Plan-এ পাওয়া যায়নি");
+    if (!ad) throw badRequest("campaigns.theAdWasNotFoundIn");
     const draft = await this.duplicatePlan(organizationId, actorId, planId, { name: `${full.name} — Fresh Creative Draft` });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.fresh_draft_from_recommendation", entityType: "CampaignPlan", entityId: (draft as any).id, metadata: { sourcePlanId: planId, fatiguedAdId: ad.id, fatiguedAdName: ad.name } }).catch(() => undefined);
     return { draftId: (draft as any).id, plan: draft, note: "নতুন DRAFT তৈরি হয়েছে — ওই Draft-এ ক্লান্ত Ad-টির Creative বদলে তারপর স্বাভাবিক Approval পথে যান। Live Campaign অপরিবর্তিত।" };
@@ -6808,12 +6831,13 @@ export class CampaignsService implements OnModuleInit {
   }) {
     const sent = dto.proposal;
     if (!sent?.fromAdSetId || !sent?.toAdSetId || !sent?.shiftMinor) {
-      throw new BadRequestException("Budget Shift প্রয়োগে Recommendation-এর proposal পাঠাতে হবে — proposal ছাড়া কোনো সংখ্যা প্রয়োগ হবে না।");
+      throw badRequest("campaigns.forABudgetShiftTheRecommendation");
     }
     const fresh = await this.planRecommendations(organizationId, planId);
     const rec = (fresh.recommendations as any[]).find((r) => r.type === "budget_shift");
     if (!rec) {
       throw new BadRequestException({
+        code: "campaigns.budgetShiftNoCurrentProposal",
         message: "এই মুহূর্তে কোনো Budget Shift প্রস্তাব নেই — ডেটা বদলে গেছে। নতুন প্রস্তাব দেখে আবার নিশ্চিত করুন।",
         freshProposal: null,
       } as any);
@@ -6826,6 +6850,7 @@ export class CampaignsService implements OnModuleInit {
       p.toDailyAfterMinor !== String(sent.toDailyAfterMinor);
     if (stale) {
       throw new BadRequestException({
+        code: "campaigns.budgetShiftNumbersChanged",
         message: "সংখ্যা বদলে গেছে — আপনি যে প্রস্তাব দেখে নিশ্চিত করেছিলেন তা আর হুবহু নেই। নতুন প্রস্তাবটি দেখে আবার নিশ্চিত করুন; পুরনো সংখ্যা প্রয়োগ হয়নি।",
         freshProposal: p,
       } as any);
@@ -6833,7 +6858,7 @@ export class CampaignsService implements OnModuleInit {
     const full = await this.getPlanFull(organizationId, planId);
     const donor = (full.adSets ?? []).find((s: any) => s.id === p.fromAdSetId);
     const winner = (full.adSets ?? []).find((s: any) => s.id === p.toAdSetId);
-    if (!donor || !winner) throw new BadRequestException("প্রস্তাবের Ad Set পাওয়া যায়নি");
+    if (!donor || !winner) throw badRequest("campaigns.theProposalSAdSetWas");
     const before = {
       fromDailyMinor: donor.dailyBudgetMinor != null ? BigInt(donor.dailyBudgetMinor).toString() : null,
       toDailyMinor: winner.dailyBudgetMinor != null ? BigInt(winner.dailyBudgetMinor).toString() : null,
@@ -6856,7 +6881,7 @@ export class CampaignsService implements OnModuleInit {
           .then(() => true).catch(() => false);
       }
       await this.audit.log({ organizationId, userId: actorId, action: "campaign.budget_shift_failed", entityType: "CampaignPlan", entityId: planId, metadata: { fromAdSetId: p.fromAdSetId, toAdSetId: p.toAdSetId, shiftMinor: shift.toString(), stage: "winner_leg", donorRolledBack: rolledBack, error: e instanceof Error ? e.message : String(e) } }).catch(() => undefined);
-      throw new BadRequestException(`Donor Ad Set-এর বাজেট কমেছে, কিন্তু Winner Ad Set-এ বাড়ানো যায়নি: ${e instanceof Error ? e.message : e}${rolledBack ? " — Donor আগের বাজেটে ফিরিয়ে দেওয়া হয়েছে।" : " — Donor ফিরিয়ে দেওয়াও ব্যর্থ; Budget হাতে যাচাই করুন।"}`);
+      throw badRequest("campaigns.theDonorAdSetSBudget", { p1: e instanceof Error ? e.message : e, p2: rolledBack ? " — Donor আগের বাজেটে ফিরিয়ে দেওয়া হয়েছে।" : " — Donor ফিরিয়ে দেওয়াও ব্যর্থ; Budget হাতে যাচাই করুন।" });
     }
     // Post-apply verification: re-read and compare against
     // the proposal the human confirmed.
@@ -6931,9 +6956,9 @@ export class CampaignsService implements OnModuleInit {
    * step and re-verifies every number. */
   async budgetAllocatorProposal(organizationId: string, dto: { planIds: string[]; totalShiftMinor: string }) {
     const totalShift = (() => { try { return BigInt(dto.totalShiftMinor ?? "0"); } catch { return 0n; } })();
-    if (totalShift <= 0n) throw new BadRequestException("মোট অতিরিক্ত বাজেট ধনাত্মক হতে হবে (minor units)");
+    if (totalShift <= 0n) throw badRequest("campaigns.theTotalExtraBudgetMustBe");
     const planIds = [...new Set((dto.planIds ?? []).filter(Boolean))].slice(0, 50);
-    if (!planIds.length) throw new BadRequestException("অন্তত একটি Plan বেছে নিন");
+    if (!planIds.length) throw badRequest("campaigns.selectAtLeastOnePlan");
     const windowDays = CampaignsService.ALLOCATOR_WINDOW_DAYS;
     const since = new Date(Date.now() - windowDays * 86400000);
     const excluded: any[] = [];
@@ -7055,7 +7080,7 @@ export class CampaignsService implements OnModuleInit {
     allocations: { planId: string; amountMinor: string; expectedDailyTotalMinor: string }[];
   }) {
     const items = (dto.allocations ?? []).filter((a) => a?.planId).slice(0, 50);
-    if (!items.length) throw new BadRequestException("প্রয়োগের জন্য অন্তত একটি Allocation পাঠাতে হবে");
+    if (!items.length) throw badRequest("campaigns.atLeastOneAllocationMustBe");
     const results: any[] = [];
     for (const item of items) {
       const planId = item.planId;
@@ -7135,7 +7160,7 @@ export class CampaignsService implements OnModuleInit {
     await this.getPlanOrThrow(organizationId, planId);
     const p = this.prisma as any;
     const rule = p.automationRule?.findFirst ? await p.automationRule.findFirst({ where: { id: ruleId, organizationId } }).catch(() => null) : null;
-    if (!rule) throw new NotFoundException("Automation rule not found in this organization");
+    if (!rule) throw notFound("campaigns.automationRuleNotFoundInThis");
     await p.automationRule.update({ where: { id: ruleId }, data: { campaignPlanId: planId } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.guardrail_attached", entityType: "CampaignPlan", entityId: planId, metadata: { ruleId, ruleName: rule.name, note: "rule narrowed to this plan only" } }).catch(() => undefined);
     return this.planGuardrails(organizationId, planId);
@@ -7145,8 +7170,8 @@ export class CampaignsService implements OnModuleInit {
     await this.getPlanOrThrow(organizationId, planId);
     const p = this.prisma as any;
     const rule = p.automationRule?.findFirst ? await p.automationRule.findFirst({ where: { id: ruleId, organizationId } }).catch(() => null) : null;
-    if (!rule) throw new NotFoundException("Automation rule not found in this organization");
-    if (rule.campaignPlanId !== planId) throw new BadRequestException("এই Rule টি এই Plan-এ যুক্ত নয়");
+    if (!rule) throw notFound("campaigns.automationRuleNotFoundInThis");
+    if (rule.campaignPlanId !== planId) throw badRequest("campaigns.thisRuleIsNotAttachedTo");
     await p.automationRule.update({ where: { id: ruleId }, data: { campaignPlanId: null } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.guardrail_detached", entityType: "CampaignPlan", entityId: planId, metadata: { ruleId, ruleName: rule.name, note: "rule returned to org-wide (applies to all published plans)" } }).catch(() => undefined);
     return this.planGuardrails(organizationId, planId);
@@ -7569,9 +7594,9 @@ export class CampaignsService implements OnModuleInit {
   }) {
     const source = await this.getPlanFull(organizationId, planId);
     const target = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.targetAdAccountId, organizationId } });
-    if (!target) throw new NotFoundException("Target ad account not found in this organization");
-    if (target.platform !== "meta") throw new BadRequestException("Cross-account clone supports Meta ad accounts only — Google/TikTok যাওয়ার পথ Cross-Platform Draft (CB6/CN9)");
-    if (target.id === source.adAccountId) throw new BadRequestException("Target account টি Source-এর একই — একই Account-এ কপি চাইলে Duplicate ব্যবহার করুন");
+    if (!target) throw notFound("campaigns.targetAdAccountNotFoundIn");
+    if (target.platform !== "meta") throw badRequest("campaigns.crossAccountCloneMetaAdAccount");
+    if (target.id === source.adAccountId) throw badRequest("campaigns.theTargetAccountIsTheSame");
     const p = this.prisma as any;
     const res = dto.resolutions ?? {};
 
@@ -7780,10 +7805,10 @@ export class CampaignsService implements OnModuleInit {
    * path. A per-platform failure (bad account, access)
    * is reported on that platform's block only. */
   async fanoutPreview(organizationId: string, planId: string, actorId: string, dto: { googleAccountId?: string; googleKind?: string; tiktokAccountId?: string; tiktokObjectiveType?: string; tiktokPixelId?: string; tiktokOptimizationEvent?: string }) {
-    if (!dto.googleAccountId && !dto.tiktokAccountId) throw new BadRequestException("অন্তত একটি Target Account দিন (Google বা TikTok)");
+    if (!dto.googleAccountId && !dto.tiktokAccountId) throw badRequest("campaigns.giveAtLeastOneTargetAccount");
     const plan = await this.getPlanOrThrow(organizationId, planId);
     if (!["approved", "published", "publish_failed"].includes(plan.status)) {
-      throw new BadRequestException(`Fan-out-এর জন্য Approved Plan দরকার (বর্তমান: ${plan.status})`);
+      throw badRequest("campaigns.fanOutRequiresAnApprovedPlan", { planStatus: plan.status });
     }
     const full = await this.getPlanFull(organizationId, planId);
     const platforms: any[] = [];
@@ -7814,10 +7839,10 @@ export class CampaignsService implements OnModuleInit {
    * in BDT as-is — labelled in each block's budget
    * object; no currency conversion exists or is claimed. */
   async fanoutCreate(organizationId: string, planId: string, actorId: string, dto: { googleAccountId?: string; googleKind?: string; tiktokAccountId?: string; tiktokObjectiveType?: string; tiktokPixelId?: string; tiktokOptimizationEvent?: string }) {
-    if (!dto.googleAccountId && !dto.tiktokAccountId) throw new BadRequestException("অন্তত একটি Target Account দিন (Google বা TikTok)");
+    if (!dto.googleAccountId && !dto.tiktokAccountId) throw badRequest("campaigns.giveAtLeastOneTargetAccount");
     const plan = await this.getPlanOrThrow(organizationId, planId);
     if (!["approved", "published", "publish_failed"].includes(plan.status)) {
-      throw new BadRequestException(`Fan-out-এর জন্য Approved Plan দরকার (বর্তমান: ${plan.status})`);
+      throw badRequest("campaigns.fanOutRequiresAnApprovedPlan", { planStatus: plan.status });
     }
     const full = await this.getPlanFull(organizationId, planId);
     const platforms: any[] = [];
@@ -7855,7 +7880,7 @@ export class CampaignsService implements OnModuleInit {
    * missing) instead of a fake success.
    */
   async crossPlatformDraft(organizationId: string, planId: string, actorId: string, dto: { platform: string; targetAdAccountId: string; kind?: string; objectiveType?: string; pixelId?: string; optimizationEvent?: string }) {
-    if (!["google", "tiktok"].includes(dto.platform)) throw new BadRequestException("platform must be google or tiktok");
+    if (!["google", "tiktok"].includes(dto.platform)) throw badRequest("campaigns.platformMustBeGoogleOrTiktok");
     // Frontier NB8 / CN17: a Google draft is a Search RSA
     // draft (the CN9 default) or a Performance Max draft
     // (kind "pmax", riding PublishingService.publishGooglePmax).
@@ -7863,19 +7888,19 @@ export class CampaignsService implements OnModuleInit {
     // plan/draft path ONLY; the direct publishing page is
     // untouched and keeps its TRAFFIC behaviour.
     const kind = dto.platform === "google" ? (dto.kind ?? "search") : null;
-    if (kind !== null && !["search", "pmax"].includes(kind)) throw new BadRequestException("google draft kind must be search or pmax");
+    if (kind !== null && !["search", "pmax"].includes(kind)) throw badRequest("campaigns.googleDraftKindMustBeSearch");
     const tiktokObjective = dto.platform === "tiktok" ? (String(dto.objectiveType ?? "TRAFFIC").trim().toUpperCase() || "TRAFFIC") : null;
     if (tiktokObjective !== null && !["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION"].includes(tiktokObjective)) {
-      throw new BadRequestException("tiktok objectiveType must be TRAFFIC, WEB_CONVERSIONS or LEAD_GENERATION");
+      throw badRequest("campaigns.tiktokObjectivetypeMustBeTrafficWeb");
     }
-    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    if (!this.publishing) throw badRequest("campaigns.crossPlatformPublishingIsNotAvailable");
     const plan = await this.getPlanOrThrow(organizationId, planId);
     if (!["approved", "published", "publish_failed"].includes(plan.status)) {
-      throw new BadRequestException(`Cross-platform drafts need an approved plan (current: ${plan.status})`);
+      throw badRequest("campaigns.crossPlatformDraftsNeedAnApproved", { planStatus: plan.status });
     }
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: dto.targetAdAccountId, organizationId } });
-    if (!account) throw new BadRequestException("Target ad account not found in this organization");
-    if (account.platform !== dto.platform) throw new BadRequestException(`Target account is a ${account.platform} account, not ${dto.platform}`);
+    if (!account) throw badRequest("campaigns.targetAdAccountNotFoundIn");
+    if (account.platform !== dto.platform) throw badRequest("campaigns.targetAccountIsAAccountNot", { accountPlatform: account.platform, dtoPlatform: dto.platform });
     // CC27: the draft CREATES platform objects (paused) on the
     // TARGET account — a launch-class action, gated on the target.
     await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId: account.id });
@@ -8156,7 +8181,7 @@ export class CampaignsService implements OnModuleInit {
     const draft = p.crossPlatformDraft?.findFirst
       ? await p.crossPlatformDraft.findFirst({ where: { id: draftId, planId, organizationId } }).catch(() => null)
       : null;
-    if (!draft) throw new NotFoundException("Cross-platform draft not found for this plan");
+    if (!draft) throw notFound("campaigns.crossPlatformDraftNotFoundFor");
     return draft;
   }
 
@@ -8250,7 +8275,7 @@ export class CampaignsService implements OnModuleInit {
 
   async updateCrossPlatformDraft(organizationId: string, actorId: string, planId: string, draftId: string, fields: any) {
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
-    if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new BadRequestException("fields অবজেক্ট হতে হবে");
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw badRequest("campaigns.fieldsMustBeAnObject");
     const merged = { ...(draft.fields ?? {}), ...fields, adAccountId: draft.targetAdAccountId };
     const problems = this.validateCrossPlatformFields(draft.platform, merged, draft.kind);
     const updated = await (this.prisma as any).crossPlatformDraft.update({
@@ -8342,7 +8367,7 @@ export class CampaignsService implements OnModuleInit {
    * nor deleted. A draft failing readiness is not sent; its
    * stored fields remain the export package. */
   async publishCrossPlatformDraft(organizationId: string, actorId: string, planId: string, draftId: string) {
-    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    if (!this.publishing) throw badRequest("campaigns.crossPlatformPublishingIsNotAvailable");
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
     const problems = this.validateCrossPlatformFields(draft.platform, draft.fields ?? {}, draft.kind);
     if (problems.length) {
@@ -8478,13 +8503,13 @@ export class CampaignsService implements OnModuleInit {
    * Delete/archive is deliberately NOT part of this lifecycle
    * (TikTok v1.3 has no campaign delete; pause is the floor). */
   async setCrossPlatformDraftLifecycle(organizationId: string, actorId: string, planId: string, draftId: string, action: "pause" | "resume") {
-    if (action !== "pause" && action !== "resume") throw new BadRequestException(`action must be "pause" or "resume" (got "${action}")`);
+    if (action !== "pause" && action !== "resume") throw badRequest("campaigns.actionMustBePauseOrResume", { action: action });
     if (!this.publishing || typeof (this.publishing as any).crossPlatformSetCampaignStatus !== "function") {
-      throw new BadRequestException("Cross-platform publishing is not available in this context");
+      throw badRequest("campaigns.crossPlatformPublishingIsNotAvailable");
     }
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
     if (draft.status !== "created" || !draft.externalCampaignId) {
-      throw new BadRequestException(`শুধু তৈরি (created) Draft-এরই প্ল্যাটফর্ম Status বদলানো যায় — এই Draft-এর Status "${draft.status}"${draft.externalCampaignId ? "" : " এবং কোনো External Campaign ID নেই"}।`);
+      throw badRequest("campaigns.onlyACreatedDraftSPlatform", { draftStatus: draft.status, p2: draft.externalCampaignId ? "" : " এবং কোনো External Campaign ID নেই" });
     }
     // CC27 discipline, same as Meta: activation gated, pause always allowed.
     if (action === "resume") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId: draft.targetAdAccountId });
@@ -8496,7 +8521,7 @@ export class CampaignsService implements OnModuleInit {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Status change failed";
       await this.logStep(planId, actorId, step, "error", { externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
-      throw new BadRequestException(`${platformLabel} did NOT confirm the status change: ${message}. Local status is unchanged.`);
+      throw badRequest("campaigns.didNotConfirmTheStatusChange", { platformLabel: platformLabel, message: message });
     }
     await this.logStep(planId, actorId, step, "success", { externalId: draft.externalCampaignId }).catch(() => undefined);
     await this.audit.log({ organizationId, userId: actorId, action: action === "pause" ? "campaign.xdraft_paused" : "campaign.xdraft_resumed", entityType: "CrossPlatformDraft", entityId: draftId, metadata: { platform: draft.platform, externalCampaignId: draft.externalCampaignId, target } }).catch(() => undefined);
@@ -8532,20 +8557,20 @@ export class CampaignsService implements OnModuleInit {
    * status stays the creation lifecycle ("created");
    * the live status read is the truth for current state. */
   async setCrossPlatformDraftStatus(organizationId: string, actorId: string, planId: string, draftId: string, target: "ACTIVE" | "PAUSED") {
-    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException("target হতে হবে ACTIVE বা PAUSED");
-    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    if (target !== "ACTIVE" && target !== "PAUSED") throw badRequest("campaigns.targetMustBeActiveOrPaused2");
+    if (!this.publishing) throw badRequest("campaigns.crossPlatformPublishingIsNotAvailable");
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
-    if (draft.status !== "created" || !draft.externalCampaignId) throw new BadRequestException("এই Draft এখনো Platform-এ তৈরি হয়নি — Status বদলানো যাবে না");
+    if (draft.status !== "created" || !draft.externalCampaignId) throw badRequest("campaigns.thisDraftIsNotCreatedOn2");
     if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId: draft.targetAdAccountId });
     const setter = draft.platform === "google" ? (this.publishing as any).setGoogleCampaignStatus : (this.publishing as any).setTikTokCampaignStatus;
-    if (typeof setter !== "function") throw new BadRequestException("এই Deployment-এ Platform Status বদলের Path যুক্ত নেই");
+    if (typeof setter !== "function") throw badRequest("campaigns.thisDeploymentHasNoPlatformStatus");
     const platformTarget = draft.platform === "google" ? (target === "ACTIVE" ? "ENABLED" : "PAUSED") : (target === "ACTIVE" ? "ENABLE" : "DISABLE");
     try {
       await setter.call(this.publishing, organizationId, draft.targetAdAccountId, draft.externalCampaignId, platformTarget);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Status change failed";
       await this.logStep(planId, actorId, `${draft.platform}_status`, "error", { entityRef: draftId, externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
-      throw new BadRequestException(`Platform Status বদল নিশ্চিত করেনি: ${message}। Local Record অপরিবর্তিত আছে।`);
+      throw badRequest("campaigns.thePlatformDidNotConfirmThe2", { message: message });
     }
     await this.logStep(planId, actorId, `${draft.platform}_status`, "success", { entityRef: draftId, externalId: draft.externalCampaignId }).catch(() => undefined);
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.xdraft_status", entityType: "CrossPlatformDraft", entityId: draftId, metadata: { platform: draft.platform, target, platformStatus: platformTarget, externalCampaignId: draft.externalCampaignId } }).catch(() => undefined);
@@ -8564,10 +8589,10 @@ export class CampaignsService implements OnModuleInit {
    * gets an honest refusal, never a guessed call. */
   async updateCrossPlatformDraftBudget(organizationId: string, actorId: string, planId: string, draftId: string, dailyBudgetRaw: string) {
     const daily = Number(dailyBudgetRaw);
-    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("দৈনিক বাজেট ধনাত্মক সংখ্যা হতে হবে");
-    if (!this.publishing) throw new BadRequestException("Cross-platform publishing is not available in this context");
+    if (!Number.isFinite(daily) || daily <= 0) throw badRequest("campaigns.theDailyBudgetMustBeA");
+    if (!this.publishing) throw badRequest("campaigns.crossPlatformPublishingIsNotAvailable");
     const draft = await this.getCrossPlatformDraftOrThrow(organizationId, planId, draftId);
-    if (draft.status !== "created" || !draft.externalCampaignId) throw new BadRequestException("এই Draft এখনো Platform-এ তৈরি হয়নি — Budget বদলানো যাবে না");
+    if (draft.status !== "created" || !draft.externalCampaignId) throw badRequest("campaigns.thisDraftIsNotCreatedOn");
     let pub: any = null;
     if (draft.publicationId && (this.prisma as any).platformPublication?.findFirst) {
       pub = await (this.prisma as any).platformPublication.findFirst({ where: { id: draft.publicationId, organizationId } }).catch(() => null);
@@ -8576,18 +8601,18 @@ export class CampaignsService implements OnModuleInit {
     try {
       if (draft.platform === "google") {
         const budgetResource = (pub?.detail?.steps ?? []).find((s: any) => s.step === "budget")?.resourceName;
-        if (!budgetResource) throw new BadRequestException("এই Draft-এর Creation Record-এ Google Budget Resource নেই — Budget বদলানো যাবে না (Re-publish করলে নতুন Record তৈরি হবে)");
+        if (!budgetResource) throw badRequest("campaigns.thisDraftSCreationRecordHas");
         await (this.publishing as any).updateGoogleCampaignBudget(organizationId, draft.targetAdAccountId, budgetResource, daily);
       } else {
         const adgroupId = pub?.detail?.adgroupId;
-        if (!adgroupId) throw new BadRequestException("এই Draft-এর Creation Record-এ TikTok Ad Group ID নেই — Budget বদলানো যাবে না (Re-publish করলে নতুন Record তৈরি হবে)");
+        if (!adgroupId) throw badRequest("campaigns.thisDraftSCreationRecordHas2");
         await (this.publishing as any).updateTikTokAdGroupBudget(organizationId, draft.targetAdAccountId, String(adgroupId), daily);
       }
     } catch (e) {
-      if (e instanceof BadRequestException) throw e;
+      if (e instanceof ApiException && e.getStatus() === 400) throw e;
       const message = e instanceof Error ? e.message : "Budget change failed";
       await this.logStep(planId, actorId, `${draft.platform}_budget`, "error", { entityRef: draftId, externalId: draft.externalCampaignId, error: message }).catch(() => undefined);
-      throw new BadRequestException(`Platform Budget বদল নিশ্চিত করেনি: ${message}। Local Record অপরিবর্তিত আছে।`);
+      throw badRequest("campaigns.thePlatformDidNotConfirmThe", { message: message });
     }
     const fields = { ...((draft.fields as any) ?? {}), dailyBudget: daily.toFixed(2) };
     const updated = await (this.prisma as any).crossPlatformDraft.update({ where: { id: draftId }, data: { fields } }).catch(() => ({ ...draft, fields }));
@@ -8600,13 +8625,13 @@ export class CampaignsService implements OnModuleInit {
    * Meta first, local state after confirmation (like budgets). */
   async updateAdSetSchedule(organizationId: string, actorId: string, planId: string, adSetId: string, dto: { startTime?: string; endTime?: string }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
-    if (plan.status !== "published") throw new BadRequestException("Only published plans have live schedules to edit");
+    if (plan.status !== "published") throw badRequest("campaigns.onlyPublishedPlansHaveLiveSchedules");
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: adSetId, planId } });
-    if (!adSet?.externalAdSetId) throw new BadRequestException("This ad set has no Meta ad set id (not published)");
+    if (!adSet?.externalAdSetId) throw badRequest("campaigns.thisAdSetHasNoMeta2");
     const params: Record<string, string> = {};
     if (dto.startTime) params.start_time = new Date(dto.startTime).toISOString();
     if (dto.endTime) params.end_time = new Date(dto.endTime).toISOString();
-    if (Object.keys(params).length === 0) throw new BadRequestException("Provide startTime or endTime");
+    if (Object.keys(params).length === 0) throw badRequest("campaigns.provideStarttimeOrEndtime");
     const { client } = await this.publishClient(organizationId, plan);
     await client.updateAdSetFields(adSet.externalAdSetId, params);
     await (this.prisma as any).campaignAdSet.update({
@@ -8741,19 +8766,19 @@ export class CampaignsService implements OnModuleInit {
     const raw = dto?.template ?? null;
     let template: Record<string, string> | null = null;
     if (raw !== null) {
-      if (typeof raw !== "object" || Array.isArray(raw)) throw new BadRequestException("UTM Template অবজেক্ট হতে হবে");
+      if (typeof raw !== "object" || Array.isArray(raw)) throw badRequest("campaigns.utmTemplateMustBeAnObject");
       const keys = Object.keys(raw);
       const unknown = keys.filter((k) => !(CampaignsService.UTM_KEYS as readonly string[]).includes(k));
-      if (unknown.length) throw new BadRequestException(`অজানা UTM Key: ${unknown.join(", ")} — ব্যবহারযোগ্য: ${CampaignsService.UTM_KEYS.join(", ")}`);
-      if (!keys.length) throw new BadRequestException("Template-এ অন্তত একটি Key দিন — Template মুছতে চাইলে null পাঠান");
+      if (unknown.length) throw badRequest("campaigns.unknownUtmKeyUsable", { p1: unknown.join(", "), p2: CampaignsService.UTM_KEYS.join(", ") });
+      if (!keys.length) throw badRequest("campaigns.giveAtLeastOneKeyIn");
       template = {};
       for (const k of keys) {
         const v = String((raw as any)[k] ?? "").trim();
-        if (!v) throw new BadRequestException(`utm_${k}-এর মান খালি হতে পারবে না`);
-        if (v.length > 120) throw new BadRequestException(`utm_${k}-এর মান সর্বোচ্চ ১২০ অক্ষরের হতে পারে`);
+        if (!v) throw badRequest("campaigns.theValueOfUtmCannotBe", { k: k });
+        if (v.length > 120) throw badRequest("campaigns.theValueOfUtmCanBe", { k: k });
         const used = [...v.matchAll(/\{([a-zA-Z]+)\}/g)].map((m) => m[1].toLowerCase());
         const badTokens = used.filter((t) => !(CampaignsService.UTM_TOKENS as readonly string[]).includes(t));
-        if (badTokens.length) throw new BadRequestException(`অজানা Token: ${badTokens.map((t) => `{${t}}`).join(", ")} — ব্যবহারযোগ্য: ${CampaignsService.UTM_TOKENS.map((t) => `{${t}}`).join(" ")}`);
+        if (badTokens.length) throw badRequest("campaigns.unknownTokenUsable", { p1: badTokens.map((t) => `{${t}}`).join(", "), p2: CampaignsService.UTM_TOKENS.map((t) => `{${t}}`).join(" ") });
         template[k] = v;
       }
     }
@@ -8784,7 +8809,7 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     // CC27: activation gated, pause always allowed.
     if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, plan);
-    if (plan.status !== "published" || !plan.externalCampaignId) throw new BadRequestException("Only published plans can be activated or paused");
+    if (plan.status !== "published" || !plan.externalCampaignId) throw badRequest("campaigns.onlyPublishedPlansCanBeActivated");
     const { client } = await this.publishClient(organizationId, plan);
     const step = target === "ACTIVE" ? "activate" : "pause";
     try {
@@ -8792,7 +8817,7 @@ export class CampaignsService implements OnModuleInit {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Status change failed";
       await this.logStep(planId, actorId, step, "error", { error: message });
-      throw new BadRequestException(`Meta did NOT confirm the status change: ${message}. Local status is unchanged.`);
+      throw badRequest("campaigns.metaDidNotConfirmTheStatus", { message: message });
     }
     await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { metaStatus: target } });
     await this.logStep(planId, actorId, step, "success", { externalId: plan.externalCampaignId });
@@ -8818,11 +8843,11 @@ export class CampaignsService implements OnModuleInit {
    * companion below reads Meta live instead.
    */
   async setMetaCampaignStatusByAccount(organizationId: string, actorId: string, adAccountId: string, externalCampaignId: string, target: "ACTIVE" | "PAUSED") {
-    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException(`target must be ACTIVE or PAUSED (got "${target}")`);
-    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to change campaign status");
+    if (target !== "ACTIVE" && target !== "PAUSED") throw badRequest("campaigns.targetMustBeActiveOrPaused", { target: target });
+    if (!externalCampaignId) throw badRequest("campaigns.externalcampaignidIsRequiredToChangeCampaign");
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found in this organization");
-    if (account.platform !== "meta") throw new BadRequestException("This lifecycle path is Meta-only");
+    if (!account) throw notFound("campaigns.adAccountNotFoundInThis");
+    if (account.platform !== "meta") throw badRequest("campaigns.thisLifecyclePathIsMetaOnly");
     // CC27: activation gated, pause always allowed (same as setMetaStatus).
     if (target === "ACTIVE") await this.assertCampaignAccountAccess(organizationId, actorId, { adAccountId });
     const client = await this.metaClientForAccount(organizationId, account);
@@ -8830,7 +8855,7 @@ export class CampaignsService implements OnModuleInit {
       await client.setObjectStatus(externalCampaignId, target);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Status change failed";
-      throw new BadRequestException(`Meta did NOT confirm the status change: ${message}. Local status is unchanged.`);
+      throw badRequest("campaigns.metaDidNotConfirmTheStatus", { message: message });
     }
     await this.audit.log({ organizationId, userId: actorId, action: target === "PAUSED" ? "campaign.paused" : "campaign.activated", entityType: "AdCampaign", entityId: externalCampaignId, metadata: { platform: "meta", adAccountId, externalCampaignId, target, via: "action_engine" } });
     return { platform: "meta", externalCampaignId, status: target };
@@ -8842,8 +8867,8 @@ export class CampaignsService implements OnModuleInit {
    *  Meta does not report comes back null, never guessed. */
   async getMetaCampaignStatusByAccount(organizationId: string, adAccountId: string, externalCampaignId: string) {
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found in this organization");
-    if (account.platform !== "meta") throw new BadRequestException("This status read is Meta-only");
+    if (!account) throw notFound("campaigns.adAccountNotFoundInThis");
+    if (account.platform !== "meta") throw badRequest("campaigns.thisStatusReadIsMetaOnly");
     const client = await this.metaClientForAccount(organizationId, account);
     const res = await client.getObjectStatus(externalCampaignId);
     return { platform: "meta", externalCampaignId, status: res.status ?? null, effectiveStatus: res.effectiveStatus ?? null };
@@ -8854,12 +8879,12 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const adSet = await (this.prisma as any).campaignAdSet.findFirst({ where: { id: dto.adSetId, planId } });
-    if (!adSet) throw new NotFoundException("Ad set not found in this plan");
+    if (!adSet) throw notFound("campaigns.adSetNotFoundInThis");
     const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("campaigns.productNotFoundInThisOrganization");
     const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } });
     const linkUrl = dto.linkUrl ?? profile?.websiteUrl ?? "";
-    if (!linkUrl) throw new BadRequestException("A landing link is required: pass linkUrl or set the business website URL in Business Knowledge");
+    if (!linkUrl) throw badRequest("campaigns.aLandingLinkIsRequiredPass");
     const provider = this.llm.getProvider();
     const price = formatMinor(BigInt(product.priceMinor), product.currency);
 
@@ -8881,7 +8906,7 @@ export class CampaignsService implements OnModuleInit {
       await (this.prisma as any).aIUsageRecord.create({
         data: { organizationId, userId: actorId, feature: "ad_copy", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
       });
-      if (variants.length === 0) throw new BadRequestException("The AI provider returned no usable copy variants. Nothing was saved.");
+      if (variants.length === 0) throw badRequest("campaigns.theAiProviderReturnedNoUsable");
     } else {
       variants = [
         { primaryText: `${product.name} - দাম ${price}। বিস্তারিত দেখে এখনই অর্ডার করুন।`, headline: product.name },
@@ -8913,7 +8938,7 @@ export class CampaignsService implements OnModuleInit {
   async generateImage(organizationId: string, actorId: string, planId: string, dto: { prompt: string; productId?: string; adAccountId?: string }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
-    if (!this.creatives) throw new BadRequestException("AI image generation is not available in this context");
+    if (!this.creatives) throw badRequest("campaigns.aiImageGenerationIsNotAvailable");
     return this.creatives.generateAiImage(organizationId, actorId, {
       adAccountId: dto.adAccountId ?? plan.adAccountId,
       prompt: dto.prompt,
@@ -8936,9 +8961,9 @@ export class CampaignsService implements OnModuleInit {
   async generateVideo(organizationId: string, actorId: string, planId: string, dto: { productId: string; adAccountId?: string }) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
-    if (!this.creatives) throw new BadRequestException("AI video generation is not available in this context");
+    if (!this.creatives) throw badRequest("campaigns.aiVideoGenerationIsNotAvailable");
     const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("campaigns.productNotFoundInThisOrganization");
     const price = formatMinor(BigInt(product.priceMinor), product.currency);
 
     const taka = Number(BigInt(product.priceMinor)) / 100;
@@ -9011,9 +9036,9 @@ export class CampaignsService implements OnModuleInit {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     this.assertEditable(plan);
     const target = dto.targetLocale;
-    if (!["bn", "en"].includes(target)) throw new BadRequestException("targetLocale must be bn or en");
+    if (!["bn", "en"].includes(target)) throw badRequest("campaigns.targetlocaleMustBeBnOrEn");
     const ad = await (this.prisma as any).campaignAd.findFirst({ where: { id: adId, planId } });
-    if (!ad) throw new NotFoundException("Ad not found in this plan");
+    if (!ad) throw notFound("campaigns.adNotFoundInThisPlan");
     const opts = this.textOptionsOf(ad);
     const source = {
       primaryTexts: opts?.primaryTexts ?? (ad.primaryText ? [String(ad.primaryText)] : []),
@@ -9021,26 +9046,26 @@ export class CampaignsService implements OnModuleInit {
       descriptions: opts?.descriptions ?? (ad.description ? [String(ad.description)] : []),
     };
     const sourceAll = [...source.primaryTexts, ...source.headlines, ...source.descriptions].join("\n");
-    if (!sourceAll.trim()) throw new BadRequestException("এই Ad-এ অনুবাদ করার মতো কোনো Text নেই");
+    if (!sourceAll.trim()) throw badRequest("campaigns.thereIsNoTextInThis");
     const detected = /[\u0980-\u09FF]/.test(sourceAll) ? "bn" : "en"; // Bengali Unicode block
     if (detected === target) {
-      throw new BadRequestException(target === "bn" ? "Ad-এর Text এমনিতেই বাংলায় আছে বলে মনে হচ্ছে (Script দেখে আন্দাজ) — আবার অনুবাদের দরকার নেই" : "Ad-এর Text এমনিতেই English-এ আছে বলে মনে হচ্ছে (Script দেখে আন্দাজ) — আবার অনুবাদের দরকার নেই");
+      throw badRequest(target === "bn" ? "campaigns.adTextAlreadyLooksBengali" : "campaigns.adTextAlreadyLooksEnglish");
     }
     const provider = this.llm.getProvider();
     if (!provider.isRealLlm) {
-      throw new BadRequestException("অনুবাদের জন্য আসল AI Provider দরকার — Organization Settings-এ LLM Provider configure করুন। Template দিয়ে অনুবাদ করা হয় না।");
+      throw badRequest("campaigns.aRealAiProviderIsNeeded");
     }
     const sourceNumbers = CampaignsService.numbersInText(sourceAll);
     const result = await provider.complete([
       { role: "system", content: `Translate ecommerce ad copy into ${target === "bn" ? "Bengali (Bangla script)" : "English"}. Keep EVERY number exactly as it appears in the source — never add, drop or change a number, price, discount or quantity. Keep the same number of items in each list, in the same order. Return ONLY JSON: {"primaryTexts":[string],"headlines":[string],"descriptions":[string]} — include a list only when the source has it; use [] otherwise.` },
       { role: "user", content: JSON.stringify(source) },
     ], { jsonMode: true, maxTokens: 1200 }).catch(() => null);
-    if (!result) throw new BadRequestException("AI Provider থেকে অনুবাদ পাওয়া যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন");
+    if (!result) throw badRequest("campaigns.noTranslationWasReturnedFromThe");
     await (this.prisma as any).aIUsageRecord.create({
       data: { organizationId, userId: actorId, feature: "ad_copy_localization", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
     }).catch(() => undefined);
     let parsed: any;
-    try { parsed = JSON.parse(result.text); } catch { throw new BadRequestException("AI-এর অনুবাদ পড়া যায়নি (JSON নয়) — কিছু সেভ হয়নি"); }
+    try { parsed = JSON.parse(result.text); } catch { throw badRequest("campaigns.theAiTranslationCouldNotBe"); }
     const clean = (v: any) => (Array.isArray(v) ? v.map((x: any) => String(x ?? "").trim()) : []);
     const translated = {
       primaryTexts: clean(parsed?.primaryTexts),
@@ -9049,12 +9074,12 @@ export class CampaignsService implements OnModuleInit {
     };
     for (const key of ["primaryTexts", "headlines", "descriptions"] as const) {
       if (source[key].length && translated[key].length !== source[key].length) {
-        throw new BadRequestException(`অনুবাদে ${key}-এর সংখ্যা বদলে গেছে (আছে ${source[key].length}টি, অনুবাদে ${translated[key].length}টি) — নিরাপত্তার জন্য কিছু সেভ হয়নি`);
+        throw badRequest("campaigns.theNumberOfChangedInTranslation", { key: key, p2: source[key].length, p3: translated[key].length });
       }
     }
     const translatedNumbers = CampaignsService.numbersInText([...translated.primaryTexts, ...translated.headlines, ...translated.descriptions].join("\n"));
     if (JSON.stringify(translatedNumbers) !== JSON.stringify(sourceNumbers)) {
-      throw new BadRequestException(`অনুবাদে সংখ্যা/দাম বদলে গেছে — Source-এ ছিল [${sourceNumbers.join(", ") || "কোনো সংখ্যা নেই"}], অনুবাদে এসেছে [${translatedNumbers.join(", ") || "কোনো সংখ্যা নেই"}]। সংখ্যা লক করা থাকে বলে কিছু সেভ হয়নি`);
+      throw badRequest("campaigns.numbersPricesChangedInTranslationThe", { p1: sourceNumbers.join(", ") || "কোনো সংখ্যা নেই", p2: translatedNumbers.join(", ") || "কোনো সংখ্যা নেই" });
     }
     const existingOpts = ad.textOptions && typeof ad.textOptions === "object" ? ad.textOptions : {};
     const baseOpts = opts ?? { primaryTexts: source.primaryTexts, headlines: source.headlines, descriptions: source.descriptions };
@@ -9180,12 +9205,12 @@ export class CampaignsService implements OnModuleInit {
   async suggestPlan(organizationId: string, actorId: string, dto: { adAccountId: string; productId?: string; goal?: string; totalDailyBudget: string }) {
     const p = this.prisma as any;
     const totalMinor = parseMoneyToMinor(dto.totalDailyBudget);
-    if (totalMinor <= 0n) throw new BadRequestException("A positive total daily budget is required");
+    if (totalMinor <= 0n) throw badRequest("campaigns.aPositiveTotalDailyBudgetIs");
     const product = dto.productId ? await p.product.findFirst({ where: { id: dto.productId, organizationId } }) : null;
-    if (dto.productId && !product) throw new NotFoundException("Product not found in this organization");
+    if (dto.productId && !product) throw notFound("campaigns.productNotFoundInThisOrganization");
     const profile = await p.businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null);
     const linkUrl = profile?.websiteUrl ?? "";
-    if (!linkUrl) throw new BadRequestException("Set the business website URL first (Organization Settings) — ads need a real landing link");
+    if (!linkUrl) throw badRequest("campaigns.setTheBusinessWebsiteUrlFirst");
 
     const goalText = (dto.goal ?? "").toLowerCase();
     const objective = /lead|লিড|ফর্ম/.test(goalText) ? "OUTCOME_LEADS" : /traffic|ভিজিট|ক্লিক/.test(goalText) ? "OUTCOME_TRAFFIC" : "OUTCOME_SALES";
@@ -9354,10 +9379,10 @@ export class CampaignsService implements OnModuleInit {
   async setAdvantagePlus(organizationId: string, actorId: string, planId: string, enabled: boolean) {
     const plan = await this.getPlanOrThrow(organizationId, planId);
     if (plan.externalCampaignId || ["published", "publishing"].includes(plan.status)) {
-      throw new BadRequestException("Advantage+ can only be changed before publishing — the budget structure is fixed at creation time");
+      throw badRequest("campaigns.advantageCanOnlyBeChangedBefore");
     }
     if (enabled && !["OUTCOME_SALES", "OUTCOME_APP_PROMOTION"].includes(plan.objective)) {
-      throw new BadRequestException("Advantage+ runs on the Sales or App Promotion objectives: the plan objective must be OUTCOME_SALES or OUTCOME_APP_PROMOTION");
+      throw badRequest("campaigns.advantageRunsOnTheSalesOr");
     }
     await (this.prisma as any).campaignPlan.update({ where: { id: planId }, data: { advantagePlus: enabled } });
     await this.audit.log({ organizationId, userId: actorId, action: "campaign.advantage_plus_set", entityType: "CampaignPlan", entityId: planId, metadata: { enabled } });

@@ -3,7 +3,9 @@ import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinorTaka, takaToMinorString } from "@/lib/storefront-money";
+import { takaToMinorString } from "@/lib/storefront-money";
+import { fmtMoney, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import {
   generateInfluencerTrackingUrl,
   calculateInfluencerRoi,
@@ -11,6 +13,7 @@ import {
   SOCIAL_PLATFORMS,
   SocialPlatform,
   simulateInfluencerCampaign,
+  platformLabelFor,
   buildInfluencerWhatsAppBriefing,
   buildInfluencerWhatsAppUrl,
   buildPayoutReceiptText,
@@ -63,6 +66,7 @@ function extractPlatformFromNote(note?: string | null): SocialPlatform {
 }
 
 export default function InfluencerMarketingPage() {
+  const { t, locale } = useLocale();
   const [activeTab, setActiveTab] = useState<TabType>("creators");
   const [creators, setCreators] = useState<CreatorPartner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,7 +142,7 @@ export default function InfluencerMarketingPage() {
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ইনফ্লুয়েন্সার তালিকা লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : t("social.infLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -168,7 +172,7 @@ export default function InfluencerMarketingPage() {
           note: noteWithPlatform,
         }),
       });
-      setNotice(`✅ ইনফ্লুয়েন্সার "${formData.name}" সফলভাবে যুক্ত করা হয়েছে!`);
+      setNotice(t("social.infCreated", { name: formData.name }));
       setShowCreateModal(false);
       setFormData({
         name: "",
@@ -181,7 +185,7 @@ export default function InfluencerMarketingPage() {
       });
       await loadCreators();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.infCreateFailed"));
     } finally {
       setSubmittingCreate(false);
     }
@@ -195,7 +199,7 @@ export default function InfluencerMarketingPage() {
 
     const minor = takaToMinorString(payoutAmountTaka);
     if (!minor || BigInt(minor) <= 0n) {
-      setError("সঠিক পেআউট টাকার পরিমাণ লিখুন");
+      setError(t("social.infPayoutInvalid"));
       return;
     }
 
@@ -218,17 +222,17 @@ export default function InfluencerMarketingPage() {
         amountBdt: payoutAmountTaka,
         method: payoutMethod,
         reference: payoutRef.trim() || null,
-      });
+      }, locale);
 
       setRecordedVoucher({
         text: receipt,
         phone: payoutCreator.phone,
       });
 
-      setNotice(`✅ ${payoutCreator.name}-এর ৳${payoutAmountTaka} পেআউট সফলভাবে সংরক্ষিত হয়েছে!`);
+      setNotice(t("social.infPayoutSaved", { name: payoutCreator.name, amount: fmtNumber(locale, Number(payoutAmountTaka) || 0) }));
       await loadCreators();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পেআউট রেকর্ড সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("social.infPayoutFailed"));
     } finally {
       setSubmittingPayout(false);
     }
@@ -268,12 +272,12 @@ export default function InfluencerMarketingPage() {
     return {
       creatorsCount: creators.length,
       totalOrders,
-      totalRevenueFormatted: formatMinorTaka(totalRevenueMinor.toString()),
-      totalCommissionFormatted: formatMinorTaka(totalCommissionMinor.toString()),
-      totalPaidFormatted: formatMinorTaka(totalPaidMinor.toString()),
+      totalRevenueFormatted: fmtMoneyMinor(locale, totalRevenueMinor),
+      totalCommissionFormatted: fmtMoneyMinor(locale, totalCommissionMinor),
+      totalPaidFormatted: fmtMoneyMinor(locale, totalPaidMinor),
       roiMultiplier: roi.roiMultiplier,
     };
-  }, [creators]);
+  }, [creators, locale]);
 
   // Filtered Creators
   const filteredCreators = useMemo(() => {
@@ -403,12 +407,11 @@ export default function InfluencerMarketingPage() {
                 🌟
               </span>
               <h1 className="text-xl font-bold text-slate-900">
-                ইনফ্লুয়েন্সার ও TikTok / Meta অ্যাফিলিয়েট ROI ট্র্যাকার
+                {t("social.infTitle")}
               </h1>
             </div>
             <p className="text-xs text-slate-600 max-w-2xl">
-              টিকটক, ইনস্টাগ্রাম, ইউটিউব ও ফেসবুক ক্রিয়েটরদের ইউনিক ট্র্যাকিং লিঙ্ক ও কুপন কোড প্রদান করুন।
-              কার থেকে কত সেলস আসলো তা রিয়েল-টাইমে ট্র্যাক করুন এবং ১-ক্লিকে হোয়াটসঅ্যাপ ব্রিফিং ও পেআউট রেকর্ড সম্পন্ন করুন।
+              {t("social.infSub")}
             </p>
           </div>
 
@@ -419,7 +422,7 @@ export default function InfluencerMarketingPage() {
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 px-4 py-2.5 text-xs font-semibold text-white shadow hover:opacity-95 transition"
             >
               <span>➕</span>
-              <span>নতুন ইনফ্লুয়েন্সার যুক্ত করুন</span>
+              <span>{t("social.infAddNew")}</span>
             </button>
           </div>
         </div>
@@ -436,7 +439,7 @@ export default function InfluencerMarketingPage() {
             }`}
           >
             <span>👥</span>
-            <span>পার্টনার ক্রিয়েটর তালিকা ({creators.length})</span>
+            <span>{t("social.infTabCreators", { count: fmtNumber(locale, creators.length) })}</span>
           </button>
 
           <button
@@ -449,7 +452,7 @@ export default function InfluencerMarketingPage() {
             }`}
           >
             <span>🧮</span>
-            <span>ক্যাম্পেইন ROI ক্যালকুলেটর ও সিমুলেটর</span>
+            <span>{t("social.infTabSimulator")}</span>
           </button>
 
           <button
@@ -462,7 +465,7 @@ export default function InfluencerMarketingPage() {
             }`}
           >
             <span>📊</span>
-            <span>প্ল্যাটফর্ম পারফরম্যান্স ও লিডারবোর্ড</span>
+            <span>{t("social.infTabAnalytics")}</span>
           </button>
         </div>
       </div>
@@ -470,29 +473,29 @@ export default function InfluencerMarketingPage() {
       {/* Metrics Row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="card p-4 space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-slate-400">মোট পার্টনার ক্রিয়েটর</div>
-          <div className="text-2xl font-bold text-slate-900">{stats.creatorsCount} জন</div>
+          <div className="text-[11px] font-semibold uppercase text-slate-400">{t("social.infKpiCreators")}</div>
+          <div className="text-2xl font-bold text-slate-900">{t("social.infCountPeople", { count: fmtNumber(locale, stats.creatorsCount) })}</div>
           <div className="text-[11px] text-slate-500">TikTok, Insta, FB & YT</div>
         </div>
 
         <div className="card p-4 space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-slate-400">অ্যাট্রিবিউটেড অর্ডার</div>
-          <div className="text-2xl font-bold text-indigo-600">{stats.totalOrders} টি</div>
-          <div className="text-[11px] text-slate-500">ক্রিয়েটর সেলস ভলিউম</div>
+          <div className="text-[11px] font-semibold uppercase text-slate-400">{t("social.infKpiOrders")}</div>
+          <div className="text-2xl font-bold text-indigo-600">{t("social.infCountItems", { count: fmtNumber(locale, stats.totalOrders) })}</div>
+          <div className="text-[11px] text-slate-500">{t("social.infKpiOrdersSub")}</div>
         </div>
 
         <div className="card p-4 space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-slate-400">ইনফ্লুয়েন্সার রেভিনিউ</div>
+          <div className="text-[11px] font-semibold uppercase text-slate-400">{t("social.infKpiRevenue")}</div>
           <div className="text-2xl font-bold text-emerald-600">{stats.totalRevenueFormatted}</div>
-          <div className="text-[11px] text-slate-500">মোট সেলস (GMV)</div>
+          <div className="text-[11px] text-slate-500">{t("social.infKpiRevenueSub")}</div>
         </div>
 
         <div className="card p-4 space-y-1">
-          <div className="text-[11px] font-semibold uppercase text-slate-400">গড় ক্যাম্পেইন ROI</div>
+          <div className="text-[11px] font-semibold uppercase text-slate-400">{t("social.infKpiRoi")}</div>
           <div className="text-2xl font-bold text-amber-600">
             {stats.roiMultiplier ? `${stats.roiMultiplier}x` : "—"}
           </div>
-          <div className="text-[11px] text-slate-500">কমিশনের তুলনায় বিক্রয় গুণক</div>
+          <div className="text-[11px] text-slate-500">{t("social.infKpiRoiSub")}</div>
         </div>
       </div>
 
@@ -520,7 +523,7 @@ export default function InfluencerMarketingPage() {
               <span className="text-slate-400 text-sm">🔍</span>
               <input
                 type="text"
-                placeholder="নাম, কুপন কোড বা ফোন নম্বর দিয়ে খুঁজুন..."
+                placeholder={t("social.infSearchPlaceholder")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full text-xs bg-transparent focus:outline-none"
@@ -537,16 +540,16 @@ export default function InfluencerMarketingPage() {
             </div>
 
             <div className="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-slate-200 pt-2 sm:pt-0 sm:pl-3">
-              <span className="text-[11px] font-semibold text-slate-500">প্ল্যাটফর্ম:</span>
+              <span className="text-[11px] font-semibold text-slate-500">{t("social.infPlatformLabel")}</span>
               <select
                 value={platformFilter}
                 onChange={(e) => setPlatformFilter(e.target.value)}
                 className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 focus:outline-none"
               >
-                <option value="all">সব প্ল্যাটফর্ম</option>
+                <option value="all">{t("social.infAllPlatforms")}</option>
                 {SOCIAL_PLATFORMS.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.icon} {p.label}
+                    {p.icon} {locale === "en" ? p.labelEn : p.label}
                   </option>
                 ))}
               </select>
@@ -557,23 +560,23 @@ export default function InfluencerMarketingPage() {
           {loading ? (
             <div className="card p-12 text-center text-xs text-slate-500">
               <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-amber-600 border-t-transparent mb-2" />
-              <p>ইনফ্লুয়েন্সার ক্যাম্পেইন ডেটা লোড হচ্ছে...</p>
+              <p>{t("social.infLoading")}</p>
             </div>
           ) : filteredCreators.length === 0 ? (
             <div className="card p-12 text-center space-y-3">
               <div className="text-4xl">🌟</div>
-              <h3 className="font-bold text-slate-800">কোনো ইনফ্লুয়েন্সার পাওয়া যায়নি</h3>
+              <h3 className="font-bold text-slate-800">{t("social.infEmptyTitle")}</h3>
               <p className="max-w-md mx-auto text-xs text-slate-500">
                 {searchQuery || platformFilter !== "all"
-                  ? "ফিল্টার পরিবর্তন করে আবার চেষ্টা করুন।"
-                  : "আপনার প্রথম ইনফ্লুয়েন্সার পার্টনারকে যুক্ত করুন এবং তাদের ইউনিক প্রোমো কোড ও ট্র্যাকিং লিঙ্ক দিন।"}
+                  ? t("social.infEmptyFiltered")
+                  : t("social.infEmptyFresh")}
               </p>
               <button
                 type="button"
                 onClick={() => setShowCreateModal(true)}
                 className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-amber-700 transition"
               >
-                ➕ নতুন ইনফ্লুয়েন্সার যুক্ত করুন
+                {t("social.infAddFirst")}
               </button>
             </div>
           ) : (
@@ -612,10 +615,10 @@ export default function InfluencerMarketingPage() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
-                            {platformMeta.icon} {platformMeta.label}
+                            {platformMeta.icon} {platformLabelFor(platform, locale)}
                           </span>
                           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                            {c.commissionPercent}% কমিশন
+                            {t("social.infCommissionBadge", { pct: fmtNumber(locale, c.commissionPercent) })}
                           </span>
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
                             c.status === "active" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-600"
@@ -624,11 +627,11 @@ export default function InfluencerMarketingPage() {
                           </span>
                         </div>
                         <h3 className="font-bold text-slate-900 text-base">{c.name}</h3>
-                        <p className="text-[11px] text-slate-500">ফোন: {c.phone} {c.email ? `• ${c.email}` : ""}</p>
+                        <p className="text-[11px] text-slate-500">{t("social.infPhonePrefix", { phone: c.phone })} {c.email ? `• ${c.email}` : ""}</p>
                       </div>
 
                       <div className="text-right">
-                        <div className="text-[11px] font-semibold uppercase text-slate-400">ক্যাম্পেইন ROI</div>
+                        <div className="text-[11px] font-semibold uppercase text-slate-400">{t("social.infCardRoi")}</div>
                         <div className={`text-lg font-bold ${roi.profitable ? "text-emerald-600" : "text-amber-600"}`}>
                           {roi.roiMultiplier ? `${roi.roiMultiplier}x` : "—"}
                         </div>
@@ -639,7 +642,7 @@ export default function InfluencerMarketingPage() {
                     <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 space-y-2.5 text-xs">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] uppercase font-semibold text-slate-400">কুপন কোড:</span>
+                          <span className="text-[10px] uppercase font-semibold text-slate-400">{t("social.infCouponCode")}</span>
                           <code className="rounded bg-amber-100 px-2 py-0.5 font-bold text-amber-900">
                             {c.code}
                           </code>
@@ -649,7 +652,7 @@ export default function InfluencerMarketingPage() {
                           onClick={() => copyToClipboard(c.code, `code-${c.id}`)}
                           className="text-[11px] font-semibold text-indigo-600 hover:underline"
                         >
-                          {copiedCode === `code-${c.id}` ? "✓ কপি হয়েছে!" : "কপি কোড"}
+                          {copiedCode === `code-${c.id}` ? t("social.infCopiedBang") : t("social.infCopyCode")}
                         </button>
                       </div>
 
@@ -662,7 +665,7 @@ export default function InfluencerMarketingPage() {
                           onClick={() => copyToClipboard(trackingUrl, `url-${c.id}`)}
                           className="text-[11px] font-semibold text-amber-700 hover:underline shrink-0 ml-2"
                         >
-                          {copiedCode === `url-${c.id}` ? "✓ লিঙ্ক কপি হয়েছে!" : "📋 ট্র্যাকিং লিঙ্ক কপি"}
+                          {copiedCode === `url-${c.id}` ? t("social.infLinkCopiedBang") : t("social.infCopyTracking")}
                         </button>
                       </div>
                     </div>
@@ -670,20 +673,20 @@ export default function InfluencerMarketingPage() {
                     {/* Performance Matrix */}
                     <div className="grid grid-cols-4 gap-2 text-center text-xs">
                       <div className="rounded-lg bg-slate-50 p-2 border border-slate-100">
-                        <div className="text-[10px] text-slate-400 font-semibold uppercase">অর্ডার</div>
-                        <div className="font-bold text-slate-800">{totalOrders} টি</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">{t("social.infOrders")}</div>
+                        <div className="font-bold text-slate-800">{t("social.infOrdersValue", { count: fmtNumber(locale, totalOrders) })}</div>
                       </div>
                       <div className="rounded-lg bg-slate-50 p-2 border border-slate-100">
-                        <div className="text-[10px] text-slate-400 font-semibold uppercase">মোট সেলস</div>
-                        <div className="font-bold text-emerald-600">{formatMinorTaka(revMinor.toString())}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">{t("social.infTotalSales")}</div>
+                        <div className="font-bold text-emerald-600">{fmtMoneyMinor(locale, revMinor)}</div>
                       </div>
                       <div className="rounded-lg bg-slate-50 p-2 border border-slate-100">
-                        <div className="text-[10px] text-slate-400 font-semibold uppercase">মোট কমিশন</div>
-                        <div className="font-bold text-indigo-600">{formatMinorTaka(earnedMinor.toString())}</div>
+                        <div className="text-[10px] text-slate-400 font-semibold uppercase">{t("social.infTotalCommission")}</div>
+                        <div className="font-bold text-indigo-600">{fmtMoneyMinor(locale, earnedMinor)}</div>
                       </div>
                       <div className="rounded-lg bg-amber-50/70 p-2 border border-amber-100">
-                        <div className="text-[10px] text-amber-700 font-semibold uppercase">প্রদেয় ব্যালেন্স</div>
-                        <div className="font-bold text-amber-900">{formatMinorTaka(outstandingMinor)}</div>
+                        <div className="text-[10px] text-amber-700 font-semibold uppercase">{t("social.infOutstanding")}</div>
+                        <div className="font-bold text-amber-900">{fmtMoneyMinor(locale, BigInt(outstandingMinor))}</div>
                       </div>
                     </div>
 
@@ -699,7 +702,7 @@ export default function InfluencerMarketingPage() {
                           className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition"
                         >
                           <span>💬</span>
-                          <span>WhatsApp ব্রিফিং</span>
+                          <span>{t("social.infWaBriefing")}</span>
                         </button>
 
                         <button
@@ -716,7 +719,7 @@ export default function InfluencerMarketingPage() {
                           className="flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-800 border border-indigo-200 hover:bg-indigo-100 transition"
                         >
                           <span>💳</span>
-                          <span>পেআউট রেকর্ড</span>
+                          <span>{t("social.infPayoutRecord")}</span>
                         </button>
                       </div>
 
@@ -724,7 +727,7 @@ export default function InfluencerMarketingPage() {
                         href="/dashboard/commerce/affiliates"
                         className="text-[11px] font-medium text-slate-500 hover:text-slate-800 hover:underline"
                       >
-                        লেজার হিস্ট্রি →
+                        {t("social.infLedgerHistory")}
                       </Link>
                     </div>
                   </div>
@@ -742,43 +745,43 @@ export default function InfluencerMarketingPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-4">
               <div>
                 <h3 className="font-bold text-slate-900 text-base">
-                  🧮 ইনফ্লুয়েন্সার ক্যাম্পেইন ROI ও ব্রেক-ইভেন সিমুলেটর
+                  {t("social.infSimTitle")}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  ইনফ্লুয়েন্সার হায়ার বা চুক্তি করার আগেই সম্ভাব্য ভিউ, ক্লিক, সেলস এবং আরওআই সিমুলেট করুন।
+                  {t("social.infSimSub")}
                 </p>
               </div>
 
               {/* Presets */}
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-semibold text-slate-400">প্রিসেট:</span>
+                <span className="text-[11px] font-semibold text-slate-400">{t("social.infPresetLabel")}</span>
                 <button
                   type="button"
                   onClick={() => applyPreset("tiktok")}
                   className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50"
                 >
-                  🎵 TikTok রিলস
+                  {t("social.infPresetTiktok")}
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("instagram")}
                   className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50"
                 >
-                  📷 Insta স্টোরি
+                  {t("social.infPresetInsta")}
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("youtube")}
                   className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50"
                 >
-                  ▶️ YouTube ভিডিও
+                  {t("social.infPresetYoutube")}
                 </button>
                 <button
                   type="button"
                   onClick={() => applyPreset("micro")}
                   className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50"
                 >
-                  🌐 মাইক্রো ক্রিয়েটর
+                  {t("social.infPresetMicro")}
                 </button>
               </div>
             </div>
@@ -789,7 +792,7 @@ export default function InfluencerMarketingPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      ফিক্সড পারিশ্রমিক (৳ Flat Fee):
+                      {t("social.infFeeLabel")}
                     </label>
                     <input
                       type="number"
@@ -799,12 +802,12 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, fixedFeeBdt: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none font-semibold"
                     />
-                    <span className="text-[10px] text-slate-400">স্পনসরড পোস্ট বা শুট ফি</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infFeeHint")}</span>
                   </div>
 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      কমিশন হার (%):
+                      {t("social.infCommLabel")}
                     </label>
                     <input
                       type="number"
@@ -814,14 +817,14 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, commissionPercent: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none font-semibold"
                     />
-                    <span className="text-[10px] text-slate-400">প্রতি সফল অর্ডারে প্রদেয় কমিশন</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infCommHint")}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      প্রত্যাশিত ভিউ / রিচ:
+                      {t("social.infViewsLabel")}
                     </label>
                     <input
                       type="number"
@@ -831,12 +834,12 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, estimatedViews: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none"
                     />
-                    <span className="text-[10px] text-slate-400">ভিডিও বা স্টোরির গড় ভিউ</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infViewsHint")}</span>
                   </div>
 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      এনগেজমেন্ট রেট (%):
+                      {t("social.infEngLabel")}
                     </label>
                     <input
                       type="number"
@@ -847,14 +850,14 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, engagementRatePercent: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none"
                     />
-                    <span className="text-[10px] text-slate-400">ট্র্যাকিং লিঙ্কে ক্লিকের হার</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infEngHint")}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      কনভার্সন রেট (%):
+                      {t("social.infConvLabel")}
                     </label>
                     <input
                       type="number"
@@ -865,12 +868,12 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, conversionRatePercent: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none"
                     />
-                    <span className="text-[10px] text-slate-400">ক্লিকের পর অর্ডারের হার</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infConvHint")}</span>
                   </div>
 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      গড় অর্ডার সাইজ (AOV ৳):
+                      {t("social.infAovLabel")}
                     </label>
                     <input
                       type="number"
@@ -880,7 +883,7 @@ export default function InfluencerMarketingPage() {
                       onChange={(e) => setSimParams({ ...simParams, averageOrderValueBdt: Number(e.target.value) })}
                       className="w-full rounded-lg border border-slate-300 p-2 focus:border-amber-500 focus:outline-none"
                     />
-                    <span className="text-[10px] text-slate-400">প্রতি কার্টের গড় মূল্য</span>
+                    <span className="text-[10px] text-slate-400">{t("social.infAovHint")}</span>
                   </div>
                 </div>
               </div>
@@ -889,55 +892,55 @@ export default function InfluencerMarketingPage() {
               <div className="space-y-4 lg:col-span-6 rounded-2xl bg-slate-900 p-5 text-white">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div>
-                    <div className="text-[11px] uppercase font-semibold text-slate-400">প্রজেক্টেড ক্যাম্পেইন পারফরম্যান্স</div>
+                    <div className="text-[11px] uppercase font-semibold text-slate-400">{t("social.infProjTitle")}</div>
                     <div className="text-xl font-bold text-amber-400">
-                      {simulationResult.estimatedRoas}x প্রজেক্টেড ROAS
+                      {t("social.infProjRoas", { roas: simulationResult.estimatedRoas })}
                     </div>
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs font-bold ${
                     simulationResult.isProfitable ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"
                   }`}>
-                    {simulationResult.isProfitable ? "✓ লাভজনক ডিল" : "⚠️ লোকসানের ঝুঁকি"}
+                    {simulationResult.isProfitable ? t("social.infProfitable") : t("social.infLossRisk")}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div className="rounded-xl bg-slate-800/80 p-3 space-y-1">
-                    <div className="text-[11px] text-slate-400">প্রত্যাশিত ক্লিক ও ট্রাফিক</div>
-                    <div className="text-base font-bold text-slate-100">{simulationResult.expectedClicks.toLocaleString()} টি</div>
+                    <div className="text-[11px] text-slate-400">{t("social.infExpClicks")}</div>
+                    <div className="text-base font-bold text-slate-100">{t("social.infClicksValue", { count: fmtNumber(locale, simulationResult.expectedClicks) })}</div>
                   </div>
 
                   <div className="rounded-xl bg-slate-800/80 p-3 space-y-1">
-                    <div className="text-[11px] text-slate-400">প্রত্যাশিত মোট অর্ডার</div>
-                    <div className="text-base font-bold text-indigo-400">{simulationResult.expectedOrders} টি</div>
+                    <div className="text-[11px] text-slate-400">{t("social.infExpOrders")}</div>
+                    <div className="text-base font-bold text-indigo-400">{t("social.infOrdersValue", { count: fmtNumber(locale, simulationResult.expectedOrders) })}</div>
                   </div>
 
                   <div className="rounded-xl bg-slate-800/80 p-3 space-y-1">
-                    <div className="text-[11px] text-slate-400">প্রত্যাশিত গ্রস রেভিনিউ</div>
-                    <div className="text-base font-bold text-emerald-400">৳{simulationResult.expectedRevenueBdt.toLocaleString()}</div>
+                    <div className="text-[11px] text-slate-400">{t("social.infExpRevenue")}</div>
+                    <div className="text-base font-bold text-emerald-400">{fmtMoney(locale, simulationResult.expectedRevenueBdt)}</div>
                   </div>
 
                   <div className="rounded-xl bg-slate-800/80 p-3 space-y-1">
-                    <div className="text-[11px] text-slate-400">মোট খরচ (ফি + কমিশন)</div>
-                    <div className="text-base font-bold text-amber-400">৳{simulationResult.totalCostBdt.toLocaleString()}</div>
+                    <div className="text-[11px] text-slate-400">{t("social.infTotalCost")}</div>
+                    <div className="text-base font-bold text-amber-400">{fmtMoney(locale, simulationResult.totalCostBdt)}</div>
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-slate-800 bg-slate-800/40 p-3 space-y-2 text-xs">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-300">নেট প্রফিট মার্জিন:</span>
+                    <span className="text-slate-300">{t("social.infNetProfit")}</span>
                     <span className={`font-bold ${simulationResult.netProfitBdt >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                      ৳{simulationResult.netProfitBdt.toLocaleString()}
+                      {fmtMoney(locale, simulationResult.netProfitBdt)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-300">ব্রেক-ইভেন অর্ডার সংখ্যা:</span>
-                    <span className="font-bold text-amber-300">{simulationResult.breakEvenOrders} টি অর্ডার</span>
+                    <span className="text-slate-300">{t("social.infBreakEven")}</span>
+                    <span className="font-bold text-amber-300">{t("social.infBreakEvenValue", { count: fmtNumber(locale, simulationResult.breakEvenOrders) })}</span>
                   </div>
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  💡 <strong>স্ট্র্যাটেজি টিপ:</strong> ইনফ্লুয়েন্সারকে ফিক্সড ফি এর চেয়ে বেশি কমিশন শেয়ার অফার করলে আপনার রিস্ক কমে যায় এবং ইনফ্লুয়েন্সার বেশি সেলস আনতে উৎসাহিত হয়।
+                  <strong>{t("social.infStrategyTip")}</strong> {t("social.infStrategyTipText")}
                 </p>
               </div>
             </div>
@@ -960,24 +963,24 @@ export default function InfluencerMarketingPage() {
                     <span className="flex items-center gap-1.5 font-bold text-slate-900 text-sm">
                       <span className="text-xl">{p.icon}</span> {p.label}
                     </span>
-                    <span className="text-[11px] text-slate-500 font-semibold">{data.count} জন ক্রিয়েটর</span>
+                    <span className="text-[11px] text-slate-500 font-semibold">{t("social.infCreatorsCount", { count: fmtNumber(locale, data.count) })}</span>
                   </div>
 
                   <div className="space-y-1.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500">মোট সেলস:</span>
-                      <span className="font-bold text-emerald-600">{formatMinorTaka(data.revenueMinor.toString())}</span>
+                      <span className="text-slate-500">{t("social.infSalesLabel")}</span>
+                      <span className="font-bold text-emerald-600">{fmtMoneyMinor(locale, data.revenueMinor)}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500">অর্ডার সংখ্যা:</span>
-                      <span className="font-bold text-slate-800">{data.orders} টি</span>
+                      <span className="text-slate-500">{t("social.infOrderCountLabel")}</span>
+                      <span className="font-bold text-slate-800">{t("social.infOrdersCountValue", { count: fmtNumber(locale, data.orders) })}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500">প্রদত্ত কমিশন:</span>
-                      <span className="font-bold text-indigo-600">{formatMinorTaka(data.commissionMinor.toString())}</span>
+                      <span className="text-slate-500">{t("social.infCommissionGiven")}</span>
+                      <span className="font-bold text-indigo-600">{fmtMoneyMinor(locale, data.commissionMinor)}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-slate-100 pt-1.5">
-                      <span className="text-slate-500 font-semibold">প্ল্যাটফর্ম ROI:</span>
+                      <span className="text-slate-500 font-semibold">{t("social.infPlatformRoi")}</span>
                       <span className="font-bold text-amber-600">
                         {roi.roiMultiplier ? `${roi.roiMultiplier}x` : "—"}
                       </span>
@@ -992,24 +995,24 @@ export default function InfluencerMarketingPage() {
           <div className="card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-slate-900 text-base">🏆 সেরা পারফর্মার লিডারবোর্ড</h3>
-                <p className="text-xs text-slate-500">সর্বোচ্চ রেভিনিউ ও অর্ডার জেনারেটকারী ইনফ্লুয়েন্সার পার্টনারবৃন্দ</p>
+                <h3 className="font-bold text-slate-900 text-base">{t("social.infLeaderboardTitle")}</h3>
+                <p className="text-xs text-slate-500">{t("social.infLeaderboardSub")}</p>
               </div>
             </div>
 
             {topCreators.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-6">কোনো পার্টনার ডেটা পাওয়া যায়নি।</p>
+              <p className="text-xs text-slate-500 text-center py-6">{t("social.infNoPartnerData")}</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-700">
                   <thead className="bg-slate-50 text-[11px] uppercase text-slate-400 font-semibold">
                     <tr>
-                      <th className="p-3">র‍্যাংক</th>
-                      <th className="p-3">ইনফ্লুয়েন্সার</th>
-                      <th className="p-3">প্ল্যাটফর্ম</th>
-                      <th className="p-3 text-right">অর্ডার</th>
-                      <th className="p-3 text-right">মোট সেলস (GMV)</th>
-                      <th className="p-3 text-right">কমিশন</th>
+                      <th className="p-3">{t("social.infThRank")}</th>
+                      <th className="p-3">{t("social.infThInfluencer")}</th>
+                      <th className="p-3">{t("social.infThPlatform")}</th>
+                      <th className="p-3 text-right">{t("social.infThOrders")}</th>
+                      <th className="p-3 text-right">{t("social.infThGmv")}</th>
+                      <th className="p-3 text-right">{t("social.infThCommission")}</th>
                       <th className="p-3 text-right">ROI</th>
                     </tr>
                   </thead>
@@ -1017,10 +1020,10 @@ export default function InfluencerMarketingPage() {
                     {topCreators.map((c, idx) => {
                       const platform = extractPlatformFromNote(c.note);
                       const platformMeta = getPlatformMeta(platform);
-                      let rankBadge = `${idx + 1}`;
-                      if (idx === 0) rankBadge = "🥇 ১ম";
-                      else if (idx === 1) rankBadge = "🥈 ২য়";
-                      else if (idx === 2) rankBadge = "🥉 ৩য়";
+                      let rankBadge = fmtNumber(locale, idx + 1);
+                      if (idx === 0) rankBadge = t("social.infRank1");
+                      else if (idx === 1) rankBadge = t("social.infRank2");
+                      else if (idx === 2) rankBadge = t("social.infRank3");
 
                       return (
                         <tr key={c.id} className="hover:bg-slate-50/80 transition">
@@ -1031,15 +1034,15 @@ export default function InfluencerMarketingPage() {
                           </td>
                           <td className="p-3">
                             <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-[11px]">
-                              {platformMeta.icon} {platformMeta.label}
+                              {platformMeta.icon} {platformLabelFor(platform, locale)}
                             </span>
                           </td>
-                          <td className="p-3 text-right font-bold text-slate-800">{c.totalOrders} টি</td>
+                          <td className="p-3 text-right font-bold text-slate-800">{t("social.infOrdersValue", { count: fmtNumber(locale, c.totalOrders) })}</td>
                           <td className="p-3 text-right font-bold text-emerald-600">
-                            {formatMinorTaka(c.revMinor.toString())}
+                            {fmtMoneyMinor(locale, c.revMinor)}
                           </td>
                           <td className="p-3 text-right font-semibold text-indigo-600">
-                            {formatMinorTaka(c.commMinor.toString())}
+                            {fmtMoneyMinor(locale, c.commMinor)}
                           </td>
                           <td className="p-3 text-right font-bold text-amber-600">
                             {c.roiMultiplier ? `${c.roiMultiplier}x` : "—"}
@@ -1060,7 +1063,7 @@ export default function InfluencerMarketingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">নতুন ইনফ্লুয়েন্সার / পার্টনার যুক্ত করুন</h3>
+              <h3 className="font-bold text-slate-900 text-sm">{t("social.infCreateTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
@@ -1073,12 +1076,12 @@ export default function InfluencerMarketingPage() {
             <form onSubmit={handleCreateCreator} className="space-y-3.5 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  ইনফ্লুয়েন্সারের নাম:
+                  {t("social.infNameLabel")}
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="যেমন: তানিয়া ইসলাম (TikTok / Reels)"
+                  placeholder={t("social.infNamePlaceholder")}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
@@ -1088,7 +1091,7 @@ export default function InfluencerMarketingPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    মোবাইল নম্বর (WhatsApp):
+                    {t("social.infPhoneLabel")}
                   </label>
                   <input
                     type="text"
@@ -1101,7 +1104,7 @@ export default function InfluencerMarketingPage() {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    সোশ্যাল প্ল্যাটফর্ম:
+                    {t("social.infPlatformSelectLabel")}
                   </label>
                   <select
                     value={formData.platform}
@@ -1110,7 +1113,7 @@ export default function InfluencerMarketingPage() {
                   >
                     {SOCIAL_PLATFORMS.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.icon} {p.label}
+                        {p.icon} {locale === "en" ? p.labelEn : p.label}
                       </option>
                     ))}
                   </select>
@@ -1120,12 +1123,12 @@ export default function InfluencerMarketingPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    ইউনিক কুপন / রেফ কোড:
+                    {t("social.infCodeLabel")}
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="যেমন: TANIA10"
+                    placeholder={t("social.infCodePlaceholder")}
                     value={formData.code}
                     onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
                     className="w-full rounded-lg border border-slate-300 p-2 text-xs uppercase font-bold focus:border-amber-500 focus:outline-none"
@@ -1133,7 +1136,7 @@ export default function InfluencerMarketingPage() {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    কমিশন হার (%):
+                    {t("social.infCommRateLabel")}
                   </label>
                   <input
                     type="number"
@@ -1149,7 +1152,7 @@ export default function InfluencerMarketingPage() {
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  ইমেইল ঠিকানা (ঐচ্ছিক):
+                  {t("social.infEmailLabel")}
                 </label>
                 <input
                   type="email"
@@ -1162,11 +1165,11 @@ export default function InfluencerMarketingPage() {
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  নোট বা সোশ্যাল প্রোফাইল লিঙ্ক (ঐচ্ছিক):
+                  {t("social.infNoteLabel")}
                 </label>
                 <input
                   type="text"
-                  placeholder="যেমন: tiktok.com/@tania_lifestyle"
+                  placeholder={t("social.infNotePlaceholder")}
                   value={formData.note}
                   onChange={(e) => setFormData({ ...formData, note: e.target.value })}
                   className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
@@ -1179,14 +1182,14 @@ export default function InfluencerMarketingPage() {
                   onClick={() => setShowCreateModal(false)}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50"
                 >
-                  বাতিল
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={submittingCreate}
                   className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
                 >
-                  {submittingCreate ? "যুক্ত হচ্ছে..." : "ইনফ্লুয়েন্সার সেভ করুন"}
+                  {submittingCreate ? t("social.infSaving") : t("social.infSaveCreator")}
                 </button>
               </div>
             </form>
@@ -1202,7 +1205,7 @@ export default function InfluencerMarketingPage() {
               <div className="flex items-center gap-2">
                 <span className="text-xl">💬</span>
                 <h3 className="font-bold text-slate-900 text-sm">
-                  1-ক্লিকে হোয়াটসঅ্যাপ ব্রিফিং পাঠান ({briefingCreator.name})
+                  {t("social.infBriefingTitle", { name: briefingCreator.name })}
                 </h3>
               </div>
               <button
@@ -1230,7 +1233,7 @@ export default function InfluencerMarketingPage() {
                 trackingUrl,
                 commissionPercent: briefingCreator.commissionPercent,
                 paymentTerms: customBriefingNote || undefined,
-              });
+              }, locale);
 
               const waUrl = buildInfluencerWhatsAppUrl(briefingCreator.phone, briefingText);
 
@@ -1238,7 +1241,7 @@ export default function InfluencerMarketingPage() {
                 <div className="space-y-3 text-xs">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      হোয়াটসঅ্যাপ প্রিভিউ মেসেজ:
+                      {t("social.infBriefingPreviewLabel")}
                     </label>
                     <textarea
                       readOnly
@@ -1250,11 +1253,11 @@ export default function InfluencerMarketingPage() {
 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      কাস্টম পেমেন্ট শর্তাবলী বা বিশেষ নোট (ঐচ্ছিক):
+                      {t("social.infBriefingTermsLabel")}
                     </label>
                     <input
                       type="text"
-                      placeholder="যেমন: বিকাশ/নগদে প্রতি রবিবারে অথবা প্রতি ১০টি সেলসে"
+                      placeholder={t("social.infBriefingTermsPlaceholder")}
                       value={customBriefingNote}
                       onChange={(e) => setCustomBriefingNote(e.target.value)}
                       className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
@@ -1267,7 +1270,7 @@ export default function InfluencerMarketingPage() {
                       onClick={() => copyToClipboard(briefingText, `brief-${briefingCreator.id}`)}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                      {copiedCode === `brief-${briefingCreator.id}` ? "✓ টেক্সট কপি হয়েছে!" : "📋 টেক্সট কপি করুন"}
+                      {copiedCode === `brief-${briefingCreator.id}` ? t("social.infTextCopiedBang") : t("social.infCopyText")}
                     </button>
 
                     <a
@@ -1277,7 +1280,7 @@ export default function InfluencerMarketingPage() {
                       className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-700 transition flex items-center gap-1.5"
                     >
                       <span>🟢</span>
-                      <span>হোয়াটসঅ্যাপে পাঠান ({briefingCreator.phone})</span>
+                      <span>{t("social.infSendWa", { phone: briefingCreator.phone })}</span>
                     </a>
                   </div>
                 </div>
@@ -1295,7 +1298,7 @@ export default function InfluencerMarketingPage() {
               <div className="flex items-center gap-2">
                 <span className="text-xl">💳</span>
                 <h3 className="font-bold text-slate-900 text-sm">
-                  কমিশন পেআউট রেকর্ড করুন ({payoutCreator.name})
+                  {t("social.infPayoutTitle", { name: payoutCreator.name })}
                 </h3>
               </div>
               <button
@@ -1311,10 +1314,10 @@ export default function InfluencerMarketingPage() {
               <div className="space-y-4 text-xs">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
                   <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
-                    <span>✅ পেআউট সফলভাবে সংরক্ষিত হয়েছে!</span>
+                    <span>{t("social.infVoucherSavedTitle")}</span>
                   </div>
                   <p className="text-slate-600 text-xs">
-                    ক্রিয়েটরকে নিশ্চিতকরণ রসিদ বা ভাউচার মেসেজ কপি করে পাঠিয়ে দিন:
+                    {t("social.infVoucherSavedSub")}
                   </p>
                   <textarea
                     readOnly
@@ -1330,7 +1333,7 @@ export default function InfluencerMarketingPage() {
                     onClick={() => copyToClipboard(recordedVoucher.text, "voucher-copy")}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
-                    {copiedCode === "voucher-copy" ? "✓ রসিদ কপি হয়েছে!" : "📋 রসিদ কপি করুন"}
+                    {copiedCode === "voucher-copy" ? t("social.infReceiptCopiedBang") : t("social.infCopyReceipt")}
                   </button>
 
                   <a
@@ -1339,30 +1342,30 @@ export default function InfluencerMarketingPage() {
                     rel="noopener noreferrer"
                     className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-700 transition"
                   >
-                    🟢 WhatsApp-এ রসিদ পাঠান
+                    {t("social.infSendReceiptWa")}
                   </a>
                 </div>
               </div>
             ) : (
               <form onSubmit={handleRecordPayout} className="space-y-3.5 text-xs">
                 <div className="rounded-xl bg-slate-50 p-3 border border-slate-100 flex items-center justify-between">
-                  <span className="text-slate-500">অনুমোদিত প্রদেয় কমিশন:</span>
+                  <span className="text-slate-500">{t("social.infApprovedDue")}</span>
                   <span className="font-bold text-amber-700 text-sm">
-                    {formatMinorTaka(calculatePartnerOutstandingMinor(payoutCreator))}
+                    {fmtMoneyMinor(locale, BigInt(calculatePartnerOutstandingMinor(payoutCreator)))}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      পেআউট টাকা (৳ BDT):
+                      {t("social.infPayoutAmountLabel")}
                     </label>
                     <input
                       type="number"
                       required
                       min={1}
                       step="any"
-                      placeholder="যেমন: 1500"
+                      placeholder={t("social.infPayoutAmountPlaceholder")}
                       value={payoutAmountTaka}
                       onChange={(e) => setPayoutAmountTaka(e.target.value)}
                       className="w-full rounded-lg border border-slate-300 p-2 text-xs font-bold focus:border-amber-500 focus:outline-none"
@@ -1371,30 +1374,30 @@ export default function InfluencerMarketingPage() {
 
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">
-                      পেমেন্ট মেথড:
+                      {t("social.infMethodLabel")}
                     </label>
                     <select
                       value={payoutMethod}
                       onChange={(e) => setPayoutMethod(e.target.value)}
                       className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
                     >
-                      <option value="bkash">বিকাশ (bKash)</option>
-                      <option value="nagad">নগদ (Nagad)</option>
-                      <option value="rocket">রকেট (Rocket)</option>
-                      <option value="bank">ব্যাংক ট্রান্সফার (Bank)</option>
-                      <option value="cash">নগদ টাকা (Cash)</option>
-                      <option value="other">অন্যান্য</option>
+                      <option value="bkash">{t("social.infMethodBkash")}</option>
+                      <option value="nagad">{t("social.infMethodNagad")}</option>
+                      <option value="rocket">{t("social.infMethodRocket")}</option>
+                      <option value="bank">{t("social.infMethodBank")}</option>
+                      <option value="cash">{t("social.infMethodCash")}</option>
+                      <option value="other">{t("social.infMethodOther")}</option>
                     </select>
                   </div>
                 </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    ট্রানজেকশন আইডি / রেফারেন্স (TrxID):
+                    {t("social.infRefLabel")}
                   </label>
                   <input
                     type="text"
-                    placeholder="যেমন: 9J38A7BZ বা Cheque #1029"
+                    placeholder={t("social.infRefPlaceholder")}
                     value={payoutRef}
                     onChange={(e) => setPayoutRef(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
@@ -1403,11 +1406,11 @@ export default function InfluencerMarketingPage() {
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    নোট বা অতিরিক্ত বিবরণ (ঐচ্ছিক):
+                    {t("social.infPayoutNoteLabel")}
                   </label>
                   <input
                     type="text"
-                    placeholder="যেমন: মার্চ মাসের প্রথমার্ধের কমিশন"
+                    placeholder={t("social.infPayoutNotePlaceholder")}
                     value={payoutNote}
                     onChange={(e) => setPayoutNote(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-amber-500 focus:outline-none"
@@ -1420,14 +1423,14 @@ export default function InfluencerMarketingPage() {
                     onClick={() => setPayoutCreator(null)}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50"
                   >
-                    বাতিল
+                    {t("common.cancel")}
                   </button>
                   <button
                     type="submit"
                     disabled={submittingPayout}
                     className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {submittingPayout ? "সংরক্ষণ হচ্ছে..." : "পেআউট রেকর্ড সেভ করুন"}
+                    {submittingPayout ? t("social.infPayoutSaving") : t("social.infPayoutSave")}
                   </button>
                 </div>
               </form>

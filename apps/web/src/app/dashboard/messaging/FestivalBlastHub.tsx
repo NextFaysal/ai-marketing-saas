@@ -1,5 +1,7 @@
 "use client";
 import React, { useState, useMemo } from "react";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber, fmtMoney } from "@repo/contracts";
 import {
   BROADCAST_SEGMENTS,
   FESTIVAL_BROADCAST_TEMPLATES,
@@ -26,10 +28,11 @@ interface FestivalBlastHubProps {
 }
 
 export function FestivalBlastHub({
-  storeName = "আমাদের শপ",
+  storeName,
   storeUrl = "https://yourshop.com",
   onApplyTemplate,
 }: FestivalBlastHubProps) {
+  const { t: tr, locale } = useLocale();
   const [selectedFestival, setSelectedFestival] = useState<FestivalKey>("eid_ul_fitr");
   const [selectedSegment, setSelectedSegment] = useState<BroadcastSegmentKey>("vip_champions");
   const [selectedChannel, setSelectedChannel] = useState<"sms" | "whatsapp">("sms");
@@ -106,34 +109,27 @@ export function FestivalBlastHub({
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white font-bold text-lg shadow-sm">
               📢
             </span>
-            <h2 className="text-lg font-bold text-slate-900">
-              উৎসব ও মেগা সেল ক্যাম্পেইন ব্লাস্ট ইঞ্জিন (Festival Broadcast Engine)
-            </h2>
+            <h2 className="text-lg font-bold text-slate-900">{tr("messaging.festTitle")}</h2>
           </div>
           <p className="text-xs text-slate-600 max-w-2xl">
-            ঈদ, বৈশাখ, ১১.১১ ও শীতের মেগা সেলে টার্গেটেড গ্রাহকদের কাছে হাই-কনভার্সন WhatsApp ও SMS ক্যাম্পেইন ব্লাস্ট পাঠান।
-            BTRC রেগুলেশন মান্য করে তাৎক্ষণিক বাজেট, সম্ভাব্য সেলস ও ROAS সিমুলেট করুন।
+            {tr("messaging.festIntro")}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-amber-100 border border-amber-300 px-3 py-1 text-[11px] font-bold text-amber-900">
-            🇧🇩 BD স্পেশাল প্লেবুক
-          </span>
-          <span className="rounded-full bg-emerald-100 border border-emerald-300 px-3 py-1 text-[11px] font-bold text-emerald-900">
-            ⚡ 1-ক্লিক কম্পোজার
-          </span>
+          <span className="rounded-full bg-amber-100 border border-amber-300 px-3 py-1 text-[11px] font-bold text-amber-900">{tr("messaging.festBdPlaybook")}</span>
+          <span className="rounded-full bg-emerald-100 border border-emerald-300 px-3 py-1 text-[11px] font-bold text-emerald-900">{tr("messaging.festOneClick")}</span>
         </div>
       </div>
 
       {/* Festival Selector Tabs */}
       <div className="flex flex-wrap gap-2 text-xs font-semibold">
         {[
-          { key: "eid_ul_fitr", label: "🌙 ঈদ-উল-ফিতর", count: 4 },
-          { key: "eid_ul_adha", label: "🥩 কোরবানি ঈদ", count: 1 },
-          { key: "pohela_boishakh", label: "🪕 পহেলা বৈশাখ", count: 1 },
-          { key: "black_friday_11_11", label: "🔥 ১১.১১ ও ব্ল্যাক ফ্রাইডে", count: 1 },
-          { key: "winter_clearance", label: "❄️ উইন্টার ক্লিয়ারেন্স", count: 1 },
+          { key: "eid_ul_fitr", label: tr("messaging.festEidFitr"), count: 4 },
+          { key: "eid_ul_adha", label: tr("messaging.festEidAdha"), count: 1 },
+          { key: "pohela_boishakh", label: tr("messaging.festBoishakh"), count: 1 },
+          { key: "black_friday_11_11", label: tr("messaging.festBlackFriday"), count: 1 },
+          { key: "winter_clearance", label: tr("messaging.festWinter"), count: 1 },
         ].map((f) => (
           <button
             key={f.key}
@@ -164,8 +160,8 @@ export function FestivalBlastHub({
           {/* Target Customer Segments */}
           <div className="card p-4 space-y-2.5 border border-slate-200">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-900">🎯 টার্গেটেড কাস্টমার সেগমেন্ট বেছে নিন:</span>
-              <span className="text-[11px] text-slate-400">সর্বোচ্চ আরওআই পেতে অডিয়েন্স ভাগ করুন</span>
+              <span className="text-xs font-bold text-slate-900">{tr("messaging.festSegmentTitle")}</span>
+              <span className="text-[11px] text-slate-400">{tr("messaging.festSegmentSub")}</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               {BROADCAST_SEGMENTS.map((seg) => (
@@ -182,7 +178,7 @@ export function FestivalBlastHub({
                   <div className="font-bold text-slate-900">{seg.label}</div>
                   <div className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">{seg.description}</div>
                   <div className="text-[10px] text-indigo-600 font-semibold mt-1">
-                    পরামর্শ: {seg.suggestedDiscount}
+                    {tr("messaging.festSuggestedPrefix")} {seg.suggestedDiscount}
                   </div>
                 </button>
               ))}
@@ -192,7 +188,7 @@ export function FestivalBlastHub({
           {/* Template Cards */}
           <div className="space-y-3">
             <span className="text-xs font-bold text-slate-900">
-              📝 উৎসবের রেডিমেড কপি ও টেমপ্লেট ({festivalTemplates.length}টি উপলব্ধ):
+              {tr("messaging.festTemplatesTitle", { count: fmtNumber(locale, festivalTemplates.length) })}
             </span>
 
             <div className="space-y-2.5">
@@ -226,8 +222,8 @@ export function FestivalBlastHub({
                   </p>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
-                    <span>পর্যায়: <strong className="text-slate-600">{t.phaseLabel}</strong></span>
-                    <span>সুপারিশকৃত কুপন: <code className="font-bold text-amber-800">{t.suggestedCoupon}</code></span>
+                    <span>{tr("messaging.festPhaseLabel")} <strong className="text-slate-600">{t.phaseLabel}</strong></span>
+                    <span>{tr("messaging.festCouponLabel")}<code className="font-bold text-amber-800">{t.suggestedCoupon}</code></span>
                   </div>
                 </div>
               ))}
@@ -240,20 +236,18 @@ export function FestivalBlastHub({
           <div className="card p-5 border border-slate-200 bg-slate-900 text-white space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <span className="text-[10px] uppercase font-bold text-amber-400">ক্যাম্পেইন বাজেট ও আরওআই সিমুলেটর</span>
-                <h3 className="text-sm font-bold text-white">লাইভ ডেলিভারি প্রজেকশন</h3>
+                <span className="text-[10px] uppercase font-bold text-amber-400">{tr("messaging.festBudgetTitle")}</span>
+                <h3 className="text-sm font-bold text-white">{tr("messaging.festLiveProjection")}</h3>
               </div>
               <span className="rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 text-[11px] font-bold">
-                {simulation.projectedRoas}x প্রজেক্টেড ROAS
+                {tr("messaging.festProjectedRoas", { roas: fmtNumber(locale, simulation.projectedRoas) })}
               </span>
             </div>
 
             {/* Inputs */}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">
-                  চ্যানেল নির্বাচন:
-                </label>
+                <label className="block text-[11px] text-slate-400 mb-1">{tr("messaging.festChannelLabel")}</label>
                 <select
                   value={selectedChannel}
                   onChange={(e) => setSelectedChannel(e.target.value as "sms" | "whatsapp")}
@@ -265,9 +259,7 @@ export function FestivalBlastHub({
               </div>
 
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">
-                  গ্রাহক সংখ্যা (Audience):
-                </label>
+                <label className="block text-[11px] text-slate-400 mb-1">{tr("messaging.festAudienceLabel")}</label>
                 <input
                   type="number"
                   step={500}
@@ -280,7 +272,7 @@ export function FestivalBlastHub({
 
               <div>
                 <label className="block text-[11px] text-slate-400 mb-1">
-                  গড় অর্ডার মূল্য (AOV ৳):
+                  {tr("messaging.festAovLabel")}
                 </label>
                 <input
                   type="number"
@@ -293,9 +285,7 @@ export function FestivalBlastHub({
               </div>
 
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">
-                  কুপন কোড (ঐচ্ছিক):
-                </label>
+                <label className="block text-[11px] text-slate-400 mb-1">{tr("messaging.festCouponOptional")}</label>
                 <input
                   type="text"
                   placeholder={currentTemplate?.suggestedCoupon || "EIDSPECIAL"}
@@ -309,46 +299,46 @@ export function FestivalBlastHub({
             {/* Live Metrics Grid */}
             <div className="grid grid-cols-2 gap-2.5 text-xs pt-1">
               <div className="rounded-xl bg-slate-800/80 p-2.5 border border-slate-700/60">
-                <div className="text-[10px] text-slate-400">বার্তা পার্টস / খরচ</div>
+                <div className="text-[10px] text-slate-400">{tr("messaging.festPartsLabel")}</div>
                 <div className="text-sm font-bold text-amber-300">
-                  {selectedChannel === "sms" ? `${simulation.smsPartsPerMessage} পার্ট (৳${simulation.costPerRecipientBdt})` : `১ মেসেজ (৳০.৮৫)`}
+                  {selectedChannel === "sms" ? tr("messaging.festPartsLine", { parts: fmtNumber(locale, simulation.smsPartsPerMessage), cost: fmtNumber(locale, simulation.costPerRecipientBdt) }) : tr("messaging.festOneMessage")}
                 </div>
               </div>
 
               <div className="rounded-xl bg-slate-800/80 p-2.5 border border-slate-700/60">
-                <div className="text-[10px] text-slate-400">মোট ব্লাস্ট বাজেট</div>
-                <div className="text-sm font-bold text-white">৳{simulation.totalCampaignCostBdt.toLocaleString()}</div>
+                <div className="text-[10px] text-slate-400">{tr("messaging.festTotalBudget")}</div>
+                <div className="text-sm font-bold text-white">{fmtMoney(locale, simulation.totalCampaignCostBdt)}</div>
               </div>
 
               <div className="rounded-xl bg-slate-800/80 p-2.5 border border-slate-700/60">
-                <div className="text-[10px] text-slate-400">প্রত্যাশিত অর্ডার সংখ্যা</div>
-                <div className="text-sm font-bold text-indigo-400">{simulation.expectedConversions} টি অর্ডার</div>
+                <div className="text-[10px] text-slate-400">{tr("messaging.festExpectedOrders")}</div>
+                <div className="text-sm font-bold text-indigo-400">{tr("messaging.festOrdersSuffix", { count: fmtNumber(locale, simulation.expectedConversions) })}</div>
               </div>
 
               <div className="rounded-xl bg-slate-800/80 p-2.5 border border-slate-700/60">
-                <div className="text-[10px] text-slate-400">প্রত্যাশিত গ্রস রেভিনিউ</div>
-                <div className="text-sm font-bold text-emerald-400">৳{simulation.expectedRevenueBdt.toLocaleString()}</div>
+                <div className="text-[10px] text-slate-400">{tr("messaging.festGrossRevenue")}</div>
+                <div className="text-sm font-bold text-emerald-400">{fmtMoney(locale, simulation.expectedRevenueBdt)}</div>
               </div>
             </div>
 
             {/* BTRC Opt-out Badge */}
             <div className="flex items-center justify-between rounded-lg bg-slate-800/50 p-2 text-[11px] border border-slate-700/50">
-              <span className="text-slate-400">BTRC অপ্ট-আউট চেক:</span>
+              <span className="text-slate-400">{tr("messaging.festBtrcCheck")}</span>
               <span className={`font-semibold ${simulation.hasOptOutStopWord ? "text-emerald-400" : "text-amber-400"}`}>
-                {simulation.hasOptOutStopWord ? "✓ STOP শব্দ অন্তর্ভুক্ত (Compliant)" : "⚠️ STOP নির্দেশিকা নেই"}
+                {simulation.hasOptOutStopWord ? tr("messaging.festStopOk") : tr("messaging.festStopMissing")}
               </span>
             </div>
 
             {/* Message Preview */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>প্রিভিউ ({simulation.charCount} অক্ষর):</span>
+                <span>{tr("messaging.festPreviewLabel", { count: fmtNumber(locale, simulation.charCount) })}</span>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(messageBody, "preview-copy")}
                   className="text-amber-400 hover:underline font-semibold"
                 >
-                  {copiedId === "preview-copy" ? "✓ কপি হয়েছে!" : "📋 কপি করুন"}
+                  {copiedId === "preview-copy" ? tr("messaging.festCopied") : tr("messaging.festCopy")}
                 </button>
               </div>
               <textarea
@@ -366,7 +356,7 @@ export function FestivalBlastHub({
               className="w-full rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 py-3 text-xs font-bold text-white shadow-md hover:opacity-95 transition flex items-center justify-center gap-2"
             >
               <span>🚀</span>
-              <span>এই ক্যাম্পেইনটি ব্রডকাস্ট কম্পোজারে লোড করুন</span>
+              <span>{tr("messaging.festLoadComposer")}</span>
             </button>
           </div>
         </div>

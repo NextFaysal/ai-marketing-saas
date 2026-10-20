@@ -257,7 +257,7 @@ describe("CN11 saved views", () => {
     expect(view.filters).toEqual({ status: "draft", q: "eid" });
     expect(await svc.listSavedViews("org", "creator-1")).toHaveLength(1);
     expect(await svc.listSavedViews("org", "owner-1")).toHaveLength(0);
-    await expect(svc.deleteSavedView("org", "owner-1", view.id)).rejects.toThrow(/not found/i);
+    await expect(svc.deleteSavedView("org", "owner-1", view.id)).rejects.toMatchObject({ code: "campaigns.savedViewNotFound" });
     expect(await svc.listSavedViews("org", "creator-1")).toHaveLength(1); // still there
     expect(await svc.deleteSavedView("org", "creator-1", view.id)).toEqual({ deleted: true });
     expect(await svc.listSavedViews("org", "creator-1")).toHaveLength(0);

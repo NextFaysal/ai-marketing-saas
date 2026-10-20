@@ -467,8 +467,8 @@ describe("SA-B15 ads actions — the budget wall (L5) + autonomy in this context
   it("cross-org: org B cannot approve or execute org A's campaign proposal (404 by design)", async () => {
     const s = setup();
     const res: any = await s.engine.propose(ORG, "pause_campaign", { platform: "google", campaignExternalId: "gc-1" }, { proposedBy: "staff", actorUserId: OWNER });
-    await expect(s.engine.approve(ORG_B, "owner-b", res.proposal.id)).rejects.toThrow(/not found/i);
-    await expect(s.engine.execute(ORG_B, "owner-b", res.proposal.id)).rejects.toThrow(/not found/i);
+    await expect(s.engine.approve(ORG_B, "owner-b", res.proposal.id)).rejects.toMatchObject({ code: "ai.actionProposalNotFound" });
+    await expect(s.engine.execute(ORG_B, "owner-b", res.proposal.id)).rejects.toMatchObject({ code: "ai.actionProposalNotFound" });
     expect(await s.engine.listProposals(ORG_B)).toHaveLength(0);
     expect(s.proposals[0].status).toBe("proposed"); // untouched
   });

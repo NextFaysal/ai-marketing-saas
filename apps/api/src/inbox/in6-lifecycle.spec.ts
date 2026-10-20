@@ -379,7 +379,7 @@ describe("IN6 pin", () => {
     expect(auditCalls.some((a) => a.action === "inbox.message.pinned")).toBe(true);
     const unpinned = await svc.setMessagePinned("org-1", "user-1", "c-wa", "m-out", false);
     expect(unpinned.pinnedAt).toBeNull();
-    await expect(svc.setMessagePinned("org-1", "user-1", "c-other", "m-out", true)).rejects.toThrow("not found");
+    await expect(svc.setMessagePinned("org-1", "user-1", "c-other", "m-out", true)).rejects.toMatchObject({ code: "inbox.messageNotFoundInThisConversation" });
     await expect(svc.setMessagePinned("org-2", "user-1", "c-wa", "m-out", true)).rejects.toThrow();
   });
 });

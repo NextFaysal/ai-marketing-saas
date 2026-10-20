@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "<MASKED_SECRET_001>";
 
 import { createHash } from "node:crypto";
+import { ApiException } from "../i18n";
 import { BadRequestException, NotFoundException, ValidationPipe } from "@nestjs/common";
 import { TenantPaymentsService } from "./tenant-payments.service";
 import { WalletService } from "./wallet.service";
@@ -225,9 +226,9 @@ describe("GC12 putGateway fee key-presence", () => {
     const { svc, tables } = build();
     await svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL, feeBps: 150 });
     await expect(svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL, feeFixedMinor: "12.5" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL, feeFixedMinor: "-5" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     expect(tables.tenantPaymentGateway.rows[0].feeBps).toBe(150);
     expect(tables.tenantPaymentGateway.rows[0].feeFixedMinor ?? null).toBeNull();
   });
@@ -235,9 +236,9 @@ describe("GC12 putGateway fee key-presence", () => {
   it("invalid feeBps → 400", async () => {
     const { svc } = build();
     await expect(svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL, feeBps: 10001 }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL, feeBps: 2.5 }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("ValidationPipe (main.ts settings): absent fee keys arrive as undefined, explicit null stays null — and putGateway honours that on REAL DTO instances", async () => {
@@ -278,7 +279,7 @@ describe("GC12 failureReason bookkeeping", () => {
     const stub = gatewayStub({ sslInitSession: async () => ({ status: "FAILED", failed_reason: longReason }) });
     const { svc, tables } = build(stub);
     await svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL });
-    await expect(svc.initiateOrderPayment("org-1", "order-1", "sslcommerz")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.initiateOrderPayment("org-1", "order-1", "sslcommerz")).rejects.toBeInstanceOf(ApiException);
     const txn = tables.tenantPaymentTransaction.rows[0];
     expect(txn.status).toBe("failed");
     expect(typeof txn.failureReason).toBe("string");
@@ -379,8 +380,8 @@ describe("GC12 PaymentOpsService — attempts", () => {
     const detail: any = await ops.getAttempt("org-1", "t-1");
     expect(detail.valId).toBe("VAL9");
     expect(detail.ipnPayload).toEqual({ ipn: { status: "VALID" } });
-    await expect(ops.getAttempt("org-1", "t-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(ops.getAttempt("org-1", "missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(ops.getAttempt("org-1", "t-foreign")).rejects.toBeInstanceOf(ApiException);
+    await expect(ops.getAttempt("org-1", "missing")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -438,6 +439,6 @@ describe("GC12 PaymentOpsService — fee report + settlements", () => {
 
   it("fee report rejects an inverted range", async () => {
     const { ops } = build();
-    await expect(ops.feeReport("org-1", "2026-10-20", "2026-10-01")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(ops.feeReport("org-1", "2026-10-20", "2026-10-01")).rejects.toBeInstanceOf(ApiException);
   });
 });

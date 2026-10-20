@@ -345,8 +345,8 @@ describe("InventoryService.adjust", () => {
   it("404s for another organization's product (tenant isolation)", async () => {
     const { prisma, svc } = setup();
     const p = await seedProduct(prisma, { organizationId: "org-2" });
-    await expect(svc.adjust("org-1", "owner-1", p.id, { delta: 1 })).rejects.toThrow(/not found/i);
-    await expect(svc.listMovements("org-1", p.id)).rejects.toThrow(/not found/i);
+    await expect(svc.adjust("org-1", "owner-1", p.id, { delta: 1 })).rejects.toMatchObject({ code: "inventory.productNotFoundInThisOrganization" });
+    await expect(svc.listMovements("org-1", p.id)).rejects.toMatchObject({ code: "inventory.productNotFoundInThisOrganization" });
   });
 });
 

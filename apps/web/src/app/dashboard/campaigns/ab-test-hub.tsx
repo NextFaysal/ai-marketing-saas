@@ -3,8 +3,9 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtMoneyMinor, fmtNumber } from "@repo/contracts";
 import { getVerdictLabel } from "@/lib/ab-test-winner";
+import { useLocale } from "@/lib/i18n/provider";
 
 export interface AbVariant {
   planId: string;
@@ -33,6 +34,7 @@ interface AbTestHubProps {
 }
 
 export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
+  const { t, locale } = useLocale();
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<AbTestGroup[]>([]);
   const [error, setError] = useState("");
@@ -54,7 +56,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
       const data = await apiFetch<AbTestGroup[]>(`/organizations/${orgId}/campaigns/ab-tests/list`);
       setGroups(Array.isArray(data) ? data : []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "A/B টেস্ট তালিকা লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : t("ads.abLoadError"));
     } finally {
       setLoading(false);
     }
@@ -74,11 +76,11 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
       const res = await apiFetch<any>(`/organizations/${orgId}/campaigns/${planId}/promote-winner`, {
         method: "POST",
       });
-      setNotice(`✅ বিজয়ী সংস্করণ সফলভাবে প্রমোট করা হয়েছে! নতুন ড্রাফট: "${res?.name || planId}"`);
+      setNotice(t("ads.abPromoted", { name: res?.name || planId }));
       await loadAbTests();
       if (onRefreshPlans) onRefreshPlans();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "উইনার প্রমোট করা যায়নি");
+      setError(e instanceof Error ? e.message : t("ads.abPromoteError"));
     } finally {
       setBusy(null);
     }
@@ -100,21 +102,21 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
           metric: metricChoice,
         }),
       });
-      setNotice(`✅ সফলভাবে নতুন A/B ভ্যারিয়েন্ট (${variantLabel}) তৈরি করা হয়েছে!`);
+      setNotice(t("ads.abVariantCreated", { label: variantLabel }));
       setShowCreateModal(false);
       await loadAbTests();
       if (onRefreshPlans) onRefreshPlans();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ভ্যারিয়েন্ট তৈরি ব্যর্থ হয়েছে");
+      setError(e instanceof Error ? e.message : t("ads.abVariantError"));
     } finally {
       setBusy(null);
     }
   };
 
   const formatMoney = (minor: string | null | undefined) => {
-    if (!minor || minor === "0") return "৳০";
+    if (!minor || minor === "0") return fmtMoneyMinor(locale, 0n);
     try {
-      return formatMinor(BigInt(minor), "BDT");
+      return fmtMoneyMinor(locale, BigInt(minor));
     } catch {
       return `${minor} BDT`;
     }
@@ -131,11 +133,11 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                 ⚖️
               </span>
               <h2 className="text-lg font-bold text-slate-900">
-                অটো A/B টেস্টিং ও উইনার ডিটেক্টর (A/B Test Hub)
+                {t("ads.abTitle")}
               </h2>
             </div>
             <p className="text-xs text-slate-600">
-              ভিন্ন ভিন্ন ক্রিয়েটিভ বা অ্যাড সেটের মধ্যে তুলনামূলক পারফরম্যান্স পরীক্ষা করুন। সর্বনিম্ন খরচে সর্বোচ্চ সেলস আনা উইনার অ্যাডকে স্বয়ংক্রিয়ভাবে শনাক্ত ও স্কেল করুন।
+              {t("ads.abIntro")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -145,13 +147,13 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
               className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow hover:bg-indigo-700 transition"
             >
               <span>➕</span>
-              <span>নতুন A/B টেস্ট তৈরি করুন</span>
+              <span>{t("ads.abCreateNew")}</span>
             </button>
             <button
               type="button"
               onClick={loadAbTests}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
-              title="রিফ্রেশ করুন"
+              title={t("ads.abRefresh")}
             >
               🔄
             </button>
@@ -189,7 +191,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900">নতুন A/B টেস্ট ভ্যারিয়েন্ট তৈরি</h3>
+              <h3 className="font-bold text-slate-900">{t("ads.abModalTitle")}</h3>
               <button
                 type="button"
                 onClick={() => setShowCreateModal(false)}
@@ -202,7 +204,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
             <form onSubmit={handleCreateVariant} className="space-y-4 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  মূল ক্যাম্পেইন নির্বাচন করুন (Variant A):
+                  {t("ads.abSourceLabel")}
                 </label>
                 <select
                   value={sourcePlanId}
@@ -217,14 +219,14 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                   ))}
                 </select>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  নির্বাচিত ক্যাম্পেইনটি থেকে হুবহু আরেকটি সংস্করণ (ভ্যারিয়েন্ট B) তৈরি হবে।
+                  {t("ads.abSourceHint")}
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    ভ্যারিয়েন্ট লেবেল:
+                    {t("ads.abVariantLabel")}
                   </label>
                   <input
                     type="text"
@@ -238,21 +240,21 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
-                    উইনার নির্ধারণের মেট্রিক:
+                    {t("ads.abMetricLabel")}
                   </label>
                   <select
                     value={metricChoice}
                     onChange={(e) => setMetricChoice(e.target.value as any)}
                     className="w-full rounded-lg border border-slate-300 p-2 text-xs focus:border-indigo-500 focus:outline-none"
                   >
-                    <option value="first_party_cpa">আসল অর্ডার CPA (সেরা)</option>
-                    <option value="platform_cpa">মেটা প্ল্যাটফর্ম CPA</option>
+                    <option value="first_party_cpa">{t("ads.abMetricFirstParty")}</option>
+                    <option value="platform_cpa">{t("ads.abMetricPlatform")}</option>
                   </select>
                 </div>
               </div>
 
               <div className="rounded-lg bg-amber-50 p-3 text-[11px] text-amber-800">
-                💡 <strong>টিপস:</strong> ভ্যারিয়েন্ট B তৈরি হলে Campaign Builder-এ গিয়ে আপনি ভিন্ন কোনো ছবি বা অফার হেডলাইন দিয়ে টেস্ট করতে পারেন।
+                💡 <strong>{t("ads.abTipsLabel")}</strong> {t("ads.abTip")}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
@@ -261,14 +263,14 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                   onClick={() => setShowCreateModal(false)}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50"
                 >
-                  বাতিল
+                  {t("ads.abCancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={busy === "create-variant"}
                   className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                 >
-                  {busy === "create-variant" ? "তৈরি হচ্ছে..." : "ভ্যারিয়েন্ট তৈরি করুন"}
+                  {busy === "create-variant" ? t("ads.abCreating") : t("ads.abCreateVariant")}
                 </button>
               </div>
             </form>
@@ -280,21 +282,21 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
       {loading ? (
         <div className="card p-12 text-center text-sm text-slate-500">
           <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent mb-2" />
-          <p>A/B টেস্টের পারফরম্যান্স বিশ্লেষণ করা হচ্ছে...</p>
+          <p>{t("ads.abAnalyzing")}</p>
         </div>
       ) : groups.length === 0 ? (
         <div className="card p-10 text-center space-y-3">
           <div className="text-4xl">⚖️</div>
-          <h3 className="font-bold text-slate-800">কোনো সক্রিয় A/B টেস্ট নেই</h3>
+          <h3 className="font-bold text-slate-800">{t("ads.abEmptyTitle")}</h3>
           <p className="max-w-md mx-auto text-xs text-slate-500">
-            বিজ্ঞাপনের কার্যকারিতা যাচাই করতে আপনার যেকোনো ক্যাম্পেইনকে একটি A/B টেস্টে রূপান্তর করুন। দুটি ভিন্ন ব্যানার বা টেক্সটের পারফরম্যান্স অটোমেটিক ট্র্যাক হবে।
+            {t("ads.abEmptyDesc")}
           </p>
           <button
             type="button"
             onClick={() => setShowCreateModal(true)}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-indigo-700 transition"
           >
-            প্রথম A/B টেস্ট শুরু করুন
+            {t("ads.abStartFirst")}
           </button>
         </div>
       ) : (
@@ -314,14 +316,14 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                     </span>
                     <div>
                       <h4 className="text-sm font-bold text-slate-800">
-                        গ্রুপ: {grp.groupId.slice(0, 16)}...
+                        {t("ads.abGroup", { id: grp.groupId.slice(0, 16) })}
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        মূল্যায়ন মেট্রিক:{" "}
+                        {t("ads.abEvalMetric")}{" "}
                         <span className="font-semibold text-slate-700">
                           {grp.metric === "first_party_cpa"
-                            ? "ফার্স্ট-পার্টি অর্ডার CPA (আসল সেলস)"
-                            : "মেটা প্ল্যাটফর্ম CPA"}
+                            ? t("ads.abMetricFirstPartyLong")
+                            : t("ads.abMetricPlatformLong")}
                         </span>
                       </p>
                     </div>
@@ -329,7 +331,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
 
                   <div className="flex items-center gap-2">
                     {(() => {
-                      const vInfo = getVerdictLabel(grp.verdict);
+                      const vInfo = getVerdictLabel(grp.verdict, locale);
                       return (
                         <span className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${vInfo.badgeCls}`}>
                           {hasWinner ? "🏆 " : "⏳ "}
@@ -355,7 +357,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                         {isWinner && (
                           <div className="absolute top-3 right-3 flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm">
                             <span>🏆</span>
-                            <span>উইনার (বিজয়ী)</span>
+                            <span>{t("ads.abWinner")}</span>
                           </div>
                         )}
 
@@ -365,7 +367,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                               Variant {v.variant}
                             </span>
                             <span className="text-xs text-slate-400 capitalize">
-                              স্ট্যাটাস: {v.status}
+                              {t("ads.abStatus", { status: v.status })}
                             </span>
                           </div>
                           <h5 className="font-semibold text-slate-900 text-sm">
@@ -382,7 +384,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
                             <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                              মোট বিজ্ঞাপন খরচ
+                              {t("ads.abSpend")}
                             </div>
                             <div className="text-sm font-bold text-slate-800">
                               {formatMoney(v.spendMinor)}
@@ -391,19 +393,19 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
 
                           <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
                             <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                              আসল অর্ডার (First-party)
+                              {t("ads.abFirstPartyOrders")}
                             </div>
                             <div className="text-sm font-bold text-emerald-600">
-                              {v.firstPartyOrders} টি
+                              {t("ads.abCountSuffix", { count: fmtNumber(locale, v.firstPartyOrders) })}
                             </div>
                             <div className="text-[10px] text-slate-500">
-                              রেভিনিউ: {formatMoney(v.firstPartyRevenueMinor)}
+                              {t("ads.abRevenue", { amount: formatMoney(v.firstPartyRevenueMinor) })}
                             </div>
                           </div>
 
                           <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
                             <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                              ফার্স্ট-পার্টি CPA (প্রতি অর্ডারে খরচ)
+                              {t("ads.abFirstPartyCpa")}
                             </div>
                             <div className="text-sm font-bold text-indigo-600">
                               {formatMoney(v.firstPartyCpaMinor)}
@@ -412,13 +414,13 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
 
                           <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
                             <div className="text-[10px] text-slate-400 uppercase font-semibold">
-                              মেটা কনভার্সন
+                              {t("ads.abMetaConversions")}
                             </div>
                             <div className="text-sm font-bold text-slate-700">
-                              {v.platformConversions} টি
+                              {t("ads.abCountSuffix", { count: fmtNumber(locale, v.platformConversions) })}
                             </div>
                             <div className="text-[10px] text-slate-500">
-                              প্ল্যাটফর্ম CPA: {formatMoney(v.platformCpaMinor)}
+                              {t("ads.abPlatformCpa", { amount: formatMoney(v.platformCpaMinor) })}
                             </div>
                           </div>
                         </div>
@@ -429,7 +431,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                             href={`/dashboard/campaign-builder?id=${v.planId}`}
                             className="text-xs font-medium text-indigo-600 hover:underline"
                           >
-                            Campaign Builder-এ দেখুন →
+                            {t("ads.abViewInBuilder")}
                           </Link>
 
                           {isWinner && (
@@ -439,7 +441,7 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
                               disabled={busy === `promote-${v.planId}`}
                               className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
                             >
-                              {busy === `promote-${v.planId}` ? "প্রমোট হচ্ছে..." : "🚀 উইনার হিসেবে প্রমোট করুন"}
+                              {busy === `promote-${v.planId}` ? t("ads.abPromoting") : t("ads.abPromote")}
                             </button>
                           )}
                         </div>
@@ -457,19 +459,19 @@ export function AbTestHub({ plans, onRefreshPlans }: AbTestHubProps) {
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm text-xs text-slate-600 space-y-3">
         <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
           <span>🧠</span>
-          <span>মার্কেটারদের জন্য ক্রিয়েটিভ ফ্যাটিগ ও অপটিমাইজেশন নিয়মাবলী:</span>
+          <span>{t("ads.abGuideTitle")}</span>
         </h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-lg bg-slate-50 p-3 border border-slate-200/60 space-y-1">
-            <div className="font-semibold text-slate-800">১. ক্রিয়েটিভ ফ্যাটিগ (দর্শক ক্লান্তি) নিয়ম:</div>
+            <div className="font-semibold text-slate-800">{t("ads.abGuide1Title")}</div>
             <p>
-              যখন বিজ্ঞাপনের ফ্রিকোয়েন্সি (Frequency) ≥ ৩.৫ ছাড়িয়ে যায় এবং CTR পূর্বের তুলনায় ৩০%+ ড্রপ করে, তখন বুঝতে হবে একই দর্শক বিজ্ঞাপনটি বারবার দেখে ক্লান্ত।
+              {t("ads.abGuide1Body")}
             </p>
           </div>
           <div className="rounded-lg bg-slate-50 p-3 border border-slate-200/60 space-y-1">
-            <div className="font-semibold text-slate-800">২. উইনার প্রমোট করলে কী হয়?</div>
+            <div className="font-semibold text-slate-800">{t("ads.abGuide2Title")}</div>
             <p>
-              "উইনার প্রমোট" বাটনে ক্লিক করলে সিস্টেম স্বয়ংক্রিয়ভাবে বিজয়ী ভ্যারিয়েন্টটির একটি পরিচ্ছন্ন প্রোডাকশন ক্যাম্পেইন তৈরি করে, যা আপনি সহজেই স্কেল করতে পারেন।
+              {t("ads.abGuide2Body")}
             </p>
           </div>
         </div>

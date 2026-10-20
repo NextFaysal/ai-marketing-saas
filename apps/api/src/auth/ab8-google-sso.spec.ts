@@ -1,4 +1,5 @@
 import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { createHash } from "node:crypto";
 import { hashSync } from "bcryptjs";
 import { AuthService } from "./auth.service";
@@ -147,7 +148,7 @@ describe("AB8 config + start", () => {
     const h = makeHarness({ sso: "absent" });
     await expect(h.sso.config()).resolves.toEqual({ enabled: false });
     await expect(h.controller.googleConfig()).resolves.toEqual({ enabled: false });
-    await expect(h.sso.start()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(h.sso.start()).rejects.toMatchObject({ code: "auth.googleSsoNotEnabled", status: 503 });
     expect(effectiveGoogleOAuthConfig()).toBeNull();
     expect(h.ssoRows).toHaveLength(0);
     delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET;
@@ -156,7 +157,7 @@ describe("AB8 config + start", () => {
   it("config stored but enabled=false → still off (credentials alone never turn SSO on)", async () => {
     const h = makeHarness({ sso: "disabled-flag" });
     await expect(h.sso.config()).resolves.toEqual({ enabled: false });
-    await expect(h.sso.start()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(h.sso.start()).rejects.toMatchObject({ code: "auth.googleSsoNotEnabled", status: 503 });
     // The config itself DID load — only the switch is off.
     expect(effectiveGoogleOAuthConfig()).toMatchObject({ clientId: "sso-client-id", enabled: false, source: "admin" });
   });
@@ -275,14 +276,14 @@ describe("AB8 handoff + exchange", () => {
     expect(h.sessions[0]).toMatchObject({ userId: "u-1", ip: "1.2.3.4" });
     expect(h.events).toHaveLength(1);
     expect(h.events[0]).toMatchObject({ userId: "u-1", email: "tenant@x.com", success: true, method: "google" });
-    await expect(h.sso.exchange(raw, "1.2.3.4", "UA/1")).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(h.sso.exchange(raw, "1.2.3.4", "UA/1")).rejects.toBeInstanceOf(ApiException);
     await expect(h.sso.exchange(raw)).rejects.toThrow(/অবৈধ বা মেয়াদ শেষ/);
     expect(h.sessions).toHaveLength(1);
   });
 
   it("exchange of a bogus/empty token → 401 with the Bengali message", async () => {
     const h = makeHarness();
-    await expect(h.sso.exchange("bogus-token")).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(h.sso.exchange("bogus-token")).rejects.toBeInstanceOf(ApiException);
     await expect(h.sso.exchange("")).rejects.toThrow(/অবৈধ বা মেয়াদ শেষ/);
   });
 
@@ -291,7 +292,7 @@ describe("AB8 handoff + exchange", () => {
     const raw = await handoffFor(h);
     const row = h.ssoRows.find((r) => r.kind === "handoff");
     row.expiresAt = new Date(Date.now() - 1000);
-    await expect(h.sso.exchange(raw)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(h.sso.exchange(raw)).rejects.toBeInstanceOf(ApiException);
   });
 });
 

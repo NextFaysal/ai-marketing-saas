@@ -8,6 +8,7 @@ import { TRANSIT_STATUSES } from "./order-queues";
 import { computeSlaStage, SLA_DEFAULTS } from "../fulfillment/sla";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { isSoldOrder } from "../storefront/ec27-discovery";
+import { badRequest } from "../i18n";
 
 /**
  * ON9 — Orders Analytics v2 + Owner Digest.
@@ -143,7 +144,7 @@ export function parseRange(from?: string, to?: string, now: Date = new Date()) {
     fromDay = fmtDay(new Date(toStart.getTime() - 29 * DAY_MS));
   }
   if (fromDay > toDay) {
-    throw new BadRequestException("শুরুর তারিখ (from) শেষ তারিখের (to) পরে হতে পারবে না");
+    throw badRequest("connections.fromAfterToDates");
   }
   const { start } = dhakaDayBounds(fromDay);
   const { end } = dhakaDayBounds(toDay);

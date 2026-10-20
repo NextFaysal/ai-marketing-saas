@@ -14,6 +14,11 @@ import {
   Menu,
 } from "lucide-react";
 import { publicApiBase, API_URL } from "@/lib/api";
+import { fmtMoney, fmtNumber } from "@repo/contracts";
+import { pubT, pubLocaleOf } from "@/lib/i18n/public";
+
+const LOCALE = pubLocaleOf();
+const t = pubT(LOCALE);
 
 interface Plan {
   tier: string;
@@ -32,10 +37,10 @@ interface SysStatus {
 }
 
 const TIER_BN: Record<string, string> = {
-  FREE: "ফ্রি",
-  STARTER: "স্টার্টার",
-  GROWTH: "গ্রোথ",
-  AGENCY: "এজেন্সি",
+  FREE: t.pricing.tierFREE,
+  STARTER: t.pricing.tierSTARTER,
+  GROWTH: t.pricing.tierGROWTH,
+  AGENCY: t.pricing.tierAGENCY,
 };
 
 const FEATURE_MATRIX: { name: string; free: boolean | string; starter: boolean | string; growth: boolean | string; agency: boolean | string }[] = [
@@ -89,14 +94,14 @@ export default function PricingPage() {
   const signupClosed = status?.signupOpen === false;
   const RegisterCta = ({
     className,
-    label = "শুরু করুন",
+    label = t.pricing.startButton,
   }: {
     className: string;
     label?: string;
   }) =>
     signupClosed ? (
-      <span className={`${className} cursor-not-allowed opacity-60`} title="নতুন সাইনআপ সাময়িক বন্ধ আছে">
-        সাইনআপ সাময়িক বন্ধ
+      <span className={`${className} cursor-not-allowed opacity-60`} title={t.landing.signupClosedTitle}>
+        {t.landing.signupClosedCta}
       </span>
     ) : (
       <a href="/register" className={className}>
@@ -135,7 +140,7 @@ export default function PricingPage() {
             <Link href="/" className="transition hover:text-white">হোম</Link>
             <Link href="/features" className="transition hover:text-white">ফিচারসমূহ</Link>
             <Link href="/#calculator" className="transition hover:text-white">সাশ্রয় ক্যালকুলেটর</Link>
-            <Link href="/pricing" className="text-indigo-400 font-bold">মূল্য</Link>
+            <Link href="/pricing" className="text-indigo-400 font-bold">{t.landing.navPricing}</Link>
             <Link href="/#faq" className="transition hover:text-white">জিজ্ঞাসা</Link>
           </nav>
 
@@ -144,7 +149,7 @@ export default function PricingPage() {
               href="/login"
               className="rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
             >
-              লগইন
+              {t.landing.login}
             </Link>
             <RegisterCta className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition hover:brightness-110 active:scale-[0.98]" />
           </div>
@@ -164,10 +169,10 @@ export default function PricingPage() {
             <Link href="/" className="block py-1 text-slate-300 hover:text-white">হোম</Link>
             <Link href="/features" className="block py-1 text-slate-300 hover:text-white">ফিচারসমূহ</Link>
             <Link href="/#calculator" className="block py-1 text-slate-300 hover:text-white">সাশ্রয় ক্যালকুলেটর</Link>
-            <Link href="/pricing" className="block py-1 text-indigo-400 font-bold">মূল্য</Link>
+            <Link href="/pricing" className="block py-1 text-indigo-400 font-bold">{t.landing.navPricing}</Link>
             <Link href="/#faq" className="block py-1 text-slate-300 hover:text-white">জিজ্ঞাসা</Link>
             <div className="pt-2 flex gap-2">
-              <Link href="/login" className="flex-1 text-center py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold">লগইন</Link>
+              <Link href="/login" className="flex-1 text-center py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold">{t.landing.login}</Link>
               <RegisterCta className="flex-1 text-center py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold" />
             </div>
           </div>
@@ -189,7 +194,7 @@ export default function PricingPage() {
         </h1>
 
         <p className="mx-auto mt-4 max-w-2xl text-base text-slate-400">
-          সব পেইড প্ল্যানে {pricing?.trialDays ?? 14} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। কোনো ক্রেডিট কার্ডের তথ্য লাগবে না।
+          সব পেইড প্ল্যানে {fmtNumber(LOCALE, pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। কোনো ক্রেডিট কার্ডের তথ্য লাগবে না।
         </p>
 
         {/* Billing cycle toggle */}
@@ -255,13 +260,13 @@ export default function PricingPage() {
                     </div>
 
                     <div className="mt-3 text-3xl sm:text-4xl font-black text-white">
-                      {displayAmount === 0 ? "৳০" : `৳${displayAmount.toLocaleString("bn-BD")}`}
-                      <span className="text-xs font-normal text-slate-400"> /মাস</span>
+                      {fmtMoney(LOCALE, displayAmount)}
+                      <span className="text-xs font-normal text-slate-400">{t.pricing.perMonth}</span>
                     </div>
 
                     {billingCycle === "annual" && monthlyAmount > 0 ? (
                       <div className="text-[10px] text-emerald-400 font-semibold mt-1">
-                        বার্ষিক বিলে ৳{(monthlyAmount * 2).toLocaleString("bn-BD")} সরাসরি সেভ
+                        বার্ষিক বিলে {fmtMoney(LOCALE, monthlyAmount * 2)} সরাসরি সেভ
                       </div>
                     ) : null}
 
@@ -270,15 +275,15 @@ export default function PricingPage() {
                     <ul className="space-y-3 text-xs text-slate-300">
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>{p.limits.seats} জন টিম মেম্বার সিট</span>
+                        <span>{fmtNumber(LOCALE, p.limits.seats)} জন টিম মেম্বার সিট</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>প্রতিদিন {p.limits.aiDaily}টি AI ভেরিফাইড মেসেজ</span>
+                        <span>প্রতিদিন {fmtNumber(LOCALE, p.limits.aiDaily)}টি AI ভেরিফাইড মেসেজ</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>ব্রডকাস্ট ক্যাপাসিটি {p.limits.broadcastCap.toLocaleString()} জন</span>
+                        <span>ব্রডকাস্ট ক্যাপাসিটি {fmtNumber(LOCALE, p.limits.broadcastCap)} জন</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -304,7 +309,7 @@ export default function PricingPage() {
                   </div>
 
                   <RegisterCta
-                    label={isGrowth ? "গ্রোথ প্ল্যানে শুরু করুন" : "শুরু করুন"}
+                    label={isGrowth ? "গ্রোথ প্ল্যানে শুরু করুন" : t.pricing.startButton}
                     className={`mt-8 block rounded-xl py-3 text-center text-xs font-bold transition ${
                       isGrowth
                         ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-600/30 hover:brightness-110 active:scale-[0.98]"
@@ -375,6 +380,11 @@ export default function PricingPage() {
         </div>
       </section>
 
+            <p className="relative z-10 pb-10 text-center text-sm text-slate-400">
+        {t.pricing.haveAccount}
+        <a className="text-indigo-400 underline" href="/login">{t.pricing.loginLink}</a>
+      </p>
+
       {/* FOOTER */}
       <footer className="border-t border-slate-800 bg-slate-950 py-10">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 text-xs text-slate-500">
@@ -382,10 +392,10 @@ export default function PricingPage() {
           <div className="flex flex-wrap gap-5 sm:gap-6">
             <Link href="/" className="hover:text-slate-300">হোম</Link>
             <Link href="/features" className="hover:text-slate-300">ফিচারসমূহ</Link>
-            <Link href="/pricing" className="hover:text-slate-300">মূল্য</Link>
+            <Link href="/pricing" className="hover:text-slate-300">{t.landing.footerPricing}</Link>
             <Link href="/privacy" className="hover:text-slate-300">গোপনীয়তা নীতি</Link>
             <Link href="/terms" className="hover:text-slate-300">শর্তাবলি</Link>
-            <Link href="/login" className="hover:text-slate-300">লগইন</Link>
+            <Link href="/login" className="hover:text-slate-300">{t.landing.footerLogin}</Link>
           </div>
         </div>
       </footer>

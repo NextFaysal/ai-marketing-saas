@@ -111,6 +111,6 @@ describe("MessagingService broadcasts", () => {
     const { svc } = build(async () => ({ providerMessageId: "ok" }));
     const bc = await svc.createBroadcast("org-1", "owner", { name: "Once", channel: "email", subject: "s", body: "b", audienceType: "customers" });
     await svc.sendBroadcast("org-1", "owner", bc.id);
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow("already sent");
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
   });
 });

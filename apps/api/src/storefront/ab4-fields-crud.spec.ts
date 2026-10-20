@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { CheckoutFieldsService } from "./checkout-fields.service";
 import { CheckoutFieldsController } from "./checkout-fields.controller";
@@ -85,7 +86,7 @@ describe("AB4 CheckoutFieldsService.create", () => {
     async (key) => {
       const { svc, checkoutFieldDef } = setup();
       await expect(svc.create("org-1", "s", { key, label: "লেবেল", type: "text" }))
-        .rejects.toBeInstanceOf(BadRequestException);
+        .rejects.toBeInstanceOf(ApiException);
       expect(checkoutFieldDef.rows).toHaveLength(0);
     },
   );
@@ -102,23 +103,23 @@ describe("AB4 CheckoutFieldsService.create", () => {
   it("select without valid options → 400 (missing, empty, blank, duplicate, >30, >80 chars)", async () => {
     const { svc } = setup();
     const base = { key: "sel_field", label: "বেছে নিন", type: "select" };
-    await expect(svc.create("org-1", "s", { ...base })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, options: [] })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, options: ["  "] })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, options: ["এক", " এক "] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("org-1", "s", { ...base })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, options: [] })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, options: ["  "] })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, options: ["এক", " এক "] })).rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("org-1", "s", { ...base, options: Array.from({ length: 31 }, (_, i) => `opt-${i}`) }))
-      .rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, options: ["x".repeat(81)] })).rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, options: ["x".repeat(81)] })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects a short/long label, an unknown type, an unknown surface and a non-integer sortOrder", async () => {
     const { svc } = setup();
     const base = { key: "some_field", label: "লেবেল", type: "text" };
-    await expect(svc.create("org-1", "s", { ...base, label: " ক " })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, label: "x".repeat(81) })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, type: "radio" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, appliesTo: "everywhere" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.create("org-1", "s", { ...base, sortOrder: 1.5 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("org-1", "s", { ...base, label: " ক " })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, label: "x".repeat(81) })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, type: "radio" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, appliesTo: "everywhere" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { ...base, sortOrder: 1.5 })).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -159,7 +160,7 @@ describe("AB4 CheckoutFieldsService list / update / remove", () => {
     const { svc } = setup();
     const created: any = await svc.create("org-1", "s", { key: "note_field", label: "নোট", type: "text" });
     await expect(svc.update("org-1", "s", created.field.id, { key: "other_key" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     const ok: any = await svc.update("org-1", "s", created.field.id, { key: "note_field", label: "নতুন লেবেল" });
     expect(ok.field.label).toBe("নতুন লেবেল");
   });
@@ -168,7 +169,7 @@ describe("AB4 CheckoutFieldsService list / update / remove", () => {
     const { svc, checkoutFieldDef } = setup();
     const created: any = await svc.create("org-1", "s", { key: "note_field", label: "নোট", type: "text" });
     const id = created.field.id;
-    await expect(svc.update("org-1", "s", id, { type: "select" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.update("org-1", "s", id, { type: "select" })).rejects.toBeInstanceOf(ApiException);
     const asSelect: any = await svc.update("org-1", "s", id, { type: "select", options: ["এক"] });
     expect(asSelect.field.options).toEqual(["এক"]);
     const back: any = await svc.update("org-1", "s", id, { type: "textarea" });
@@ -180,10 +181,10 @@ describe("AB4 CheckoutFieldsService list / update / remove", () => {
     const { svc } = setup();
     const created: any = await svc.create("org-1", "s", { key: "note_field", label: "নোট", type: "text" });
     const id = created.field.id;
-    await expect(svc.update("org-2", "s", id, { label: "হ্যাক" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.remove("org-2", "s", id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.update("org-1", "s", "missing", { label: "হ্যাক" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.remove("org-1", "s", "missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.update("org-2", "s", id, { label: "হ্যাক" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.remove("org-2", "s", id)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.update("org-1", "s", "missing", { label: "হ্যাক" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.remove("org-1", "s", "missing")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("remove hard-deletes the def and audits; the org list is then empty", async () => {

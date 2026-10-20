@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { badRequest } from "../i18n";
 
 /**
  * EC24 — Product Model Expansion shared helpers.
@@ -96,7 +97,7 @@ export interface WholesaleTier {
 export function validateWholesaleTiers(v: unknown): WholesaleTier[] | null {
   if (v === undefined || v === null) return null;
   const fail = (why: string): never => {
-    throw new BadRequestException(`পাইকারি মূল্যের স্তর সঠিক নয় — ${why}`);
+    throw badRequest("commerce.wholesaleTierInvalid", { reason: why });
   };
   if (!Array.isArray(v)) return fail("তালিকা (array) হতে হবে");
   if (v.length > 10) return fail("সর্বোচ্চ ১০টি স্তর দেওয়া যাবে");
@@ -149,10 +150,10 @@ export function assertEc24Conditionals(effective: {
   // "file"/"both" still require one — satisfied by EITHER the
   // merchant-hosted URL or an R2-hosted file (digitalStorageKey).
   if (effective.digital && effective.digitalDeliveryType !== "license" && !String(effective.digitalFileUrl ?? "").trim() && !String(effective.digitalStorageKey ?? "").trim()) {
-    throw new BadRequestException("ডিজিটাল পণ্য চালু করতে ফাইল URL আবশ্যক");
+    throw badRequest("commerce.digitalFileUrlRequired");
   }
   if (effective.subscriptionEnabled && !(Number(effective.subscriptionIntervalDays) >= 1)) {
-    throw new BadRequestException("সাবস্ক্রিপশন চালু করতে ইন্টারভাল (দিন) কমপক্ষে ১ হতে হবে");
+    throw badRequest("commerce.subscriptionIntervalDayMin");
   }
 }
 
@@ -168,8 +169,6 @@ export async function assertPreorderLimit(
   if (!Number.isFinite(limit)) return;
   const open = await openPreorderQty(prisma, organizationId, product.id);
   if (open + requestedQty > limit) {
-    throw new BadRequestException(
-      `প্রি-অর্ডারের সীমা শেষ — এই পণ্যের প্রি-অর্ডার সীমা ${limit}টি, ইতিমধ্যে ${open}টি খোলা প্রি-অর্ডার আছে`,
-    );
+    throw badRequest("commerce.preorderLimitExhausted", { limit: limit, open: open });
   }
 }

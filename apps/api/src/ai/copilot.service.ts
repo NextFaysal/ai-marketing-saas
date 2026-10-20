@@ -19,6 +19,8 @@ import { catalogAction } from "./actions/action-catalog";
 import { extractGuardNumbers } from "../inbox/business-brain";
 import { formatMinor } from "@repo/contracts";
 import { CopilotAskDto } from "./copilot.dto";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
+import { ApiException, badRequest, forbidden } from "../i18n/api-exception";
 
 /** The AIUsageRecord feature bucket for the copilot's LLM calls. */
 export const COPILOT_FEATURE = "copilot";
@@ -229,7 +231,7 @@ export class CopilotService {
     const { killSwitches, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "ai.aiFeaturesTemporarilyPausedPlatformWide" : "ai.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
   }
 
@@ -243,19 +245,23 @@ export class CopilotService {
       where: { organizationId, feature: COPILOT_FEATURE, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("ai.dailyAiLimitReachedForThis", { limit: limit }, 429);
     }
   }
 
-  private async resolveLanguage(organizationId: string, dtoLanguage?: string): Promise<"bn" | "en"> {
-    if (dtoLanguage === "en" || dtoLanguage === "bn") return dtoLanguage;
-    const profile = await this.p().businessProfile
-      ?.findUnique({ where: { organizationId }, select: { aiReplyLanguage: true } })
-      .catch(() => null);
-    return String(profile?.aiReplyLanguage ?? "").toLowerCase() === "en" ? "en" : "bn";
+  /** MB5 (ML13, CD-1/CD-8 #5): the copilot's language is the
+   *  shared OWNER chain — dto → BusinessProfile.aiReplyLanguage
+   *  → Organization.dashboardLocale → acting User.preferredLocale
+   *  → bn — via the frozen resolver in owner-language.ts. This
+   *  method stays as the call seam; it no longer carries its own
+   *  divergent dto→aiReplyLanguage→bn logic. */
+  private async resolveLanguage(organizationId: string, dtoLanguage?: string, userId?: string): Promise<"bn" | "en"> {
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: userId ?? null,
+      dtoLanguage: dtoLanguage ?? null,
+    });
+    return language;
   }
 
   // ---------------- campaign target resolution ----------------
@@ -332,9 +338,9 @@ export class CopilotService {
 
   async ask(organizationId: string, userId: string, dto: CopilotAskDto): Promise<CopilotAskResult> {
     const question = typeof dto?.question === "string" ? dto.question.trim() : "";
-    if (!question) throw new BadRequestException("একটি প্রশ্ন বা নির্দেশ লিখুন।");
+    if (!question) throw badRequest("ai.writeAQuestionOrAnInstruction");
     await this.checkKillSwitch(organizationId);
-    const language = await this.resolveLanguage(organizationId, dto?.language);
+    const language = await this.resolveLanguage(organizationId, dto?.language, userId);
     const bn = language === "bn";
     const askNorm = normText(question);
 

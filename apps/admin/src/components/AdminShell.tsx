@@ -3,13 +3,15 @@ import React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { apiFetch, getAdminToken, setAdminToken } from "@/lib/api";
 import {
-  ALL_NAV_ITEMS, LS_KEYS, NAV_GROUPS, NavIcon, groupTitleForPath, isActivePath,
+  ALL_NAV_ITEMS, LS_KEYS, NAV_GROUPS, NavIcon, groupForPath, isActivePath,
   lsGetArray, lsSet, navItemForPath,
   type NavCounts, type NavItemDef,
 } from "./nav";
 import { useNavCounts } from "./useNavCounts";
 import { DialogHost, ToastHost, askReason } from "./ui";
 import AttentionBell from "./AttentionBell";
+import { AdminLocaleSwitcher, useAdminLocale } from "./AdminLocale";
+import { fmtNumber } from "@repo/contracts";
 import CommandPalette from "./CommandPalette";
 
 // ADX2 (Admin UX DB1): Navigation v2 — 7 collapsible task groups
@@ -36,6 +38,8 @@ function NavRow({
   pinned: boolean; onTogglePin: (href: string) => void; onNavigate?: () => void;
 }) {
   const pathname = usePathname() ?? "/";
+  const { locale, t } = useAdminLocale();
+  const label = t(item.labelKey);
   const active = isActivePath(pathname, item.href);
   const count = countOf(item, counts);
   const showBadge = count !== undefined && count > 0;
@@ -44,25 +48,25 @@ function NavRow({
       <a
         href={item.href}
         onClick={onNavigate}
-        title={collapsed ? (showBadge ? `${item.label} (${count})` : item.label) : undefined}
+        title={collapsed ? (showBadge ? `${label} (${fmtNumber(locale, count)})` : label) : undefined}
         className={`anav relative flex-1 ${active ? "anav-active" : ""} ${collapsed ? "justify-center px-2" : ""}`}
       >
         <span className="relative">
           <NavIcon name={item.icon} />
           {collapsed && showBadge ? (
-            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{count}</span>
+            <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{fmtNumber(locale, count)}</span>
           ) : null}
         </span>
-        {!collapsed ? <span className="truncate">{item.label}</span> : null}
+        {!collapsed ? <span className="truncate">{label}</span> : null}
         {!collapsed && showBadge ? (
-          <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500/90 px-1.5 text-[11px] font-bold text-white">{count}</span>
+          <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500/90 px-1.5 text-[11px] font-bold text-white">{fmtNumber(locale, count)}</span>
         ) : null}
       </a>
       {!collapsed ? (
         <button
           type="button"
-          aria-label={pinned ? `${item.label} প্রিয় থেকে সরান` : `${item.label} প্রিয়তে রাখুন`}
-          title={pinned ? "প্রিয় থেকে সরান" : "⭐ প্রিয়তে রাখুন"}
+          aria-label={pinned ? t("shell.pinRemove", { label }) : t("shell.pinAdd", { label })}
+          title={pinned ? t("shell.pinRemoveTitle") : t("shell.pinAddTitle")}
           onClick={() => onTogglePin(item.href)}
           className={`mr-1 shrink-0 rounded-md p-1 transition ${pinned ? "text-amber-300" : "text-slate-600 opacity-0 hover:text-slate-300 focus:opacity-100 group-hover/row:opacity-100"}`}
         >
@@ -79,22 +83,23 @@ interface NavContentProps {
   favorites: string[];
   recents: string[];
   openGroups: Record<string, boolean>;
-  onToggleGroup: (title: string) => void;
+  onToggleGroup: (groupId: string) => void;
   onTogglePin: (href: string) => void;
   onNavigate?: () => void;
 }
 
 function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggleGroup, onTogglePin, onNavigate }: NavContentProps) {
+  const { dict, locale, t } = useAdminLocale();
   const favItems = favorites.map((h) => ALL_NAV_ITEMS.find((i) => i.href === h)).filter((x): x is NavItemDef => !!x);
   const recentItems = recents.map((h) => ALL_NAV_ITEMS.find((i) => i.href === h)).filter((x): x is NavItemDef => !!x);
   return (
-    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label="Admin navigation">
+    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label={dict.shell.navLabel}>
       {!collapsed && favItems.length === 0 ? (
-        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-400">⭐ কোনো প্রিয় পেজ নেই — যেকোনো মেনু আইটেমের পাশের ☆ চেপে এখানে রাখুন।</div>
+        <div className="px-3 pb-1 pt-3 text-[11px] leading-relaxed text-slate-400">{dict.shell.noFavorites}</div>
       ) : null}
       {!collapsed && favItems.length > 0 ? (
         <div>
-          <div className="anav-group flex items-center gap-1.5"><NavIcon name="star" size={12} /> প্রিয়</div>
+          <div className="anav-group flex items-center gap-1.5"><NavIcon name="star" size={12} /> {dict.shell.favorites}</div>
           {favItems.map((item) => (
             <NavRow key={`fav-${item.href}`} item={item} counts={counts} collapsed={false} pinned onTogglePin={onTogglePin} onNavigate={onNavigate} />
           ))}
@@ -102,7 +107,7 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
       ) : null}
       {!collapsed && recentItems.length > 0 ? (
         <div>
-          <div className="anav-group flex items-center gap-1.5"><NavIcon name="clock" size={12} /> সাম্প্রতিক</div>
+          <div className="anav-group flex items-center gap-1.5"><NavIcon name="clock" size={12} /> {dict.shell.recents}</div>
           {recentItems.map((item) => (
             <NavRow key={`recent-${item.href}`} item={item} counts={counts} collapsed={false} pinned={favorites.includes(item.href)} onTogglePin={onTogglePin} onNavigate={onNavigate} />
           ))}
@@ -110,10 +115,10 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
       ) : null}
       {NAV_GROUPS.map((group) => {
         const groupTotal = group.items.reduce((sum, i) => sum + (countOf(i, counts) ?? 0), 0);
-        const open = !!openGroups[group.title];
+        const open = !!openGroups[group.id];
         if (collapsed) {
           return (
-            <div key={group.title}>
+            <div key={group.id}>
               <div className="mx-2 border-t border-slate-800 pb-1 pt-4 first:border-0" />
               {group.items.map((item) => (
                 <NavRow key={item.href} item={item} counts={counts} collapsed pinned={false} onTogglePin={onTogglePin} onNavigate={onNavigate} />
@@ -122,16 +127,16 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
           );
         }
         return (
-          <div key={group.title}>
+          <div key={group.id}>
             <button
               type="button"
-              onClick={() => onToggleGroup(group.title)}
+              onClick={() => onToggleGroup(group.id)}
               aria-expanded={open}
               className="anav-group flex w-full items-center gap-1.5 rounded-md text-left transition hover:text-slate-300"
             >
-              <span className="truncate">{group.title}</span>
+              <span className="truncate">{t(group.titleKey)}</span>
               {groupTotal > 0 ? (
-                <span className="inline-flex items-center justify-center rounded-full bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-white">{groupTotal}</span>
+                <span className="inline-flex items-center justify-center rounded-full bg-red-500/90 px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-white">{fmtNumber(locale, groupTotal)}</span>
               ) : null}
               <span className={`ml-auto inline-block transition-transform ${open ? "rotate-90" : ""}`}><NavIcon name="chevron" size={13} /></span>
             </button>
@@ -152,13 +157,15 @@ function NavContent({ collapsed, counts, favorites, recents, openGroups, onToggl
 // Purely presentational: fresh/blocked storage = comfortable.
 type Density = "comfortable" | "compact";
 function DensityToggle({ density, onChange, collapsed }: { density: Density; onChange: (d: Density) => void; collapsed: boolean }) {
+  const { dict, t } = useAdminLocale();
+  const densityName = density === "compact" ? dict.shell.densityCompact : dict.shell.densityComfortable;
   if (collapsed) {
     return (
       <button
         type="button"
         className="anav mb-1 w-full justify-center"
-        title={`ঘনত্ব: ${density === "compact" ? "Compact" : "স্বাভাবিক"} — বদলাতে চাপুন`}
-        aria-label="ঘনত্ব বদলান"
+        title={t("shell.densityTitle", { density: densityName })}
+        aria-label={dict.shell.densityChange}
         onClick={() => onChange(density === "compact" ? "comfortable" : "compact")}
       >
         <NavIcon name="list" size={16} />
@@ -166,8 +173,8 @@ function DensityToggle({ density, onChange, collapsed }: { density: Density; onC
     );
   }
   return (
-    <div className="flex items-center gap-1 px-2 pb-1.5" role="group" aria-label="ঘনত্ব বাছাই">
-      <span className="text-[11px] text-slate-400">ঘনত্ব:</span>
+    <div className="flex items-center gap-1 px-2 pb-1.5" role="group" aria-label={dict.shell.densityPick}>
+      <span className="text-[11px] text-slate-400">{dict.shell.densityLabel}:</span>
       {(["comfortable", "compact"] as const).map((d) => (
         <button
           key={d}
@@ -176,7 +183,7 @@ function DensityToggle({ density, onChange, collapsed }: { density: Density; onC
           className={density === d ? "abtn !px-2 !py-0.5 text-[11px]" : "abtn-secondary !px-2 !py-0.5 text-[11px]"}
           onClick={() => onChange(d)}
         >
-          {d === "comfortable" ? "স্বাভাবিক" : "Compact"}
+          {d === "comfortable" ? dict.shell.densityComfortable : dict.shell.densityCompact}
         </button>
       ))}
     </div>
@@ -184,13 +191,14 @@ function DensityToggle({ density, onChange, collapsed }: { density: Density; onC
 }
 
 function Brand({ collapsed }: { collapsed: boolean }) {
+  const { dict } = useAdminLocale();
   return (
     <div className={`flex items-center gap-3 px-5 pb-2 pt-5 ${collapsed ? "justify-center px-2" : ""}`}>
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-[0_10px_24px_-8px_rgb(99_102_241/0.9)]"><NavIcon name="shield" size={20} /></span>
       {!collapsed ? (
         <div className="min-w-0">
-          <div className="truncate text-[15px] font-bold tracking-tight">Qosprey Admin</div>
-          <div className="text-[11px] text-slate-400">SaaS Operator Console</div>
+          <div className="truncate text-[15px] font-bold tracking-tight">{dict.shell.brandName}</div>
+          <div className="text-[11px] text-slate-400">{dict.shell.brandSub}</div>
         </div>
       ) : null}
     </div>
@@ -198,6 +206,7 @@ function Brand({ collapsed }: { collapsed: boolean }) {
 }
 
 export default function AdminShell({ children, title }: { children: React.ReactNode; title: string }) {
+  const { dict, locale, t } = useAdminLocale();
   const router = useRouter();
   const pathname = usePathname() ?? "/";
   const [ready, setReady] = React.useState(false);
@@ -240,7 +249,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
         setRecents(lsGetArray(LS_KEYS.recent).filter((h) => ALL_NAV_ITEMS.some((i) => i.href === h)).slice(0, 5));
         let storedGroups: Record<string, boolean> = {};
         try { const v = JSON.parse(localStorage.getItem(LS_KEYS.groups) ?? "{}"); if (v && typeof v === "object") storedGroups = v; } catch { /* ignore */ }
-        const activeGroup = groupTitleForPath(window.location.pathname);
+        const activeGroup = groupForPath(window.location.pathname)?.id;
         setOpenGroups({ ...storedGroups, ...(activeGroup ? { [activeGroup]: true } : {}) });
         setReady(true);
       } catch {
@@ -255,7 +264,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   // record the visit in সাম্প্রতিক (max 5, most-recent first).
   React.useEffect(() => {
     if (!ready) return;
-    const activeGroup = groupTitleForPath(pathname);
+    const activeGroup = groupForPath(pathname)?.id;
     if (activeGroup) {
       setOpenGroups((prev) => {
         if (prev[activeGroup]) return prev;
@@ -293,9 +302,9 @@ export default function AdminShell({ children, title }: { children: React.ReactN
     });
   }
 
-  function toggleGroup(title: string) {
+  function toggleGroup(groupId: string) {
     setOpenGroups((prev) => {
-      const next = { ...prev, [title]: !prev[title] };
+      const next = { ...prev, [groupId]: !prev[groupId] };
       lsSet(LS_KEYS.groups, next);
       return next;
     });
@@ -320,7 +329,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
       <div className="flex min-h-screen items-center justify-center">
         <div className="flex items-center gap-3 text-slate-400">
           <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-lg">🛡</span>
-          যাচাই হচ্ছে…
+          {dict.shell.verifying}
         </div>
       </div>
     );
@@ -333,26 +342,26 @@ export default function AdminShell({ children, title }: { children: React.ReactN
   // all come from the single nav source (./nav.tsx); the pending
   // badge reuses the shell's existing nav-counts (absent = none).
   const quickItems: { href: string; label: string; icon: NavItemDef["icon"]; countKey?: NavItemDef["countKey"] }[] = [
-    { href: "/", label: "হোম", icon: "home" },
-    { href: "/payouts", label: "Payouts", icon: "wallet", countKey: "pendingPayouts" },
-    { href: "/tickets", label: "Tickets", icon: "ticket", countKey: "openTickets" },
-    { href: "/health", label: "Health", icon: "activity", countKey: "failedJobs24h" },
+    { href: "/", label: dict.shell.quickHome, icon: "home" },
+    { href: "/payouts", label: dict.shell.quickPayouts, icon: "wallet", countKey: "pendingPayouts" },
+    { href: "/tickets", label: dict.shell.quickTickets, icon: "ticket", countKey: "openTickets" },
+    { href: "/health", label: dict.shell.quickHealth, icon: "activity", countKey: "failedJobs24h" },
   ];
 
   return (
     <div className="min-h-screen">
       {/* ADNX6: skip link — first focusable element, jumps past
           the nav to the main landmark. */}
-      <a href="#admin-main" className="askip-link">মূল Content-এ যান</a>
+      <a href="#admin-main" className="askip-link">{dict.shell.skipToContent}</a>
       {/* Mobile top bar */}
       <div className="aglass fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-slate-800 px-4 py-3 lg:hidden">
-        <button aria-label="মেনু খুলুন" className="abtn-secondary !px-2.5" onClick={() => setDrawer(true)}>☰</button>
+        <button aria-label={dict.shell.openMenu} className="abtn-secondary !px-2.5" onClick={() => setDrawer(true)}>☰</button>
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white"><NavIcon name="shield" size={16} /></span>
         <div className="min-w-0">
-          <div className="truncate text-sm font-bold">Qosprey Admin</div>
+          <div className="truncate text-sm font-bold">{dict.shell.brandName}</div>
           <div className="truncate text-[11px] text-slate-400">{adminEmail}</div>
         </div>
-        <button className="abtn-secondary ml-auto !px-2.5" aria-label="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /></button>
+        <button className="abtn-secondary ml-auto !px-2.5" aria-label={dict.shell.logout} onClick={logout}><NavIcon name="logout" size={16} /></button>
       </div>
 
       {/* Mobile drawer — the exact same NavContent as the desktop sidebar */}
@@ -362,13 +371,13 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           <aside className="adrawer absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-slate-800 bg-slate-950 shadow-2xl">
             <div className="flex items-start justify-between pr-3">
               <Brand collapsed={false} />
-              <button aria-label="মেনু বন্ধ করুন" className="abtn-secondary mt-4 !px-2.5" onClick={() => setDrawer(false)}>✕</button>
+              <button aria-label={dict.shell.closeMenu} className="abtn-secondary mt-4 !px-2.5" onClick={() => setDrawer(false)}>✕</button>
             </div>
             <NavContent collapsed={false} {...navProps} onNavigate={() => setDrawer(false)} />
             <div className="border-t border-slate-800 p-3 text-xs text-slate-400">
               <div className="truncate px-2 pb-1">{adminEmail}</div>
               <DensityToggle density={density} onChange={changeDensity} collapsed={false} />
-              <button className="anav w-full" onClick={logout}><NavIcon name="logout" size={16} /> লগ আউট</button>
+              <button className="anav w-full" onClick={logout}><NavIcon name="logout" size={16} /> {dict.shell.logout}</button>
             </div>
           </aside>
         </div>
@@ -383,11 +392,11 @@ export default function AdminShell({ children, title }: { children: React.ReactN
             {!collapsed ? <div className="truncate px-2 pb-1.5 text-xs text-slate-400">{adminEmail}</div> : null}
             <DensityToggle density={density} onChange={changeDensity} collapsed={collapsed} />
             <div className={`flex ${collapsed ? "flex-col gap-1" : "items-center gap-1"}`}>
-              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="Sidebar ছোট/বড় করুন" onClick={toggleCollapsed}>
+              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title={dict.shell.collapseSidebar} onClick={toggleCollapsed}>
                 <span className={`inline-block ${collapsed ? "" : "rotate-180"}`}><NavIcon name="chevron" size={15} /></span>
-                {!collapsed ? <span>ছোট করুন</span> : null}
+                {!collapsed ? <span>{dict.shell.collapse}</span> : null}
               </button>
-              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title="লগ আউট" onClick={logout}><NavIcon name="logout" size={16} /> {!collapsed ? <span>লগ আউট</span> : null}</button>
+              <button className={`anav flex-1 ${collapsed ? "justify-center" : ""}`} title={dict.shell.logout} onClick={logout}><NavIcon name="logout" size={16} /> {!collapsed ? <span>{dict.shell.logout}</span> : null}</button>
             </div>
           </div>
         </aside>
@@ -401,14 +410,16 @@ export default function AdminShell({ children, title }: { children: React.ReactN
                   onSubmit={(e) => { e.preventDefault(); if (q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`); }}
                   className="flex gap-2"
                 >
-                  <input className="ainput w-44 sm:w-64" placeholder="🔍 User, Org, Order খুঁজুন…" value={q} onChange={(e) => setQ(e.target.value)} />
-                  <button className="abtn-secondary">খুঁজুন</button>
+                  <input className="ainput w-44 sm:w-64" placeholder={dict.shell.searchPlaceholder} value={q} onChange={(e) => setQ(e.target.value)} />
+                  <button className="abtn-secondary">{dict.shell.searchButton}</button>
                 </form>
-                <button type="button" onClick={() => setPaletteOpen(true)} className="abtn-secondary hidden items-center gap-2 md:inline-flex" aria-label="Command palette খুলুন (Ctrl+K)">
+                <button type="button" onClick={() => setPaletteOpen(true)} className="abtn-secondary hidden items-center gap-2 md:inline-flex" aria-label={dict.shell.paletteOpen}>
                   <NavIcon name="command" size={15} />
                   <span className="text-xs text-slate-400">Ctrl K</span>
                 </button>
                 <AttentionBell counts={counts} />
+                {/* ML3 (MB1): admin language switcher (bn/en). */}
+                <AdminLocaleSwitcher />
                 <div className="hidden items-center gap-2.5 rounded-full border border-slate-800 bg-slate-900/70 py-1 pl-1 pr-3 md:flex" title={adminEmail}>
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[11px] font-bold">{initials}</span>
                   <span className="max-w-[180px] truncate text-xs text-slate-300">{adminEmail}</span>
@@ -423,7 +434,7 @@ export default function AdminShell({ children, title }: { children: React.ReactN
           .aquickbar class hides it at lg+), safe-area aware, and
           never on /login because login pages do not render this
           shell at all. "আরও" opens the existing mobile drawer. */}
-      <nav className="aquickbar" aria-label="দ্রুত কাজ">
+      <nav className="aquickbar" aria-label={dict.shell.quickNavLabel}>
         {quickItems.map((item) => {
           const count = item.countKey && counts ? counts[item.countKey] : undefined;
           const active = isActivePath(pathname, item.href);
@@ -431,15 +442,15 @@ export default function AdminShell({ children, title }: { children: React.ReactN
             <a key={item.href} href={item.href} className={`aquickbar-item ${active ? "aquickbar-active" : ""}`} aria-current={active ? "page" : undefined}>
               <span className="relative">
                 <NavIcon name={item.icon} size={20} />
-                {typeof count === "number" && count > 0 ? <span className="aquickbar-badge">{count}</span> : null}
+                {typeof count === "number" && count > 0 ? <span className="aquickbar-badge">{fmtNumber(locale, count)}</span> : null}
               </span>
               <span>{item.label}</span>
             </a>
           );
         })}
-        <button type="button" className="aquickbar-item" onClick={() => setDrawer(true)} aria-label="আরও — পুরো মেনু খুলুন">
+        <button type="button" className="aquickbar-item" onClick={() => setDrawer(true)} aria-label={dict.shell.quickMoreLabel}>
           <NavIcon name="list" size={20} />
-          <span>আরও</span>
+          <span>{dict.shell.quickMore}</span>
         </button>
       </nav>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

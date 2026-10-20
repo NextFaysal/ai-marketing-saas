@@ -124,7 +124,7 @@ describe("U4 Email lane", () => {
     const svc = new EmailChannelService(prisma as any, auditStub() as any, {} as any);
     (svc as any).buildImapClient = () => ({ connect: jest.fn(async () => undefined), logout: jest.fn(async () => undefined) });
     (svc as any).buildTransport = () => ({ verify: jest.fn(async () => { throw new Error("Invalid login"); }) });
-    await expect(svc.connect(ORG, "owner", creds)).rejects.toThrow(/SMTP verification failed/);
+    await expect(svc.connect(ORG, "owner", creds)).rejects.toMatchObject({ code: "inbox.smtpVerificationFailed" });
     expect(prisma.integrations).toHaveLength(0);
   });
 

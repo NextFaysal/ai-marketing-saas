@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtDateTime, fmtMoney, fmtNumber, formatMinor } from "@repo/contracts";
 import { EmptyState, ResponsiveTable } from "@repo/ui";
 import { useToast } from "@repo/ui/client";
 
@@ -60,6 +61,7 @@ interface MissingDisbursementsData {
 }
 
 export default function CourierReconciliationPage() {
+  const { dict, t, locale } = useLocale();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"batches" | "missing" | "upload">("batches");
   const [batches, setBatches] = useState<DisbursementBatch[]>([]);
@@ -98,7 +100,7 @@ export default function CourierReconciliationPage() {
       setBatches(batchesRes || []);
       setMissingData(missingRes || null);
     } catch (err: any) {
-      setError(err?.message || "রিকনসিলিয়েশন তথ্য লোড করতে সমস্যা হয়েছে।");
+      setError(err?.message || dict.orders.thereWasAProblemLoading);
     } finally {
       setLoading(false);
     }
@@ -116,7 +118,7 @@ export default function CourierReconciliationPage() {
       setSelectedBatch(res);
       setClaimSheet(null);
     } catch (err: any) {
-      toast({ title: err?.message || "ব্যাচ বিস্তারিত লোড করতে ব্যর্থ।", tone: "error" });
+      toast({ title: err?.message || dict.orders.failedToLoadBatchDetails, tone: "error" });
     } finally {
       setDetailLoading(false);
     }
@@ -128,7 +130,7 @@ export default function CourierReconciliationPage() {
       const sheet = await apiFetch<any>(`/organizations/${orgId}/courier/reconciliation/batches/${batchId}/claim-sheet`);
       setClaimSheet(sheet);
     } catch (err: any) {
-      toast({ title: err?.message || "ক্লেইম শিট লোড করতে ব্যর্থ।", tone: "error" });
+      toast({ title: err?.message || dict.orders.failedToLoadClaimSheet, tone: "error" });
     }
   }
 
@@ -143,13 +145,13 @@ export default function CourierReconciliationPage() {
           notes: disputeNotes,
         }),
       });
-      toast({ title: `ট্র্যাকিং ${disputeItem.trackingCode}-এর ডিসপিউট স্ট্যাটাস আপডেট হয়েছে।`, tone: "success" });
+      toast({ title: t("orders.disputeStatusUpdatedForTracking", { trackingCode: disputeItem.trackingCode }), tone: "success" });
       setDisputeItem(null);
       if (selectedBatch) {
         await openBatchDetail(selectedBatch.id);
       }
     } catch (err: any) {
-      toast({ title: err?.message || "ডিসপিউট আপডেট ব্যর্থ।", tone: "error" });
+      toast({ title: err?.message || dict.orders.disputeUpdateFailed, tone: "error" });
     } finally {
       setDisputeBusy(false);
     }
@@ -159,11 +161,11 @@ export default function CourierReconciliationPage() {
     e.preventDefault();
     if (!orgId) return;
     if (!referenceNo.trim()) {
-      toast({ title: "অনুগ্রহ করে স্টেটমেন্ট রেফারেন্স বা ইনভয়েস নম্বর দিন।", tone: "error" });
+      toast({ title: dict.orders.pleaseGiveAStatementReference, tone: "error" });
       return;
     }
     if (!rawCsvText.trim()) {
-      toast({ title: "অনুগ্রহ করে CSV ডাটা পেস্ট করুন।", tone: "error" });
+      toast({ title: dict.orders.pleasePasteTheCSVData, tone: "error" });
       return;
     }
 
@@ -196,7 +198,7 @@ export default function CourierReconciliationPage() {
       }
 
       if (items.length === 0) {
-        toast({ title: "কোনো সঠিক ট্র্যাকিং ও অ্যামাউন্ট রেকর্ড পাওয়া যায়নি। ফরম্যাট পরীক্ষা করুন।", tone: "error" });
+        toast({ title: dict.orders.noValidTrackingAmountRecords, tone: "error" });
         setUploadBusy(false);
         return;
       }
@@ -210,7 +212,7 @@ export default function CourierReconciliationPage() {
         }),
       });
 
-      toast({ title: `স্টেটমেন্ট সফলভাবে রিকনসিল করা হয়েছে! মোট ${res.totalOrders}টি অর্ডার অডিট সম্পন্ন।`, tone: "success" });
+      toast({ title: t("orders.statementReconciledSuccessfullyAuditComplete", { totalOrders: res.totalOrders }), tone: "success" });
       setReferenceNo("");
       setRawCsvText("");
       setActiveTab("batches");
@@ -219,7 +221,7 @@ export default function CourierReconciliationPage() {
         await openBatchDetail(res.id);
       }
     } catch (err: any) {
-      setError(err?.message || "স্টেটমেন্ট প্রসেস করতে ব্যর্থ।");
+      setError(err?.message || dict.orders.failedToProcessTheStatement);
     } finally {
       setUploadBusy(false);
     }
@@ -254,22 +256,20 @@ export default function CourierReconciliationPage() {
       onClick={() => void openBatchDetail(b.id)}
       className="inline-flex min-h-[44px] items-center rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
     >
-      বিস্তারিত অডিট →
-    </button>
+      {dict.orders.detailedAudit}</button>
   );
   const renderMissingActions = (p: MissingParcel) => (
     <button
       type="button"
       onClick={() => {
         navigator.clipboard.writeText(
-          `Courier: ${p.provider}\nTracking: ${p.trackingCode}\nCOD Amount: ৳${p.codAmountMinor / 100}\nDelivered: ${new Date(p.deliveredAt).toLocaleDateString()}`
+          t("orders.courierTrackingCODAmountDelivered", { provider: p.provider, trackingCode: p.trackingCode, p: p.codAmountMinor / 100, p3: fmtDate(locale, new Date(p.deliveredAt)) })
         );
-        toast({ title: `ট্র্যাকিং ${p.trackingCode}-এর ক্লেইম টেক্সট ক্লিপবোর্ডে কপি হয়েছে।`, tone: "success" });
+        toast({ title: t("orders.claimTextForTrackingCopied", { trackingCode: p.trackingCode }), tone: "success" });
       }}
       className="inline-flex min-h-[44px] items-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-rose-100 active:scale-95"
     >
-      📋 ক্লেইম কপি
-    </button>
+      {dict.orders.copyClaim}</button>
   );
 
   return (
@@ -279,19 +279,16 @@ export default function CourierReconciliationPage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
             <Link href="/dashboard/orders" className="text-indigo-600 hover:underline">
-              ← অর্ডার তালিকা
-            </Link>
+              {dict.orders.orderList}</Link>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-700">কুরিয়ার ক্যাশ রিকনসিলিয়েশন</span>
+            <span className="text-slate-700">{dict.orders.courierCashReconciliation}</span>
           </div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              💰 কুরিয়ার ক্যাশ রিকনসিলিয়েশন ও মিসিং পেমেন্ট
-            </h1>
+              {dict.orders.courierCashReconciliationMissingPayments}</h1>
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Steadfast, Pathao ও RedX-এর পে-আউট স্টেটমেন্ট অডিট করুন। কম টাকা দেওয়া বা হারিয়ে যাওয়া পার্সেলের টাকা ক্লেইম করুন।
-          </p>
+            {dict.orders.auditSteadfastPathaoRedXPayout}</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -300,15 +297,13 @@ export default function CourierReconciliationPage() {
             onClick={() => void loadData()}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95"
           >
-            <span>🔄</span> রিফ্রেশ
-          </button>
+            <span>🔄</span> {dict.orders.refresh}</button>
           <button
             type="button"
             onClick={() => setActiveTab("upload")}
             className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-95"
           >
-            <span>+</span> স্টেটমেন্ট আপলোড
-          </button>
+            <span>+</span> {dict.orders.statementUpload}</button>
         </div>
       </div>
 
@@ -316,7 +311,7 @@ export default function CourierReconciliationPage() {
       {error && (
         <div className="flex items-center justify-between rounded-2xl bg-rose-50 border border-rose-200 p-4 text-xs font-semibold text-rose-800">
           <span>{error}</span>
-          <button type="button" aria-label="বন্ধ করুন" onClick={() => setError(null)} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-rose-600 hover:text-rose-900 font-bold">
+          <button type="button" aria-label={dict.orders.close} onClick={() => setError(null)} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-rose-600 hover:text-rose-900 font-bold">
             ✕
           </button>
         </div>
@@ -326,7 +321,7 @@ export default function CourierReconciliationPage() {
       <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">মোট সংগৃহীত COD</span>
+            <span className="text-xs font-semibold text-slate-500">{dict.orders.totalCODCollected}</span>
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 text-sm">
               💵
             </span>
@@ -334,12 +329,12 @@ export default function CourierReconciliationPage() {
           <div className="mt-2 text-2xl font-bold text-slate-900">
             {formatMinor(totalCollectedAll)}
           </div>
-          <p className="mt-0.5 text-[11px] text-slate-500">আপলোডকৃত স্টেটমেন্ট থেকে</p>
+          <p className="mt-0.5 text-[11px] text-slate-500">{dict.orders.fromTheUploadedStatement}</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">কুরিয়ার ফি কর্তন</span>
+            <span className="text-xs font-semibold text-slate-500">{dict.orders.courierFeeDeduction}</span>
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600 text-sm">
               🏷️
             </span>
@@ -347,35 +342,33 @@ export default function CourierReconciliationPage() {
           <div className="mt-2 text-2xl font-bold text-slate-600">
             {formatMinor(totalFeesAll)}
           </div>
-          <p className="mt-0.5 text-[11px] text-emerald-700 font-medium">নেট ডিপোজিট: {formatMinor(totalNetAll)}</p>
+          <p className="mt-0.5 text-[11px] text-emerald-700 font-medium">{dict.orders.netDeposit2}{formatMinor(totalNetAll)}</p>
         </div>
 
         <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-amber-800">অডিটকৃত অমিল পার্সেল</span>
+            <span className="text-xs font-semibold text-amber-800">{dict.orders.auditedMismatchedParcels}</span>
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-800 text-sm">
               ⚠️
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-amber-900">
-            {totalDiscrepanciesCount} টি
-          </div>
-          <p className="mt-0.5 text-[11px] text-amber-700 font-medium">কম টাকা বা ভুল ফি আপত্তি</p>
+            {totalDiscrepanciesCount} {dict.orders.items}</div>
+          <p className="mt-0.5 text-[11px] text-amber-700 font-medium">{dict.orders.shortPaymentOrWrongFee}</p>
         </div>
 
         <div className="rounded-2xl border border-rose-200/80 bg-rose-50/60 p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-rose-800">🚨 ডেলিভার্ড কিন্তু অদত্ত টাকা</span>
+            <span className="text-xs font-semibold text-rose-800">{dict.orders.deliveredButUnpaidMoney}</span>
             <span className="animate-pulse rounded-full bg-rose-500 px-1.5 py-0.2 text-[9px] font-black text-white">
               ALERT
             </span>
           </div>
           <div className="mt-2 text-2xl font-bold text-rose-900">
-            {missingData ? formatMinor(missingData.totalMissingAmountMinor) : "৳০.০০"}
+            {missingData ? formatMinor(missingData.totalMissingAmountMinor) : dict.orders.text145goqj}
           </div>
           <p className="mt-0.5 text-[11px] text-rose-700 font-semibold">
-            {missingData ? missingData.totalMissingParcels : 0}টি পার্সেল ৭+ দিন পার হলেও টাকা আসেনি!
-          </p>
+            {missingData ? missingData.totalMissingParcels : 0}{dict.orders.parcelsPassed7DaysBut}</p>
         </div>
       </div>
 
@@ -390,7 +383,7 @@ export default function CourierReconciliationPage() {
               : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           }`}
         >
-          <span>📄 পে-আউট ব্যাচ অডিট ইতিহাস ({batches.length})</span>
+          <span>{dict.orders.payoutBatchAuditHistory}{batches.length})</span>
         </button>
 
         <button
@@ -402,7 +395,7 @@ export default function CourierReconciliationPage() {
               : "text-rose-700 hover:bg-rose-50"
           }`}
         >
-          <span>🚨 মিসিং ক্যাশ ফাইন্ডার</span>
+          <span>{dict.orders.missingCashFinder}</span>
           {missingData && missingData.totalMissingParcels > 0 && (
             <span className="rounded-full bg-rose-900 px-2 py-0.2 text-[10px] font-bold text-white">
               {missingData.totalMissingParcels}
@@ -419,7 +412,7 @@ export default function CourierReconciliationPage() {
               : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           }`}
         >
-          <span>⬆️ নতুন স্টেটমেন্ট আপলোড</span>
+          <span>{dict.orders.uploadNewStatement}</span>
         </button>
       </div>
 
@@ -428,16 +421,15 @@ export default function CourierReconciliationPage() {
         <div className="space-y-4">
           {batches.length === 0 ? (
             <EmptyState
-              title="কোনো রিকনসিলিয়েশন স্টেটমেন্ট নেই"
-              description="Steadfast বা Pathao থেকে পাওয়া সাপ্তাহিক পেমেন্ট এক্সেল বা CSV আপলোড করে স্বয়ংক্রিয়ভাবে টাকা মিলিয়ে নিন।"
+              title={dict.orders.noReconciliationStatements}
+              description={dict.orders.uploadTheWeeklyPaymentExcel}
               action={(
                 <button
                   type="button"
                   onClick={() => setActiveTab("upload")}
                   className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
                 >
-                  + প্রথম স্টেটমেন্ট আপলোড করুন
-                </button>
+                  {dict.orders.uploadFirstStatement}</button>
               )}
             />
           ) : (
@@ -446,14 +438,14 @@ export default function CourierReconciliationPage() {
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                     <tr>
-                      <th className="py-3 px-4">রেফারেন্স / ইনভয়েস</th>
-                      <th className="py-3 px-4">কুরিয়ার</th>
-                      <th className="py-3 px-4">মোট অর্ডার</th>
-                      <th className="py-3 px-4">সংগৃহীত COD</th>
-                      <th className="py-3 px-4">কর্তন ফি</th>
-                      <th className="py-3 px-4">নেট ডিপোজিট</th>
-                      <th className="py-3 px-4">স্ট্যাটাস</th>
-                      <th className="py-3 px-4 text-right">অ্যাকশন</th>
+                      <th className="py-3 px-4">{dict.orders.referenceInvoice}</th>
+                      <th className="py-3 px-4">{dict.orders.courier2}</th>
+                      <th className="py-3 px-4">{dict.orders.totalOrders}</th>
+                      <th className="py-3 px-4">{dict.orders.collectedCOD}</th>
+                      <th className="py-3 px-4">{dict.orders.deductionFee}</th>
+                      <th className="py-3 px-4">{dict.orders.netDeposit}</th>
+                      <th className="py-3 px-4">{dict.orders.status}</th>
+                      <th className="py-3 px-4 text-right">{dict.orders.action}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -462,13 +454,13 @@ export default function CourierReconciliationPage() {
                         <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
                           {b.referenceNo}
                           <p className="text-[10px] text-slate-500 font-sans font-normal">
-                            {new Date(b.createdAt).toLocaleString("bn-BD")}
+                            {fmtDateTime(locale, new Date(b.createdAt))}
                           </p>
                         </td>
                         <td className="py-3.5 px-4 uppercase font-bold text-slate-700 text-[11px]">
                           {b.provider}
                         </td>
-                        <td className="py-3.5 px-4 font-semibold text-slate-800">{b.totalOrders}টি</td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-800">{b.totalOrders}{dict.orders.items}</td>
                         <td className="py-3.5 px-4 font-semibold text-slate-900">
                           {formatMinor(b.totalCollectedMinor)}
                         </td>
@@ -481,12 +473,10 @@ export default function CourierReconciliationPage() {
                         <td className="py-3.5 px-4">
                           {b.discrepancyCount > 0 ? (
                             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
-                              ⚠️ {b.discrepancyCount} অমিল
-                            </span>
+                              ⚠️ {b.discrepancyCount} {dict.orders.mismatch}</span>
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                              ✓ শতভাগ মিলেছে
-                            </span>
+                              {dict.orders.fullyMatched}</span>
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-right">{renderBatchActions(b)}</td>
@@ -495,7 +485,7 @@ export default function CourierReconciliationPage() {
                   </tbody>
                 </table>
               </div>
-            </div>} cards={batches.map((b) => (<div key={b.id} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">রেফারেন্স / ইনভয়েস</dt><dd className="text-right"><><span className="font-mono font-bold text-slate-900">{b.referenceNo}</span><span className="block text-[10px] font-normal text-slate-500">{new Date(b.createdAt).toLocaleString("bn-BD")}</span></></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কুরিয়ার</dt><dd className="text-right"><span className="text-[11px] font-bold uppercase text-slate-700">{b.provider}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">মোট অর্ডার</dt><dd className="text-right">{b.totalOrders}টি</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">সংগৃহীত COD</dt><dd className="text-right">{formatMinor(b.totalCollectedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কর্তন ফি</dt><dd className="text-right">{formatMinor(b.totalFeeMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">নেট ডিপোজিট</dt><dd className="text-right">{formatMinor(b.netDisbursedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">স্ট্যাটাস</dt><dd className="text-right">{b.discrepancyCount > 0 ? (<span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">⚠️ {b.discrepancyCount} অমিল</span>) : (<span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">✓ শতভাগ মিলেছে</span>)}</dd></div></dl><div className="mt-2 text-right">{renderBatchActions(b)}</div></div>))} />
+            </div>} cards={batches.map((b) => (<div key={b.id} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.referenceInvoice}</dt><dd className="text-right"><><span className="font-mono font-bold text-slate-900">{b.referenceNo}</span><span className="block text-[10px] font-normal text-slate-500">{fmtDateTime(locale, new Date(b.createdAt))}</span></></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.courier2}</dt><dd className="text-right"><span className="text-[11px] font-bold uppercase text-slate-700">{b.provider}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.totalOrders}</dt><dd className="text-right">{b.totalOrders}{dict.orders.items}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.collectedCOD}</dt><dd className="text-right">{formatMinor(b.totalCollectedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.deductionFee}</dt><dd className="text-right">{formatMinor(b.totalFeeMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.netDeposit}</dt><dd className="text-right">{formatMinor(b.netDisbursedMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.status}</dt><dd className="text-right">{b.discrepancyCount > 0 ? (<span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">⚠️ {b.discrepancyCount} {dict.orders.mismatch}</span>) : (<span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">{dict.orders.fullyMatched}</span>)}</dd></div></dl><div className="mt-2 text-right">{renderBatchActions(b)}</div></div>))} />
           )}
         </div>
       )}
@@ -507,35 +497,33 @@ export default function CourierReconciliationPage() {
             <div className="flex items-center gap-2">
               <span className="text-xl">🚨</span>
               <h3 className="text-sm font-bold text-rose-900">
-                ডেলিভারি হওয়া কিন্তু অদত্ত টাকা সতর্কতা (Missing Money Finder)
-              </h3>
+                {dict.orders.deliveredButUnpaidMoneyAlert}</h3>
             </div>
             <p className="text-xs text-rose-800 leading-relaxed">
-              এই পার্সেলগুলো কুরিয়ার দ্বারা সফলভাবে ডেলিভার্ড হয়েছে ৭ দিনেরও বেশি সময় আগে, কিন্তু কুরিয়ারের কোনো পে-আউট স্টেটমেন্টেই এই টাকা জমা দেওয়া হয়নি। কুরিয়ার ম্যানেজারকে অবিলম্বে ট্র্যাকিং কোডগুলো পাঠিয়ে ক্লেইম করুন।
-            </p>
+              {dict.orders.theseParcelsWereSuccessfullyDelivered}</p>
           </div>
 
           {!missingData || missingData.parcels.length === 0 ? (
-            <EmptyState title="কোনো মিসিং পেমেন্ট নেই!" description="ডেলিভারি হওয়া সকল পার্সেলের টাকা সময়মতো কুরিয়ার স্টেটমেন্টে ক্রেডিট হয়েছে।" />
+            <EmptyState title={dict.orders.noMissingPayments} description={dict.orders.allDeliveredParcelsMoneyHas} />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
               <div className="border-b bg-slate-50/75 px-4 py-3 font-semibold text-xs text-slate-700 flex items-center justify-between">
-                <span>মিসিং পার্সেল তালিকা ({missingData.parcels.length}টি)</span>
+                <span>{dict.orders.missingParcelList}{missingData.parcels.length}{dict.orders.items2}</span>
                 <span className="font-bold text-rose-700">
-                  মোট অপরিশোধিত: {formatMinor(missingData.totalMissingAmountMinor)}
+                  {dict.orders.totalUnpaid}{formatMinor(missingData.totalMissingAmountMinor)}
                 </span>
               </div>
               <ResponsiveTable className="p-3 md:p-0" table={<div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50/75 border-b border-slate-200 text-slate-500 font-semibold">
                     <tr>
-                      <th className="py-3 px-4">ট্র্যাকিং কোড</th>
-                      <th className="py-3 px-4">কুরিয়ার</th>
-                      <th className="py-3 px-4">গ্রাহকের নাম ও ফোন</th>
-                      <th className="py-3 px-4">প্রত্যাশিত COD</th>
-                      <th className="py-3 px-4">ডেলিভারির তারিখ</th>
-                      <th className="py-3 px-4">বিলম্বিত দিন</th>
-                      <th className="py-3 px-4 text-right">অ্যাকশন</th>
+                      <th className="py-3 px-4">{dict.orders.trackingCode}</th>
+                      <th className="py-3 px-4">{dict.orders.courier2}</th>
+                      <th className="py-3 px-4">{dict.orders.customerNamePhone}</th>
+                      <th className="py-3 px-4">{dict.orders.expectedCOD}</th>
+                      <th className="py-3 px-4">{dict.orders.deliveryDate}</th>
+                      <th className="py-3 px-4">{dict.orders.daysLate}</th>
+                      <th className="py-3 px-4 text-right">{dict.orders.action}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -555,19 +543,18 @@ export default function CourierReconciliationPage() {
                           {formatMinor(p.codAmountMinor)}
                         </td>
                         <td className="py-3.5 px-4 text-slate-500">
-                          {new Date(p.deliveredAt).toLocaleDateString("bn-BD")}
+                          {fmtDate(locale, new Date(p.deliveredAt))}
                         </td>
                         <td className="py-3.5 px-4">
                           <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-                            {p.daysOverdue} দিন বাকি
-                          </span>
+                            {p.daysOverdue} {dict.orders.daysLeft}</span>
                         </td>
                         <td className="py-3.5 px-4 text-right">{renderMissingActions(p)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>} cards={missingData.parcels.map((p) => (<div key={p.id} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ট্র্যাকিং কোড</dt><dd className="text-right"><span className="font-mono font-bold text-slate-900">{p.trackingCode}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">কুরিয়ার</dt><dd className="text-right"><span className="text-[11px] font-bold uppercase text-slate-600">{p.provider}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">গ্রাহকের নাম ও ফোন</dt><dd className="text-right"><><span className="font-semibold text-slate-800">{p.recipientName}</span><span className="block font-mono text-[10px] font-normal text-slate-500">{p.recipientPhone}</span></></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">প্রত্যাশিত COD</dt><dd className="text-right">{formatMinor(p.codAmountMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">ডেলিভারির তারিখ</dt><dd className="text-right">{new Date(p.deliveredAt).toLocaleDateString("bn-BD")}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">বিলম্বিত দিন</dt><dd className="text-right"><span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">{p.daysOverdue} দিন বাকি</span></dd></div></dl><div className="mt-2 text-right">{renderMissingActions(p)}</div></div>))} />
+              </div>} cards={missingData.parcels.map((p) => (<div key={p.id} className="rounded-xl border bg-white p-3 shadow-sm"><dl className="space-y-1 text-sm"><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.trackingCode}</dt><dd className="text-right"><span className="font-mono font-bold text-slate-900">{p.trackingCode}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.courier2}</dt><dd className="text-right"><span className="text-[11px] font-bold uppercase text-slate-600">{p.provider}</span></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.customerNamePhone}</dt><dd className="text-right"><><span className="font-semibold text-slate-800">{p.recipientName}</span><span className="block font-mono text-[10px] font-normal text-slate-500">{p.recipientPhone}</span></></dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.expectedCOD}</dt><dd className="text-right">{formatMinor(p.codAmountMinor)}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.deliveryDate}</dt><dd className="text-right">{fmtDate(locale, new Date(p.deliveredAt))}</dd></div><div className="flex justify-between gap-3"><dt className="text-xs font-semibold text-slate-500">{dict.orders.daysLate}</dt><dd className="text-right"><span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">{p.daysOverdue} {dict.orders.daysLeft}</span></dd></div></dl><div className="mt-2 text-right">{renderMissingActions(p)}</div></div>))} />
             </div>
           )}
         </div>
@@ -578,17 +565,15 @@ export default function CourierReconciliationPage() {
         <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm space-y-6 max-w-3xl">
           <div>
             <h3 className="text-base font-bold text-slate-900">
-              কুরিয়ার পে-আউট স্টেটমেন্ট আপলোড ও স্বয়ংক্রিয় অডিট
-            </h3>
+              {dict.orders.courierPayoutStatementUploadAutomatic}</h3>
             <p className="text-xs text-slate-500 mt-1">
-              কুরিয়ার পোর্টাল থেকে ডাউনলোড করা CSV ফাইল ড্রপ করুন অথবা টেক্সট পেস্ট করে অডিট চালান।
-            </p>
+              {dict.orders.dropTheCSVFileDownloaded}</p>
           </div>
 
           <form onSubmit={handleUploadSubmit} className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-700">কুরিয়ার নির্বাচন করুন</label>
+                <label className="block text-xs font-semibold text-slate-700">{dict.orders.selectCourier}</label>
                 <select
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold focus:ring-2 focus:ring-indigo-500"
                   value={uploadProvider}
@@ -597,18 +582,18 @@ export default function CourierReconciliationPage() {
                   <option value="steadfast">Steadfast Courier</option>
                   <option value="pathao">Pathao Courier</option>
                   <option value="redx">RedX</option>
-                  <option value="generic">অন্যান্য কুরিয়ার</option>
+                  <option value="generic">{dict.orders.otherCouriers}</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700">
-                  ইনভয়েস / রেফারেন্স নম্বর <span className="text-red-500">*</span>
+                  {dict.orders.invoiceReferenceNumber}<span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="যেমন: INV-2026-OCT-15 বা Bank TR091"
+                  placeholder={dict.orders.eGINV2026OCT}
                   className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={referenceNo}
                   onChange={(e) => setReferenceNo(e.target.value)}
@@ -639,18 +624,16 @@ export default function CourierReconciliationPage() {
               <label htmlFor="csv-file-input" className="cursor-pointer block space-y-1">
                 <span className="text-2xl">📁</span>
                 <div className="text-xs font-bold text-slate-700">
-                  CSV ফাইল ড্রপ করুন বা ব্রাউজ করুন
-                </div>
+                  {dict.orders.dropTheCSVFileOr2}</div>
                 <div className="text-[11px] text-slate-500">
-                  Steadfast বা Pathao পেমেন্ট স্টেটমেন্ট CSV ফাইল সিলেক্ট করুন
-                </div>
+                  {dict.orders.selectASteadfastOrPathao}</div>
               </label>
             </div>
 
             <div>
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">
-                  CSV ডাটা টেক্সট <span className="text-red-500">*</span>
+                  {dict.orders.cSVDataText}<span className="text-red-500">*</span>
                 </label>
                 <button
                   type="button"
@@ -665,8 +648,7 @@ export default function CourierReconciliationPage() {
                   }}
                   className="text-xs font-medium text-indigo-600 hover:underline"
                 >
-                  📝 ডেমো ডাটা লোড করুন
-                </button>
+                  {dict.orders.loadDemoData}</button>
               </div>
               <textarea
                 rows={6}
@@ -684,14 +666,13 @@ export default function CourierReconciliationPage() {
                 onClick={() => setActiveTab("batches")}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="submit"
                 disabled={uploadBusy}
                 className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
               >
-                {uploadBusy ? "অডিট হচ্ছে..." : "🔍 স্টেটমেন্ট অডিট ও রিকনসিল করুন"}
+                {uploadBusy ? dict.orders.auditing : dict.orders.auditStatementReconcile}
               </button>
             </div>
           </form>
@@ -712,9 +693,8 @@ export default function CourierReconciliationPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  মোট অর্ডার: {selectedBatch.totalOrders}টি | মিলেছে: {selectedBatch.matchedCount}টি | অমিল:{" "}
-                  {selectedBatch.discrepancyCount}টি
-                </p>
+                  {dict.orders.totalOrders2}{selectedBatch.totalOrders}{dict.orders.matched2}{selectedBatch.matchedCount}{dict.orders.mismatched}{" "}
+                  {selectedBatch.discrepancyCount}{dict.orders.items}</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -723,12 +703,11 @@ export default function CourierReconciliationPage() {
                   onClick={() => void loadClaimSheet(selectedBatch.id)}
                   className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
                 >
-                  📋 ক্লেইম শিট জেনারেট
-                </button>
+                  {dict.orders.generateClaimSheet}</button>
                 <button
                   type="button"
                   onClick={() => setSelectedBatch(null)}
-                  aria-label="বন্ধ করুন" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label={dict.orders.close} className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                 >
                   ✕
                 </button>
@@ -740,10 +719,9 @@ export default function CourierReconciliationPage() {
               <div className="bg-amber-50/80 border-b border-amber-200 p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-amber-900">
-                    কুরিয়ার সাপোর্ট ক্লেইম রিপোর্ট ({claimSheet.totalDiscrepancies}টি আপত্তি রেকর্ড)
-                  </h4>
+                    {dict.orders.courierSupportClaimReport}{claimSheet.totalDiscrepancies}{dict.orders.disputeRecords}</h4>
                   <span className="text-xs font-bold text-rose-700">
-                    মোট দাবি: {formatMinor(claimSheet.totalShortfallMinor)}
+                    {dict.orders.totalClaim}{formatMinor(claimSheet.totalShortfallMinor)}
                   </span>
                 </div>
                 <textarea
@@ -754,11 +732,11 @@ export default function CourierReconciliationPage() {
                     `Subject: Disbursement Shortfall Claim - Batch ${claimSheet.referenceNo}\n` +
                     `Courier: ${claimSheet.provider}\n` +
                     `Total Discrepancies: ${claimSheet.totalDiscrepancies}\n` +
-                    `Total Shortfall: ৳${claimSheet.totalShortfallMinor / 100}\n\n` +
+                    t("orders.totalShortfall", { claimSheet: claimSheet.totalShortfallMinor / 100 }) +
                     claimSheet.claims
                       .map(
                         (c: any) =>
-                          `Tracking: ${c.trackingCode} | Issue: ${c.issueType} | Expected: ৳${c.systemCodBdt} | Paid: ৳${c.courierPaidBdt} | Shortfall: ৳${c.shortfallBdt}`
+                          t("orders.trackingIssueExpectedPaidShortfall", { trackingCode: c.trackingCode, issueType: c.issueType, systemCodBdt: fmtMoney(locale, c.systemCodBdt), courierPaidBdt: fmtMoney(locale, c.courierPaidBdt), shortfallBdt: fmtMoney(locale, c.shortfallBdt) })
                       )
                       .join("\n")
                   }
@@ -771,14 +749,14 @@ export default function CourierReconciliationPage() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 border-b text-slate-500 font-semibold sticky top-0">
                   <tr>
-                    <th className="py-2.5 px-3">ট্র্যাকিং কোড</th>
-                    <th className="py-2.5 px-3">প্রত্যাশিত COD</th>
-                    <th className="py-2.5 px-3">কুরিয়ার জমা দিয়েছে</th>
-                    <th className="py-2.5 px-3">কুরিয়ার ফি</th>
-                    <th className="py-2.5 px-3">পার্থক্য / ঘাটতি</th>
-                    <th className="py-2.5 px-3">স্ট্যাটাস</th>
-                    <th className="py-2.5 px-3">ডিসপিউট</th>
-                    <th className="py-2.5 px-3 text-right">অ্যাকশন</th>
+                    <th className="py-2.5 px-3">{dict.orders.trackingCode}</th>
+                    <th className="py-2.5 px-3">{dict.orders.expectedCOD}</th>
+                    <th className="py-2.5 px-3">{dict.orders.courierDeposited}</th>
+                    <th className="py-2.5 px-3">{dict.orders.courierFee}</th>
+                    <th className="py-2.5 px-3">{dict.orders.differenceShortfall}</th>
+                    <th className="py-2.5 px-3">{dict.orders.status}</th>
+                    <th className="py-2.5 px-3">{dict.orders.dispute}</th>
+                    <th className="py-2.5 px-3 text-right">{dict.orders.action}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -796,7 +774,7 @@ export default function CourierReconciliationPage() {
                         {item.discrepancyMinor > 0 ? (
                           <span className="text-rose-700">-{formatMinor(item.discrepancyMinor)}</span>
                         ) : (
-                          <span className="text-slate-400">৳০.০০</span>
+                          <span className="text-slate-400">{dict.orders.text145goqj}</span>
                         )}
                       </td>
                       <td className="py-2.5 px-3">
@@ -812,7 +790,7 @@ export default function CourierReconciliationPage() {
                           {item.status === "MATCHED"
                             ? "✓ MATCHED"
                             : item.status === "UNDERPAID"
-                              ? "⚠️ কম টাকা"
+                              ? dict.orders.shortPayment
                               : item.status}
                         </span>
                       </td>
@@ -829,8 +807,7 @@ export default function CourierReconciliationPage() {
                           }}
                           className="inline-flex min-h-[44px] items-center font-semibold text-indigo-600 hover:underline"
                         >
-                          আপত্তি / নোট →
-                        </button>
+                          {dict.orders.disputeNote}</button>
                       </td>
                     </tr>
                   ))}
@@ -845,32 +822,32 @@ export default function CourierReconciliationPage() {
       {disputeItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs animate-fade">
           <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl space-y-4 animate-rise">
-            <h3 className="font-bold text-slate-900 text-sm">কুরিয়ার আপত্তি ও ডিসপিউট ট্র্যাকিং</h3>
+            <h3 className="font-bold text-slate-900 text-sm">{dict.orders.courierDisputesTracking}</h3>
             <p className="text-xs text-slate-500">
-              ট্র্যাকিং কোড: <strong className="font-mono text-slate-800">{disputeItem.trackingCode}</strong>
+              {dict.orders.trackingCode2}<strong className="font-mono text-slate-800">{disputeItem.trackingCode}</strong>
             </p>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">ডিসপিউট স্ট্যাটাস</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{dict.orders.disputeStatus}</label>
                 <select
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                   value={disputeStatus}
                   onChange={(e) => setDisputeStatus(e.target.value)}
                 >
-                  <option value="NONE">কোনো আপত্তি নেই (NONE)</option>
-                  <option value="OPEN">আপত্তি চিহ্নিত (OPEN)</option>
-                  <option value="CLAIMED">কুরিয়ারে টিকিট খোলা হয়েছে (CLAIMED)</option>
-                  <option value="RESOLVED">কুরিয়ার টাকা ফেরত দিয়েছে (RESOLVED)</option>
+                  <option value="NONE">{dict.orders.noDisputeNONE}</option>
+                  <option value="OPEN">{dict.orders.disputeMarkedOPEN}</option>
+                  <option value="CLAIMED">{dict.orders.ticketOpenedAtCourierCLAIMED}</option>
+                  <option value="RESOLVED">{dict.orders.courierRefundedTheMoneyRESOLVED}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">নোট বা টিকিট নম্বর</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">{dict.orders.noteOrTicketNumber}</label>
                 <textarea
                   rows={3}
                   className="w-full rounded-xl border border-slate-200 p-2.5 text-xs focus:ring-2 focus:ring-indigo-500"
-                  placeholder="যেমন: Steadfast ticket #8741 - ম্যানেজার বলেছেন রবিবারে এডজাস্ট হবে..."
+                  placeholder={dict.orders.eGSteadfastTicket8741}
                   value={disputeNotes}
                   onChange={(e) => setDisputeNotes(e.target.value)}
                 />
@@ -883,15 +860,14 @@ export default function CourierReconciliationPage() {
                 onClick={() => setDisputeItem(null)}
                 className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                বাতিল
-              </button>
+                {dict.common.cancel}</button>
               <button
                 type="button"
                 disabled={disputeBusy}
                 onClick={() => void handleDisputeSave()}
                 className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {disputeBusy ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
+                {disputeBusy ? dict.orders.saving2 : dict.common.save}
               </button>
             </div>
           </div>

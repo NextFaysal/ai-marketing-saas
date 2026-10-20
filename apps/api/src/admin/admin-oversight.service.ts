@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { killSwitches, platformSetting } from "../common/platform-settings";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const DAY_MS = 86_400_000;
 
@@ -76,7 +77,7 @@ export class AdminOversightService {
 
   async board(daysRaw?: string | number | null) {
     const days = daysRaw === undefined || daysRaw === null || daysRaw === "" ? 7 : Number(daysRaw);
-    if (days !== 7 && days !== 30) throw new BadRequestException("days must be 7 or 30");
+    if (days !== 7 && days !== 30) throw badRequest("admin.daysMustBe7Or30");
     const now = new Date();
     const since = new Date(now.getTime() - days * DAY_MS);
     const p = this.db();
@@ -262,11 +263,9 @@ export class AdminOversightService {
   private requireReason(reason: unknown): string {
     const r = String(reason ?? "").trim();
     if (!r) {
-      throw new BadRequestException(
-        "A reason is required for every kill-switch flip — it is recorded verbatim in the audit trail.",
-      );
+      throw badRequest("admin.aReasonIsRequiredForEvery2");
     }
-    if (r.length > 500) throw new BadRequestException("reason is too long (max 500)");
+    if (r.length > 500) throw badRequest("admin.reasonIsTooLongMax500");
     return r;
   }
 
@@ -295,7 +294,7 @@ export class AdminOversightService {
 
   async setGlobalPause(actor: any, pausedRaw: unknown, reasonRaw: unknown, ip?: string) {
     const reason = this.requireReason(reasonRaw);
-    if (typeof pausedRaw !== "boolean") throw new BadRequestException("paused must be a boolean");
+    if (typeof pausedRaw !== "boolean") throw badRequest("admin.pausedMustBeABoolean");
     const paused = pausedRaw;
     const at = new Date().toISOString();
     await this.writeKillSwitches(actor?.id ?? null, (current) => ({
@@ -316,10 +315,10 @@ export class AdminOversightService {
 
   async setOrgDisabled(actor: any, organizationId: string, disabledRaw: unknown, reasonRaw: unknown, ip?: string) {
     const reason = this.requireReason(reasonRaw);
-    if (typeof disabledRaw !== "boolean") throw new BadRequestException("disabled must be a boolean");
+    if (typeof disabledRaw !== "boolean") throw badRequest("admin.disabledMustBeABoolean");
     const disabled = disabledRaw;
     const org = await this.rows<any>(() => this.db().organization.findUnique({ where: { id: organizationId }, select: { id: true } }), null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const at = new Date().toISOString();
     await this.writeKillSwitches(actor?.id ?? null, (current) => {
       const ids = new Set<string>(current.aiDisabledOrgIds);

@@ -13,6 +13,7 @@ import { PaymentResendService } from "./payment-resend.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest } from "../i18n";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"] as const;
 
@@ -146,13 +147,13 @@ export class OrdersController {
 
   @Post("blocked-identifiers") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   addBlockedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateIdentifierDto) {
-    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.identifiers) throw badRequest("orders.listFeatureUnavailable");
     return this.identifiers.add(orgId, user.userId, "blocked", dto);
   }
 
   @Delete("blocked-identifiers/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   removeBlockedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
-    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.identifiers) throw badRequest("orders.listFeatureUnavailable");
     return this.identifiers.remove(orgId, user.userId, "blocked", id);
   }
 
@@ -163,13 +164,13 @@ export class OrdersController {
 
   @Post("trusted-identifiers") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   addTrustedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateIdentifierDto) {
-    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.identifiers) throw badRequest("orders.listFeatureUnavailable");
     return this.identifiers.add(orgId, user.userId, "trusted", dto);
   }
 
   @Delete("trusted-identifiers/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   removeTrustedIdentifier(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
-    if (!this.identifiers) throw new BadRequestException("তালিকা সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.identifiers) throw badRequest("orders.listFeatureUnavailable");
     return this.identifiers.remove(orgId, user.userId, "trusted", id);
   }
 
@@ -185,19 +186,19 @@ export class OrdersController {
 
   @Post("fraud-rules") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   createFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Body() dto: CreateFraudRuleDto) {
-    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.fraudRules) throw badRequest("orders.fraudRuleFeatureUnavailable");
     return this.fraudRules.create(orgId, user.userId, dto);
   }
 
   @Patch("fraud-rules/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   updateFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string, @Body() dto: UpdateFraudRuleDto) {
-    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.fraudRules) throw badRequest("orders.fraudRuleFeatureUnavailable");
     return this.fraudRules.update(orgId, user.userId, id, dto);
   }
 
   @Delete("fraud-rules/:id") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   deleteFraudRule(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("id") id: string) {
-    if (!this.fraudRules) throw new BadRequestException("ফ্রড নিয়ম সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.fraudRules) throw badRequest("orders.fraudRuleFeatureUnavailable");
     return this.fraudRules.delete(orgId, user.userId, id);
   }
 
@@ -332,7 +333,7 @@ export class OrdersController {
    * returned to staff. No automatic retries. */
   @Post(":orderId/payment-link-resend") @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
   resendPaymentLink(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") id: string, @Body() dto: PaymentLinkResendDto) {
-    if (!this.paymentResend) throw new BadRequestException("পেমেন্ট লিংক পাঠানোর সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.paymentResend) throw badRequest("orders.paymentLinkFeatureUnavailable");
     return this.paymentResend.resendPaymentLink(orgId, user.userId, id, dto);
   }
 

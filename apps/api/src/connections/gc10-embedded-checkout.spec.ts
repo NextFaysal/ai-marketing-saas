@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "test-secret";
 
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { TenantPaymentsService } from "./tenant-payments.service";
 import { WalletService } from "./wallet.service";
 import { setPlatformConfigSnapshot } from "../common/platform-config";
@@ -163,9 +164,9 @@ describe("GC10 publicPaymentOptions — real initiation gates", () => {
     await expect(svc.assertPublicPaymentOption("org-1", { provider: "sslcommerz", source: "own" }))
       .resolves.toEqual({ provider: "sslcommerz", source: "own" });
     await expect(svc.assertPublicPaymentOption("org-1", { provider: "sslcommerz", source: "platform" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.assertPublicPaymentOption("org-1", { provider: "bkash", source: "own" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -212,9 +213,9 @@ describe("GC10 publicPaymentState — honest polling state", () => {
 
   it("wrong orderNumber → 404; unknown slug → 404; unknown order → 404", async () => {
     const { svc } = build();
-    await expect(svc.publicPaymentState("myshop", "order-1", "ORD-WRONG")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.publicPaymentState("nope", "order-1", "ORD-1")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.publicPaymentState("myshop", "order-x", "ORD-1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publicPaymentState("myshop", "order-1", "ORD-WRONG")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.publicPaymentState("nope", "order-1", "ORD-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.publicPaymentState("myshop", "order-x", "ORD-1")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -227,7 +228,7 @@ describe("GC10 initiation failure — clean unpaid order + failed txn", () => {
     const { svc, tables } = build(stub);
     await svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL });
     await expect(svc.initiatePublicPayment("myshop", "order-1", "ORD-1", "sslcommerz"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     expect(tables.tenantPaymentTransaction.rows).toHaveLength(1);
     expect(tables.tenantPaymentTransaction.rows[0].status).toBe("failed");
     const order = tables.order.rows[0];

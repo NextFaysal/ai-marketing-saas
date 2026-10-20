@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { allocateBundle } from "./ec29-bundles";
 import { BundlesService } from "./bundles.service";
 import { StorefrontService } from "../storefront/storefront.service";
@@ -183,12 +184,12 @@ describe("AB5 BundlesService.validateSlots", () => {
       svc.validateSlots("org-1", null, [
         { label: "স্লট", chooseQty: 1, sourceType: "category", sourceRef: { categoryId: "cat-foreign" } },
       ]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.validateSlots("org-1", null, [
         { label: "স্লট", chooseQty: 1, sourceType: "category", sourceRef: {} },
       ]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("foreign product in a products pool → 400 naming the product", async () => {
@@ -204,7 +205,7 @@ describe("AB5 BundlesService.validateSlots", () => {
       svc.validateSlots("org-1", null, [
         { label: "স্লট", chooseQty: 1, sourceType: "products", sourceRef: { productIds: [] } },
       ]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("chooseQty bounds: 0 and 21 → 400; label missing → 400", async () => {
@@ -214,10 +215,10 @@ describe("AB5 BundlesService.validateSlots", () => {
     const base = { label: "স্লট", sourceType: "products", sourceRef: { productIds: ["p-1"] } };
     await expect(svc.validateSlots("org-1", null, [{ ...base, chooseQty: 0 }])).rejects.toThrow(/১–২০/);
     await expect(svc.validateSlots("org-1", null, [{ ...base, chooseQty: 21 }])).rejects.toThrow(/১–২০/);
-    await expect(svc.validateSlots("org-1", null, [{ ...base, chooseQty: 1.5 }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.validateSlots("org-1", null, [{ ...base, chooseQty: 1.5 }])).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.validateSlots("org-1", null, [{ chooseQty: 1, sourceType: "products", sourceRef: { productIds: ["p-1"] } }]),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it(">6 slots refused before any per-slot work", async () => {
@@ -309,7 +310,7 @@ describe("AB5 BundlesService slot CRUD via create/update + serialize", () => {
         name: "খারাপ", bundlePriceMinor: "25000", items: FIXED_ITEMS,
         slots: [{ label: "স্লট", chooseQty: 1, sourceType: "category", sourceRef: { categoryId: "cat-foreign" } }],
       } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(prisma.bundle.rows).toHaveLength(0);
   });
 
@@ -606,7 +607,7 @@ describe("AB5 storefront — patchCartBundle picks + serializeCart", () => {
       svc.patchCartBundle("shop-one", cartToken, {
         bundleId: "b-1", quantity: 1, picks: [{ slotId: "slot-1", productId: "p-c" }],
       } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.patchCartBundle("shop-one", cartToken, { bundleId: "b-1", quantity: 1 } as any),
     ).rejects.toThrow(/একটি বেছে নিন/);

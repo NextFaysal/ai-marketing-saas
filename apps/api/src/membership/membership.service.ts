@@ -1,12 +1,11 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * NF7 (FB3) — Membership tiers.
@@ -113,7 +112,7 @@ export class MembershipService {
   private parseMinSpend(raw: unknown): bigint {
     const s = raw === null || raw === undefined ? "" : String(raw).trim();
     if (!/^\d+$/.test(s)) {
-      throw new BadRequestException("minSpendMinor অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে");
+      throw badRequest("membership.minspendminorMustBeAnIntegerOf");
     }
     return BigInt(s);
   }
@@ -149,14 +148,14 @@ export class MembershipService {
 
   async createTier(orgId: string, actorId: string, dto: { name?: string; minSpendMinor?: unknown; sortOrder?: number }) {
     const name = String(dto?.name ?? "").trim();
-    if (!name) throw new BadRequestException("টিয়ারের নাম আবশ্যক");
+    if (!name) throw badRequest("membership.theTierNameIsRequired");
     const minSpendMinor = this.parseMinSpend(dto?.minSpendMinor);
     const sortOrder = dto?.sortOrder !== undefined ? Number(dto.sortOrder) : 0;
-    if (!Number.isInteger(sortOrder)) throw new BadRequestException("sortOrder পূর্ণসংখ্যা হতে হবে");
+    if (!Number.isInteger(sortOrder)) throw badRequest("membership.sortorderMustBeAnInteger");
     const existing = await this.t("tierDefinition")
       .findFirst({ where: { organizationId: orgId, name } })
       .catch(() => null);
-    if (existing) throw new BadRequestException("এই নামে ইতিমধ্যে একটি টিয়ার আছে — অন্য নাম দিন");
+    if (existing) throw badRequest("membership.aTierWithThisNameAlready");
     let row: any;
     try {
       row = await this.t("tierDefinition").create({
@@ -164,7 +163,7 @@ export class MembershipService {
       });
     } catch (e) {
       if (isUniqueViolation(e)) {
-        throw new BadRequestException("এই নামে ইতিমধ্যে একটি টিয়ার আছে — অন্য নাম দিন");
+        throw badRequest("membership.aTierWithThisNameAlready");
       }
       throw e;
     }
@@ -183,29 +182,29 @@ export class MembershipService {
     const data: Record<string, any> = {};
     if (dto?.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("টিয়ারের নাম আবশ্যক");
+      if (!name) throw badRequest("membership.theTierNameIsRequired");
       if (name !== tier.name) {
         const clash = await this.t("tierDefinition")
           .findFirst({ where: { organizationId: orgId, name } })
           .catch(() => null);
         if (clash && clash.id !== tierId) {
-          throw new BadRequestException("এই নামে ইতিমধ্যে একটি টিয়ার আছে — অন্য নাম দিন");
+          throw badRequest("membership.aTierWithThisNameAlready");
         }
       }
       data.name = name;
     }
     if (dto?.minSpendMinor !== undefined) data.minSpendMinor = this.parseMinSpend(dto.minSpendMinor);
     if (dto?.sortOrder !== undefined) {
-      if (!Number.isInteger(Number(dto.sortOrder))) throw new BadRequestException("sortOrder পূর্ণসংখ্যা হতে হবে");
+      if (!Number.isInteger(Number(dto.sortOrder))) throw badRequest("membership.sortorderMustBeAnInteger");
       data.sortOrder = Number(dto.sortOrder);
     }
-    if (Object.keys(data).length === 0) throw new BadRequestException("কমপক্ষে একটি ক্ষেত্র পাঠান");
+    if (Object.keys(data).length === 0) throw badRequest("membership.sendAtLeastOneField");
     let updated: any;
     try {
       updated = await this.t("tierDefinition").update({ where: { id: tierId }, data });
     } catch (e) {
       if (isUniqueViolation(e)) {
-        throw new BadRequestException("এই নামে ইতিমধ্যে একটি টিয়ার আছে — অন্য নাম দিন");
+        throw badRequest("membership.aTierWithThisNameAlready");
       }
       throw e;
     }
@@ -250,7 +249,7 @@ export class MembershipService {
     const row = await this.t("tierDefinition").findFirst({
       where: { id: tierId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("মেম্বারশিপ টিয়ারটি পাওয়া যায়নি");
+    if (!row) throw notFound("membership.theMembershipTierWasNotFound");
     return row;
   }
 
@@ -284,7 +283,7 @@ export class MembershipService {
     const customer = await this.t("customer").findFirst({
       where: { id: customerId, organizationId: orgId },
     });
-    if (!customer) throw new NotFoundException("কাস্টমার পাওয়া যায়নি");
+    if (!customer) throw notFound("membership.theCustomerWasNotFound");
     const spend = await this.lifetimeSpendMinor(orgId, customerId);
     const tiers: any[] =
       (await this.t("tierDefinition")
@@ -369,7 +368,7 @@ export class MembershipService {
     const customer = await this.t("customer").findFirst({
       where: { id: customerId, organizationId: orgId },
     });
-    if (!customer) throw new NotFoundException("কাস্টমার পাওয়া যায়নি");
+    if (!customer) throw notFound("membership.theCustomerWasNotFound");
     let row = await this.t("customerTier")
       .findFirst({ where: { customerId, organizationId: orgId } })
       .catch(() => null);

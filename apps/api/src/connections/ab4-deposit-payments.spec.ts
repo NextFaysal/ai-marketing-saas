@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "test-secret";
 
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { TenantPaymentsService } from "./tenant-payments.service";
 import { WalletService } from "./wallet.service";
 import { PaymentResendService } from "../orders/payment-resend.service";
@@ -176,11 +177,11 @@ describe("AB4 initiation — amount + purpose scoping", () => {
     await svc.putGateway("org-1", "owner", "sslcommerz", { ...SSL });
     seedVerified(tables, { amountMinor: 5000n });
     await expect(svc.initiateOrderPayment("org-1", "order-1", "sslcommerz", { amountMinor: 10001n }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.initiateOrderPayment("org-1", "order-1", "sslcommerz", { amountMinor: 0n }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.initiateOrderPayment("org-1", "order-1", "sslcommerz", { purpose: "partial" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     // Only the seeded row exists — refused initiations create nothing.
     expect(tables.tenantPaymentTransaction.rows).toHaveLength(1);
   });

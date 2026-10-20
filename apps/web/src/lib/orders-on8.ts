@@ -10,6 +10,14 @@
  * minor-unit STRING (taka input converted via takaToMinor).
  */
 import { minorToTaka, takaToMinor } from "./orders-on1";
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
 
 export interface AutomationRule {
   id: string;
@@ -56,32 +64,52 @@ export interface AutomationLogRow {
 }
 
 export const TRIGGER_OPTIONS: { value: string; label: string }[] = [
-  { value: "order_created", label: "অর্ডার তৈরি হলে" },
-  { value: "status_changed", label: "অর্ডারের স্ট্যাটাস বদলালে" },
-  { value: "parcel_stuck_hours", label: "পার্সেল আটকে থাকলে (ঘণ্টা)" },
-  { value: "due_overdue_days", label: "বকেয়া পুরনো হলে (দিন)" },
+  { value: "order_created", label: ordersBn.whenAnOrderIsCreated },
+  { value: "status_changed", label: ordersBn.whenAnOrderSStatus },
+  { value: "parcel_stuck_hours", label: ordersBn.whenAParcelIsStuck },
+  { value: "due_overdue_days", label: ordersBn.whenADueGetsOld },
 ];
 
 export const ACTION_TYPE_OPTIONS: { value: AutomationAction["type"]; label: string }[] = [
-  { value: "add_tag", label: "ট্যাগ যোগ করুন" },
-  { value: "assign", label: "দায়িত্ব দিন" },
-  { value: "hold", label: "পর্যালোচনার জন্য আটকান" },
-  { value: "notify_staff", label: "স্টাফকে জানান" },
-  { value: "notify_customer", label: "গ্রাহককে জানান" },
+  { value: "add_tag", label: ordersBn.addTag2 },
+  { value: "assign", label: ordersBn.assignResponsibility },
+  { value: "hold", label: ordersBn.holdForReview },
+  { value: "notify_staff", label: ordersBn.notifyStaff },
+  { value: "notify_customer", label: ordersBn.notifyCustomer },
 ];
 
-export function triggerLabel(trigger: string): string {
-  return TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label ?? trigger;
+/** ML5 i18n: locale-built option lists (bn constants stay the default). */
+export function triggerOptions(locale: LibLocale = "bn"): typeof TRIGGER_OPTIONS {
+  const d = D(locale);
+  return [
+    { value: "order_created", label: d.whenAnOrderIsCreated },
+    { value: "status_changed", label: d.whenAnOrderSStatus },
+    { value: "parcel_stuck_hours", label: d.whenAParcelIsStuck },
+    { value: "due_overdue_days", label: d.whenADueGetsOld },
+  ];
+}
+export function actionTypeOptions(locale: LibLocale = "bn"): typeof ACTION_TYPE_OPTIONS {
+  const d = D(locale);
+  return [
+    { value: "add_tag", label: d.addTag2 },
+    { value: "assign", label: d.assignResponsibility },
+    { value: "hold", label: d.holdForReview },
+    { value: "notify_staff", label: d.notifyStaff },
+    { value: "notify_customer", label: d.notifyCustomer },
+  ] as typeof ACTION_TYPE_OPTIONS;
+}
+export function triggerLabel(trigger: string, locale: LibLocale = "bn"): string {
+  return triggerOptions(locale).find((t) => t.value === trigger)?.label ?? trigger;
 }
 
-export function actionLabel(type: string): string {
-  return ACTION_TYPE_OPTIONS.find((a) => a.value === type)?.label ?? type;
+export function actionLabel(type: string, locale: LibLocale = "bn"): string {
+  return actionTypeOptions(locale).find((a) => a.value === type)?.label ?? type;
 }
 
 /** One-line summary of a rule's actions for the list view. */
-export function actionSummary(actions: AutomationAction[] | undefined): string {
+export function actionSummary(actions: AutomationAction[] | undefined, locale: LibLocale = "bn"): string {
   if (!actions || actions.length === 0) return "—";
-  return actions.map((a) => actionLabel(a.type)).join(" · ");
+  return actions.map((a) => actionLabel(a.type, locale)).join(" · ");
 }
 
 /** Builder form state (all strings — converted at build time). */
@@ -158,31 +186,31 @@ export interface BuildResult {
  * missing/invalid — the server validates again regardless
  * (this only keeps the round-trip honest and fast).
  */
-export function buildRulePayload(draft: RuleDraft): BuildResult {
+export function buildRulePayload(draft: RuleDraft, locale: LibLocale = "bn"): BuildResult {
   const name = draft.name.trim();
-  if (name.length < 1 || name.length > 120) return { payload: null, error: "নিয়মের নাম ১–১২০ অক্ষরের হতে হবে" };
+  if (name.length < 1 || name.length > 120) return { payload: null, error: D(locale).theRuleNameMustBe };
 
   let triggerConfig: Record<string, unknown> | null = null;
   if (draft.trigger === "status_changed") {
     const to = draft.toStatus.trim();
-    if (!to) return { payload: null, error: "কোন স্ট্যাটাসে বদলালে চলবে তা বেছে দিন" };
+    if (!to) return { payload: null, error: D(locale).chooseWhichStatusChangeTriggers };
     triggerConfig = { toStatus: to };
   } else if (draft.trigger === "parcel_stuck_hours") {
     const hours = Number(draft.hours);
-    if (!Number.isInteger(hours) || hours < 1 || hours > 8760) return { payload: null, error: "আটকে থাকার ঘণ্টা ১–৮৭৬০ এর মধ্যে হতে হবে" };
+    if (!Number.isInteger(hours) || hours < 1 || hours > 8760) return { payload: null, error: D(locale).stuckHoursMustBeBetween };
     triggerConfig = { hours };
   } else if (draft.trigger === "due_overdue_days") {
     const days = Number(draft.days);
-    if (!Number.isInteger(days) || days < 1 || days > 365) return { payload: null, error: "বকেয়ার দিন ১–৩৬৫ এর মধ্যে হতে হবে" };
+    if (!Number.isInteger(days) || days < 1 || days > 365) return { payload: null, error: D(locale).dueDaysMustBeBetween };
     triggerConfig = { days };
   } else if (draft.trigger !== "order_created") {
-    return { payload: null, error: "অজানা ট্রিগার" };
+    return { payload: null, error: D(locale).unknownTrigger };
   }
 
   const conditions: Record<string, unknown> = {};
   if (draft.minTotalTaka.trim()) {
     const minor = takaToMinor(draft.minTotalTaka);
-    if (minor === null) return { payload: null, error: "কমপক্ষে মোট টাকার পরিমাণ সঠিক সংখ্যায় লিখুন" };
+    if (minor === null) return { payload: null, error: D(locale).enterTheMinimumTotalAmount };
     conditions.minTotalMinor = minor;
   }
   const sources = draft.sources.split(",").map((s) => s.trim()).filter(Boolean);
@@ -192,23 +220,23 @@ export function buildRulePayload(draft: RuleDraft): BuildResult {
   if (draft.district.trim()) conditions.district = draft.district.trim();
   if (draft.riskBandAtLeast !== "") conditions.riskBandAtLeast = draft.riskBandAtLeast;
 
-  if (draft.actions.length === 0) return { payload: null, error: "অন্তত একটি কাজ যোগ করুন" };
+  if (draft.actions.length === 0) return { payload: null, error: D(locale).addAtLeastOneAction };
   const actions: AutomationAction[] = [];
   for (const a of draft.actions) {
     if (a.type === "add_tag") {
       const tag = a.tag.trim();
-      if (!tag) return { payload: null, error: "ট্যাগের কাজে ট্যাগ লিখুন" };
+      if (!tag) return { payload: null, error: D(locale).forATagActionEnter };
       actions.push({ type: "add_tag", tag });
     } else if (a.type === "assign") {
-      if (!a.userId) return { payload: null, error: "দায়িত্বের কাজে টিম সদস্য বেছে দিন" };
+      if (!a.userId) return { payload: null, error: D(locale).forAResponsibilityActionChoose };
       actions.push({ type: "assign", userId: a.userId });
     } else if (a.type === "hold") {
       const reason = a.reason.trim();
-      if (!reason) return { payload: null, error: "আটকানোর কাজে কারণ লিখুন" };
+      if (!reason) return { payload: null, error: D(locale).forAHoldActionEnter };
       actions.push({ type: "hold", reason });
     } else {
       const message = a.message.trim();
-      if (!message) return { payload: null, error: "বার্তার কাজে বার্তা লিখুন" };
+      if (!message) return { payload: null, error: D(locale).forAMessageActionEnter };
       actions.push({ type: a.type, message });
     }
   }
@@ -226,8 +254,8 @@ export function buildRulePayload(draft: RuleDraft): BuildResult {
 }
 
 /** Log-row action summary for the viewer ("add_tag ✓ · hold ✗ …"). */
-export function logActionSummary(row: AutomationLogRow): string {
+export function logActionSummary(row: AutomationLogRow, locale: LibLocale = "bn"): string {
   const results = Array.isArray(row.actionsResult) ? row.actionsResult : [];
   if (results.length === 0) return "—";
-  return results.map((r) => `${actionLabel(String(r.type))} ${r.ok ? "✓" : "✗"}`).join(" · ");
+  return results.map((r) => `${actionLabel(String(r.type), locale)} ${r.ok ? "✓" : "✗"}`).join(" · ");
 }

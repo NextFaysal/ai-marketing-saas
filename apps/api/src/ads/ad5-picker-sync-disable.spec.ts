@@ -226,8 +226,8 @@ describe("AD5 discover (picker step 1)", () => {
     const db = fakeDb();
     jest.spyOn(MetaClient.prototype, "verifyToken").mockRejectedValue(new Error("Invalid OAuth access token - Cannot parse access token"));
     const err = await service(db).discoverMetaAccounts(ORG, { accessToken: "bad-token-value" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Meta token verification failed: Invalid OAuth access token");
+    expect(err).toMatchObject({ code: "ads.metaTokenVerificationFailed" });
+    expect(err.message).toContain("Meta token verification ব্যর্থ হয়েছে: Invalid OAuth access token");
     expect(db.integrations).toHaveLength(0);
     expect(db.credentials).toHaveLength(0);
     expect(db.accounts).toHaveLength(0);
@@ -239,8 +239,8 @@ describe("AD5 discover (picker step 1)", () => {
     jest.spyOn(MetaClient.prototype, "verifyToken").mockResolvedValue({ id: "user-42" });
     jest.spyOn(MetaClient.prototype, "listAdAccounts").mockRejectedValue(new Error("(#100) Tried accessing nonexisting field"));
     const err = await service(db).discoverMetaAccounts(ORG, { accessToken: "some-token" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Could not list Meta ad accounts: (#100)");
+    expect(err).toMatchObject({ code: "ads.couldNotListMetaAdAccounts" });
+    expect(err.message).toContain("Meta ad accounts তালিকা করা যায়নি: (#100)");
     expect(db.integrations).toHaveLength(0);
     expect(db.accounts).toHaveLength(0);
   });
@@ -284,7 +284,7 @@ describe("AD5 connect selection semantics", () => {
   it("PRESENT but empty selection → 400 Bengali, nothing created (never a silent connect-all)", async () => {
     const db = fakeDb(); stubMeta();
     const err = await service(db).connectMeta(ORG, "owner-1", { accessToken: "tok", adAccountExternalIds: [] } as any).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "ads.noAdAccountHasBeenSelected" });
     expect(err.message).toContain("কোনো Ad Account নির্বাচন করা হয়নি");
     expect(db.accounts).toHaveLength(0);
     expect(db.integrations).toHaveLength(0);
@@ -293,7 +293,7 @@ describe("AD5 connect selection semantics", () => {
   it("selection matching nothing under the token → 400 Bengali, nothing created", async () => {
     const db = fakeDb(); stubMeta();
     const err = await service(db).connectMeta(ORG, "owner-1", { accessToken: "tok", adAccountExternalIds: ["act_zzz"] } as any).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "ads.theSelectedAdAccountsWereNot" });
     expect(err.message).toContain("নির্বাচিত Ad Accountগুলো এই Token-এর অধীনে পাওয়া যায়নি");
     expect(db.accounts).toHaveLength(0);
     expect(db.integrations).toHaveLength(0);
@@ -334,7 +334,7 @@ describe("AD5 syncDisabled gate", () => {
     expect(audit).toBeTruthy();
     expect(audit.metadata).toEqual({ syncDisabled: true, label: null });
     const err = await svc.updateAccountSettings(ORG2, "owner-1", account.id, { syncDisabled: true }).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "ads.adAccountNotFoundInThis" });
   });
 
   it("every manual sync path refuses BEFORE any platform call when disabled", async () => {
@@ -354,7 +354,7 @@ describe("AD5 syncDisabled gate", () => {
       () => svc.refreshAccountStatus(ORG, "owner-1", account.id),
     ]) {
       const err = await call().catch((e) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toMatchObject({ code: "ads.thisAdAccountSSyncIs" });
       expect(err.message).toContain("Sync বন্ধ রাখা হয়েছে");
     }
     expect(campaignSpy).not.toHaveBeenCalled();
@@ -377,10 +377,10 @@ describe("AD5 syncDisabled gate", () => {
     const tSpy = jest.spyOn(TikTokAdsClient.prototype, "getCampaignDaily").mockResolvedValue([]);
 
     const gErr = await svc.syncGoogleInsights(ORG, "owner-1", gAcc.id, {}).catch((e) => e);
-    expect(gErr).toBeInstanceOf(BadRequestException);
+    expect(gErr).toMatchObject({ code: "ads.thisAdAccountSSyncIs" });
     expect(gErr.message).toContain("Sync বন্ধ রাখা হয়েছে");
     const tErr = await svc.syncTikTokInsights(ORG, "owner-1", tAcc.id, {}).catch((e) => e);
-    expect(tErr).toBeInstanceOf(BadRequestException);
+    expect(tErr).toMatchObject({ code: "ads.thisAdAccountSSyncIs" });
     expect(tErr.message).toContain("Sync বন্ধ রাখা হয়েছে");
     expect(gSpy).not.toHaveBeenCalled();
     expect(tSpy).not.toHaveBeenCalled();

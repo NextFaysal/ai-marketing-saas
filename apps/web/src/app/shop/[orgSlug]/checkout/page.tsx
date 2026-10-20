@@ -19,6 +19,7 @@ import {
   type Quote,
 } from "@/lib/storefront-cart";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtNumber } from "@repo/contracts";
 import { captchaSiteKeyFor, termsHrefFor, type CheckoutTrust } from "@/lib/orders-gb3";
 import {
   depositKindForPaymentMethod,
@@ -86,8 +87,7 @@ function money(minor: string): string {
  * place, fields and handlers.
  */
 function CheckoutStepHeader({ n, label, locale }: { n: number; label: string; locale: ShopLocale }) {
-  const bnDigits = "০১২৩৪৫৬৭৮৯";
-  const num = locale === "bn" ? String(n).replace(/\d/g, (d) => bnDigits[Number(d)]) : String(n);
+  const num = fmtNumber(locale, n);
   return (
     <div className="flex items-center gap-2 pt-1">
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-black text-white">{num}</span>
@@ -496,7 +496,7 @@ export default function ShopCheckoutPage() {
     const checkoutFieldDefs = normalizeCheckoutFields(shop?.checkoutFields);
     const missingFields = missingRequiredFields(checkoutFieldDefs, fieldAnswers);
     if (missingFields.length > 0) {
-      setError(`এই তথ্যগুলো আবশ্যক: ${missingFields.join(", ")}`);
+      setError(`${t.checkoutExtra.requiredFieldsPrefix}${missingFields.join(", ")}`);
       return;
     }
     setSubmitting(true);
@@ -671,43 +671,43 @@ export default function ShopCheckoutPage() {
         <div className="space-y-4 rounded-2xl border bg-white p-8 shadow-sm">
           <div className="text-center">
             <p className="text-4xl">✅</p>
-            <h1 className="mt-2 text-lg font-black text-slate-900">অর্ডার গ্রহণ করা হয়েছে</h1>
-            <p className="mt-1 text-sm text-slate-500">অর্ডার নম্বর: <b className="font-mono">{placedDeposit.orderNumber}</b></p>
+            <h1 className="mt-2 text-lg font-black text-slate-900">{t.checkoutExtra.orderReceived}</h1>
+            <p className="mt-1 text-sm text-slate-500">{t.checkoutExtra.orderNumberLabel}<b className="font-mono">{placedDeposit.orderNumber}</b></p>
           </div>
           <div className="space-y-1.5 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
-            <div className="flex justify-between"><span>মোট</span><span className="font-bold">{money(placedDeposit.totalMinor)}</span></div>
-            <div className="flex justify-between"><span>এখন পরিশোধ (ডিপোজিট)</span><span className="font-black">{money(dep.amountMinor)}</span></div>
-            <div className="flex justify-between"><span>ডেলিভারিতে বাকি</span><span className="font-bold">{money(dep.dueAfterMinor)}</span></div>
+            <div className="flex justify-between"><span>{t.checkoutExtra.totalLabel}</span><span className="font-bold">{money(placedDeposit.totalMinor)}</span></div>
+            <div className="flex justify-between"><span>{t.checkoutExtra.payNowDeposit}</span><span className="font-black">{money(dep.amountMinor)}</span></div>
+            <div className="flex justify-between"><span>{t.checkoutExtra.dueAtDelivery}</span><span className="font-bold">{money(dep.dueAfterMinor)}</span></div>
             {dep.note ? <p className="pt-1 text-xs leading-relaxed">{dep.note}</p> : null}
           </div>
           {placedDeposit.paymentMethod === "cod" && onlineOptions.length > 0 ? (
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">অনলাইন পেমেন্টের মাধ্যম</label>
+              <label className="block text-xs font-bold text-slate-700">{t.checkoutExtra.onlineMethodLabel}</label>
               <select value={depositOption} onChange={(e) => setDepositOption(e.target.value)} className="w-full rounded-xl border border-slate-300 p-2.5 text-sm focus:border-indigo-600 focus:outline-none">
                 {onlineOptions.map((option) => (
                   <option key={onlineSelectionValue(option)} value={onlineSelectionValue(option)}>{onlineOptionLabel(option)}</option>
                 ))}
               </select>
               <button type="button" onClick={payDepositNow} disabled={depositBusy} className="w-full rounded-2xl bg-emerald-600 py-3 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:opacity-50">
-                {depositBusy ? "পেমেন্ট শুরু হচ্ছে…" : "ডিপোজিট এখনই পরিশোধ করুন"}
+                {depositBusy ? t.checkoutExtra.payDepositBusy : t.checkoutExtra.payDepositNow}
               </button>
               {depositError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{depositError}</p> : null}
             </div>
           ) : (
             <div className="space-y-1.5 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="font-bold text-slate-900">ডিপোজিট পাঠানোর মাধ্যম</p>
+              <p className="font-bold text-slate-900">{t.checkoutExtra.depositMethodsTitle}</p>
               {dep.note ? <p className="text-xs leading-relaxed">{dep.note}</p> : null}
               {shop?.businessProfile?.bkashNumber ? (
-                <p className="text-xs">বিকাশ: <span className="font-mono font-bold">{shop.businessProfile.bkashNumber}</span></p>
+                <p className="text-xs">{t.checkoutExtra.bkashLabel}<span className="font-mono font-bold">{shop.businessProfile.bkashNumber}</span></p>
               ) : null}
               {shop?.businessProfile?.nagadNumber ? (
-                <p className="text-xs">নগদ: <span className="font-mono font-bold">{shop.businessProfile.nagadNumber}</span></p>
+                <p className="text-xs">{t.checkoutExtra.nagadLabel}<span className="font-mono font-bold">{shop.businessProfile.nagadNumber}</span></p>
               ) : null}
               {shop?.businessProfile?.paymentNote ? (
                 <p className="text-xs leading-relaxed">{shop.businessProfile.paymentNote}</p>
               ) : null}
               {!shop?.businessProfile?.bkashNumber && !shop?.businessProfile?.nagadNumber && !shop?.businessProfile?.paymentNote && !dep.note ? (
-                <p className="text-xs">ডিপোজিট পাঠানোর মাধ্যম জানতে দোকান আপনার সাথে যোগাযোগ করবে।</p>
+                <p className="text-xs">{t.checkoutExtra.depositContactNote}</p>
               ) : null}
             </div>
           )}
@@ -716,7 +716,7 @@ export default function ShopCheckoutPage() {
             onClick={() => router.push(`/shop/${orgSlug}/success?order=${encodeURIComponent(placedDeposit.orderNumber)}`)}
             className="block w-full rounded-xl bg-slate-900 py-3 text-center text-xs font-semibold text-white hover:bg-black"
           >
-            অর্ডারের বিবরণ দেখুন
+            {t.checkoutExtra.viewOrderDetails}
           </button>
         </div>
       </div>
@@ -817,7 +817,7 @@ export default function ShopCheckoutPage() {
           />
           {/* ED9 (v2): the existing missing-required-fields error,
               also shown at the field group it belongs to. */}
-          {isV2 && error.startsWith("এই তথ্যগুলো আবশ্যক:") ? (
+          {isV2 && error.startsWith(t.checkoutExtra.requiredFieldsPrefix.trim()) ? (
             <p className="text-xs font-medium text-rose-600">{error}</p>
           ) : null}
 
@@ -876,7 +876,7 @@ export default function ShopCheckoutPage() {
                   <input type="radio" name="pay" checked={paymentMethod === value} onChange={() => setPaymentMethod(value)} />
                   {onlineOptionLabel(option)}
                   {option.sandbox ? (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">স্যান্ডবক্স</span>
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">{t.checkoutExtra.sandboxBadge}</span>
                   ) : null}
                 </label>
               );
@@ -927,11 +927,11 @@ export default function ShopCheckoutPage() {
                 the discount comes back on the quote itself. */}
             {loyaltyBal != null && loyaltyBal > 0 ? (
               <div className="space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
-                <p className="text-xs font-bold text-violet-900">⭐ লয়্যালটি পয়েন্ট</p>
+                <p className="text-xs font-bold text-violet-900">{t.checkoutExtra.loyaltyTitle}</p>
                 <p className="text-xs text-slate-600">
-                  আপনার ব্যালেন্স: <b className="text-slate-900">{loyaltyBal} পয়েন্ট</b>
+                  {t.checkoutExtra.yourBalancePrefix}<b className="text-slate-900">{fmtNumber(locale, loyaltyBal)}{t.checkoutExtra.pointsSuffix}</b>
                   {quote?.loyalty && quote.loyalty.pointsApplied > 0 ? (
-                    <> · ছাড় পেয়েছেন: <b className="text-emerald-700">− {money(quote.loyalty.discountMinor)}</b></>
+                    <>{t.checkoutExtra.discountReceivedPrefix}<b className="text-emerald-700">− {money(quote.loyalty.discountMinor)}</b></>
                   ) : null}
                 </p>
                 <div className="flex gap-2">
@@ -941,7 +941,7 @@ export default function ShopCheckoutPage() {
                     max={loyaltyBal}
                     value={loyaltyInput}
                     onChange={(e) => setLoyaltyInput(e.target.value)}
-                    placeholder="কত পয়েন্ট ব্যবহার করবেন"
+                    placeholder={t.checkoutExtra.loyaltyPlaceholder}
                     className="w-full rounded-xl border border-violet-300 bg-white px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
                   />
                   <button
@@ -949,18 +949,18 @@ export default function ShopCheckoutPage() {
                     onClick={applyLoyalty}
                     className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white hover:bg-violet-700"
                   >
-                    প্রয়োগ করুন
+                    {t.checkoutExtra.apply}
                   </button>
                 </div>
                 {loyaltyApplied > 0 ? (
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-medium text-emerald-700">
                       {quote?.loyalty
-                        ? `${quote.loyalty.pointsApplied} পয়েন্ট প্রয়োগ হয়েছে — ছাড় ${money(quote.loyalty.discountMinor)}`
-                        : `${loyaltyApplied} পয়েন্ট প্রয়োগ করা হয়েছে — হিসাব আসছে…`}
+                        ? `${fmtNumber(locale, quote.loyalty.pointsApplied)}${t.checkoutExtra.pointsAppliedMid}${money(quote.loyalty.discountMinor)}`
+                        : `${fmtNumber(locale, loyaltyApplied)}${t.checkoutExtra.pointsAppliedCalcPrefix}`}
                     </p>
                     <button type="button" onClick={removeLoyalty} className="shrink-0 text-xs font-bold text-rose-600 hover:underline">
-                      সরিয়ে দিন
+                      {t.checkoutExtra.remove}
                     </button>
                   </div>
                 ) : null}
@@ -971,12 +971,12 @@ export default function ShopCheckoutPage() {
                 code; the priced discount comes back on the quote
                 itself and a refusal surfaces via quoteError. */}
             <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
-              <p className="text-xs font-bold text-pink-900">🎁 গিফট কার্ড</p>
+              <p className="text-xs font-bold text-pink-900">{t.checkoutExtra.giftCardTitle}</p>
               <div className="flex gap-2">
                 <input
                   value={giftCardInput}
                   onChange={(e) => setGiftCardInput(e.target.value)}
-                  placeholder="গিফট কার্ডের কোড লিখুন"
+                  placeholder={t.checkoutExtra.giftCardPlaceholder}
                   className="w-full rounded-xl border border-pink-300 bg-white px-3 py-2 font-mono text-sm uppercase focus:border-pink-500 focus:outline-none"
                 />
                 <button
@@ -985,18 +985,18 @@ export default function ShopCheckoutPage() {
                   disabled={!giftCardInput.trim()}
                   className="shrink-0 rounded-xl bg-pink-600 px-4 py-2 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
                 >
-                  প্রয়োগ করুন
-                </button>
+                    {t.checkoutExtra.apply}
+                  </button>
               </div>
               {giftCardApplied ? (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-medium text-emerald-700">
                     {quote?.giftCard
-                      ? `কার্ড ••••${quote.giftCard.codeLast4} প্রয়োগ হয়েছে — ছাড় ${money(quote.giftCard.discountMinor)} (কার্ডে অবশিষ্ট ${money(quote.giftCard.balanceMinor)})`
-                      : "কোড প্রয়োগ করা হয়েছে — হিসাব আসছে…"}
+                      ? `${t.checkoutExtra.cardPrefix}${quote.giftCard.codeLast4}${t.checkoutExtra.cardAppliedMid}${money(quote.giftCard.discountMinor)}${t.checkoutExtra.cardBalanceMid}${money(quote.giftCard.balanceMinor)})`
+                      : t.checkoutExtra.cardAppliedCalc}
                   </p>
                   <button type="button" onClick={removeGiftCard} className="shrink-0 text-xs font-bold text-rose-600 hover:underline">
-                    সরিয়ে দিন
+                    {t.checkoutExtra.remove}
                   </button>
                 </div>
               ) : null}
@@ -1008,11 +1008,11 @@ export default function ShopCheckoutPage() {
                 priced amount comes back on the quote itself. */}
             {creditBalanceMinor !== null && creditBalanceMinor !== "0" ? (
               <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-                <p className="text-xs font-bold text-amber-900">💰 স্টোর ক্রেডিট</p>
+                <p className="text-xs font-bold text-amber-900">{t.checkoutExtra.storeCreditTitle}</p>
                 <p className="text-xs text-slate-600">
-                  আপনার ব্যালেন্স: <b className="text-slate-900">{money(creditBalanceMinor)}</b>
+                  {t.checkoutExtra.yourBalancePrefix}<b className="text-slate-900">{money(creditBalanceMinor)}</b>
                   {creditApplied && quote?.storeCredit ? (
-                    <> · ছাড় পেয়েছেন: <b className="text-emerald-700">− {money(quote.storeCredit.discountMinor)}</b></>
+                    <>{t.checkoutExtra.discountReceivedPrefix}<b className="text-emerald-700">− {money(quote.storeCredit.discountMinor)}</b></>
                   ) : null}
                 </p>
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -1022,7 +1022,7 @@ export default function ShopCheckoutPage() {
                     onChange={(e) => setCreditApplied(e.target.checked)}
                     className="h-4 w-4"
                   />
-                  এই অর্ডারে স্টোর ক্রেডিট ব্যবহার করুন (ব্যালেন্স বা অর্ডারের বাকি পরিমাণ — যেটি কম, ততটুকুই কাটবে)
+                  {t.checkoutExtra.storeCreditUse}
                 </label>
               </div>
             ) : null}
@@ -1051,10 +1051,10 @@ export default function ShopCheckoutPage() {
                   <div className="flex justify-between text-emerald-700"><span>{t.checkout.referralApplied}:</span><span className="font-semibold">− {money(quote.referralDiscountMinor)}</span></div>
                 ) : null}
                 {quote.loyalty && quote.loyalty.pointsApplied > 0 ? (
-                  <div className="flex justify-between text-emerald-700"><span>লয়্যালটি পয়েন্ট ছাড় ({quote.loyalty.pointsApplied} পয়েন্ট):</span><span className="font-semibold">− {money(quote.loyalty.discountMinor)}</span></div>
+                  <div className="flex justify-between text-emerald-700"><span>{t.checkoutExtra.loyaltyDiscountPrefix}{fmtNumber(locale, quote.loyalty.pointsApplied)}{t.checkoutExtra.loyaltyDiscountSuffix}</span><span className="font-semibold">− {money(quote.loyalty.discountMinor)}</span></div>
                 ) : null}
                 {quote.giftCard && BigInt(quote.giftCard.discountMinor) > 0n ? (
-                  <div className="flex justify-between text-emerald-700"><span>গিফট কার্ড ছাড় (••••{quote.giftCard.codeLast4}):</span><span className="font-semibold">− {money(quote.giftCard.discountMinor)}</span></div>
+                  <div className="flex justify-between text-emerald-700"><span>{t.checkoutExtra.giftCardDiscountPrefix}{quote.giftCard.codeLast4}):</span><span className="font-semibold">− {money(quote.giftCard.discountMinor)}</span></div>
                 ) : null}
                 {quote.gift ? (
                   <div className="flex justify-between text-pink-700">
@@ -1088,9 +1088,9 @@ export default function ShopCheckoutPage() {
                   if (!lines) return null;
                   return (
                     <div className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-                      <div className="flex justify-between"><span>মোট</span><span className="font-bold">{money(lines.totalMinor)}</span></div>
-                      <div className="flex justify-between"><span>এখন পরিশোধ (ডিপোজিট)</span><span className="font-bold">{money(lines.depositMinor)}</span></div>
-                      <div className="flex justify-between"><span>ডেলিভারিতে বাকি</span><span className="font-bold">{money(lines.dueAfterMinor)}</span></div>
+                      <div className="flex justify-between"><span>{t.checkoutExtra.totalLabel}</span><span className="font-bold">{money(lines.totalMinor)}</span></div>
+                      <div className="flex justify-between"><span>{t.checkoutExtra.payNowDeposit}</span><span className="font-bold">{money(lines.depositMinor)}</span></div>
+                      <div className="flex justify-between"><span>{t.checkoutExtra.dueAtDelivery}</span><span className="font-bold">{money(lines.dueAfterMinor)}</span></div>
                       {lines.note ? <p className="pt-0.5 leading-relaxed">{lines.note}</p> : null}
                     </div>
                   );
@@ -1190,10 +1190,10 @@ export default function ShopCheckoutPage() {
             <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3 space-y-1.5 text-[11px] text-slate-700">
               <div className="flex items-center gap-2 font-bold text-slate-900">
                 <span>🛡️</span>
-                <span>নিরাপদ ও ১০০% আসল পণ্যের নিশ্চয়তা</span>
+                <span>{t.checkoutExtra.trustGuarantee}</span>
               </div>
               <p className="text-[10px] leading-relaxed text-slate-500">
-                অফিশিয়াল ব্র্যান্ড ওয়ারেন্টি • দ্রুত এক্সপ্রেস ডেলিভারি • ত্রুটিযুক্ত পণ্যে ৭ দিনের সহজ রিপ্লেসমেন্ট/এক্সচেঞ্জ • পার্সেল হাতে পেয়ে চেক করে ক্যাশ অন ডেলিভারিতে পরিশোধের সুবিধা।
+                {t.checkoutExtra.trustBody}।
               </p>
             </div>
 

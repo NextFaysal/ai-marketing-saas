@@ -48,10 +48,10 @@ describe("LeadsService + custom fields (CRM C4)", () => {
 
   it("create enforces required defs and value types; unknown keys 400", async () => {
     const { svc } = await setup();
-    await expect(svc.create("org-1", "u", { name: "A" })).rejects.toThrow('"District" is required');
-    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "ঢাকা", budget: "lots" } })).rejects.toThrow('"Budget" must be a number');
-    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "ঢাকা", mystery: 1 } })).rejects.toThrow('Unknown custom field: "mystery"');
-    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "চট্টগ্রাম" } })).rejects.toThrow("must be one of");
+    await expect(svc.create("org-1", "u", { name: "A" })).rejects.toMatchObject({ code: "crm.customFieldIsRequired" });
+    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "ঢাকা", budget: "lots" } })).rejects.toMatchObject({ code: "crm.customFieldMustBeANumber" });
+    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "ঢাকা", mystery: 1 } })).rejects.toMatchObject({ code: "crm.unknownCustomFieldFor" });
+    await expect(svc.create("org-1", "u", { name: "A", customFields: { district: "চট্টগ্রাম" } })).rejects.toMatchObject({ code: "crm.customFieldMustBeOneOf" });
   });
 
   it("update merges partial values, clears single keys with null, and clears all with customFields: null; required is NOT enforced on update", async () => {

@@ -286,7 +286,7 @@ describe("generateScript", () => {
     const svc = buildAi(prisma, realProviderReturning(scriptJson));
     await expect(svc.generateScript("org-1", "user-1", { topic: "   " })).rejects.toThrow("একটা বিষয় (Topic) লিখুন।");
     await expect(svc.generateScript("org-1", "user-1", { productId: "nope", topic: "রিল" }))
-      .rejects.toThrow("Product not found in this organization");
+      .rejects.toMatchObject({ code: "social.productNotFoundInThisOrganization" });
   });
 });
 
@@ -363,7 +363,7 @@ describe("materializePlan", () => {
     seedPlan(prisma);
     const { svc } = buildMaterializer(prisma);
     await expect(svc.materializePlan("org-2", "user-9", "plan-1", { itemIndexes: [0], socialAccountId: "acc-1" }))
-      .rejects.toThrow("Content plan not found in this organization");
+      .rejects.toMatchObject({ code: "social.contentPlanNotFoundInThis" });
 
     const bare = buildAi(prisma, devProvider);
     await expect(bare.materializePlan("org-1", "user-1", "plan-1", { itemIndexes: [0], socialAccountId: "acc-1" }))
@@ -380,6 +380,6 @@ describe("materializePlan", () => {
     expect(await svc.listContentPlans("org-2")).toEqual([]);
     const one: any = await svc.getContentPlan("org-1", "plan-1");
     expect(one.id).toBe("plan-1");
-    await expect(svc.getContentPlan("org-2", "plan-1")).rejects.toThrow("Content plan not found in this organization");
+    await expect(svc.getContentPlan("org-2", "plan-1")).rejects.toMatchObject({ code: "social.contentPlanNotFoundInThis" });
   });
 });

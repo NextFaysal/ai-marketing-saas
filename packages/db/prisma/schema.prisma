@@ -69,6 +69,10 @@ model User {
   emailVerifiedAt     DateTime?
   phoneVerifiedAt     DateTime?
   phone               String?
+  // ML1 (Multi-Language MB1): personal UI language preference
+  // (bn | en). Null = no personal preference — follow the
+  // organization's dashboardLocale default.
+  preferredLocale     String?
   verificationTokens  VerificationToken[]
   // AB8 (AX26): Google SSO state + handoff tokens (hashed at rest).
   ssoLoginStates      SsoLoginState[]
@@ -102,6 +106,11 @@ model Organization {
   attributionWindowDays Int       @default(30)
   timezone       String          @default("Asia/Dhaka")
   currency       String          @default("BDT")
+  // ML1 (Multi-Language MB1): the org's dashboard default UI
+  // language (bn | en). A user's own User.preferredLocale, when
+  // set, wins over this. StorefrontSetting.locale is the separate
+  // shop-surface language and is deliberately untouched.
+  dashboardLocale String         @default("bn")
   // Milestone 59 (Agency White-Label v1): per-org branding.
   // All additive + nullable; absence means the platform defaults.
   brandName       String?
@@ -5309,6 +5318,17 @@ model MessageTemplate {
   // content edit; each version's snapshot lives in
   // MessageTemplateVersion.
   blocks         Json?
+  // MB5 (ML14, CD-3): the merchant's OWN per-locale variants of
+  // this template — { bn?: { subject?, body?, htmlBody? },
+  // en?: { … } }, each field a string or null. Nullable: null
+  // (every pre-MB5 row) = no variants, the authored
+  // subject/body/htmlBody are sent verbatim in every locale,
+  // exactly as before. The workflow engine's send steps apply a
+  // variant field ONLY when it is present and non-empty for the
+  // recipient's locale (variant-if-exists); variants are never
+  // machine-translated (D-MB4-5) and are not part of the MX7
+  // version snapshots.
+  variants       Json?
   version        Int      @default(1)
   createdById    String
   createdAt      DateTime @default(now())

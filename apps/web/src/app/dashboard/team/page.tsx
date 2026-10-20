@@ -6,6 +6,10 @@ import {
   buildCustomRolePayload, buildCustomRoleUpdatePayload,
   type CustomRole, type CustomRolesResponse, type LoginHistoryRow, type MemberSession, type PresetRoleProfile,
 } from "@/lib/gb6-team";
+import { useLocale } from "@/lib/i18n/provider";
+import type { UiLocale } from "@/lib/i18n/dict";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
+import { teamBn } from "@/lib/i18n/team";
 
 interface Member {
   id: string; role: string; status: string; user: { id: string; name: string; email: string };
@@ -23,9 +27,10 @@ const ROLES = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANA
 // Milestone 68: working hours (agent roles only).
 const AGENT_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
 const DAY_DEFS = [
-  { key: "sat", label: "শনিবার" }, { key: "sun", label: "রবিবার" }, { key: "mon", label: "সোমবার" },
-  { key: "tue", label: "মঙ্গলবার" }, { key: "wed", label: "বুধবার" }, { key: "thu", label: "বৃহস্পতিবার" }, { key: "fri", label: "শুক্রবার" },
-];
+  { key: "sat", labelKey: "tmDaySat" }, { key: "sun", labelKey: "tmDaySun" }, { key: "mon", labelKey: "tmDayMon" },
+  { key: "tue", labelKey: "tmDayTue" }, { key: "wed", labelKey: "tmDayWed" }, { key: "thu", labelKey: "tmDayThu" }, { key: "fri", labelKey: "tmDayFri" },
+] as const;
+type TeamDict = typeof teamBn;
 interface ScheduleRow { userId: string; timezone: string; windows: Record<string, [string, string][]>; hasSchedule: boolean; onShift: boolean }
 // Milestone 69: activity board + feed shapes.
 interface ActivityMember {
@@ -34,34 +39,36 @@ interface ActivityMember {
   today: { repliesSent: number; closedToday: number; auditActions: number; openNow: number };
 }
 interface FeedRow { id: string; actorName: string; action: string; entityType: string; createdAt: string }
-const ACTION_LABELS: Record<string, string> = {
-  "org.member_role_updated": "ভূমিকা বদলেছেন", "org.member_suspended": "সদস্য সাময়িক বন্ধ করেছেন",
-  "org.member_reactivated": "সদস্য আবার চালু করেছেন", "org.member_removed": "সদস্য সরিয়ে দিয়েছেন",
-  "org.ownership_transferred": "মালিকানা হস্তান্তর করেছেন", "org.member_left": "Organization ছেড়ে গেছেন",
-  "org.archived": "Organization আর্কাইভ করেছেন", "org.restored": "Organization Restore করেছেন",
-  "org.member_invited": "সদস্য আমন্ত্রণ জানিয়েছেন", "org.member_access_updated": "কাস্টম অ্যাক্সেস বদলেছেন", "inbox.agent_schedule_updated": "কর্মঘণ্টা বদলেছেন",
-  "org.invite_link_created": "Invite link তৈরি করেছেন", "org.invite_link_revoked": "Invite link বাতিল করেছেন",
-  "org.join_requested": "যোগদানের অনুরোধ পাঠিয়েছেন", "org.join_request_approved": "যোগদানের অনুরোধ অনুমোদন করেছেন", "org.join_request_rejected": "যোগদানের অনুরোধ ফিরিয়ে দিয়েছেন",
-  "inbox.agent_schedule_cleared": "কর্মঘণ্টা সরিয়েছেন", "inbox.conversation_assigned": "কথোপকথন Assign করেছেন",
-  "integration.messaging.connected": "মেসেজিং Channel যুক্ত করেছেন", "order.created": "অর্ডার তৈরি করেছেন",
+const ACTION_LABEL_KEYS: Record<string, keyof TeamDict> = {
+  "org.member_role_updated": "tmActRoleUpdated", "org.member_suspended": "tmActSuspended",
+  "org.member_reactivated": "tmActReactivated", "org.member_removed": "tmActRemoved",
+  "org.ownership_transferred": "tmActOwnership", "org.member_left": "tmActLeft",
+  "org.archived": "tmActArchived", "org.restored": "tmActRestored",
+  "org.member_invited": "tmActInvited", "org.member_access_updated": "tmActAccessUpdated", "inbox.agent_schedule_updated": "tmActScheduleUpdated",
+  "org.invite_link_created": "tmActLinkCreated", "org.invite_link_revoked": "tmActLinkRevoked",
+  "org.join_requested": "tmActJoinRequested", "org.join_request_approved": "tmActJoinApproved", "org.join_request_rejected": "tmActJoinRejected",
+  "inbox.agent_schedule_cleared": "tmActScheduleCleared", "inbox.conversation_assigned": "tmActAssigned",
+  "integration.messaging.connected": "tmActMessagingConnected", "order.created": "tmActOrderCreated",
 };
-function agoText(iso: string | null): string {
+function agoText(iso: string | null, locale: UiLocale, D: TeamDict, tr: (path: string, params?: Record<string, string | number>) => string): string {
   if (!iso) return "—";
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 1) return "এইমাত্র";
-  if (mins < 60) return `${mins} মিনিট আগে`;
+  if (mins < 1) return D.tmJustNow;
+  if (mins < 60) return tr("team.tmMinsAgo", { n: fmtNumber(locale, mins) });
   const h = Math.floor(mins / 60);
-  if (h < 24) return `${h} ঘণ্টা আগে`;
-  return `${Math.floor(h / 24)} দিন আগে`;
+  if (h < 24) return tr("team.tmHoursAgo", { n: fmtNumber(locale, h) });
+  return tr("team.tmDaysAgo", { n: fmtNumber(locale, Math.floor(h / 24)) });
 }
-const STATE_CHIP: Record<string, { label: string; cls: string }> = {
-  active: { label: "🟢 সক্রিয় (কাজ করছেন)", cls: "bg-emerald-100 text-emerald-700" },
-  idle: { label: "🟡 নিষ্ক্রিয় (বসে আছেন)", cls: "bg-amber-100 text-amber-700" },
-  away: { label: "⚪ দূরে (Away)", cls: "bg-slate-200 text-slate-600" },
-  offline: { label: "⚫ অফলাইন", cls: "bg-slate-100 text-slate-500" },
+const STATE_CHIP: Record<string, { labelKey: keyof TeamDict; cls: string }> = {
+  active: { labelKey: "tmStateActive", cls: "bg-emerald-100 text-emerald-700" },
+  idle: { labelKey: "tmStateIdle", cls: "bg-amber-100 text-amber-700" },
+  away: { labelKey: "tmStateAway", cls: "bg-slate-200 text-slate-600" },
+  offline: { labelKey: "tmStateOffline", cls: "bg-slate-100 text-slate-500" },
 };
 
 export default function TeamPage() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.team;
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [usage, setUsage] = useState<SeatUsage | null>(null);
@@ -75,7 +82,7 @@ export default function TeamPage() {
   const [editingShift, setEditingShift] = useState("");
   // Milestone 72: custom access editor state.
   const [editingAccess, setEditingAccess] = useState("");
-  const [accessCatalog, setAccessCatalog] = useState<{ key: string; labelBn: string; noteBn: string; minRole: string }[]>([]);
+  const [accessCatalog, setAccessCatalog] = useState<{ key: string; labelBn: string; label?: string; noteBn: string; minRole: string }[]>([]);
   const [accessDraft, setAccessDraft] = useState<{ grants: string[]; denies: string[] }>({ grants: [], denies: [] });
   const [accessEffective, setAccessEffective] = useState<{ key: string; allowed: boolean; source: string }[]>([]);
   const [activity, setActivity] = useState<ActivityMember[]>([]);
@@ -116,7 +123,7 @@ export default function TeamPage() {
 
   const load = useCallback(async () => {
     const orgId = getOrganizationId();
-    if (!orgId) { setError("কোনো Organization নির্বাচিত নেই।"); return; }
+    if (!orgId) { setError(D.tmNoOrg); return; }
     try {
       const [m, inv, u, orgs] = await Promise.all([
         apiFetch<Member[]>(`/organizations/${orgId}/members`),
@@ -142,7 +149,7 @@ export default function TeamPage() {
       apiFetch<{ id: string }>("/auth/me").then((me) => setMyUserId(me.id)).catch(() => undefined);
       refreshActivity(orgId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.tmLoadFailed);
     }
   }, []);
 
@@ -154,7 +161,7 @@ export default function TeamPage() {
 
   async function wrap(key: string, fn: () => Promise<void>) {
     setBusy(key); setError(""); setNotice("");
-    try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : "কাজটি করা যায়নি"); } finally { setBusy(""); }
+    try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : D.tmActionFailed); } finally { setBusy(""); }
   }
 
   async function directInvite() {
@@ -163,7 +170,7 @@ export default function TeamPage() {
     const role = (document.getElementById("direct-role") as HTMLSelectElement).value;
     await wrap("direct", async () => {
       await apiFetch(`/organizations/${orgId}/members/invite`, { method: "POST", body: JSON.stringify({ email, role }) });
-      setNotice("সদস্য যোগ হয়েছে।");
+      setNotice(D.tmMemberAdded);
       await load();
     });
   }
@@ -177,9 +184,7 @@ export default function TeamPage() {
         method: "POST", body: JSON.stringify({ email, role }),
       });
       setLastLink(out.inviteUrl);
-      setNotice(out.emailSent
-        ? "আমন্ত্রণের ইমেইল পাঠানো হয়েছে। চাইলে নিচের লিংকটিও সরাসরি পাঠাতে পারেন।"
-        : "আমন্ত্রণ তৈরি হয়েছে, কিন্তু ইমেইল পাঠানো যায়নি (SMTP সেট করা নেই বা ব্যর্থ)। নিচের লিংকটি কপি করে সরাসরি পাঠিয়ে দিন।");
+      setNotice(out.emailSent ? D.tmInviteEmailSent : D.tmInviteNoEmail);
       await load();
     });
   }
@@ -190,7 +195,7 @@ export default function TeamPage() {
     const orgId = getOrganizationId(); if (!orgId || role === m.role) return;
     await wrap(`role-${m.user.id}`, async () => {
       await apiFetch(`/organizations/${orgId}/members/${m.user.id}/role`, { method: "PATCH", body: JSON.stringify({ role }) });
-      setNotice(`${m.user.name} এর ভূমিকা এখন ${role}।`);
+      setNotice(t("team.tmRoleNow", { name: m.user.name, role }));
       await load();
     });
   }
@@ -202,18 +207,18 @@ export default function TeamPage() {
         method: "PATCH", body: JSON.stringify({ status }),
       });
       setNotice(status === "SUSPENDED"
-        ? `${m.user.name} কে সাময়িক বন্ধ করা হয়েছে — তার ${out.handedOver}টি খোলা কথোপকথন Pool এ ফেরত গেছে, Assignment নিজে থেকে ভাগ করে দেবে। এখন থেকে তিনি এই Organization এ ঢুকতে পারবেন না।`
-        : `${m.user.name} আবার সক্রিয়।`);
+        ? t("team.tmSuspendedNotice", { name: m.user.name, count: fmtNumber(locale, out.handedOver) })
+        : t("team.tmReactivatedNotice", { name: m.user.name }));
       await load();
     });
   }
 
   async function removeMember(m: Member) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`${m.user.name} কে এই Organization থেকে স্থায়ীভাবে সরিয়ে দেবেন? তার খোলা কথোপকথন Pool এ ফেরত যাবে।`)) return;
+    if (!window.confirm(t("team.tmRemoveConfirm", { name: m.user.name }))) return;
     await wrap(`remove-${m.user.id}`, async () => {
       const out = await apiFetch<{ handedOver: number }>(`/organizations/${orgId}/members/${m.user.id}`, { method: "DELETE" });
-      setNotice(`${m.user.name} কে সরিয়ে দেওয়া হয়েছে (${out.handedOver}টি খোলা কথোপকথন হস্তান্তর হয়েছে)।`);
+      setNotice(t("team.tmRemovedNotice", { name: m.user.name, count: fmtNumber(locale, out.handedOver) }));
       await load();
     });
   }
@@ -231,7 +236,7 @@ export default function TeamPage() {
         method: "POST", body: JSON.stringify({ targetUserId: transferTarget }),
       });
       setTransferStep(0); setTransferTarget(""); setTransferConfirmText("");
-      setNotice(`মালিকানা ${target?.user.name ?? ""} এর কাছে হস্তান্তর হয়েছে — আপনি এখন এই Organization এ ADMIN। দুই পক্ষকেই ইমেইলে জানানো হয়েছে (SMTP চালু থাকলে)।`);
+      setNotice(t("team.tmTransferredNotice", { name: target?.user.name ?? "" }));
       await load();
     });
   }
@@ -241,7 +246,7 @@ export default function TeamPage() {
   // to onboarding when none remain.
   async function doLeave() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`আপনি সত্যিই ${orgName || "এই Organization"} ছেড়ে যাবেন? আপনার খোলা কথোপকথন Pool এ ফেরত যাবে এবং এই ওয়ার্কস্পেসে আপনার প্রবেশ বন্ধ হয়ে যাবে। আবার ঢুকতে হলে টিমের কাউকে আমন্ত্রণ পাঠাতে হবে।`)) return;
+    if (!window.confirm(t("team.tmLeaveConfirm", { org: orgName || D.tmThisOrg }))) return;
     await wrap("leave", async () => {
       await apiFetch(`/organizations/${orgId}/leave`, { method: "POST" });
       const remaining = await apiFetch<{ id: string }[]>(`/organizations`).catch(() => [] as { id: string }[]);
@@ -282,7 +287,7 @@ export default function TeamPage() {
       await apiFetch(`/organizations/${orgId}/inbox/agent-schedules/${m.user.id}`, {
         method: "PUT", body: JSON.stringify({ timezone: shiftTz, windows }),
       });
-      setNotice(`${m.user.name} এর কর্মঘণ্টা সংরক্ষণ হয়েছে — Assignment এখন থেকে এই সময়ের বাইরে তাকে নতুন কথোপকথন দেবে না।`);
+      setNotice(t("team.tmShiftSaved", { name: m.user.name }));
       setEditingShift("");
       await load();
     });
@@ -292,7 +297,7 @@ export default function TeamPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap(`shift-clear-${m.user.id}`, async () => {
       await apiFetch(`/organizations/${orgId}/inbox/agent-schedules/${m.user.id}`, { method: "DELETE" });
-      setNotice(`${m.user.name} এর কর্মঘণ্টা সরানো হয়েছে — এখন তিনি সব সময় Assignment এর জন্য উপলব্ধ।`);
+      setNotice(t("team.tmShiftCleared", { name: m.user.name }));
       setEditingShift("");
       await load();
     });
@@ -307,7 +312,7 @@ export default function TeamPage() {
       const data: any = await apiFetch(`/organizations/${orgId}/members/${m.user.id}/access`);
       setAccessDraft({ grants: data.overrides?.grants ?? [], denies: data.overrides?.denies ?? [] });
       setAccessEffective(data.effective ?? []);
-    } catch (e) { setError(e instanceof Error ? e.message : "অ্যাক্সেস লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.tmAccessLoadFailed); }
   }
 
   function setAccessMode(key: string, mode: "role" | "grant" | "deny") {
@@ -327,7 +332,7 @@ export default function TeamPage() {
         method: "PATCH", body: JSON.stringify(accessDraft),
       });
       setAccessEffective(data.effective ?? []);
-      setNotice(`${m.user.name} এর কাস্টম অ্যাক্সেস সংরক্ষণ হয়েছে।`);
+      setNotice(t("team.tmAccessSaved", { name: m.user.name }));
     });
   }
 
@@ -335,7 +340,7 @@ export default function TeamPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap(`totp-${userId}`, async () => {
       await apiFetch(`/organizations/${orgId}/members/${userId}/totp-reset`, { method: "POST" });
-      setNotice(`${name} এর 2FA রিসেট হয়েছে — তিনি Settings থেকে আবার চালু করতে পারবেন। (শুধু OWNER এই কাজটি করতে পারে।)`);
+      setNotice(t("team.tmTotpReset", { name }));
     });
   }
 
@@ -352,10 +357,10 @@ export default function TeamPage() {
     setBusy("role-preset"); setRoleError(""); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/custom-roles`, { method: "POST", body: JSON.stringify(payload) });
-      setNotice("প্রিসেট থেকে কাস্টম রোল তৈরি হয়েছে।");
+      setNotice(D.tmPresetRoleCreated);
       setPresetKey("");
       await reloadCustomRoles(orgId);
-    } catch (e) { setRoleError(e instanceof Error ? e.message : "রোল তৈরি ব্যর্থ"); }
+    } catch (e) { setRoleError(e instanceof Error ? e.message : D.tmRoleCreateFailed); }
     finally { setBusy(""); }
   }
 
@@ -369,30 +374,30 @@ export default function TeamPage() {
     try {
       if (editingRoleId) {
         await apiFetch(`/organizations/${orgId}/custom-roles/${editingRoleId}`, { method: "PATCH", body: JSON.stringify(built.payload) });
-        setNotice("কাস্টম রোল হালনাগাদ হয়েছে।");
+        setNotice(D.tmRoleUpdated);
       } else {
         await apiFetch(`/organizations/${orgId}/custom-roles`, { method: "POST", body: JSON.stringify(built.payload) });
-        setNotice("কাস্টম রোল তৈরি হয়েছে।");
+        setNotice(D.tmRoleCreated);
       }
       setEditingRoleId(""); setRoleName(""); setRoleAreas([]);
       await reloadCustomRoles(orgId);
       await load();
-    } catch (e) { setRoleError(e instanceof Error ? e.message : "রোল সংরক্ষণ ব্যর্থ"); }
+    } catch (e) { setRoleError(e instanceof Error ? e.message : D.tmRoleSaveFailed); }
     finally { setBusy(""); }
   }
 
   async function deleteCustomRole(r: CustomRole) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`“${r.name}” কাস্টম রোলটি মুছে ফেলবেন?`)) return;
+    if (!window.confirm(t("team.tmRoleDeleteConfirm", { name: r.name }))) return;
     setBusy(`role-del-${r.id}`); setRoleError(""); setError(""); setNotice("");
     try {
       await apiFetch(`/organizations/${orgId}/custom-roles/${r.id}`, { method: "DELETE" });
-      setNotice("কাস্টম রোল মুছে ফেলা হয়েছে।");
+      setNotice(D.tmRoleDeleted);
       if (editingRoleId === r.id) { setEditingRoleId(""); setRoleName(""); setRoleAreas([]); }
       await reloadCustomRoles(orgId);
     } catch (e) {
       // Server refuses while the role is still assigned — show its message verbatim.
-      setRoleError(e instanceof Error ? e.message : "রোল মোছা ব্যর্থ");
+      setRoleError(e instanceof Error ? e.message : D.tmRoleDeleteFailed);
     } finally { setBusy(""); }
   }
 
@@ -403,8 +408,8 @@ export default function TeamPage() {
         method: "PATCH", body: JSON.stringify({ customRoleId: customRoleId || null }),
       });
       setNotice(customRoleId
-        ? `${m.user.name} এর কাস্টম রোল এখন ${customRoles.find((r) => r.id === customRoleId)?.name ?? ""}।`
-        : `${m.user.name} এর কাস্টম রোল তুলে নেওয়া হয়েছে।`);
+        ? t("team.tmCustomRoleSet", { name: m.user.name, role: customRoles.find((r) => r.id === customRoleId)?.name ?? "" })
+        : t("team.tmCustomRoleRemoved", { name: m.user.name }));
       await load();
     });
   }
@@ -422,7 +427,7 @@ export default function TeamPage() {
         apiFetch<MemberSession[]>(`/organizations/${orgId}/members/${m.user.id}/sessions`),
       ]);
       setLoginHistory(h); setMemberSessions(s);
-    } catch (e) { setPanelError(e instanceof Error ? e.message : "ইতিহাস লোড করা যায়নি"); }
+    } catch (e) { setPanelError(e instanceof Error ? e.message : D.tmHistoryLoadFailed); }
   }
 
   async function reloadMemberSessions(userId: string) {
@@ -434,18 +439,18 @@ export default function TeamPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap(`msession-${sessionId}`, async () => {
       await apiFetch(`/organizations/${orgId}/members/${m.user.id}/sessions/${sessionId}`, { method: "DELETE" });
-      setNotice(`${m.user.name} এর একটি সেশন বাতিল হয়েছে।`);
+      setNotice(t("team.tmSessionRevoked", { name: m.user.name }));
       await reloadMemberSessions(m.user.id);
     });
   }
 
   async function revokeAllMemberSessions(m: Member) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`${m.user.name} এর সব সক্রিয় সেশন বাতিল করবেন? তিনি সব ডিভাইস থেকে লগআউট হয়ে যাবেন।`)) return;
+    if (!window.confirm(t("team.tmRevokeAllConfirm", { name: m.user.name }))) return;
     await wrap(`msessions-all-${m.user.id}`, async () => {
       // Server field is `revokedCount` (verified in organizations.service.ts).
       const out = await apiFetch<{ revokedCount: number }>(`/organizations/${orgId}/members/${m.user.id}/sessions/revoke-all`, { method: "POST" });
-      setNotice(`${m.user.name} এর ${out.revokedCount}টি সেশন বাতিল হয়েছে।`);
+      setNotice(t("team.tmSessionsRevoked", { name: m.user.name, count: fmtNumber(locale, out.revokedCount) }));
       await reloadMemberSessions(m.user.id);
     });
   }
@@ -454,7 +459,7 @@ export default function TeamPage() {
     const orgId = getOrganizationId(); if (!orgId) return;
     await wrap(`revoke-${id}`, async () => {
       await apiFetch(`/organizations/${orgId}/members/invitations/${id}`, { method: "DELETE" });
-      setNotice("আমন্ত্রণ বাতিল হয়েছে।");
+      setNotice(D.tmInviteRevoked);
       await load();
     });
   }
@@ -464,7 +469,7 @@ export default function TeamPage() {
     await wrap(`resend-${id}`, async () => {
       const out = await apiFetch<{ inviteUrl: string; emailSent: boolean }>(`/organizations/${orgId}/members/invitations/${id}/resend`, { method: "POST" });
       setLastLink(out.inviteUrl);
-      setNotice(out.emailSent ? "আমন্ত্রণ আবার পাঠানো হয়েছে (নতুন লিংক)।" : "নতুন লিংক তৈরি হয়েছে; ইমেইল যায়নি — লিংকটি কপি করে পাঠান।");
+      setNotice(out.emailSent ? D.tmResentEmail : D.tmResentNoEmail);
       await load();
     });
   }
@@ -482,7 +487,7 @@ export default function TeamPage() {
         method: "POST", body: JSON.stringify({ role, maxUses, expiresInDays }),
       });
       setNewJoinLink(out.inviteUrl);
-      setNotice("Invite link তৈরি হয়েছে — লিংকটি এখনই কপি করে রাখুন, পরে আর দেখা যাবে না (সার্ভারে শুধু এর hash থাকে)।");
+      setNotice(D.tmLinkCreated);
       await load();
     });
   }
@@ -490,18 +495,18 @@ export default function TeamPage() {
   async function copyJoinLink() {
     try {
       await navigator.clipboard.writeText(newJoinLink);
-      setNotice("লিংক কপি হয়েছে।");
+      setNotice(D.tmLinkCopied);
     } catch {
-      setError("কপি করা যায়নি — লিংকটি হাতে সিলেক্ট করে কপি করুন।");
+      setError(D.tmCopyFailed);
     }
   }
 
   async function revokeLink(id: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm("এই Invite link টি বাতিল করবেন? লিংকটি দিয়ে আর কেউ অনুরোধ পাঠাতে পারবে না (আগের অনুরোধগুলো থেকে যাবে)।")) return;
+    if (!window.confirm(D.tmLinkRevokeConfirm)) return;
     await wrap(`link-revoke-${id}`, async () => {
       await apiFetch(`/organizations/${orgId}/invite-links/${id}`, { method: "DELETE" });
-      setNotice("Invite link বাতিল হয়েছে।");
+      setNotice(D.tmLinkRevoked);
       await load();
     });
   }
@@ -516,20 +521,20 @@ export default function TeamPage() {
       const out = await apiFetch<{ alreadyMember: boolean; role: string }>(`/organizations/${orgId}/join-requests/${id}/approve`, {
         method: "POST", body: JSON.stringify(role ? { role } : {}),
       });
-      setNotice(out.alreadyMember ? "তিনি ইতিমধ্যে সদস্য ছিলেন — অনুরোধটি বন্ধ করে দেওয়া হয়েছে।" : `অনুমোদিত — তিনি এখন ${out.role} ভূমিকায় সক্রিয় সদস্য।`);
+      setNotice(out.alreadyMember ? D.tmAlreadyMember : t("team.tmApprovedNotice", { role: out.role }));
       await load();
     });
   }
 
   async function rejectRequest(id: string, name: string) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const reason = window.prompt(`${name} এর যোগদানের অনুরোধ ফিরিয়ে দেবেন? চাইলে একটি কারণ লিখুন (তিনি দেখতে পাবেন) — না লিখলেও চলবে।`, "");
+    const reason = window.prompt(t("team.tmRejectPrompt", { name }), "");
     if (reason === null) return;
     await wrap(`jr-reject-${id}`, async () => {
       await apiFetch(`/organizations/${orgId}/join-requests/${id}/reject`, {
         method: "POST", body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
       });
-      setNotice("অনুরোধ ফিরিয়ে দেওয়া হয়েছে।");
+      setNotice(D.tmRejectedNotice);
       await load();
     });
   }
@@ -538,20 +543,20 @@ export default function TeamPage() {
     <div className="space-y-4">
       <h1 className="page-title">Team Settings</h1>
       <div>
-        <a href="/dashboard/team/performance" className="btn-secondary">📊 পারফরম্যান্স স্কোরকার্ড — কে ভালো করছেন, কার দিকে নজর দিতে হবে →</a>
+        <a href="/dashboard/team/performance" className="btn-secondary">{D.tmPerfLink}</a>
       </div>
       {error ? <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {notice ? <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</div> : null}
 
       {usage ? (
         <div className="card flex flex-wrap items-center gap-x-8 gap-y-2 p-5 text-sm">
-          <div><span className="text-2xl font-bold">{usage.activeMembers}</span> <span className="text-slate-500">সক্রিয় সদস্য</span></div>
-          <div>Seat সীমা: <strong>{usage.limit === null ? "সীমাহীন" : `${usage.limit}টি`}</strong></div>
-          <div>অপেক্ষমাণ আমন্ত্রণ: <strong>{usage.pendingInvites}</strong></div>
-          {usage.suspendedMembers > 0 ? <div>সাময়িক বন্ধ: <strong>{usage.suspendedMembers}</strong></div> : null}
+          <div><span className="text-2xl font-bold">{fmtNumber(locale, usage.activeMembers)}</span> <span className="text-slate-500">{D.tmActiveMembers}</span></div>
+          <div>{D.tmSeatLimit}<strong>{usage.limit === null ? D.tmUnlimited : t("team.tmCountSuffix", { count: fmtNumber(locale, usage.limit) })}</strong></div>
+          <div>{D.tmPendingInvites}<strong>{fmtNumber(locale, usage.pendingInvites)}</strong></div>
+          {usage.suspendedMembers > 0 ? <div>{D.tmSuspendedLabel}<strong>{fmtNumber(locale, usage.suspendedMembers)}</strong></div> : null}
           {usage.available !== null ? (
             <div className={usage.available === 0 ? "font-semibold text-red-600" : "text-slate-600"}>
-              {usage.available === 0 ? "আর কোনো Seat খালি নেই — সদস্য যোগ করতে Plan বাড়ান বা কাউকে সরান।" : `আরও ${usage.available}টি Seat খালি আছে।`}
+              {usage.available === 0 ? D.tmNoSeats : t("team.tmSeatsLeft", { count: fmtNumber(locale, usage.available ?? 0) })}
             </div>
           ) : null}
         </div>
@@ -559,28 +564,28 @@ export default function TeamPage() {
 
       {activity.length ? (
         <div className="card p-5">
-          <h2 className="mb-1 font-semibold">লাইভ টিম বোর্ড — কে কাজ করছেন, কে বসে আছেন</h2>
-          <p className="mb-3 text-xs text-slate-400">নিয়ম: শেষ ১৫ মিনিটে আসল কাজের চিহ্ন (Reply, বন্ধ করা কথোপকথন, অন্য কাজ) থাকলে "সক্রিয়"; Dashboard খোলা আছে কিন্তু ১৫+ মিনিট কোনো কাজ নেই — "নিষ্ক্রিয়"। এটি একটি সংকেত মাত্র, কাজের চূড়ান্ত প্রমাণ নয়। প্রতি ৩০ সেকেন্ডে নিজে থেকে হালনাগাদ হয়।</p>
+          <h2 className="mb-1 font-semibold">{D.tmBoardTitle}</h2>
+          <p className="mb-3 text-xs text-slate-400">{D.tmBoardRule}</p>
           {canManage ? (
             <div className="mb-3">
               <button className="btn-secondary" disabled={busy === "rebalance"} onClick={async () => {
                 const orgId = getOrganizationId(); if (!orgId) return;
                 await wrap("rebalance", async () => {
                   const plan: any = await apiFetch(`/organizations/${orgId}/inbox/rebalance`, { method: "POST", body: JSON.stringify({ dryRun: true }) });
-                  if (!plan.movedCount) { setNotice("ভারসাম্যের দরকার নেই — কেউ ধারণক্ষমতার ওপরে নেই, অথবা নেওয়ার মতো উপযুক্ত সদস্য খালি নেই।"); return; }
+                  if (!plan.movedCount) { setNotice(D.tmNoRebalanceNeeded); return; }
                   const names = new Map(members.map((x) => [x.user.id, x.user.name]));
                   const lines = plan.moves.slice(0, 8).map((mv: any) => `• ${names.get(mv.fromUserId) ?? mv.fromUserId} → ${names.get(mv.toUserId) ?? mv.toUserId}`).join("\n");
-                  if (!window.confirm(`পরিকল্পনা: ${plan.movedCount}টি কথোপকথন সরানো হবে (সবচেয়ে নতুনগুলো আগে):\n${lines}${plan.moves.length > 8 ? "\n…" : ""}\n\nএখনই প্রয়োগ করবেন?`)) return;
+                  if (!window.confirm(t("team.tmRebalanceConfirm", { count: fmtNumber(locale, plan.movedCount), lines, more: plan.moves.length > 8 ? "\n…" : "" }))) return;
                   const done: any = await apiFetch(`/organizations/${orgId}/inbox/rebalance`, { method: "POST", body: JSON.stringify({ dryRun: false }) });
-                  setNotice(`⚖️ ভারসাম্য সম্পন্ন: ${done.movedCount}টি কথোপকথন কম ব্যস্ত সদস্যদের কাছে সরানো হয়েছে।`);
+                  setNotice(t("team.tmRebalanceDone", { count: fmtNumber(locale, done.movedCount) }));
                   refreshActivity(orgId);
                 });
-              }}>⚖️ কাজের ভারসাম্য করুন</button>
-              <span className="ml-2 text-xs text-slate-400">ধারণক্ষমতার বেশি কাজ যার কাছে, তার সবচেয়ে নতুন কথোপকথনগুলো শিফটে থাকা কম-ব্যস্ত সদস্যের কাছে যায়। আগে পরিকল্পনা দেখানো হয়।</span>
+              }}>{D.tmRebalanceBtn}</button>
+              <span className="ml-2 text-xs text-slate-400">{D.tmRebalanceNote}</span>
             </div>
           ) : null}
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-slate-500"><th className="py-2">সদস্য</th><th>অবস্থা</th><th>শেষ কাজ</th><th>আজকের কাজ</th><th>এখন খোলা</th></tr></thead>
+            <thead><tr className="text-left text-slate-500"><th className="py-2">{dict.common.member}</th><th>{D.tmColStatus}</th><th>{D.tmColLastAction}</th><th>{D.tmColToday}</th><th>{D.tmColOpenNow}</th></tr></thead>
             <tbody>
               {activity.map((a) => {
                 const chip = STATE_CHIP[a.activityState] ?? STATE_CHIP.offline;
@@ -588,12 +593,12 @@ export default function TeamPage() {
                   <tr key={a.userId} className="border-t">
                     <td className="py-2">{a.name} <span className="text-xs text-slate-400">({a.role})</span></td>
                     <td>
-                      <span className={`rounded px-1.5 py-0.5 text-xs ${chip.cls}`}>{chip.label}</span>
-                      {a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">অফ-শিফট</span> : null}
+                      <span className={`rounded px-1.5 py-0.5 text-xs ${chip.cls}`}>{D[chip.labelKey]}</span>
+                      {a.hasSchedule && !a.onShift ? <span className="ml-1 rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">{D.tmOffShift}</span> : null}
                     </td>
-                    <td>{agoText(a.lastActionAt ?? a.heartbeatAt)}</td>
-                    <td className="text-slate-600">Reply {a.today.repliesSent} · বন্ধ {a.today.closedToday} · অন্য কাজ {a.today.auditActions}</td>
-                    <td>{a.today.openNow}টি</td>
+                    <td>{agoText(a.lastActionAt ?? a.heartbeatAt, locale, D, t)}</td>
+                    <td className="text-slate-600">{t("team.tmTodayLine", { replies: fmtNumber(locale, a.today.repliesSent), closed: fmtNumber(locale, a.today.closedToday), other: fmtNumber(locale, a.today.auditActions) })}</td>
+                    <td>{t("team.tmCountSuffix", { count: fmtNumber(locale, a.today.openNow) })}</td>
                   </tr>
                 );
               })}
@@ -603,11 +608,11 @@ export default function TeamPage() {
       ) : null}
 
       <div className="card p-5">
-        <h2 className="mb-3 font-semibold">সদস্যরা ({members.length})</h2>
-        <p className="mb-3 text-xs text-slate-400">মূল (preset) ভূমিকা ও কাস্টম রোল দুটোই থাকে: মূল ভূমিকা কিছু নির্দিষ্ট পেজ/কাজ নিয়ন্ত্রণ করে, আর কাস্টম রোলের এলাকাগুলো এলাকা-ভিত্তিক (area-checked) পেজগুলো নিয়ন্ত্রণ করে। কাস্টম রোল দিলে এলাকা-ভিত্তিক পেজে মূল ভূমিকার বদলে কাস্টম রোলের এলাকাই প্রযোজ্য হয় (per-member Grant/Deny এর ওপরে প্রযোজ্য থাকে)।</p>
-        {members.length === 0 ? <p className="text-sm text-slate-500">কোনো সদস্য নেই।</p> : (
+        <h2 className="mb-3 font-semibold">{t("team.tmMembersTitle", { count: fmtNumber(locale, members.length) })}</h2>
+        <p className="mb-3 text-xs text-slate-400">{D.tmMembersNote}</p>
+        {members.length === 0 ? <p className="text-sm text-slate-500">{D.tmNoMembers}</p> : (
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-slate-500"><th className="py-2">নাম</th><th>ইমেইল</th><th>ভূমিকা</th><th>অবস্থা</th><th></th></tr></thead>
+            <thead><tr className="text-left text-slate-500"><th className="py-2">{D.tmColName}</th><th>{D.tmColEmail}</th><th>{D.tmColRole}</th><th>{D.tmColStatus}</th><th></th></tr></thead>
             <tbody>
               {members.map((m) => (
                 <React.Fragment key={m.id}>
@@ -629,52 +634,52 @@ export default function TeamPage() {
                     {m.role !== "OWNER" ? (
                       <div className="mt-1.5">
                         <select className="input w-44" value={m.customRoleId ?? ""} disabled={!canManage || busy === `custom-role-${m.user.id}`}
-                          onChange={(e) => assignCustomRole(m, e.target.value)} aria-label="কাস্টম রোল">
-                          <option value="">কোনো কাস্টম রোল নেই</option>
+                          onChange={(e) => assignCustomRole(m, e.target.value)} aria-label={D.tmAriaCustomRole}>
+                          <option value="">{D.tmNoCustomRole}</option>
                           {customRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                         </select>
-                        <span className="block text-[11px] text-slate-400">কাস্টম রোল{!canManage ? " (বদলাতে OWNER/ADMIN লাগবে)" : ""}</span>
+                        <span className="block text-[11px] text-slate-400">{D.tmCustomRoleCaption}{!canManage ? D.tmCustomRoleNeedsAdmin : ""}</span>
                       </div>
-                    ) : <span className="block text-[11px] text-slate-400">মালিকের কাস্টম রোল হয় না</span>}
+                    ) : <span className="block text-[11px] text-slate-400">{D.tmOwnerNoCustomRole}</span>}
                   </td>
-                  <td>{m.status === "SUSPENDED" ? <span className="font-semibold text-red-600">সাময়িক বন্ধ</span> : m.status}
+                  <td>{m.status === "SUSPENDED" ? <span className="font-semibold text-red-600">{D.tmSuspendedStatus}</span> : m.status}
                     {scheduleOf(m.user.id)?.hasSchedule ? (
                       <span className={scheduleOf(m.user.id)?.onShift ? "ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700" : "ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600"}>
-                        {scheduleOf(m.user.id)?.onShift ? "এখন শিফটে" : "অফ-শিফট"}
+                        {scheduleOf(m.user.id)?.onShift ? D.tmOnShift : D.tmOffShift}
                       </span>
                     ) : null}
                   </td>
                   <td className="space-x-2 whitespace-nowrap text-right">
                     {canManage && m.role !== "OWNER" ? (
                       m.status === "SUSPENDED" ? (
-                        <button className="btn-secondary" disabled={busy === `status-${m.user.id}`} onClick={() => setStatus(m, "ACTIVE")}>আবার চালু</button>
+                        <button className="btn-secondary" disabled={busy === `status-${m.user.id}`} onClick={() => setStatus(m, "ACTIVE")}>{D.tmReactivate}</button>
                       ) : (
-                        <button className="btn-secondary" disabled={busy === `status-${m.user.id}`} onClick={() => setStatus(m, "SUSPENDED")}>সাময়িক বন্ধ</button>
+                        <button className="btn-secondary" disabled={busy === `status-${m.user.id}`} onClick={() => setStatus(m, "SUSPENDED")}>{D.tmSuspend}</button>
                       )
                     ) : null}
                     {myRole === "OWNER" && m.role !== "OWNER" ? (
-                      <button className="btn-secondary" disabled={busy === `remove-${m.user.id}`} onClick={() => removeMember(m)}>সরিয়ে দিন</button>
+                      <button className="btn-secondary" disabled={busy === `remove-${m.user.id}`} onClick={() => removeMember(m)}>{D.tmRemoveBtn}</button>
                     ) : null}
                     {canEditShift(m) ? (
-                      <button className="btn-secondary" onClick={() => (editingShift === m.user.id ? setEditingShift("") : openShiftEditor(m))}>কর্মঘণ্টা</button>
+                      <button className="btn-secondary" onClick={() => (editingShift === m.user.id ? setEditingShift("") : openShiftEditor(m))}>{D.tmShiftBtn}</button>
                     ) : null}
                     {canManage && m.role !== "OWNER" ? (
-                      <button className="btn-secondary" onClick={() => (editingAccess === m.user.id ? setEditingAccess("") : openAccessEditor(m))}>অ্যাক্সেস</button>
+                      <button className="btn-secondary" onClick={() => (editingAccess === m.user.id ? setEditingAccess("") : openAccessEditor(m))}>{D.tmAccessBtn}</button>
                     ) : null}
                     {canManage ? (
-                      <button className="btn-secondary" onClick={() => openHistoryPanel(m)}>লগইন ও সেশন</button>
+                      <button className="btn-secondary" onClick={() => openHistoryPanel(m)}>{D.tmHistoryBtn}</button>
                     ) : null}
-                    <button className="btn-secondary" disabled={busy === `totp-${m.user.id}`} onClick={() => resetTotp(m.user.id, m.user.name)}>2FA রিসেট</button>
+                    <button className="btn-secondary" disabled={busy === `totp-${m.user.id}`} onClick={() => resetTotp(m.user.id, m.user.name)}>{D.tmTotpResetBtn}</button>
                   </td>
                 </tr>
                 {editingShift === m.user.id ? (
                   <tr className="border-t bg-slate-50">
                     <td colSpan={5} className="p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-                        <strong>{m.user.name} এর সাপ্তাহিক কর্মঘণ্টা</strong>
+                        <strong>{t("team.tmShiftTitle", { name: m.user.name })}</strong>
                         <span className="text-slate-500">Timezone:</span>
                         <input className="input w-44" value={shiftTz} onChange={(e) => setShiftTz(e.target.value)} placeholder="Asia/Dhaka" />
-                        <span className="text-xs text-slate-400">যেদিন চালু নেই, সেদিন ছুটি। রাতের শিফটে শেষ সময় শুরুর চেয়ে ছোট দিলে মধ্যরাত পার হবে (যেমন 22:00–06:00)।</span>
+                        <span className="text-xs text-slate-400">{D.tmShiftNote}</span>
                       </div>
                       <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
                         {DAY_DEFS.map((d) => {
@@ -683,7 +688,7 @@ export default function TeamPage() {
                             <label key={d.key} className="flex items-center gap-2 rounded bg-white px-2 py-1.5 text-sm">
                               <input type="checkbox" checked={day.on}
                                 onChange={(e) => setShiftDays({ ...shiftDays, [d.key]: { ...day, on: e.target.checked } })} />
-                              <span className="w-20">{d.label}</span>
+                              <span className="w-20">{D[d.labelKey]}</span>
                               <input type="time" className="input w-28" value={day.start} disabled={!day.on}
                                 onChange={(e) => setShiftDays({ ...shiftDays, [d.key]: { ...day, start: e.target.value } })} />
                               <span>–</span>
@@ -694,10 +699,10 @@ export default function TeamPage() {
                         })}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button className="btn-primary" disabled={busy === `shift-${m.user.id}`} onClick={() => saveShift(m)}>সংরক্ষণ</button>
-                        <button className="btn-secondary" onClick={() => setEditingShift("")}>বন্ধ</button>
+                        <button className="btn-primary" disabled={busy === `shift-${m.user.id}`} onClick={() => saveShift(m)}>{D.tmSaveShift}</button>
+                        <button className="btn-secondary" onClick={() => setEditingShift("")}>{D.tmCloseShort}</button>
                         {scheduleOf(m.user.id)?.hasSchedule ? (
-                          <button className="btn-secondary" disabled={busy === `shift-clear-${m.user.id}`} onClick={() => clearShift(m)}>সময়সূচি সরিয়ে দিন (সব সময় উপলব্ধ)</button>
+                          <button className="btn-secondary" disabled={busy === `shift-clear-${m.user.id}`} onClick={() => clearShift(m)}>{D.tmClearSchedule}</button>
                         ) : null}
                       </div>
                     </td>
@@ -707,8 +712,8 @@ export default function TeamPage() {
                   <tr className="border-t bg-indigo-50/50">
                     <td colSpan={5} className="p-3">
                       <div className="mb-2 text-sm">
-                        <strong>{m.user.name} এর কাস্টম অ্যাক্সেস</strong>
-                        <span className="ml-2 text-xs text-slate-500">Role ({m.role}) হলো ভিত্তি — এখানে এলাকাভেদে আলাদা অনুমতি দেওয়া বা বন্ধ করা যায়। "বন্ধ রাখুন" Role এর অনুমতিও আটকে দেয়। শুধু-মালিকের কাজ (সদস্য সরানো, 2FA রিসেট) কখনোই Grant দিয়ে দেওয়া যায় না।</span>
+                        <strong>{t("team.tmAccessTitle", { name: m.user.name })}</strong>
+                        <span className="ml-2 text-xs text-slate-500">{t("team.tmAccessNote", { role: m.role })}</span>
                       </div>
                       <div className="grid gap-1.5 lg:grid-cols-2">
                         {accessCatalog.map((a) => {
@@ -717,16 +722,16 @@ export default function TeamPage() {
                           return (
                             <div key={a.key} className="flex flex-wrap items-center gap-2 rounded bg-white px-2 py-1.5 text-sm">
                               <span className="min-w-32 flex-1">
-                                <span className="font-medium">{a.labelBn}</span>
-                                <span className="block text-[11px] text-slate-400">{a.noteBn} · Role ভিত্তি: {a.minRole}</span>
+                                <span className="font-medium">{locale === "en" ? (a.label ?? a.labelBn) : a.labelBn}</span>
+                                <span className="block text-[11px] text-slate-400">{a.noteBn}{t("team.tmRoleBase", { minRole: a.minRole })}</span>
                               </span>
                               {eff ? (
                                 <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${eff.allowed ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
-                                  {eff.allowed ? "পাবেন" : "পাবেন না"}{eff.source === "grant" ? " (Grant)" : eff.source === "deny" ? " (Deny)" : eff.source === "role" ? " (Role)" : ""}
+                                  {eff.allowed ? D.tmAllowed : D.tmDenied}{eff.source === "grant" ? " (Grant)" : eff.source === "deny" ? " (Deny)" : eff.source === "role" ? " (Role)" : ""}
                                 </span>
                               ) : null}
                               <span className="flex overflow-hidden rounded-lg ring-1 ring-slate-200">
-                                {([["role", "Role অনুযায়ী"], ["grant", "অনুমতি দিন"], ["deny", "বন্ধ রাখুন"]] as const).map(([v, label]) => (
+                                {([["role", D.tmModeRole], ["grant", D.tmModeGrant], ["deny", D.tmModeDeny]] as const).map(([v, label]) => (
                                   <button key={v} className={`px-2 py-1 text-xs font-medium ${mode === v ? (v === "deny" ? "bg-red-600 text-white" : v === "grant" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white") : "bg-white text-slate-600"}`}
                                     onClick={() => setAccessMode(a.key, v)}>{label}</button>
                                 ))}
@@ -736,9 +741,9 @@ export default function TeamPage() {
                         })}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button className="btn-primary" disabled={busy === `access-${m.user.id}`} onClick={() => saveAccess(m)}>অ্যাক্সেস সংরক্ষণ</button>
-                        <button className="btn-secondary" onClick={() => setEditingAccess("")}>বন্ধ</button>
-                        <span className="self-center text-xs text-slate-400">কার্যকর কলামটি শেষ সংরক্ষিত অবস্থা দেখায়। কিছু Endpoint এখনো শুধু Role দিয়ে চলে — সেগুলোতে Grant/Deny প্রযোজ্য নয়।</span>
+                        <button className="btn-primary" disabled={busy === `access-${m.user.id}`} onClick={() => saveAccess(m)}>{D.tmSaveAccess}</button>
+                        <button className="btn-secondary" onClick={() => setEditingAccess("")}>{D.tmCloseShort}</button>
+                        <span className="self-center text-xs text-slate-400">{D.tmAccessFailedNote}</span>
                       </div>
                     </td>
                   </tr>
@@ -747,44 +752,44 @@ export default function TeamPage() {
                   <tr className="border-t bg-slate-50">
                     <td colSpan={5} className="p-3">
                       <div className="mb-2 text-sm">
-                        <strong>{m.user.name} এর লগইন ইতিহাস ও সক্রিয় সেশন</strong>
-                        <span className="ml-2 text-xs text-amber-700">মনে রাখুন: এটি এই ব্যক্তির সামগ্রিক (সব Organization মিলিয়ে) লগইন ইতিহাস — অ্যাকাউন্টটি সব Organization-এ একটাই, তাই শুধু এই Organization-এর আলাদা ইতিহাস হয় না।</span>
+                        <strong>{t("team.tmHistoryTitle", { name: m.user.name })}</strong>
+                        <span className="ml-2 text-xs text-amber-700">{D.tmHistoryNote}</span>
                       </div>
                       {panelError ? <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{panelError}</p> : null}
                       <div className="grid gap-4 lg:grid-cols-2">
                         <div>
-                          <h3 className="mb-1 text-sm font-semibold">সক্রিয় সেশন ({memberSessions.length})</h3>
-                          {memberSessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সক্রিয় সেশন নেই।</p> : memberSessions.map((s) => (
+                          <h3 className="mb-1 text-sm font-semibold">{t("team.tmSessionsTitle", { count: fmtNumber(locale, memberSessions.length) })}</h3>
+                          {memberSessions.length === 0 ? <p className="text-sm text-slate-400">{D.tmNoSessions}</p> : memberSessions.map((s) => (
                             <div key={s.id} className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded bg-white px-2 py-1.5 text-sm">
                               <span>
-                                <span className="font-medium">{s.ip ?? "IP অজানা"}</span>
-                                <span className="block max-w-md truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? "ডিভাইস অজানা"}</span>
-                                <span className="block text-[11px] text-slate-400">শুরু: {new Date(s.createdAt).toLocaleString("bn-BD")} · শেষ দেখা: {new Date(s.lastSeenAt).toLocaleString("bn-BD")}</span>
+                                <span className="font-medium">{s.ip ?? D.tmIpUnknown}</span>
+                                <span className="block max-w-md truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? D.tmDeviceUnknown}</span>
+                                <span className="block text-[11px] text-slate-400">{t("team.tmSessionTimes", { start: fmtDateTime(locale, s.createdAt), seen: fmtDateTime(locale, s.lastSeenAt) })}</span>
                               </span>
-                              <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msession-${s.id}`} onClick={() => revokeMemberSession(m, s.id)}>সেশন বাতিল</button>
+                              <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msession-${s.id}`} onClick={() => revokeMemberSession(m, s.id)}>{D.tmRevokeSession}</button>
                             </div>
                           ))}
                           {memberSessions.length > 0 ? (
-                            <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msessions-all-${m.user.id}`} onClick={() => revokeAllMemberSessions(m)}>সব সেশন বাতিল</button>
+                            <button className="btn-secondary btn-sm text-red-600" disabled={busy === `msessions-all-${m.user.id}`} onClick={() => revokeAllMemberSessions(m)}>{D.tmRevokeAllSessions}</button>
                           ) : null}
                         </div>
                         <div>
-                          <h3 className="mb-1 text-sm font-semibold">শেষ ৫০টি লগইন চেষ্টা</h3>
-                          {loginHistory.length === 0 ? <p className="text-sm text-slate-400">কোনো লগইন ইতিহাস নেই।</p> : (
+                          <h3 className="mb-1 text-sm font-semibold">{t("team.tmLoginAttempts", { count: fmtNumber(locale, 50) })}</h3>
+                          {loginHistory.length === 0 ? <p className="text-sm text-slate-400">{D.tmNoLoginHistory}</p> : (
                             <ul className="max-h-64 space-y-1 overflow-y-auto text-sm">
                               {loginHistory.map((h, i) => (
                                 <li key={h.id ?? i} className="flex flex-wrap items-center gap-2 rounded bg-white px-2 py-1.5">
-                                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? "সফল" : "ব্যর্থ"}</span>
-                                  <span className="text-slate-600">{h.ip ?? "IP অজানা"}</span>
+                                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? D.tmSuccess : D.tmFailedAttempt}</span>
+                                  <span className="text-slate-600">{h.ip ?? D.tmIpUnknown}</span>
                                   <span className="max-w-40 truncate text-[11px] text-slate-400" title={h.userAgent ?? ""}>{h.userAgent ?? ""}</span>
-                                  <span className="text-[11px] text-slate-400">{new Date(h.createdAt).toLocaleString("bn-BD")}</span>
+                                  <span className="text-[11px] text-slate-400">{fmtDateTime(locale, h.createdAt)}</span>
                                 </li>
                               ))}
                             </ul>
                           )}
                         </div>
                       </div>
-                      <button className="btn-secondary btn-sm mt-3" onClick={() => setHistoryFor("")}>বন্ধ করুন</button>
+                      <button className="btn-secondary btn-sm mt-3" onClick={() => setHistoryFor("")}>{dict.common.close}</button>
                     </td>
                   </tr>
                 ) : null}
@@ -793,30 +798,30 @@ export default function TeamPage() {
             </tbody>
           </table>
         )}
-        {canManage ? null : <p className="mt-2 text-xs text-slate-400">ভূমিকা ও অবস্থা বদলাতে OWNER বা ADMIN হতে হয়; সদস্য সরাতে শুধু OWNER পারে।</p>}
+        {canManage ? null : <p className="mt-2 text-xs text-slate-400">{D.tmManageNote}</p>}
       </div>
 
       {/* GB6 (GC16): custom roles manager */}
       <div className="card p-5">
-        <h2 className="mb-1 font-semibold">🎭 কাস্টম রোল</h2>
-        <p className="mb-3 text-xs text-slate-400">নাম দেওয়া অনুমতির এলাকার বান্ডল। কোনো সদস্যকে কাস্টম রোল দিলে এলাকা-ভিত্তিক পেজে তার মূল ভূমিকার বদলে এই এলাকাগুলোই প্রযোজ্য হয়। যে রোল কোনো সদস্যের কাছে আছে, সেটি মোছা যাবে না — আগে সদস্যের কাছ থেকে তুলে নিন (সার্ভারের বার্তা 그대로 দেখানো হয়)।</p>
+        <h2 className="mb-1 font-semibold">{D.tmCustomRolesTitle}</h2>
+        <p className="mb-3 text-xs text-slate-400">{D.tmCustomRolesNote}</p>
         {roleError ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{roleError}</div> : null}
-        {customRoles.length === 0 ? <p className="mb-3 text-sm text-slate-500">কোনো কাস্টম রোল নেই।</p> : (
+        {customRoles.length === 0 ? <p className="mb-3 text-sm text-slate-500">{D.tmNoCustomRoles}</p> : (
           <div className="mb-4 space-y-2">
             {customRoles.map((r) => (
               <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
                 <span>
                   <span className="font-medium">{r.name}</span>
-                  {r.presetKey ? <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">প্রিসেট: {r.presetKey}</span> : null}
-                  <span className="ml-2 text-xs text-slate-500">{r.memberCount} জন সদস্য</span>
+                  {r.presetKey ? <span className="ml-2 rounded bg-indigo-100 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700">{D.tmPresetPrefix}{r.presetKey}</span> : null}
+                  <span className="ml-2 text-xs text-slate-500">{t("team.tmMemberCountSuffix", { count: fmtNumber(locale, r.memberCount) })}</span>
                   <span className="block text-xs text-slate-400">
-                    {r.areas.map((a) => areaCatalog.find((c) => c.key === a)?.labelBn ?? a).join(", ") || "কোনো এলাকা নেই"}
+                    {r.areas.map((a) => { const c = areaCatalog.find((x) => x.key === a); return c ? (locale === "en" ? (c.label ?? c.labelBn) : c.labelBn) : a; }).join(", ") || D.tmNoAreas}
                   </span>
                 </span>
                 {canManage ? (
                   <span className="flex gap-2">
-                    <button className="btn-secondary btn-sm" onClick={() => { setEditingRoleId(r.id); setRoleName(r.name); setRoleAreas([...r.areas]); setRoleError(""); }}>সম্পাদনা</button>
-                    <button className="btn-secondary btn-sm text-red-600" disabled={busy === `role-del-${r.id}`} onClick={() => deleteCustomRole(r)}>মুছুন</button>
+                    <button className="btn-secondary btn-sm" onClick={() => { setEditingRoleId(r.id); setRoleName(r.name); setRoleAreas([...r.areas]); setRoleError(""); }}>{D.tmEdit}</button>
+                    <button className="btn-secondary btn-sm text-red-600" disabled={busy === `role-del-${r.id}`} onClick={() => deleteCustomRole(r)}>{D.tmDelete}</button>
                   </span>
                 ) : null}
               </div>
@@ -826,89 +831,89 @@ export default function TeamPage() {
         {canManage ? (
           <div className="grid gap-4 border-t pt-4 lg:grid-cols-2">
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold">{editingRoleId ? "রোল সম্পাদনা" : "নতুন রোল — নিজে বানান"}</h3>
-              <input className="input w-full" placeholder="রোলের নাম (১–৬০ অক্ষর)" value={roleName} onChange={(e) => setRoleName(e.target.value)} maxLength={70} />
+              <h3 className="text-sm font-semibold">{editingRoleId ? D.tmEditRole : D.tmNewRoleScratch}</h3>
+              <input className="input w-full" placeholder={t("team.tmRoleNamePh", { min: fmtNumber(locale, 1), max: fmtNumber(locale, 60) })} value={roleName} onChange={(e) => setRoleName(e.target.value)} maxLength={70} />
               <div className="grid gap-1 sm:grid-cols-2">
                 {(areaCatalog.length ? areaCatalog : []).map((a) => (
                   <label key={a.key} className="flex items-start gap-2 rounded bg-slate-50 px-2 py-1.5 text-sm">
                     <input type="checkbox" className="mt-0.5" checked={roleAreas.includes(a.key)}
                       onChange={(e) => setRoleAreas(e.target.checked ? [...roleAreas, a.key] : roleAreas.filter((k) => k !== a.key))} />
-                    <span><span className="font-medium">{a.labelBn}</span><span className="block text-[11px] text-slate-400">{a.noteBn}</span></span>
+                    <span><span className="font-medium">{locale === "en" ? (a.label ?? a.labelBn) : a.labelBn}</span><span className="block text-[11px] text-slate-400">{a.noteBn}</span></span>
                   </label>
                 ))}
-                {areaCatalog.length === 0 ? <p className="text-xs text-slate-400">এলাকার তালিকা লোড হয়নি — পেজটি আবার লোড করুন।</p> : null}
+                {areaCatalog.length === 0 ? <p className="text-xs text-slate-400">{D.tmAreasNotLoaded}</p> : null}
               </div>
               <div className="flex gap-2">
-                <button className="btn-primary" disabled={busy === "role-save"} onClick={saveCustomRole}>{editingRoleId ? "হালনাগাদ করুন" : "রোল তৈরি করুন"}</button>
-                {editingRoleId ? <button className="btn-secondary" onClick={() => { setEditingRoleId(""); setRoleName(""); setRoleAreas([]); }}>বাতিল</button> : null}
+                <button className="btn-primary" disabled={busy === "role-save"} onClick={saveCustomRole}>{editingRoleId ? D.tmUpdateRole : D.tmCreateRole}</button>
+                {editingRoleId ? <button className="btn-secondary" onClick={() => { setEditingRoleId(""); setRoleName(""); setRoleAreas([]); }}>{dict.common.cancel}</button> : null}
               </div>
             </div>
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold">প্রিসেট থেকে তৈরি</h3>
-              <p className="text-xs text-slate-400">প্রিসেট বেছে তৈরি করলে নাম ও এলাকা প্রিসেট থেকেই আসে — তৈরি হওয়ার পর চাইলে সম্পাদনা করে বদলাতে পারবেন।</p>
+              <h3 className="text-sm font-semibold">{D.tmFromPreset}</h3>
+              <p className="text-xs text-slate-400">{D.tmPresetNote}</p>
               <select className="input w-full" value={presetKey} onChange={(e) => setPresetKey(e.target.value)}>
-                <option value="">প্রিসেট বেছে নিন</option>
-                {presetProfiles.map((p) => <option key={p.key} value={p.key}>{p.labelBn} ({p.label})</option>)}
+                <option value="">{D.tmPresetPick}</option>
+                {presetProfiles.map((p) => <option key={p.key} value={p.key}>{locale === "en" ? (p.label ?? p.labelBn) : p.labelBn} ({p.label})</option>)}
               </select>
               {presetKey ? (
                 <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
                   {presetProfiles.find((p) => p.key === presetKey)?.noteBn}
-                  <span className="block mt-1">এলাকা: {(presetProfiles.find((p) => p.key === presetKey)?.areas ?? []).map((a) => areaCatalog.find((c) => c.key === a)?.labelBn ?? a).join(", ")}</span>
+                  <span className="block mt-1">{D.tmAreasLabel}{(presetProfiles.find((p) => p.key === presetKey)?.areas ?? []).map((a) => { const c = areaCatalog.find((x) => x.key === a); return c ? (locale === "en" ? (c.label ?? c.labelBn) : c.labelBn) : a; }).join(", ")}</span>
                 </p>
               ) : null}
-              <button className="btn-primary" disabled={busy === "role-preset" || !presetKey} onClick={createCustomRoleFromPreset}>প্রিসেট থেকে তৈরি করুন</button>
+              <button className="btn-primary" disabled={busy === "role-preset" || !presetKey} onClick={createCustomRoleFromPreset}>{D.tmCreateFromPreset}</button>
             </div>
           </div>
-        ) : <p className="text-xs text-slate-400">কাস্টম রোল বানাতে/বদলাতে OWNER বা ADMIN হতে হয়।</p>}
+        ) : <p className="text-xs text-slate-400">{D.tmCustomRolePermissionNote}</p>}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="card p-5">
-          <h2 className="mb-1 font-semibold">📧 ইমেইল আমন্ত্রণ (নতুন)</h2>
-          <p className="mb-3 text-sm text-slate-500">যার অ্যাকাউন্ট নেই তাকেও আমন্ত্রণ পাঠানো যায়। লিংকের মেয়াদ ৭ দিন; গ্রহণ করতে ওই ইমেইল দিয়েই লগইন/রেজিস্টার করতে হবে।</p>
+          <h2 className="mb-1 font-semibold">{D.tmEmailInviteTitle}</h2>
+          <p className="mb-3 text-sm text-slate-500">{t("team.tmEmailInviteNote", { days: fmtNumber(locale, 7) })}</p>
           <div className="flex flex-wrap gap-2">
             <input id="inv-email" type="email" className="input flex-1" placeholder="teammate@email.com" />
             <select id="inv-role" className="input w-44">{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
-            <button className="btn-primary" disabled={busy === "email-invite"} onClick={emailInvite}>আমন্ত্রণ তৈরি</button>
+            <button className="btn-primary" disabled={busy === "email-invite"} onClick={emailInvite}>{D.tmCreateInvite}</button>
           </div>
           {lastLink ? (
             <div className="mt-3 rounded-lg bg-slate-50 p-3">
-              <div className="mb-1 text-xs text-slate-500">আমন্ত্রণ লিংক (কপি করে পাঠাতে পারেন):</div>
+              <div className="mb-1 text-xs text-slate-500">{D.tmInviteLinkLabel}</div>
               <code className="block overflow-x-auto whitespace-nowrap text-xs">{lastLink}</code>
             </div>
           ) : null}
         </div>
 
         <div className="card p-5">
-          <h2 className="mb-1 font-semibold">সরাসরি যোগ (অ্যাকাউন্ট আছে যার)</h2>
-          <p className="mb-3 text-sm text-slate-500">আগে থেকে রেজিস্টার করা ব্যবহারকারীকে সরাসরি সদস্য করা যায়।</p>
+          <h2 className="mb-1 font-semibold">{D.tmDirectTitle}</h2>
+          <p className="mb-3 text-sm text-slate-500">{D.tmDirectNote}</p>
           <div className="flex flex-wrap gap-2">
             <input id="direct-email" type="email" className="input flex-1" placeholder="user@email.com" />
             <select id="direct-role" className="input w-44">{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
-            <button className="btn-primary" disabled={busy === "direct"} onClick={directInvite}>যোগ করুন</button>
+            <button className="btn-primary" disabled={busy === "direct"} onClick={directInvite}>{D.tmAddBtn}</button>
           </div>
         </div>
       </div>
 
       <div className="card p-5">
-        <h2 className="mb-3 font-semibold">অপেক্ষমাণ আমন্ত্রণ</h2>
-        {invitations.length === 0 ? <p className="text-sm text-slate-500">কোনো আমন্ত্রণ নেই।</p> : (
+        <h2 className="mb-3 font-semibold">{D.tmPendingTitle}</h2>
+        {invitations.length === 0 ? <p className="text-sm text-slate-500">{D.tmNoInvites}</p> : (
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-slate-500"><th className="py-2">ইমেইল</th><th>ভূমিকা</th><th>অবস্থা</th><th>ইমেইল গেছে</th><th>মেয়াদ</th><th></th></tr></thead>
+            <thead><tr className="text-left text-slate-500"><th className="py-2">{D.tmColEmail}</th><th>{D.tmColRole}</th><th>{D.tmColStatus}</th><th>{D.tmColEmailSent}</th><th>{D.tmColExpiry}</th><th></th></tr></thead>
             <tbody>
               {invitations.map((inv) => (
                 <tr key={inv.id} className="border-t">
                   <td className="py-2">{inv.email}</td>
                   <td>{inv.role}</td>
                   <td>{inv.status}</td>
-                  <td>{inv.emailSent ? "হ্যাঁ" : "না"}</td>
-                  <td>{new Date(inv.expiresAt).toLocaleDateString("bn-BD")}</td>
+                  <td>{inv.emailSent ? D.tmYes : D.tmNo}</td>
+                  <td>{fmtDate(locale, inv.expiresAt)}</td>
                   <td className="space-x-2 text-right">
                     {inv.status === "pending" || inv.status === "expired" ? (
-                      <button className="btn-secondary" disabled={busy === `resend-${inv.id}`} onClick={() => resend(inv.id)}>আবার পাঠান</button>
+                      <button className="btn-secondary" disabled={busy === `resend-${inv.id}`} onClick={() => resend(inv.id)}>{D.tmResendBtn}</button>
                     ) : null}
                     {inv.status === "pending" ? (
-                      <button className="btn-secondary" disabled={busy === `revoke-${inv.id}`} onClick={() => revoke(inv.id)}>বাতিল</button>
+                      <button className="btn-secondary" disabled={busy === `revoke-${inv.id}`} onClick={() => revoke(inv.id)}>{dict.common.cancel}</button>
                     ) : null}
                   </td>
                 </tr>
@@ -921,50 +926,47 @@ export default function TeamPage() {
       {/* ORG9 (Organization Next OB3): shareable invite links — OWNER/ADMIN only. */}
       {canManage ? (
         <div className="card p-5">
-          <h2 className="mb-1 font-semibold">🔗 Invite Link (শেয়ার করা যায়)</h2>
-          <p className="mb-3 text-sm text-slate-500">
-            এই লিংক যাকে পাঠাবেন, তিনি লগইন করে <b>যোগদানের অনুরোধ</b> পাঠাতে পারবেন — সরাসরি সদস্য হয়ে যাবেন না।
-            অনুরোধ নিচের তালিকা থেকে অনুমোদন করলেই তিনি সদস্য হবেন (সেই মুহূর্তে Seat সীমা যাচাই হবে)।
-          </p>
+          <h2 className="mb-1 font-semibold">{D.tmInviteLinksTitle}</h2>
+          <p className="mb-3 text-sm text-slate-500">{D.tmInviteLinksNote}</p>
           <div className="flex flex-wrap items-end gap-2">
-            <label className="text-sm">ভূমিকা
+            <label className="text-sm">{D.tmColRole}
               <select id="link-role" className="input ml-2 w-44" defaultValue="VIEWER">{ROLES.map((r) => <option key={r} value={r}>{r}</option>)}</select>
             </label>
-            <label className="text-sm">সর্বোচ্চ অনুরোধ
+            <label className="text-sm">{D.tmMaxRequests}
               <input id="link-max" type="number" min={1} max={1000} defaultValue={10} className="input ml-2 w-24" />
             </label>
-            <label className="text-sm">মেয়াদ
+            <label className="text-sm">{D.tmColExpiry}
               <select id="link-days" className="input ml-2 w-32" defaultValue={7}>
-                <option value={1}>১ দিন</option>
-                <option value={7}>৭ দিন</option>
-                <option value={30}>৩০ দিন</option>
-                <option value={90}>৯০ দিন</option>
+                <option value={1}>{t("team.tmDaysOption", { count: fmtNumber(locale, 1) })}</option>
+                <option value={7}>{t("team.tmDaysOption", { count: fmtNumber(locale, 7) })}</option>
+                <option value={30}>{t("team.tmDaysOption", { count: fmtNumber(locale, 30) })}</option>
+                <option value={90}>{t("team.tmDaysOption", { count: fmtNumber(locale, 90) })}</option>
               </select>
             </label>
-            <button className="btn-primary" disabled={busy === "link-create"} onClick={createLink}>Link তৈরি করুন</button>
+            <button className="btn-primary" disabled={busy === "link-create"} onClick={createLink}>{D.tmCreateLinkBtn}</button>
           </div>
           {newJoinLink ? (
             <div className="mt-3 rounded-lg bg-slate-50 p-3">
-              <div className="mb-1 text-xs text-slate-500">নতুন লিংক (শুধু এই একবারই দেখা যাচ্ছে — কপি করে রাখুন):</div>
+              <div className="mb-1 text-xs text-slate-500">{D.tmNewLinkLabel}</div>
               <div className="flex flex-wrap items-center gap-2">
                 <code className="block flex-1 overflow-x-auto whitespace-nowrap text-xs">{newJoinLink}</code>
-                <button className="btn-secondary" onClick={copyJoinLink}>কপি করুন</button>
+                <button className="btn-secondary" onClick={copyJoinLink}>{dict.common.copy}</button>
               </div>
             </div>
           ) : null}
-          {inviteLinks.length === 0 ? <p className="mt-3 text-sm text-slate-500">কোনো Invite link নেই।</p> : (
+          {inviteLinks.length === 0 ? <p className="mt-3 text-sm text-slate-500">{D.tmNoLinks}</p> : (
             <table className="mt-3 w-full text-sm">
-              <thead><tr className="text-left text-slate-500"><th className="py-2">ভূমিকা</th><th>ব্যবহার</th><th>অবস্থা</th><th>মেয়াদ শেষ</th><th></th></tr></thead>
+              <thead><tr className="text-left text-slate-500"><th className="py-2">{D.tmColRole}</th><th>{D.tmColUsage}</th><th>{D.tmColStatus}</th><th>{D.tmColExpiryEnd}</th><th></th></tr></thead>
               <tbody>
                 {inviteLinks.map((l) => (
                   <tr key={l.id} className="border-t">
                     <td className="py-2">{l.role}</td>
-                    <td>{l.usedCount} / {l.maxUses}টি অনুরোধ</td>
-                    <td>{l.status === "active" ? "সক্রিয়" : l.status === "revoked" ? "বাতিল" : l.status === "expired" ? "মেয়াদ শেষ" : "সীমা শেষ"}</td>
-                    <td>{new Date(l.expiresAt).toLocaleDateString("bn-BD")}</td>
+                    <td>{t("team.tmUsageCell", { used: fmtNumber(locale, l.usedCount), max: fmtNumber(locale, l.maxUses) })}</td>
+                    <td>{l.status === "active" ? D.tmLinkActive : l.status === "revoked" ? D.tmLinkRevokedStatus : l.status === "expired" ? D.tmLinkExpired : D.tmLinkExhausted}</td>
+                    <td>{fmtDate(locale, l.expiresAt)}</td>
                     <td className="text-right">
                       {!l.revokedAt ? (
-                        <button className="btn-secondary" disabled={busy === `link-revoke-${l.id}`} onClick={() => revokeLink(l.id)}>বাতিল করুন</button>
+                        <button className="btn-secondary" disabled={busy === `link-revoke-${l.id}`} onClick={() => revokeLink(l.id)}>{D.tmRevokeLinkBtn}</button>
                       ) : null}
                     </td>
                   </tr>
@@ -978,24 +980,22 @@ export default function TeamPage() {
       {/* ORG10 (Organization Next OB3): join-request approval queue — OWNER/ADMIN only. */}
       {canManage ? (
         <div className="card p-5">
-          <h2 className="mb-1 font-semibold">📥 যোগদানের অনুরোধ</h2>
-          <p className="mb-3 text-sm text-slate-500">
-            Invite link দিয়ে আসা অনুরোধ। অনুমোদন করলে তিনি সঙ্গে সঙ্গে সক্রিয় সদস্য হবেন — Seat পূর্ণ থাকলে অনুমোদন আটকে যাবে।
-          </p>
-          {joinRequests.length === 0 ? <p className="text-sm text-slate-500">কোনো অনুরোধ নেই।</p> : (
+          <h2 className="mb-1 font-semibold">{D.tmJoinTitle}</h2>
+          <p className="mb-3 text-sm text-slate-500">{D.tmJoinNote}</p>
+          {joinRequests.length === 0 ? <p className="text-sm text-slate-500">{D.tmNoRequests}</p> : (
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-slate-500"><th className="py-2">নাম / ইমেইল</th><th>বার্তা</th><th>অবস্থা</th><th>ভূমিকা (অনুমোদনে)</th><th></th></tr></thead>
+              <thead><tr className="text-left text-slate-500"><th className="py-2">{D.tmColNameEmail}</th><th>{D.tmColMessage}</th><th>{D.tmColStatus}</th><th>{D.tmColRoleOnApprove}</th><th></th></tr></thead>
               <tbody>
                 {joinRequests.map((r) => (
                   <tr key={r.id} className="border-t align-top">
                     <td className="py-2">
                       <div className="font-medium">{r.user.name || "—"}</div>
                       <div className="text-xs text-slate-500">{r.user.email}</div>
-                      <div className="text-xs text-slate-400">{new Date(r.createdAt).toLocaleDateString("bn-BD")}</div>
+                      <div className="text-xs text-slate-400">{fmtDate(locale, r.createdAt)}</div>
                     </td>
                     <td className="max-w-xs py-2 text-slate-600">{r.message ?? "—"}</td>
                     <td className="py-2">
-                      {r.status === "PENDING" ? "অপেক্ষমাণ" : r.status === "APPROVED" ? "অনুমোদিত" : "ফিরিয়ে দেওয়া"}
+                      {r.status === "PENDING" ? D.tmReqPending : r.status === "APPROVED" ? D.tmReqApproved : D.tmReqRejected}
                       {r.status === "REJECTED" && r.rejectReason ? <div className="text-xs text-slate-400">{r.rejectReason}</div> : null}
                     </td>
                     <td className="py-2">
@@ -1006,8 +1006,8 @@ export default function TeamPage() {
                     <td className="space-x-2 whitespace-nowrap py-2 text-right">
                       {r.status === "PENDING" ? (
                         <>
-                          <button className="btn-primary" disabled={busy === `jr-approve-${r.id}`} onClick={() => approveRequest(r.id)}>অনুমোদন</button>
-                          <button className="btn-secondary" disabled={busy === `jr-reject-${r.id}`} onClick={() => rejectRequest(r.id, r.user.name || r.user.email)}>ফিরিয়ে দিন</button>
+                          <button className="btn-primary" disabled={busy === `jr-approve-${r.id}`} onClick={() => approveRequest(r.id)}>{D.tmApproveBtn}</button>
+                          <button className="btn-secondary" disabled={busy === `jr-reject-${r.id}`} onClick={() => rejectRequest(r.id, r.user.name || r.user.email)}>{D.tmRejectBtn}</button>
                         </>
                       ) : null}
                     </td>
@@ -1021,13 +1021,13 @@ export default function TeamPage() {
 
       {feed.length ? (
         <div className="card p-5">
-          <h2 className="mb-3 font-semibold">সাম্প্রতিক কার্যকলাপ</h2>
+          <h2 className="mb-3 font-semibold">{D.tmFeedTitle}</h2>
           <ul className="space-y-1.5 text-sm">
             {feed.map((f) => (
               <li key={f.id} className="flex flex-wrap items-baseline gap-x-2 border-b border-slate-50 pb-1.5">
                 <span className="font-medium">{f.actorName}</span>
-                <span className="text-slate-600">{ACTION_LABELS[f.action] ?? f.action}</span>
-                <span className="text-xs text-slate-400">{f.entityType} · {agoText(f.createdAt)}</span>
+                <span className="text-slate-600">{ACTION_LABEL_KEYS[f.action] ? D[ACTION_LABEL_KEYS[f.action]] : f.action}</span>
+                <span className="text-xs text-slate-400">{f.entityType} · {agoText(f.createdAt, locale, D, t)}</span>
               </li>
             ))}
           </ul>
@@ -1037,40 +1037,36 @@ export default function TeamPage() {
       {/* ORG1 (Organization Next OB1): ownership transfer — OWNER only. */}
       {myRole === "OWNER" ? (
         <div className="card border-amber-200 p-5">
-          <h2 className="mb-1 font-semibold">👑 মালিকানা হস্তান্তর</h2>
+          <h2 className="mb-1 font-semibold">{D.tmTransferTitle}</h2>
           <p className="mb-3 text-sm text-slate-500">
-            এই Organization এর মালিকানা একজন <b>সক্রিয় ADMIN</b> সদস্যের কাছে হস্তান্তর করতে পারবেন। হস্তান্তরের পর তিনি OWNER হবেন,
-            আর আপনি ADMIN হিসেবে টিমে থাকবেন। কাজটি <b>সঙ্গে সঙ্গে কার্যকর</b> হয় — ভুল হলে নতুন মালিক ফিরিয়ে দিতে পারবেন।
+            {D.tmTransferNoteA}<b>{D.tmTransferNoteB}</b>{D.tmTransferNoteC}<b>{D.tmTransferNoteD}</b>{D.tmTransferNoteE}
           </p>
           {transferCandidates.length === 0 ? (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              এখন হস্তান্তর করার মতো কেউ নেই — আগে একজন সদস্যকে ADMIN ভূমিকা দিন এবং তিনি সক্রিয় (ACTIVE) আছেন কিনা নিশ্চিত করুন।
-            </p>
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{D.tmNoCandidates}</p>
           ) : transferStep === 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select className="input w-64" value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} aria-label="নতুন মালিক বেছে নিন">
-                <option value="">— নতুন মালিক বেছে নিন —</option>
+              <select className="input w-64" value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} aria-label={D.tmAriaNewOwner}>
+                <option value="">{D.tmOwnerPlaceholder}</option>
                 {transferCandidates.map((m) => (
                   <option key={m.user.id} value={m.user.id}>{m.user.name} ({m.user.email})</option>
                 ))}
               </select>
-              <button className="btn-secondary" disabled={!transferTarget} onClick={() => setTransferStep(1)}>এগিয়ে যান →</button>
+              <button className="btn-secondary" disabled={!transferTarget} onClick={() => setTransferStep(1)}>{D.tmContinueBtn}</button>
             </div>
           ) : (
             <div className="space-y-3 rounded-xl bg-amber-50 p-4">
               <p className="text-sm text-amber-900">
-                আপনি <b>{members.find((m) => m.user.id === transferTarget)?.user.name}</b> কে <b>{orgName}</b> এর নতুন মালিক করতে যাচ্ছেন।
-                নিশ্চিত করতে Organization এর নামটি হুবহু লিখুন:
+                {D.tmTransferConfirmA}<b>{members.find((m) => m.user.id === transferTarget)?.user.name}</b>{D.tmTransferConfirmB}<b>{orgName}</b>{D.tmTransferConfirmC}
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <input className="input w-64" value={transferConfirmText} onChange={(e) => setTransferConfirmText(e.target.value)} placeholder={orgName} aria-label="Organization এর নাম লিখে নিশ্চিত করুন" />
+                <input className="input w-64" value={transferConfirmText} onChange={(e) => setTransferConfirmText(e.target.value)} placeholder={orgName} aria-label={D.tmAriaConfirmName} />
                 <button className="btn-primary" disabled={busy === "transfer" || transferConfirmText !== orgName || !orgName} onClick={doTransfer}>
-                  {busy === "transfer" ? "হস্তান্তর হচ্ছে…" : "মালিকানা হস্তান্তর করুন"}
+                  {busy === "transfer" ? D.tmTransferring : D.tmTransferBtn}
                 </button>
-                <button className="btn-secondary" disabled={busy === "transfer"} onClick={() => { setTransferStep(0); setTransferConfirmText(""); }}>পেছনে</button>
+                <button className="btn-secondary" disabled={busy === "transfer"} onClick={() => { setTransferStep(0); setTransferConfirmText(""); }}>{D.tmBackBtn}</button>
               </div>
               {orgName && transferConfirmText !== orgName ? (
-                <p className="text-xs text-amber-700">নামটি হুবহু <b>{orgName}</b> হতে হবে।</p>
+                <p className="text-xs text-amber-700">{t("team.tmNameMustMatch", { org: orgName })}</p>
               ) : null}
             </div>
           )}
@@ -1080,20 +1076,16 @@ export default function TeamPage() {
       {/* ORG2: self-leave — every member; the OWNER is pointed at transfer first. */}
       {myRole ? (
         <div className="card border-rose-100 p-5">
-          <h2 className="mb-1 font-semibold">🚪 Organization ছাড়ুন</h2>
+          <h2 className="mb-1 font-semibold">{D.tmLeaveTitle}</h2>
           {myRole === "OWNER" ? (
             <p className="text-sm text-slate-500">
-              আপনি এই Organization এর <b>মালিক</b> — মালিক সরাসরি ছাড়তে পারেন না, তাহলে Organization টি মালিকহীন হয়ে যাবে।
-              আগে ওপরের অংশ থেকে একজন ADMIN কে মালিকানা হস্তান্তর করুন, তারপর এখান থেকে ছাড়তে পারবেন।
+              {D.tmLeaveOwnerA}<b>{D.tmLeaveOwnerB}</b>{D.tmLeaveOwnerC}
             </p>
           ) : (
             <>
-              <p className="mb-3 text-sm text-slate-500">
-                এই Organization ছেড়ে গেলে আপনার খোলা কথোপকথন Pool এ ফেরত যাবে এবং এই ওয়ার্কস্পেসে প্রবেশ বন্ধ হয়ে যাবে।
-                আবার যোগ দিতে হলে টিমের OWNER/ADMIN কে নতুন আমন্ত্রণ পাঠাতে হবে।
-              </p>
+              <p className="mb-3 text-sm text-slate-500">{D.tmLeaveNote}</p>
               <button className="btn-secondary text-rose-700" disabled={busy === "leave"} onClick={doLeave}>
-                {busy === "leave" ? "অপেক্ষা করুন…" : "Organization ছেড়ে যান"}
+                {busy === "leave" ? D.tmLeavingBtn : D.tmLeaveBtn}
               </button>
             </>
           )}

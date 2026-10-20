@@ -298,7 +298,7 @@ describe("GB6 list filters — customerType / tag / segmentId", () => {
   it("segmentId from another org 404s the list", async () => {
     const { svc, segments } = makeWorld();
     const seg = await segments.createSegment("org-1", "actor-1", { name: "S", criteria: { isVip: true } });
-    await expect(svc.list("org-2", undefined, { segmentId: seg.id })).rejects.toThrow(/not found/i);
+    await expect(svc.list("org-2", undefined, { segmentId: seg.id })).rejects.toMatchObject({ code: "customers.segmentNotFoundInThisOrganization" });
   });
 });
 
@@ -343,8 +343,8 @@ describe("GB6 segments — evaluator + CRUD validation", () => {
     expect(call.metadata).toEqual({ keys: ["tagsAny", "minSpentMinor"] });
     expect(JSON.stringify(call)).not.toContain("loyal");
 
-    await expect(segments.updateSegment("org-2", "a", seg.id, { name: "X" })).rejects.toThrow(/not found/i);
-    await expect(segments.deleteSegment("org-2", "a", seg.id)).rejects.toThrow(/not found/i);
+    await expect(segments.updateSegment("org-2", "a", seg.id, { name: "X" })).rejects.toMatchObject({ code: "customers.segmentNotFoundInThisOrganization" });
+    await expect(segments.deleteSegment("org-2", "a", seg.id)).rejects.toMatchObject({ code: "customers.segmentNotFoundInThisOrganization" });
 
     const updated = await segments.updateSegment("org-1", "a", seg.id, { criteria: { isVip: true } });
     expect(updated.memberCount).toBe(1);

@@ -21,6 +21,7 @@ import {
   hashGiftCardCode,
   normalizeGiftCardCode,
 } from "./gift-cards";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB2 (AX3 Gift Cards) — GiftCardsService, the core.
@@ -175,7 +176,7 @@ export class GiftCardsService {
     if (dto?.defaultExpiryDays !== undefined) {
       const v = dto.defaultExpiryDays;
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 3650)) {
-        throw new BadRequestException("গিফট কার্ডের মেয়াদ ১–৩৬৫০ দিন হতে হবে");
+        throw badRequest("commerce.giftCardValidityRange");
       }
       data.defaultExpiryDays = v;
     }
@@ -279,25 +280,25 @@ export class GiftCardsService {
     opts?: { cartHasGiftCardProduct?: boolean },
   ): Promise<any> {
     const canonical = normalizeGiftCardCode(rawCode);
-    if (!canonical) throw new BadRequestException("গিফট কার্ডের কোডটি সঠিক নয়");
+    if (!canonical) throw badRequest("commerce.giftCardCodeInvalid");
     if (opts?.cartHasGiftCardProduct) {
       // A gift card is stored value, not a mint: buying gift
       // cards WITH a gift card would let value duplicate itself.
-      throw new BadRequestException("গিফট কার্ড দিয়ে গিফট কার্ড কেনা যাবে না");
+      throw badRequest("commerce.giftCardCannotBuyGiftCard");
     }
     const setting = await this.loadSetting(orgId);
     if (setting && setting.redemptionEnabled === false) {
-      throw new BadRequestException("এই দোকানে এখন গিফট কার্ডে কেনাকাটা বন্ধ আছে");
+      throw badRequest("commerce.giftCardShoppingDisabled");
     }
     const card = await this.t("giftCard")
       .findFirst({ where: { organizationId: orgId, codeHash: hashGiftCardCode(canonical) } })
       .catch(() => null);
-    if (!card) throw new BadRequestException("গিফট কার্ডের কোডটি সঠিক নয়");
+    if (!card) throw badRequest("commerce.giftCardCodeInvalid");
     const status = effectiveGiftCardStatus(card);
-    if (status === "void") throw new BadRequestException("কার্ডটি বাতিল করা হয়েছে");
-    if (status === "expired") throw new BadRequestException("কার্ডটির মেয়াদ শেষ হয়ে গেছে");
+    if (status === "void") throw badRequest("commerce.cardCancelled");
+    if (status === "expired") throw badRequest("commerce.cardExpired");
     const balanceMinor = giftCardEffectiveBalanceMinor(card);
-    if (balanceMinor <= 0n) throw new BadRequestException("কার্ডে কোনো ব্যালেন্স অবশিষ্ট নেই");
+    if (balanceMinor <= 0n) throw badRequest("commerce.cardNoBalance");
     return {
       giftCardId: String(card.id),
       codeLast4: String(card.codeLast4 ?? canonical.slice(-4)),
@@ -1029,7 +1030,7 @@ export class GiftCardsService {
     const card = await this.t("giftCard")
       .findFirst({ where: { id, organizationId: orgId } })
       .catch(() => null);
-    if (!card) throw new NotFoundException("গিফট কার্ড পাওয়া যায়নি");
+    if (!card) throw notFound("commerce.giftCardNotFound");
     const ledger: any[] =
       (await this.t("giftCardLedger")
         .findMany({
@@ -1065,20 +1066,18 @@ export class GiftCardsService {
     try {
       amount = BigInt(dto?.amountMinor);
     } catch {
-      throw new BadRequestException("গিফট কার্ডের পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+      throw badRequest("commerce.giftCardAmountInvalid");
     }
     if (amount <= 0n || amount > MAX_MANUAL_AMOUNT_MINOR) {
-      throw new BadRequestException("গিফট কার্ডের পরিমাণ সঠিক নয়");
+      throw badRequest("commerce.giftCardAmountNotValid");
     }
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("নোট দেওয়া বাধ্যতামূলক");
+    if (!note) throw badRequest("commerce.noteMandatory");
     const recipientEmail = String(dto?.recipientEmail ?? "").trim() || null;
     const recipientPhone = String(dto?.recipientPhone ?? "").trim() || null;
     const emailOk = recipientEmail !== null && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail);
     if (!emailOk && !recipientPhone) {
-      throw new BadRequestException(
-        "প্রাপকের ইমেইল বা ফোন নম্বর দিন — গিফট কার্ডের কোড শুধুমাত্র প্রাপকের কাছেই পাঠানো হয়, এখানে দেখা যায় না",
-      );
+      throw badRequest("commerce.giftCardRecipientRequired");
     }
     const setting = await this.loadSetting(orgId);
     const expiresAt =
@@ -1166,21 +1165,21 @@ export class GiftCardsService {
    * effective-expired-but-not-yet-swept card is voidable. */
   async voidCard(orgId: string, actorId: string, id: string, dto: { note?: string }): Promise<any> {
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("নোট দেওয়া বাধ্যতামূলক");
+    if (!note) throw badRequest("commerce.noteMandatory");
     let voidedMinor = 0n;
     let cardAfter: any = null;
     await (this.prisma as any).$transaction(async (tx: any) => {
       const card = await tx.giftCard.findFirst({ where: { id, organizationId: orgId } });
-      if (!card) throw new NotFoundException("গিফট কার্ড পাওয়া যায়নি");
+      if (!card) throw notFound("commerce.giftCardNotFound");
       if (String(card.status) === "void") {
-        throw new BadRequestException("কার্ডটি ইতিমধ্যে বাতিল");
+        throw badRequest("commerce.cardAlreadyCancelled");
       }
       const claim = await tx.giftCard.updateMany({
         where: { id, organizationId: orgId, status: { in: ["active", "depleted", "expired"] } },
         data: { status: "void" },
       });
       if (!claim || Number(claim.count ?? 0) === 0) {
-        throw new BadRequestException("কার্ডটি ইতিমধ্যে বাতিল");
+        throw badRequest("commerce.cardAlreadyCancelled");
       }
       const balance = toBig(card.balanceCache);
       voidedMinor = balance;
@@ -1209,25 +1208,25 @@ export class GiftCardsService {
    * void's job, not an adjust's. */
   async adjustBalance(orgId: string, actorId: string, id: string, dto: { deltaMinor?: unknown; note?: string }): Promise<any> {
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("নোট দেওয়া বাধ্যতামূলক");
+    if (!note) throw badRequest("commerce.noteMandatory");
     let delta: bigint;
     try {
       delta = BigInt(dto?.deltaMinor as any);
     } catch {
-      throw new BadRequestException("সংশোধনের পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+      throw badRequest("commerce.adjustmentAmountInvalid");
     }
-    if (delta === 0n) throw new BadRequestException("সংশোধনের পরিমাণ শূন্য হতে পারবে না");
+    if (delta === 0n) throw badRequest("commerce.adjustmentAmountZero");
     let cardAfter: any = null;
     await (this.prisma as any).$transaction(async (tx: any) => {
       const card = await tx.giftCard.findFirst({ where: { id, organizationId: orgId } });
-      if (!card) throw new NotFoundException("গিফট কার্ড পাওয়া যায়নি");
+      if (!card) throw notFound("commerce.giftCardNotFound");
       const effective = effectiveGiftCardStatus(card);
       if (effective === "void" || effective === "expired") {
-        throw new BadRequestException("বাতিল/মেয়াদোত্তীর্ণ কার্ডে সংশোধন করা যাবে না");
+        throw badRequest("commerce.adjustmentOnClosedCard");
       }
       const newBalance = toBig(card.balanceCache) + delta;
       if (newBalance < 0n) {
-        throw new BadRequestException("সংশোধনের পর ব্যালেন্স ঋণাত্মক হতে পারবে না");
+        throw badRequest("commerce.adjustmentNegativeBalance");
       }
       const nextStatus =
         newBalance === 0n
@@ -1262,13 +1261,13 @@ export class GiftCardsService {
   async publicBalance(orgId: string, rawCode: unknown): Promise<any> {
     const canonical = normalizeGiftCardCode(rawCode);
     if (!canonical) {
-      throw new BadRequestException("গিফট কার্ডের কোডটি সঠিক নয় বা এই দোকানের কার্ড নয়");
+      throw badRequest("commerce.giftCardCodeInvalidOrForeign");
     }
     const card = await this.t("giftCard")
       .findFirst({ where: { organizationId: orgId, codeHash: hashGiftCardCode(canonical) } })
       .catch(() => null);
     if (!card) {
-      throw new BadRequestException("গিফট কার্ডের কোডটি সঠিক নয় বা এই দোকানের কার্ড নয়");
+      throw badRequest("commerce.giftCardCodeInvalidOrForeign");
     }
     return {
       balanceMinor: String(giftCardEffectiveBalanceMinor(card)),
@@ -1330,12 +1329,12 @@ export class GiftCardsService {
     let from = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
     if (fromRaw) {
       const d = new Date(fromRaw);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শুরুর তারিখটি সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("commerce.startDateInvalid");
       from = d;
     }
     if (toRaw) {
       const d = new Date(toRaw);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শেষের তারিখটি সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("commerce.endDateInvalid");
       to = d;
     }
 

@@ -196,7 +196,7 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const db = fakeDb();
     const tg = telegramStub({ getMe: jest.fn(async () => { throw new Error("Unauthorized"); }) });
     const err = await oauthService(db, tg).connectTelegramChannel(ORG, ACTOR, { botToken: "bad", channel: "@mychan" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.botVerificationFailedCheckWhetherThe" });
     expect(err.message).toContain("Unauthorized");
     expect(db.socialAccounts).toHaveLength(0);
     expect(db.integrations).toHaveLength(0);
@@ -208,7 +208,7 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const db = fakeDb();
     const tg = telegramStub({ getChat: jest.fn(async () => { throw new Error("chat not found"); }) });
     const err = await oauthService(db, tg).connectTelegramChannel(ORG, ACTOR, { botToken: BOT_TOKEN, channel: "@nope" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.channelNotFoundCheckWhetherThe" });
     expect(err.message).toContain("chat not found");
     expect(db.socialAccounts).toHaveLength(0);
     expect(tg.getChatMember).not.toHaveBeenCalled();
@@ -218,7 +218,7 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const db = fakeDb();
     const tg = telegramStub({ getChat: jest.fn(async () => ({ id: -100999, type: "supergroup", title: "Group", username: "grp" })) });
     const err = await oauthService(db, tg).connectTelegramChannel(ORG, ACTOR, { botToken: BOT_TOKEN, channel: "@grp" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.thisIsNotAChannelType" });
     expect(err.message).toContain("Channel নয়");
     expect(db.socialAccounts).toHaveLength(0);
     expect(tg.getChatMember).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const db = fakeDb();
     const tg = telegramStub({ getChatMember: jest.fn(async () => ({ status: "member", canPostMessages: null })) });
     const err = await oauthService(db, tg).connectTelegramChannel(ORG, ACTOR, { botToken: BOT_TOKEN, channel: "@mychan" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theBotIsNotAnAdmin" });
     expect(err.message).toContain("Admin নয়");
     expect(err.message).toContain("member");
     expect(db.socialAccounts).toHaveLength(0);
@@ -239,7 +239,7 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const db = fakeDb();
     const tg = telegramStub({ getChatMember: jest.fn(async () => ({ status: "administrator", canPostMessages: false })) });
     const err = await oauthService(db, tg).connectTelegramChannel(ORG, ACTOR, { botToken: BOT_TOKEN, channel: "@mychan" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theBotIsAnAdminBut" });
     expect(err.message).toContain("Post Messages");
     expect(db.socialAccounts).toHaveLength(0);
   });
@@ -250,8 +250,8 @@ describe("SN6 connect — verify-before-save matrix", () => {
     const svc = oauthService(db, tg);
     const e1 = await svc.connectTelegramChannel(ORG, ACTOR, { botToken: "", channel: "@mychan" }).catch((e) => e);
     const e2 = await svc.connectTelegramChannel(ORG, ACTOR, { botToken: BOT_TOKEN, channel: " " }).catch((e) => e);
-    expect(e1).toBeInstanceOf(BadRequestException);
-    expect(e2).toBeInstanceOf(BadRequestException);
+    expect(e1).toMatchObject({ code: "social.aBotTokenIsRequiredCreate" });
+    expect(e2).toMatchObject({ code: "social.aChannelUsernameEGMychannel" });
     expect(tg.getMe).not.toHaveBeenCalled();
   });
 

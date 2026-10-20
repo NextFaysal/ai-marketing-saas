@@ -6,6 +6,19 @@
  * fall back to the raw value so nothing is ever silently hidden.
  */
 
+import { intlLocaleOf, normalizeUiLocale } from "@repo/contracts";
+import type { UiLocale } from "./i18n/dict";
+import { tr } from "./i18n/lookup";
+import { aiBn, aiEn } from "./i18n/ai";
+
+const AI_DICTS = { bn: aiBn, en: aiEn };
+/** MB2 (ML6): label helpers read the `ai` namespace directly and
+ * take an optional locale (default "bn" — existing callers and
+ * tests keep the Bengali output they have today). */
+function L(locale: UiLocale | undefined, key: string, params?: Record<string, string | number>): string {
+  return tr(AI_DICTS, locale ?? "bn", key, params) ?? key;
+}
+
 export const LEARNING_WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 export const LEARNING_DELETE_ROLES = ["OWNER", "ADMIN"];
 
@@ -52,52 +65,57 @@ export interface LearningStateSummary {
   reason: string | null;
 }
 
-export function coverageAreaLabel(key: string): string {
+export function coverageAreaLabel(key: string, locale: UiLocale = "bn"): string {
   switch (key) {
-    case "profile": return "ব্যবসার প্রোফাইল";
-    case "policies": return "পলিসি";
-    case "knowledge": return "জ্ঞান ডকুমেন্ট";
-    case "products": return "পণ্যের তথ্য";
-    case "website": return "ওয়েবসাইটের পেজ";
-    case "answers": return "সংরক্ষিত উত্তর";
-    case "brandVoice": return "ব্র্যান্ড ভয়েস";
-    case "customerMemory": return "কাস্টমার স্মৃতি";
+    case "profile": return L(locale, "learnCoverageProfile");
+    case "policies": return L(locale, "learnCoveragePolicies");
+    case "knowledge": return L(locale, "learnCoverageKnowledge");
+    case "products": return L(locale, "learnCoverageProducts");
+    case "website": return L(locale, "learnCoverageWebsite");
+    case "answers": return L(locale, "learnCoverageAnswers");
+    case "brandVoice": return L(locale, "learnCoverageBrandVoice");
+    case "customerMemory": return L(locale, "learnCoverageCustomerMemory");
     default: return key;
   }
 }
 
-export function learningStateText(state: LearningStateSummary | null): string {
-  if (!state || !state.lastRunAt) return "এখনো চালানো হয়নি";
-  const when = formatDate(state.lastRunAt);
-  if (state.lastStatus === "ok") return `শেষ চালানো: ${when} (সফল)`;
-  if (state.lastStatus === "failed") return `শেষ চালানো: ${when} (ব্যর্থ)`;
-  if (state.lastStatus === "skipped") return `শেষ চালানো: ${when} (এড়িয়ে যাওয়া হয়েছে${state.reason ? ` — ${state.reason}` : ""})`;
-  return `শেষ চালানো: ${when}`;
+export function learningStateText(state: LearningStateSummary | null, locale: UiLocale = "bn"): string {
+  if (!state || !state.lastRunAt) return L(locale, "learnStateNeverRun");
+  const when = formatDate(state.lastRunAt, locale);
+  if (state.lastStatus === "ok") return L(locale, "learnStateLastRunOk", { when });
+  if (state.lastStatus === "failed") return L(locale, "learnStateLastRunFailed", { when });
+  if (state.lastStatus === "skipped") return state.reason
+    ? L(locale, "learnStateLastRunSkippedReason", { when, reason: state.reason })
+    : L(locale, "learnStateLastRunSkipped", { when });
+  return L(locale, "learnStateLastRunPlain", { when });
 }
 
-export function formatDate(value: string | null | undefined): string {
+export function formatDate(value: string | null | undefined, locale: UiLocale = "bn"): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("bn-BD", { year: "numeric", month: "short", day: "numeric" });
+  // Short-month form: @repo/contracts fmt* has no short-date variant,
+  // so Intl is used directly with the contracts locale mapping
+  // (intlLocaleOf) — same rendering the contracts module produces.
+  return new Intl.DateTimeFormat(intlLocaleOf(normalizeUiLocale(locale)), { year: "numeric", month: "short", day: "numeric" }).format(d);
 }
 
-export function learnedKindLabel(kind: string): string {
+export function learnedKindLabel(kind: string, locale: UiLocale = "bn"): string {
   switch (kind) {
-    case "faq_pair": return "প্রশ্নোত্তর";
-    case "fact": return "তথ্য";
-    case "product_note": return "পণ্যের নোট";
+    case "faq_pair": return L(locale, "learnKindFaq");
+    case "fact": return L(locale, "learnKindFact");
+    case "product_note": return L(locale, "learnKindProductNote");
     default: return kind;
   }
 }
 
-export function learnedSourceLabel(sourceType: string): string {
+export function learnedSourceLabel(sourceType: string, locale: UiLocale = "bn"): string {
   switch (sourceType) {
-    case "conversation": return "কথোপকথন থেকে শেখা";
-    case "unanswered": return "উত্তর-না-পাওয়া প্রশ্ন থেকে";
-    case "website": return "ওয়েবসাইট থেকে";
-    case "product": return "পণ্য থেকে";
-    case "performance": return "পারফরম্যান্স থেকে";
+    case "conversation": return L(locale, "learnSourceConversation");
+    case "unanswered": return L(locale, "learnSourceUnanswered");
+    case "website": return L(locale, "learnSourceWebsite");
+    case "product": return L(locale, "learnSourceProduct");
+    case "performance": return L(locale, "learnSourcePerformance");
     default: return sourceType;
   }
 }
@@ -105,11 +123,11 @@ export function learnedSourceLabel(sourceType: string): string {
 /** What approving a suggested item will create — mirrors the
  * SA-B4 LearningService mapping so the UI never promises a
  * different outcome than the API delivers. */
-export function approvalTargetText(item: { kind: string; sourceType: string }): string {
-  if (item.kind === "faq_pair") return "অনুমোদন হলে উত্তর ভান্ডারে যাবে";
-  if (item.kind === "product_note") return "অনুমোদন হলে অভ্যন্তরীণ নোট হিসেবে জ্ঞানে যাবে";
-  if (item.sourceType === "performance") return "অনুমোদন হলে অভ্যন্তরীণ তথ্য হিসেবে জ্ঞানে যাবে";
-  return "অনুমোদন হলে জ্ঞান ডকুমেন্ট হিসেবে যাবে";
+export function approvalTargetText(item: { kind: string; sourceType: string }, locale: UiLocale = "bn"): string {
+  if (item.kind === "faq_pair") return L(locale, "learnApprovalFaq");
+  if (item.kind === "product_note") return L(locale, "learnApprovalProductNote");
+  if (item.sourceType === "performance") return L(locale, "learnApprovalPerformance");
+  return L(locale, "learnApprovalDefault");
 }
 
 /** Whether the approve call accepts a visibility choice at all:
@@ -124,37 +142,37 @@ export function defaultApprovalVisibility(item: { kind: string; sourceType: stri
   return item.sourceType === "website" || item.sourceType === "product" ? "public" : "internal";
 }
 
-export function answerOriginLabel(origin: string): string {
+export function answerOriginLabel(origin: string, locale: UiLocale = "bn"): string {
   switch (origin) {
-    case "autopilot_grounded": return "AI-এর যাচাইকৃত উত্তর";
-    case "staff_approved": return "অনুমোদিত শেখা উত্তর";
-    case "staff_edited": return "স্টাফের সংশোধন করা উত্তর";
+    case "autopilot_grounded": return L(locale, "learnOriginAutopilot");
+    case "staff_approved": return L(locale, "learnOriginStaffApproved");
+    case "staff_edited": return L(locale, "learnOriginStaffEdited");
     default: return origin;
   }
 }
 
-export function answerStatusLabel(status: string): string {
+export function answerStatusLabel(status: string, locale: UiLocale = "bn"): string {
   switch (status) {
-    case "active": return "চালু";
-    case "disabled": return "বন্ধ";
-    case "invalidated": return "বাতিল (উৎস বদলেছে)";
+    case "active": return L(locale, "learnStatusActive");
+    case "disabled": return L(locale, "learnStatusDisabled");
+    case "invalidated": return L(locale, "learnStatusInvalidated");
     default: return status;
   }
 }
 
 /** SA-B3's invalidation vocabulary in plain language. */
-export function invalidReasonLabel(reason: string | null | undefined): string {
+export function invalidReasonLabel(reason: string | null | undefined, locale: UiLocale = "bn"): string {
   switch (reason) {
-    case "source_doc_changed": return "উৎস ডকুমেন্ট বদলে গেছে";
-    case "source_doc_removed": return "উৎস ডকুমেন্ট মুছে গেছে";
-    case "source_doc_reclassified": return "উৎস ডকুমেন্ট অভ্যন্তরীণ করা হয়েছে";
-    case "source_policy_changed": return "উৎস পলিসি বদলে গেছে";
-    case "source_policy_removed": return "উৎস পলিসি মুছে গেছে";
-    case "source_profile_changed": return "ব্যবসার তথ্য বদলে গেছে";
-    case "product_unavailable": return "পণ্যটি আর পাওয়া যাচ্ছে না";
-    case "product_changed": return "পণ্যের তথ্য বদলে গেছে";
-    case "live_facts_changed": return "দাম/স্টকের তথ্য বদলে গেছে";
-    case "number_guard_failed": return "সংখ্যা যাচাইয়ে আটকে গেছে";
+    case "source_doc_changed": return L(locale, "learnInvalidDocChanged");
+    case "source_doc_removed": return L(locale, "learnInvalidDocRemoved");
+    case "source_doc_reclassified": return L(locale, "learnInvalidDocReclassified");
+    case "source_policy_changed": return L(locale, "learnInvalidPolicyChanged");
+    case "source_policy_removed": return L(locale, "learnInvalidPolicyRemoved");
+    case "source_profile_changed": return L(locale, "learnInvalidProfileChanged");
+    case "product_unavailable": return L(locale, "learnInvalidProductUnavailable");
+    case "product_changed": return L(locale, "learnInvalidProductChanged");
+    case "live_facts_changed": return L(locale, "learnInvalidLiveFacts");
+    case "number_guard_failed": return L(locale, "learnInvalidNumberGuard");
     default: return reason ?? "";
   }
 }
@@ -166,44 +184,44 @@ export function previewText(text: string, max = 240): string {
 
 /** AiBrandVoiceProfile traits (closed vocabularies from SA-B5)
  * in plain language. Unknown values are shown raw, never dropped. */
-export function voiceTraitLines(traits: Record<string, unknown> | null | undefined): string[] {
+export function voiceTraitLines(traits: Record<string, unknown> | null | undefined, locale: UiLocale = "bn"): string[] {
   if (!traits || typeof traits !== "object") return [];
   const lines: string[] = [];
-  const formality: Record<string, string> = { formal: "আনুষ্ঠানিক ভঙ্গিতে কথা বলে", neutral: "স্বাভাবিক ভঙ্গিতে কথা বলে", friendly: "বন্ধুসুলভ ভঙ্গিতে কথা বলে" };
-  const emoji: Record<string, string> = { none: "ইমোজি ব্যবহার করে না", light: "মাঝে মাঝে ইমোজি ব্যবহার করে", frequent: "প্রায়ই ইমোজি ব্যবহার করে" };
-  const mix: Record<string, string> = { bn: "মূলত বাংলায় লেখে", en: "মূলত ইংরেজিতে লেখে", mixed: "বাংলা-ইংরেজি মিশিয়ে লেখে" };
-  const sentence: Record<string, string> = { short: "ছোট ছোট বাক্যে লেখে", medium: "মাঝারি আকারের বাক্যে লেখে", long: "বড় বাক্যে লেখে" };
-  if (typeof traits.formality === "string") lines.push(formality[traits.formality] ?? `ভঙ্গি: ${traits.formality}`);
-  if (typeof traits.emojiUse === "string") lines.push(emoji[traits.emojiUse] ?? `ইমোজি: ${traits.emojiUse}`);
-  if (typeof traits.languageMix === "string") lines.push(mix[traits.languageMix] ?? `ভাষা: ${traits.languageMix}`);
-  if (typeof traits.avgSentence === "string") lines.push(sentence[traits.avgSentence] ?? `বাক্য: ${traits.avgSentence}`);
-  if (typeof traits.greetingStyle === "string" && traits.greetingStyle) lines.push(`শুভেচ্ছা: “${traits.greetingStyle}”`);
+  const formality: Record<string, string> = { formal: L(locale, "learnVoiceFormalityFormal"), neutral: L(locale, "learnVoiceFormalityNeutral"), friendly: L(locale, "learnVoiceFormalityFriendly") };
+  const emoji: Record<string, string> = { none: L(locale, "learnVoiceEmojiNone"), light: L(locale, "learnVoiceEmojiLight"), frequent: L(locale, "learnVoiceEmojiFrequent") };
+  const mix: Record<string, string> = { bn: L(locale, "learnVoiceMixBn"), en: L(locale, "learnVoiceMixEn"), mixed: L(locale, "learnVoiceMixMixed") };
+  const sentence: Record<string, string> = { short: L(locale, "learnVoiceSentenceShort"), medium: L(locale, "learnVoiceSentenceMedium"), long: L(locale, "learnVoiceSentenceLong") };
+  if (typeof traits.formality === "string") lines.push(formality[traits.formality] ?? L(locale, "learnVoiceFormalityFallback", { value: traits.formality }));
+  if (typeof traits.emojiUse === "string") lines.push(emoji[traits.emojiUse] ?? L(locale, "learnVoiceEmojiFallback", { value: traits.emojiUse }));
+  if (typeof traits.languageMix === "string") lines.push(mix[traits.languageMix] ?? L(locale, "learnVoiceMixFallback", { value: traits.languageMix }));
+  if (typeof traits.avgSentence === "string") lines.push(sentence[traits.avgSentence] ?? L(locale, "learnVoiceSentenceFallback", { value: traits.avgSentence }));
+  if (typeof traits.greetingStyle === "string" && traits.greetingStyle) lines.push(L(locale, "learnVoiceGreeting", { value: traits.greetingStyle }));
   if (Array.isArray(traits.signaturePhrases)) {
-    for (const p of traits.signaturePhrases) if (typeof p === "string" && p) lines.push(`পরিচিত বাক্য: “${p}”`);
+    for (const p of traits.signaturePhrases) if (typeof p === "string" && p) lines.push(L(locale, "learnVoiceSignature", { value: p }));
   }
   return lines;
 }
 
-export function languagePrefLabel(pref: string | null | undefined): string {
+export function languagePrefLabel(pref: string | null | undefined, locale: UiLocale = "bn"): string {
   switch (pref) {
-    case "bn": return "বাংলা";
-    case "en": return "ইংরেজি";
-    case "mixed": return "বাংলা-ইংরেজি মিশ্র";
-    default: return "জানা নেই";
+    case "bn": return L(locale, "learnLangBn");
+    case "en": return L(locale, "learnLangEn");
+    case "mixed": return L(locale, "learnLangMixed");
+    default: return L(locale, "learnLangUnknown");
   }
 }
 
-export function unansweredReasonLabel(reason: string): string {
+export function unansweredReasonLabel(reason: string, locale: UiLocale = "bn"): string {
   switch (reason) {
-    case "no_answer": return "উত্তর মেলেনি";
-    case "knowledge_gap": return "জ্ঞানে এই তথ্য নেই";
-    case "low_confidence": return "নিশ্চিত উত্তর ছিল না";
+    case "no_answer": return L(locale, "learnUnansweredNoAnswer");
+    case "knowledge_gap": return L(locale, "learnUnansweredKnowledgeGap");
+    case "low_confidence": return L(locale, "learnUnansweredLowConfidence");
     default: return reason;
   }
 }
 
-export function brandVoiceStatusText(status: string, hasPending: boolean): string {
-  if (status === "active") return hasPending ? "চালু আছে — নতুন প্রস্তাব অপেক্ষমাণ" : "চালু আছে";
-  if (status === "suggested") return "প্রস্তাব এসেছে — অনুমোদনের অপেক্ষায়";
-  return "এখনো শেখা হয়নি";
+export function brandVoiceStatusText(status: string, hasPending: boolean, locale: UiLocale = "bn"): string {
+  if (status === "active") return hasPending ? L(locale, "learnBrandVoiceActivePending") : L(locale, "learnBrandVoiceActive");
+  if (status === "suggested") return L(locale, "learnBrandVoiceSuggested");
+  return L(locale, "learnBrandVoiceNotLearned");
 }

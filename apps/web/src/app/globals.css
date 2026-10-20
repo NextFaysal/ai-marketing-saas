@@ -1197,3 +1197,21 @@ body:has(.dashboard-root.dark) {
 .msg-section > h2.font-semibold { @apply text-[17px] tracking-tight text-slate-900; }
 .msg-section { transition: box-shadow 0.2s ease; }
 .msg-section:hover { box-shadow: var(--shadow-card-v2); }
+
+/* ============================================================
+   ML2 (Multi-Language MB1): per-locale font application.
+   The LocaleProvider sets <html lang> + <html data-locale>
+   from the resolved UI locale; fonts themselves are already
+   self-hosted via Fontsource imports in the root layout
+   (Inter Variable + Hind Siliguri 400–700) — no new font
+   files. bn gets the Hind Siliguri-first stack with the
+   roomier 1.7 line-height Bengali type needs (ML format
+   spec A); en keeps the Inter-first stack (spec B).
+   ============================================================ */
+[data-locale="bn"] body {
+  font-family: "Hind Siliguri", "Hind Siliguri Fallback", "Inter Variable", Inter, sans-serif;
+  line-height: 1.7;
+}
+[data-locale="en"] body {
+  font-family: "Inter Variable", Inter, "Hind Siliguri", sans-serif;
+}

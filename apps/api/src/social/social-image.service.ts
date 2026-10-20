@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -8,6 +8,7 @@ import { resolveImageProvider } from "../ai/images/image.factory";
 import { storedAssetPublicUrl } from "../storage/media-url";
 import { SocialImportService } from "./social-import.service";
 import { formatMinor } from "@repo/contracts";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
 
 /** XML-escape interpolated text for the poster SVG. */
 export function escapeXml(value: string): string {
@@ -157,7 +158,7 @@ export class SocialImageService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "social.aiFeaturesTemporarilyPausedPlatformWide" : "social.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -167,10 +168,7 @@ export class SocialImageService {
       where: { organizationId, feature: "social_image", createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("social.dailyAiGenerationLimitReachedFor2", { limit: limit }, 429);
     }
   }
 
@@ -185,14 +183,14 @@ export class SocialImageService {
     dto: { prompt: string; productId?: string },
   ) {
     const prompt = dto.prompt?.trim() ?? "";
-    if (!prompt) throw new BadRequestException("ছবির বর্ণনা (Prompt) দিন।");
+    if (!prompt) throw badRequest("social.giveTheImageDescriptionPrompt");
 
     // Enforcement FIRST (kill switch + daily cap), mirroring SP3/M55.
     await this.checkDailyLimit(organizationId);
 
     const r = this.resolveProvider();
     if (!r) {
-      throw new BadRequestException("AI ছবি তৈরির provider configure করা নেই — Admin Panel থেকে সেট করুন, অথবা Template Poster ব্যবহার করুন");
+      throw badRequest("social.theAiImageGenerationProviderIs");
     }
 
     let product: any = null;
@@ -200,7 +198,7 @@ export class SocialImageService {
       product = await (this.prisma as any).product.findFirst({
         where: { id: dto.productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("social.productNotFoundInThisOrganization");
     }
 
     // Grounding: the product contributes its name and category
@@ -222,7 +220,7 @@ export class SocialImageService {
     // no asset and no usage row (nothing usable was produced).
     const detected = detectMediaKind(result.bytes, result.contentType);
     if (!detected || detected.kind !== "image") {
-      throw new BadRequestException("Provider এমন ডেটা ফেরত দিয়েছে যা ছবি হিসেবে পড়া যাচ্ছে না — Asset তৈরি হয়নি।");
+      throw badRequest("social.theProviderReturnedDataThatCould");
     }
 
     const id = randomUUID();
@@ -262,9 +260,9 @@ export class SocialImageService {
     dto: { mediaAssetId?: string; productId?: string; headline: string; subtext?: string },
   ) {
     const headline = dto.headline?.trim() ?? "";
-    if (!headline) throw new BadRequestException("Poster-এর Headline দিন।");
+    if (!headline) throw badRequest("social.posterHeadline");
     if (headline.length > 120) {
-      throw new BadRequestException("Headline সর্বোচ্চ ১২০ অক্ষরের হতে পারবে।");
+      throw badRequest("social.headline");
     }
 
     let product: any = null;
@@ -272,7 +270,7 @@ export class SocialImageService {
       product = await (this.prisma as any).product.findFirst({
         where: { id: dto.productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("social.productNotFoundInThisOrganization");
     }
 
     // PP3 closes the SP2 deferral: a product-only poster no
@@ -289,16 +287,16 @@ export class SocialImageService {
         const imported = await this.importer.importForProduct(organizationId, actorId, dto.productId);
         photoAssetId = imported.id;
       } else {
-        throw new BadRequestException("Template Poster-এর জন্য একটি ছবি বেছে নিন।");
+        throw badRequest("social.templatePoster");
       }
     }
 
     const asset = await (this.prisma as any).mediaAsset.findFirst({
       where: { id: photoAssetId, organizationId },
     });
-    if (!asset) throw new NotFoundException("Media asset not found in this organization");
+    if (!asset) throw notFound("social.mediaAssetNotFoundInThis");
     if (asset.kind !== "image") {
-      throw new BadRequestException("Template Poster-এর জন্য একটি ছবি (image) asset লাগবে।");
+      throw badRequest("social.templatePosterImageAsset");
     }
 
     // An explicit subtext (even "") wins; otherwise the poster's
@@ -314,7 +312,7 @@ export class SocialImageService {
     const brandName = org?.brandName || org?.name || "";
 
     const photoBytes = await MediaStore.fromEnv().get(asset.storageKey);
-    if (!photoBytes) throw new NotFoundException("Media bytes not found in storage");
+    if (!photoBytes) throw notFound("social.mediaBytesNotFoundInStorage");
     const photoDataUri = `data:${asset.contentType};base64,${photoBytes.toString("base64")}`;
 
     let logoDataUri: string | undefined;

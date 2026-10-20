@@ -6,6 +6,7 @@
 // render in any of them (all fetching lives in the page's handlers).
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
+import { LocaleProvider } from "@/lib/i18n/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SplitDialog } from "../app/dashboard/orders/components/SplitDialog";
 import { MergeDialog } from "../app/dashboard/orders/components/MergeDialog";
@@ -108,34 +109,34 @@ const fraudProps = {
 describe("orders extraction smoke (ED13)", () => {
   it("all four panels render nothing while closed", () => {
     const { container } = render(
-      <>
+      <LocaleProvider>
         <SplitDialog splitOpen={false} actOrder={null} {...splitProps} />
         <MergeDialog mergeOpen={false} {...mergeProps} />
         <NotificationSettingsPanel notifPanelOpen={false} {...notifProps} />
         <FraudSettingsPanel fraudPanelOpen={false} {...fraudProps} />
-      </>,
+      </LocaleProvider>,
     );
     expect(container.textContent).toBe("");
   });
 
   it("SplitDialog mounts its dialog shell when open with an order", () => {
-    render(<SplitDialog splitOpen actOrder={ORDER} {...splitProps} />);
+    render(<LocaleProvider><SplitDialog splitOpen actOrder={ORDER} {...splitProps} /></LocaleProvider>);
     expect(screen.getByRole("dialog", { name: /অর্ডার Split/ })).toBeTruthy();
     expect(screen.getByText(/শাড়ি/)).toBeTruthy();
   });
 
   it("MergeDialog mounts when open and lists the selected order", () => {
-    render(<MergeDialog mergeOpen {...mergeProps} />);
+    render(<LocaleProvider><MergeDialog mergeOpen {...mergeProps} /></LocaleProvider>);
     expect(screen.getByText(/অর্ডার মার্জ করুন/)).toBeTruthy();
   });
 
   it("NotificationSettingsPanel mounts its shell when open", () => {
-    render(<NotificationSettingsPanel notifPanelOpen {...notifProps} />);
+    render(<LocaleProvider><NotificationSettingsPanel notifPanelOpen {...notifProps} /></LocaleProvider>);
     expect(screen.getByRole("dialog", { name: /বিজ্ঞপ্তি সেটিংস/ })).toBeTruthy();
   });
 
   it("FraudSettingsPanel mounts its shell when open", () => {
-    render(<FraudSettingsPanel fraudPanelOpen {...fraudProps} />);
+    render(<LocaleProvider><FraudSettingsPanel fraudPanelOpen {...fraudProps} /></LocaleProvider>);
     expect(screen.getAllByText(/Fraud Shield|জালিয়াতি/).length).toBeGreaterThan(0);
   });
 });

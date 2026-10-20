@@ -263,17 +263,17 @@ describe("OU7 manual entries — balance enforced server-side", () => {
     expect(() => validateManualLines([
       { accountCode: "1000", debitMinor: "1000", creditMinor: "0" },
       { accountCode: "3000", debitMinor: "0", creditMinor: "900" },
-    ], DEFAULT_ACCOUNTS)).toThrow(/ব্যালান্স/);
+    ], DEFAULT_ACCOUNTS)).toThrow(expect.objectContaining({ code: "finance.accounting.entryNotBalanced" }));
   });
   it("validateManualLines refuses unknown accounts and two-sided lines", () => {
     expect(() => validateManualLines([
       { accountCode: "9999", debitMinor: "100", creditMinor: "0" },
       { accountCode: "3000", debitMinor: "0", creditMinor: "100" },
-    ], DEFAULT_ACCOUNTS)).toThrow(/চার্টে নেই/);
+    ], DEFAULT_ACCOUNTS)).toThrow(expect.objectContaining({ code: "finance.accounting.codeNotInChart" }));
     expect(() => validateManualLines([
       { accountCode: "1000", debitMinor: "100", creditMinor: "100" },
       { accountCode: "3000", debitMinor: "0", creditMinor: "100" },
-    ], DEFAULT_ACCOUNTS)).toThrow(/ঠিক একটিই/);
+    ], DEFAULT_ACCOUNTS)).toThrow(expect.objectContaining({ code: "finance.accounting.debitXorCredit" }));
   });
   it("a balanced manual entry is created, marked manual and audit-logged", async () => {
     const { prisma, accounting } = makeWorld();
@@ -293,7 +293,7 @@ describe("OU7 manual entries — balance enforced server-side", () => {
         { accountCode: "1000", debitMinor: "100", creditMinor: "0" },
         { accountCode: "3000", debitMinor: "0", creditMinor: "50" },
       ],
-    })).rejects.toThrow(/ব্যালান্স/);
+    })).rejects.toMatchObject({ code: "finance.accounting.entryNotBalanced" });
     expect(prisma.ou7JournalEntry.rows).toHaveLength(1);
   });
   it("chart of accounts seeds the GL-mapping names exactly once", async () => {
@@ -347,7 +347,7 @@ describe("OU7 bank reconciliation — suggestions only, never auto-confirm", () 
     seedSources(prisma);
     await bank.importStatement("org-1", "user-1", csv);
     const line = prisma.bankStatementLine.rows.find((l: any) => BigInt(l.amountMinor) === -50000n);
-    await expect(bank.confirmMatch("org-1", "user-1", line.id, { sourceType: "expense", sourceId: "nope" })).rejects.toThrow(/প্রস্তাবিত মিল/);
+    await expect(bank.confirmMatch("org-1", "user-1", line.id, { sourceType: "expense", sourceId: "nope" })).rejects.toMatchObject({ code: "finance.bankRecon.suggestedMatchNotFound" });
     expect(prisma.bankStatementLine.rows.find((l: any) => l.id === line.id).status).toBe("unmatched");
     const done = await bank.confirmMatch("org-1", "user-1", line.id, { sourceType: "expense", sourceId: "ex-1" });
     expect(done.status).toBe("matched");

@@ -165,8 +165,8 @@ describe("CN18 — competitor-response draft (angle only, never their creative)"
   it("refuses a competitor or product from another org", async () => {
     const { tables, svc } = setup();
     seedCompetitor(tables);
-    await expect(svc.competitorResponseDraft("other-org", "u1", { competitorId: "comp-1", productId: "prod-1", adAccountId: "acc-1" })).rejects.toThrow(/Competitor not found/);
-    await expect(svc.competitorResponseDraft("org", "u1", { competitorId: "comp-1", productId: "nope", adAccountId: "acc-1" })).rejects.toThrow(/Product not found/);
+    await expect(svc.competitorResponseDraft("other-org", "u1", { competitorId: "comp-1", productId: "prod-1", adAccountId: "acc-1" })).rejects.toMatchObject({ code: "campaigns.competitorNotFoundInThisOrganization" });
+    await expect(svc.competitorResponseDraft("org", "u1", { competitorId: "comp-1", productId: "nope", adAccountId: "acc-1" })).rejects.toMatchObject({ code: "campaigns.productNotFoundInThisOrganization" });
   });
 });
 
@@ -187,7 +187,7 @@ describe("CN18 — campaign report shares (existing lifecycle, allowlisted paylo
     seedSharePlan(tables);
     const shares = new ReportSharesService(tables as any, audit, {} as any, undefined, svc);
     await expect(shares.create("org", "u1", { title: "X", kind: "campaign" })).rejects.toThrow(/planId/);
-    await expect(shares.create("other-org", "u1", { title: "X", kind: "campaign", planId: "plan-share" })).rejects.toThrow(/not found in this organization/);
+    await expect(shares.create("other-org", "u1", { title: "X", kind: "campaign", planId: "plan-share" })).rejects.toMatchObject({ code: "reports.campaignPlanNotFoundInThis" });
     const share: any = await shares.create("org", "u1", { title: "Client — Share Plan", kind: "campaign", planId: "plan-share", days: 30, expiresInDays: 7 });
     expect(share.kind).toBe("campaign");
     expect(share.planId).toBe("plan-share");
@@ -211,7 +211,7 @@ describe("CN18 — campaign report shares (existing lifecycle, allowlisted paylo
     expect(pub.pacing).not.toBeNull();
     // revoke runs through the same lifecycle as overview shares
     await shares.revoke("org", share.id);
-    await expect(shares.publicReport(share.token)).rejects.toThrow(/invalid/);
+    await expect(shares.publicReport(share.token)).rejects.toMatchObject({ code: "reports.thisReportLinkIsInvalid" });
   });
 
   it("an expired campaign share refuses like every other kind", async () => {
@@ -220,6 +220,6 @@ describe("CN18 — campaign report shares (existing lifecycle, allowlisted paylo
     const shares = new ReportSharesService(tables as any, audit, {} as any, undefined, svc);
     const share: any = await shares.create("org", "u1", { title: "Old", kind: "campaign", planId: "plan-share", days: 30 });
     tables.reportShare.rows[0].expiresAt = new Date(Date.now() - 1000);
-    await expect(shares.publicReport(share.token)).rejects.toThrow(/expired/);
+    await expect(shares.publicReport(share.token)).rejects.toMatchObject({ code: "reports.thisReportLinkHasExpired" });
   });
 });

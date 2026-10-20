@@ -221,17 +221,17 @@ describe("BookingService — services, staff, availability validation", () => {
   it("rejects out-of-range duration / negative price / bad buffer", async () => {
     const fx = setup();
     await expect(fx.svc.createService("org-1", "u1", { name: "X", durationMinutes: 3, priceMinor: "100" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "booking.theServiceDurationMustBeBetween" });
     await expect(fx.svc.createService("org-1", "u1", { name: "X", durationMinutes: 60, priceMinor: "-5" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "booking.theServicePriceCannotBeNegative" });
     await expect(fx.svc.createService("org-1", "u1", { name: "X", durationMinutes: 60, priceMinor: "100", bufferMinutes: 999 }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "booking.theBufferTimeMustBeBetween" });
   });
 
   it("staff add refuses a foreign or non-ACTIVE membership", async () => {
     const fx = setup();
-    await expect(fx.svc.addStaff("org-1", "u1", { membershipId: "m2" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(fx.svc.addStaff("org-1", "u1", { membershipId: "m3" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(fx.svc.addStaff("org-1", "u1", { membershipId: "m2" })).rejects.toMatchObject({ code: "booking.theMemberDoesNotBelongTo" });
+    await expect(fx.svc.addStaff("org-1", "u1", { membershipId: "m3" })).rejects.toMatchObject({ code: "booking.onlyAnActiveMemberCanBe" });
     const ok: any = await fx.svc.addStaff("org-1", "u1", { membershipId: "m1" });
     expect(ok.memberName).toBe("রাবেয়া সুলতানা");
     expect(ok.memberEmail).toBe("rabeya@example.com");
@@ -242,13 +242,13 @@ describe("BookingService — services, staff, availability validation", () => {
     const staff: any = await fx.svc.addStaff("org-1", "u1", { membershipId: "m1" });
     await expect(fx.svc.setAvailability("org-1", "u1", staff.id, {
       rows: [{ weekday: 1, startMinute: 700, endMinute: 600 }],
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "booking.theTimeRangeMustBeValid" });
     await expect(fx.svc.setAvailability("org-1", "u1", staff.id, {
       rows: [
         { weekday: 1, startMinute: 600, endMinute: 720 },
         { weekday: 1, startMinute: 700, endMinute: 800 },
       ],
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "booking.twoTimeRangesOnTheSame" });
     // Failed writes replaced nothing.
     const after = await fx.svc.getAvailability("org-1", staff.id);
     expect(after.rows).toHaveLength(0);
@@ -281,7 +281,7 @@ describe("BookingService — create, overlap, slots end-to-end", () => {
     await expect(fx.svc.createBookingFromDashboard("org-1", "u1", {
       serviceId: service.id, staffId: staff.id, startAt: "2026-10-19T04:30:00.000Z",
       guestName: "দ্বিতীয়", guestPhone: "01710000002",
-    })).rejects.toBeInstanceOf(ConflictException);
+    })).rejects.toMatchObject({ code: "booking.theStaffMemberHasAnotherBooking" });
     const touching: any = await fx.svc.createBookingFromDashboard("org-1", "u1", {
       serviceId: service.id, staffId: staff.id, startAt: "2026-10-19T05:00:00.000Z", // starts exactly at first end
       guestName: "তৃতীয়", guestPhone: "01710000003",
@@ -314,12 +314,12 @@ describe("BookingService — org isolation", () => {
     const pub: any = await fx.svc.publicServices("shop-two");
     expect(pub.services).toHaveLength(0);
     await expect(fx.svc.publicSlots("shop-two", { serviceId: service.id, staffId: "x", date: MON }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "booking.theServiceWasNotFound" });
     await expect(fx.svc.publicBook("shop-two", {
       serviceId: service.id, staffId: "x", date: MON, startTime: "10:00",
       guestName: "অতিথি", guestPhone: "01710000001",
-    })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(fx.svc.publicServices("no-such-shop")).rejects.toBeInstanceOf(NotFoundException);
+    })).rejects.toMatchObject({ code: "booking.theServiceWasNotFound" });
+    await expect(fx.svc.publicServices("no-such-shop")).rejects.toMatchObject({ code: "booking.theShopWasNotFound" });
   });
 
   it("tenant of org B cannot confirm org A's booking", async () => {
@@ -330,8 +330,8 @@ describe("BookingService — org isolation", () => {
       guestName: "অতিথি", guestPhone: "01710000001",
     });
     await expect(fx.svc.transitionBooking("org-2", "u2", b.id, "confirmed"))
-      .rejects.toBeInstanceOf(NotFoundException);
-    await expect(fx.svc.markDepositPaid("org-2", "u2", b.id)).rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "booking.theBookingWasNotFound" });
+    await expect(fx.svc.markDepositPaid("org-2", "u2", b.id)).rejects.toMatchObject({ code: "booking.theBookingWasNotFound" });
     expect(fx.tables.bookings[0].status).toBe("pending");
   });
 });
@@ -362,7 +362,7 @@ describe("BookingService — guest → customer link + public booking", () => {
     await expect(fx.svc.publicBook("shop-one", {
       serviceId: service.id, staffId: staff.id, date: MON, startTime: "10:00",
       guestName: "অতিথি", guestPhone: "123",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "booking.giveAValidPhoneNumber10" });
   });
 
   it("public slots response carries slots only — no booking details", async () => {
@@ -430,7 +430,7 @@ describe("BookingService — deposit honesty", () => {
     });
     const paid: any = await fx.svc.markDepositPaid("org-1", "u1", b.id);
     expect(paid.depositState).toBe("paid_manual");
-    await expect(fx.svc.markDepositPaid("org-1", "u1", b.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(fx.svc.markDepositPaid("org-1", "u1", b.id)).rejects.toMatchObject({ code: "booking.thisBookingHasNoRemainingManual" });
     const auditCall = fx.audit.log.mock.calls.find((c: any[]) => c[0].action === "booking.deposit_paid");
     expect(auditCall).toBeTruthy();
   });
@@ -451,13 +451,13 @@ describe("BookingService — status transition guards", () => {
       guestName: "অতিথি", guestPhone: "01710000001",
     });
     await expect(fx.svc.transitionBooking("org-1", "u1", b.id, "completed"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "booking.theBookingCannotBeMovedFrom" });
     const confirmed: any = await fx.svc.transitionBooking("org-1", "u1", b.id, "confirmed");
     expect(confirmed.status).toBe("confirmed");
     const noShow: any = await fx.svc.transitionBooking("org-1", "u1", b.id, "no_show");
     expect(noShow.status).toBe("no_show");
     await expect(fx.svc.transitionBooking("org-1", "u1", b.id, "cancelled"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "booking.theBookingCannotBeMovedFrom" });
   });
 });
 

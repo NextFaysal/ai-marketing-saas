@@ -202,7 +202,7 @@ describe("ContentGenerationService (SA-B19 / G1)", () => {
     const { svc, createPostCalls } = buildService(prisma, capturingProvider(CLEAN_JSON, captured));
     await expect(
       svc.generate("org-1", "user-1", { sourceType: "learned_item", learnedItemId: "learned-suggested", socialAccountId: "acc-1" } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "social.contentCanOnlyBeMadeFrom" });
     expect(captured.calls).toBe(0);
     expect(createPostCalls).toHaveLength(0);
   });
@@ -245,7 +245,7 @@ describe("ContentGenerationService (SA-B19 / G1)", () => {
     const { svc, createPostCalls } = buildService(prisma, capturingProvider(json, { calls: 0 }));
     await expect(
       svc.generate("org-1", "user-1", { sourceType: "topic", topic: "ঈদ কালেকশন", socialAccountId: "acc-1", count: 2 } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "social.aiVariantsAllDroppedNumbersOutsideFacts" });
     expect(createPostCalls).toHaveLength(0);
     expect(prisma.aIUsageRecord.rows).toHaveLength(1);
   });
@@ -260,7 +260,7 @@ describe("ContentGenerationService (SA-B19 / G1)", () => {
     });
     await expect(
       svc.generate("org-1", "user-1", { sourceType: "topic", topic: "নতুন কালেকশন", socialAccountId: "acc-1", count: 1 } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "social.aiVariantsAllDroppedNumbersOutsideFacts" });
     expect(createPostCalls).toHaveLength(0);
   });
 
@@ -349,10 +349,10 @@ describe("ContentGenerationService (SA-B19 / G1)", () => {
     const { svc, createPostCalls } = buildService(prisma, capturingProvider(CLEAN_JSON, captured));
     await expect(
       svc.generate("org-1", "user-1", { sourceType: "product", productId: "prod-2", socialAccountId: "acc-1" } as any),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "social.productNotFoundInThisOrganization" });
     await expect(
       svc.generate("org-1", "user-1", { sourceType: "learned_item", learnedItemId: "learned-other-org", socialAccountId: "acc-1" } as any),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "social.learnedItemNotFoundInThis" });
     expect(captured.calls).toBe(0);
     expect(createPostCalls).toHaveLength(0);
   });

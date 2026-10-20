@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
 import { decryptJson, encryptJson } from "../crypto";
@@ -8,6 +8,7 @@ import {
   DarazDevAdapterError,
   type DarazCredentials,
 } from "./daraz.client";
+import { badRequest } from "../../i18n/api-exception";
 
 export const DARAZ_PROVIDER = "daraz";
 /** The only config status a Daraz connection can have today:
@@ -89,7 +90,7 @@ export class DarazService {
     const appKey = dto.appKey?.trim();
     const appSecret = dto.appSecret?.trim();
     if (!appKey || !appSecret) {
-      throw new BadRequestException("Daraz এর জন্য App Key ও App Secret দুটোই দরকার");
+      throw badRequest("integrations.bothAppKeyAndAppSecret");
     }
     const creds: DarazCredentials = {
       appKey,

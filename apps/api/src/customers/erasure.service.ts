@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { notFound } from "../i18n/api-exception";
 
 export interface ErasureReport {
   customerId: string;
@@ -48,7 +49,7 @@ export class ErasureService {
 
   async eraseCustomer(organizationId: string, actorId: string, customerId: string): Promise<ErasureReport> {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (!customer) throw notFound("customers.customerNotFoundInThisOrganization");
 
     // Captured BEFORE the wipe — steps 3/4 match on them.
     const fullName = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();

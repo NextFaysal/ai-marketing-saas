@@ -109,7 +109,7 @@ describe("OU2 CfS config — save + safe view + sealing", () => {
     const audit = recordingAudit();
     const svc = new AdminService(prisma, audit as any);
     await expect(svc.updatePlatformConfig(actor, "cloudflare", { enabled: true, zoneId: "zone-1", apiToken: "wrong" }))
-      .rejects.toThrow(/NOT saved: Invalid access token/);
+      .rejects.toMatchObject({ code: "admin.cloudflareForSaasVerificationFailedThe" });
     expect(prisma.rows.find((r: any) => r.key === "cloudflareSaasConfig")).toBeUndefined();
     expect(audit.calls.some((c) => c.action === "admin.platform_config_verify_failed")).toBe(true);
   });

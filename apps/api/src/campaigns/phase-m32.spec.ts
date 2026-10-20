@@ -74,7 +74,7 @@ describe("Milestone 32 — Advantage+ Sales", () => {
     await expect(svc.setAdvantagePlus("org-1", "u-1", "plan-adv", true)).rejects.toThrow(/OUTCOME_SALES/);
     t.campaignPlan.rows[0].objective = "OUTCOME_SALES";
     t.campaignPlan.rows[0].externalCampaignId = "camp-x";
-    await expect(svc.setAdvantagePlus("org-1", "u-1", "plan-adv", false)).rejects.toThrow(/before publishing/);
+    await expect(svc.setAdvantagePlus("org-1", "u-1", "plan-adv", false)).rejects.toMatchObject({ code: "campaigns.advantageCanOnlyBeChangedBefore" });
   });
 });
 

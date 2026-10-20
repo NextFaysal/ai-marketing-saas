@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** GV3 (Global Assistant v2, G4): the per-user saved-prompt cap. */
 export const SAVED_PROMPT_CAP = 50;
@@ -31,10 +32,10 @@ export class PromptsService {
   async create(organizationId: string, userId: string, input: { title?: string; body?: string }) {
     const title = (input.title ?? "").trim();
     const body = (input.body ?? "").trim();
-    if (!title || !body) throw new BadRequestException("Prompt-এর title ও body দুটোই লাগবে।");
+    if (!title || !body) throw badRequest("ai.bothThePromptTitleAndBody");
     const count = await this.p().aiSavedPrompt.count({ where: { organizationId, userId } });
     if (count >= SAVED_PROMPT_CAP) {
-      throw new BadRequestException(`আপনি সর্বোচ্চ ${SAVED_PROMPT_CAP}টি prompt save করতে পারবেন। নতুন যোগ করতে পুরনো কোনোটি মুছে ফেলুন।`);
+      throw badRequest("ai.youCanSaveAtMostPrompts", { SAVED_PROMPT_CAP: SAVED_PROMPT_CAP });
     }
     return this.p().aiSavedPrompt.create({
       data: { organizationId, userId, title: title.slice(0, 80), body: body.slice(0, 2000) },
@@ -43,7 +44,7 @@ export class PromptsService {
 
   private async own(organizationId: string, userId: string, id: string) {
     const row = await this.p().aiSavedPrompt.findFirst({ where: { id, organizationId, userId } });
-    if (!row) throw new NotFoundException("Prompt not found");
+    if (!row) throw notFound("ai.promptNotFound");
     return row;
   }
 
@@ -52,12 +53,12 @@ export class PromptsService {
     const data: Record<string, unknown> = {};
     if (input.title !== undefined) {
       const title = input.title.trim();
-      if (!title) throw new BadRequestException("Prompt-এর title খালি রাখা যাবে না।");
+      if (!title) throw badRequest("ai.thePromptTitleCannotBeLeft");
       data.title = title.slice(0, 80);
     }
     if (input.body !== undefined) {
       const body = input.body.trim();
-      if (!body) throw new BadRequestException("Prompt-এর body খালি রাখা যাবে না।");
+      if (!body) throw badRequest("ai.thePromptBodyCannotBeLeft");
       data.body = body.slice(0, 2000);
     }
     return this.p().aiSavedPrompt.update({ where: { id }, data });

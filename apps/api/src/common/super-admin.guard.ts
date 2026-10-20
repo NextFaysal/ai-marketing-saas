@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@
 import { Reflector } from "@nestjs/core";
 import { PrismaService } from "../prisma/prisma.service";
 import { ipAllowed } from "./ip-allowlist";
+import { forbidden } from "../i18n";
 
 // Milestone 40: the console-managed allowlist (SystemSetting
 // "adminIpAllowlist") is cached briefly so the guard does not
@@ -30,7 +31,7 @@ export class SuperAdminGuard implements CanActivate {
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest();
-    if (!req.user?.userId) throw new ForbiddenException("Authentication required");
+    if (!req.user?.userId) throw forbidden("common.authRequired");
     // Allowlist = env entries + console-managed entries (either
     // may hold exact IPs or IPv4 CIDR ranges, Milestone 40).
     const envEntries = (process.env.ADMIN_IP_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -46,15 +47,15 @@ export class SuperAdminGuard implements CanActivate {
     const allowlist = [...envEntries, ...dbEntries];
     if (allowlist.length > 0) {
       const ip = String(req.headers?.["x-forwarded-for"] ?? req.ip ?? "").split(",")[0].trim();
-      if (!ipAllowed(ip, allowlist)) throw new ForbiddenException("Admin access is not allowed from this network");
+      if (!ipAllowed(ip, allowlist)) throw forbidden("common.adminNetworkNotAllowed");
     }
     const user = await (this.prisma as any).user.findUnique({ where: { id: req.user.userId } });
     if (!user?.isSuperAdmin || user.status !== "ACTIVE") {
-      throw new ForbiddenException("Platform admin access required");
+      throw forbidden("common.platformAdminRequired");
     }
     // Admin token revocation: token version must match the live row.
     if ((req.user.tv ?? 0) !== (user.tokenVersion ?? 0)) {
-      throw new ForbiddenException("This admin session has been revoked. Please sign in again.");
+      throw forbidden("common.adminSessionRevoked");
     }
     req.adminUser = user;
     req.adminTier = user.adminTier ?? "SUPER";
@@ -68,11 +69,11 @@ export class SuperAdminGuard implements CanActivate {
     // session gate: the key itself is a revocable, hashed,
     // SUPER-issued credential, not a browser session.
     if (!req.user.viaApiKey && req.adminTier === "SUPER" && !user.totpEnabled && method !== "GET" && !url.includes("/admin/totp/")) {
-      throw new ForbiddenException("SUPER admins must enable two-factor authentication (Security page) before making changes");
+      throw forbidden("common.superAdminTotpRequired");
     }
     const required = this.reflector.getAllAndOverride<string[]>(ADMIN_TIER_KEY, [ctx.getHandler(), ctx.getClass()]);
     if (required?.length && req.adminTier !== "SUPER" && !required.includes(req.adminTier)) {
-      throw new ForbiddenException(`This action requires the ${required.join(" or ")} admin tier`);
+      throw forbidden("common.adminTierRequired", { required: required.join(" or ") });
     }
     return true;
   }

@@ -1,5 +1,4 @@
-import {
-  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional,
+import { Injectable, Logger, Optional,
 } from "@nestjs/common";
 import { randomBytes, randomInt } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +15,7 @@ import type {
   CreatePromoCampaignDto, PublicGroupBuyJoinDto, PublicPlayDto, PublicQuizCompleteDto,
   UpdatePromoCampaignDto,
 } from "./gamified-promotions.dto";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF6 (FB3) — Gamified promotions: spin wheel, product-finder
@@ -83,7 +83,7 @@ export class GamifiedPromotionsService {
   private parseDate(value: string | null | undefined, label: string): Date | null {
     if (value === null || value === undefined || String(value).trim() === "") return null;
     const d = new Date(String(value));
-    if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} সঠিক তারিখ নয়`);
+    if (Number.isNaN(d.getTime())) throw badRequest("gamifiedPromotions.isNotAValidDate", { label: label });
     return d;
   }
 
@@ -91,7 +91,7 @@ export class GamifiedPromotionsService {
     const data: Record<string, any> = {};
     if (dto.trigger !== undefined) {
       if (!(PLACEMENT_TRIGGERS as readonly string[]).includes(String(dto.trigger))) {
-        throw new BadRequestException("পপআপ ট্রিগার সঠিক নয়");
+        throw badRequest("gamifiedPromotions.thePopupTriggerIsNotValid");
       }
       data.trigger = String(dto.trigger);
     }
@@ -99,14 +99,14 @@ export class GamifiedPromotionsService {
       if (dto[key] !== undefined) {
         const n = Number(dto[key]);
         if (!Number.isInteger(n) || n < 0 || n > 100000) {
-          throw new BadRequestException("পপআপের সময়/শতাংশ সঠিক নয়");
+          throw badRequest("gamifiedPromotions.thePopupTimePercentageIsNot");
         }
         data[key] = n;
       }
     }
     if (dto.showOn !== undefined) {
       if (!["home", "all"].includes(String(dto.showOn))) {
-        throw new BadRequestException("পপআপ কোথায় দেখাবে তা সঠিক নয়");
+        throw badRequest("gamifiedPromotions.whereThePopupShowsIsNot");
       }
       data.showOn = String(dto.showOn);
     }
@@ -115,7 +115,7 @@ export class GamifiedPromotionsService {
     const effStarts: Date | null = data.startsAt !== undefined ? data.startsAt : existing?.startsAt ? new Date(existing.startsAt) : null;
     const effEnds: Date | null = data.endsAt !== undefined ? data.endsAt : existing?.endsAt ? new Date(existing.endsAt) : null;
     if (effStarts && effEnds && effEnds.getTime() <= effStarts.getTime()) {
-      throw new BadRequestException("শেষের সময় শুরুর সময়ের পরে হতে হবে");
+      throw badRequest("gamifiedPromotions.theEndTimeMustBeAfter");
     }
     return data;
   }
@@ -130,7 +130,7 @@ export class GamifiedPromotionsService {
     const row = await this.t("promoCampaign").findFirst({
       where: { id: String(id ?? ""), organizationId: orgId },
     }).catch(() => null);
-    if (!row) throw new NotFoundException("ক্যাম্পেইনটি পাওয়া যায়নি");
+    if (!row) throw notFound("gamifiedPromotions.theCampaignWasNotFound");
     return row;
   }
 
@@ -141,7 +141,7 @@ export class GamifiedPromotionsService {
     const product = await this.t("product").findFirst({
       where: { id: productId, organizationId: orgId },
     }).catch(() => null);
-    if (!product) throw new BadRequestException("পণ্যটি এই দোকানের ক্যাটালগে পাওয়া যায়নি");
+    if (!product) throw badRequest("gamifiedPromotions.theProductWasNotFoundIn");
     return product;
   }
 
@@ -171,14 +171,14 @@ export class GamifiedPromotionsService {
   async createCampaign(orgId: string, actorId: string, dto: CreatePromoCampaignDto) {
     const kind = String(dto.kind ?? "");
     if (!(PROMO_KINDS as readonly string[]).includes(kind)) {
-      throw new BadRequestException("ক্যাম্পেইনের ধরন সঠিক নয় (spin_wheel | quiz | group_buy)");
+      throw badRequest("gamifiedPromotions.theCampaignTypeIsNotValid");
     }
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("ক্যাম্পেইনের নাম আবশ্যক");
+    if (!name) throw badRequest("gamifiedPromotions.theCampaignNameIsRequired");
     const config = this.validateConfig(kind, dto.config);
     if (kind === "group_buy") {
       await this.assertOwnProduct(orgId, (config as GroupBuyConfig).productId);
-      if (!dto.endsAt) throw new BadRequestException("গ্রুপ বাইয়ের জন্য শেষের সময় (উইন্ডো) আবশ্যক");
+      if (!dto.endsAt) throw badRequest("gamifiedPromotions.anEndTimeWindowIsRequired");
     }
     const placement = this.placementFrom(dto);
     const row = await this.t("promoCampaign").create({
@@ -235,7 +235,7 @@ export class GamifiedPromotionsService {
     const data: Record<string, any> = { ...this.placementFrom(dto, existing) };
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("ক্যাম্পেইনের নাম আবশ্যক");
+      if (!name) throw badRequest("gamifiedPromotions.theCampaignNameIsRequired");
       data.name = name.slice(0, 160);
     }
     if (dto.active !== undefined) data.active = dto.active === true;
@@ -248,7 +248,7 @@ export class GamifiedPromotionsService {
     }
     if (existing.kind === "group_buy") {
       const effEnds = data.endsAt !== undefined ? data.endsAt : existing.endsAt;
-      if (!effEnds) throw new BadRequestException("গ্রুপ বাইয়ের জন্য শেষের সময় (উইন্ডো) আবশ্যক");
+      if (!effEnds) throw badRequest("gamifiedPromotions.anEndTimeWindowIsRequired");
     }
     const row = await this.t("promoCampaign").update({ where: { id: existing.id }, data });
     await this.safeAudit({
@@ -420,12 +420,12 @@ export class GamifiedPromotionsService {
     const org = await this.t("organization").findFirst({
       where: { slug: String(orgSlug ?? "") },
     }).catch(() => null);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("gamifiedPromotions.theShopWasNotFound");
     const setting = await this.t("storefrontSetting").findFirst({
       where: { organizationId: org.id },
     }).catch(() => null);
     if (!setting || setting.shopEnabled !== true) {
-      throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+      throw notFound("gamifiedPromotions.theShopWasNotFound");
     }
     return org;
   }
@@ -433,13 +433,13 @@ export class GamifiedPromotionsService {
   private async phoneGate(orgId: string, rawPhone: unknown): Promise<{ phone: string; phoneKey: string }> {
     const phone = normalizeBdPhone(rawPhone ?? "");
     if (!phone) {
-      throw new BadRequestException("সঠিক বাংলাদেশি মোবাইল নম্বর দিন");
+      throw badRequest("gamifiedPromotions.giveAValidBangladeshiMobileNumber");
     }
     const phoneKey = bdPhoneMatchKey(phone)!;
     if (this.blockedPhones?.isBlocked) {
       const blocked = await this.blockedPhones.isBlocked(orgId, phone).catch(() => false);
       if (blocked) {
-        throw new ForbiddenException("এই নম্বরটি এই দোকানে ব্লক করা আছে — অংশ নেওয়া যাবে না");
+        throw forbidden("gamifiedPromotions.thisNumberIsBlockedInThis");
       }
     }
     return { phone, phoneKey };
@@ -447,12 +447,12 @@ export class GamifiedPromotionsService {
 
   private assertLive(campaign: any) {
     const now = Date.now();
-    if (!campaign.active) throw new BadRequestException("ক্যাম্পেইনটি এখন সক্রিয় নয়");
+    if (!campaign.active) throw badRequest("gamifiedPromotions.theCampaignIsNotActiveNow");
     if (campaign.startsAt && new Date(campaign.startsAt).getTime() > now) {
-      throw new BadRequestException("ক্যাম্পেইনটি এখনো শুরু হয়নি");
+      throw badRequest("gamifiedPromotions.theCampaignHasNotStartedYet");
     }
     if (campaign.endsAt && new Date(campaign.endsAt).getTime() < now) {
-      throw new BadRequestException("ক্যাম্পেইনটির সময় শেষ হয়ে গেছে");
+      throw badRequest("gamifiedPromotions.theCampaignSTimeHasEnded");
     }
   }
 
@@ -460,7 +460,7 @@ export class GamifiedPromotionsService {
     const row = await this.t("promoCampaign").findFirst({
       where: { id: String(campaignId ?? ""), organizationId: orgId, kind },
     }).catch(() => null);
-    if (!row) throw new NotFoundException("ক্যাম্পেইনটি পাওয়া যায়নি");
+    if (!row) throw notFound("gamifiedPromotions.theCampaignWasNotFound");
     return row;
   }
 
@@ -677,11 +677,11 @@ export class GamifiedPromotionsService {
 
     const answers = Array.isArray(dto.answers) ? dto.answers : [];
     if (answers.length !== config.questions.length) {
-      throw new BadRequestException("সব প্রশ্নের উত্তর দিতে হবে");
+      throw badRequest("gamifiedPromotions.allQuestionsMustBeAnswered");
     }
     answers.forEach((a, i) => {
       if (!Number.isInteger(a) || a < 0 || a >= config.questions[i].options.length) {
-        throw new BadRequestException("উত্তর সঠিক নয়");
+        throw badRequest("gamifiedPromotions.theAnswerIsNotCorrect");
       }
     });
 

@@ -150,7 +150,7 @@ describe("CN2 true campaign budget (CBO/ABO)", () => {
     expect(set.params.get("lifetime_budget")).toBeNull();
     expect(tables.campaignPublishLog.rows.some((l: any) => l.step === "campaign_budget" && l.status === "success")).toBe(true);
     // A live per-ad-set budget edit is meaningless under CBO — refused with the reason.
-    await expect(svc.updateAdSetBudget("org", "owner", plan.id, published.adSets[0].id, { dailyBudget: "100" })).rejects.toThrow(/campaign-level budget \(CBO\)/);
+    await expect(svc.updateAdSetBudget("org", "owner", plan.id, published.adSets[0].id, { dailyBudget: "100" })).rejects.toMatchObject({ code: "campaigns.thisPlanUsesACampaignLevel" });
   });
 
   it("a CBO plan WITHOUT a campaign budget cannot be submitted; an ABO publish is unchanged", async () => {

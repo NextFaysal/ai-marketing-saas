@@ -101,7 +101,7 @@ describe("Milestone 38 — support tickets", () => {
     expect(created.status).toBe("open");
     expect(created.messages).toHaveLength(1);
 
-    await expect(support.getTicket("org-2", created.id)).rejects.toThrow(/not found/i);
+    await expect(support.getTicket("org-2", created.id)).rejects.toMatchObject({ code: "support.ticketNotFound" });
 
     const queue: any[] = await support.listTicketsAdmin({});
     expect(queue[0].subject).toBe("Sync হচ্ছে না");
@@ -144,10 +144,10 @@ describe("Milestone 38 — view-as", () => {
 
   it("write sessions are SUPER-only and a reason is mandatory", async () => {
     const { svc } = makeSvc();
-    await expect(svc.startViewAs(ADMIN, "SUPPORT", "org-1", { mode: "write", reason: "fix needed" })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.startViewAs(ADMIN, "SUPPORT", "org-1", { mode: "write", reason: "fix needed" })).rejects.toMatchObject({ code: "admin.writeViewAsSessionsRequireA" });
     const ok: any = await svc.startViewAs(ADMIN, "SUPER", "org-1", { mode: "write", reason: "fix needed" });
     expect(ok.mode).toBe("write");
-    await expect(svc.startViewAs(ADMIN, "SUPER", "org-1", { mode: "read", reason: "   " })).rejects.toThrow(/reason/i);
+    await expect(svc.startViewAs(ADMIN, "SUPER", "org-1", { mode: "read", reason: "   " })).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
   });
 
   it("TenantGuard enforces the view-as org binding and read-only mode", async () => {
@@ -160,8 +160,8 @@ describe("Milestone 38 — view-as", () => {
     };
     const va = { adminId: "admin-1", orgId: "org-1", mode: "read", sessionId: "sess-m38" };
     { const { ctx, prisma } = mk(va); await expect(new TenantGuard(prisma).canActivate(ctx)).resolves.toBe(true); }
-    { const { ctx, prisma } = mk(va, "POST"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException); }
-    { const { ctx, prisma } = mk(va, "GET", "org-2"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException); }
+    { const { ctx, prisma } = mk(va, "POST"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.viewAsReadOnly" }); }
+    { const { ctx, prisma } = mk(va, "GET", "org-2"); await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.viewAsSingleOrg" }); }
     { const { ctx, prisma } = mk({ ...va, mode: "write" }, "POST"); await expect(new TenantGuard(prisma).canActivate(ctx)).resolves.toBe(true); }
   });
 });

@@ -6,6 +6,15 @@
  * a null money field means "unknown" and is NEVER rendered as
  * 0 — the honesty rule of the whole profit surface.
  */
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
+/** ML5 i18n: locale for lib label helpers — defaults to bn so
+ * existing callers and tests keep the Bengali copy. */
+export type LibLocale = "bn" | "en";
+const D = (locale?: string): typeof ordersBn =>
+  locale === "en" ? ordersEn : ordersBn;
+
 
 export interface OrderProfit {
   orderId: string;
@@ -120,13 +129,13 @@ export interface AgingRow { key: string; label: string; amountMinor: string }
 
 /** খাতা aging buckets -> display rows, oldest last. Labels use
  * Bengali digits, matching the dashboard's number style. */
-export function agingRows(khata: Pick<CustomerKhata, "aging">): AgingRow[] {
+export function agingRows(khata: Pick<CustomerKhata, "aging">, locale: LibLocale = "bn"): AgingRow[] {
   const a = khata.aging ?? { d0_7: "0", d8_15: "0", d16_30: "0", d30plus: "0" };
   return [
-    { key: "d0_7", label: "০–৭ দিন", amountMinor: a.d0_7 },
-    { key: "d8_15", label: "৮–১৫ দিন", amountMinor: a.d8_15 },
-    { key: "d16_30", label: "১৬–৩০ দিন", amountMinor: a.d16_30 },
-    { key: "d30plus", label: "৩০ দিনের বেশি", amountMinor: a.d30plus },
+    { key: "d0_7", label: D(locale).text1rygvan, amountMinor: a.d0_7 },
+    { key: "d8_15", label: D(locale).text19jycig, amountMinor: a.d8_15 },
+    { key: "d16_30", label: D(locale).text2k0muy, amountMinor: a.d16_30 },
+    { key: "d30plus", label: D(locale).moreThan30Days, amountMinor: a.d30plus },
   ];
 }
 
@@ -158,7 +167,7 @@ export interface CodBoardRow {
 /** COD board -> table rows: one per provider, then the
  * unassigned row (orders not yet handed to any courier — shown
  * only when such orders exist), then the totals row. */
-export function codBoardRows(board: CodBoard): CodBoardRow[] {
+export function codBoardRows(board: CodBoard, locale: LibLocale = "bn"): CodBoardRow[] {
   const rows: CodBoardRow[] = (board.providers ?? []).map((p) => ({
     key: `provider-${p.provider}`,
     provider: p.provider,
@@ -171,7 +180,7 @@ export function codBoardRows(board: CodBoard): CodBoardRow[] {
   if (board.unassigned && board.unassigned.orders > 0) {
     rows.push({
       key: "unassigned",
-      provider: "এখনো courier-এ যায়নি",
+      provider: D(locale).notYetSentToCourier2,
       inTransitCodMinor: "0",
       deliveredUncollectedMinor: "0",
       collectedLast7dMinor: "0",
@@ -182,7 +191,7 @@ export function codBoardRows(board: CodBoard): CodBoardRow[] {
   }
   rows.push({
     key: "total",
-    provider: "মোট",
+    provider: D(locale).total,
     inTransitCodMinor: board.totals.inTransitCodMinor,
     deliveredUncollectedMinor: board.totals.deliveredUncollectedMinor,
     collectedLast7dMinor: board.totals.collectedLast7dMinor,
@@ -196,12 +205,12 @@ export function codBoardRows(board: CodBoard): CodBoardRow[] {
  * revenue on lines, what share has a known product cost. Null
  * percent (no revenue at all) says so plainly instead of
  * printing a fake 0%. */
-export function coverageLabel(percent: number | null | undefined): string {
+export function coverageLabel(percent: number | null | undefined, locale: LibLocale = "bn"): string {
   if (percent == null || !Number.isFinite(percent)) {
-    return "এই সময়ে খরচ জানা আছে এমন কোনো লাইন-আয় নেই";
+    return D(locale).noLineRevenueWithKnown;
   }
   const p = Number.isInteger(percent) ? String(percent) : percent.toFixed(1);
-  return `মোট লাইন-আয়ের ${p}% অংশের খরচ জানা আছে`;
+  return interpolate(D(locale).costsAreKnownForOf, { p: p });
 }
 
 /** Caption for partial courier-charge coverage on the profit
@@ -210,8 +219,9 @@ export function coverageLabel(percent: number | null | undefined): string {
  * explain) or there are no shipments at all. */
 export function deliveryCoverageCaption(
   coverage: { shipments: number; withCharge: number } | null | undefined,
+  locale: LibLocale = "bn",
 ): string | null {
   if (!coverage || coverage.shipments <= 0) return null;
   if (coverage.withCharge >= coverage.shipments) return null;
-  return `shipment ${coverage.withCharge}/${coverage.shipments}-তে courier চার্জ পাওয়া গেছে`;
+  return interpolate(D(locale).courierChargeFoundInShipments, { withCharge: coverage.withCharge, shipments: coverage.shipments });
 }

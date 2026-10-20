@@ -346,7 +346,7 @@ describe("MX2 cascade engine (recipient-table path)", () => {
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "bad2", channel: "email", subject: "s", body: "b", audienceType: "customers",
       cascade: { enabled: true, channels: ["email", "whatsapp"], whatsappTemplateId: "nope" },
-    } as any)).rejects.toThrow(/not found/);
+    } as any)).rejects.toMatchObject({ code: "messaging.cascadeWhatsAppTemplateNotFoundIn" });
   });
 });
 

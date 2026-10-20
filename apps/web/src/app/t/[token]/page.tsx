@@ -4,6 +4,10 @@ import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { fmtDateTime } from "@repo/contracts";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 interface Tracking {
   provider: string;
@@ -58,7 +62,7 @@ export default function PublicTrackingPage() {
   }, [token]);
   const view = data ? courierStatusView(data.status) : null;
   const accent = data?.branding?.primaryColor ?? undefined;
-  const fmt = (v?: string | null) => (v ? new Date(v).toLocaleString("bn-BD") : "—");
+  const fmt = (v?: string | null) => (v ? fmtDateTime("bn", v) : "—");
   return (
     <main className="mx-auto max-w-2xl space-y-5 p-6">
       <header>
@@ -66,17 +70,17 @@ export default function PublicTrackingPage() {
           <img src={mediaSrc(API_URL, data.branding.logoUrl) ?? ""} alt="" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
         ) : null}
         <p className="mt-2 text-xs uppercase tracking-wide" style={accent ? { color: accent } : undefined}>
-          {data?.branding?.name ?? data?.business ?? "লাইভ ট্র্যাকিং"}
+          {data?.branding?.name ?? data?.business ?? t.trackingPublic.liveTracking}
         </p>
-        <h1 className="mt-1 text-2xl font-bold">🚚 পার্সেল ট্র্যাকিং</h1>
+        <h1 className="mt-1 text-2xl font-bold">{t.trackingPublic.title}</h1>
         {data ? (
           <p className="text-sm text-slate-500">
-            {data.provider} কুরিয়ার{data.trackingCode ? ` · Tracking: ${data.trackingCode}` : ""}{data.orderNumber ? ` · অর্ডার: ${data.orderNumber}` : ""}
+            {data.provider}{t.trackingPublic.courierSuffix}{data.trackingCode ? ` · Tracking: ${data.trackingCode}` : ""}{data.orderNumber ? `${t.trackingPublic.orderPrefix}${data.orderNumber}` : ""}
           </p>
         ) : null}
       </header>
-      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">এই ট্র্যাকিং লিংকটি পাওয়া যায়নি। ({error})</div> : null}
-      {!data && !error ? <p className="text-sm text-slate-500">লোড হচ্ছে...</p> : null}
+      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t.trackingPublic.notFoundPrefix}{error})</div> : null}
+      {!data && !error ? <p className="text-sm text-slate-500">{t.trackingPublic.loading}</p> : null}
       {data && view ? (
         <>
           <section className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -90,43 +94,44 @@ export default function PublicTrackingPage() {
                     </div>
                   ))}
                 </div>
-                <p className="mt-3 text-sm font-semibold text-slate-700">বর্তমান অবস্থা: {COURIER_STEP_LABELS[view.step]}{view.partial ? " (আংশিক ডেলিভার্ড)" : ""}</p>
+                <p className="mt-3 text-sm font-semibold text-slate-700">{t.trackingPublic.currentStatus}{COURIER_STEP_LABELS[view.step]}{view.partial ? t.trackingPublic.partialSuffix : ""}</p>
               </>
             ) : view.kind === "returned" ? (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">↩️ পার্সেলটি রিটার্ন এসেছে (কুরিয়ারের স্ট্যাটাস: {data.status})</p>
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{t.trackingPublic.returnedPrefix}{data.status})</p>
             ) : view.kind === "cancelled" ? (
-              <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">✖️ শিপমেন্ট বাতিল হয়েছে (কুরিয়ারের স্ট্যাটাস: {data.status})</p>
+              <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">{t.trackingPublic.cancelledPrefix}{data.status})</p>
             ) : (
-              <p className="text-sm text-slate-600">কুরিয়ারের স্ট্যাটাস: <b>{data.status}</b></p>
+              <p className="text-sm text-slate-600">{t.trackingPublic.courierStatusPrefix}<b>{data.status}</b></p>
             )}
           </section>
           {data.riderLocation ? (
             <section className="rounded-2xl border bg-white p-4 shadow-sm">
-              <h2 className="mb-2 text-sm font-semibold text-slate-500">🛵 রাইডারের অবস্থান</h2>
+              <h2 className="mb-2 text-sm font-semibold text-slate-500">{t.trackingPublic.riderLocationTitle}</h2>
               <p className="text-sm text-slate-700">
-                {data.riderLocation.riderName ? <>রাইডার <b>{data.riderLocation.riderName}</b> · </> : null}
+                {data.riderLocation.riderName ? <>{t.trackingPublic.riderPrefix}<b>{data.riderLocation.riderName}</b> · </> : null}
                 <span className="font-mono font-semibold">{data.riderLocation.lat}, {data.riderLocation.lng}</span>
                 {data.riderLocation.stale ? (
-                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">পুরনো অবস্থান</span>
+                  <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">{t.trackingPublic.staleBadge}</span>
                 ) : null}
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                অবস্থানের সময়: {fmt(data.riderLocation.recordedAt)} ·{" "}
-                <a href={data.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">মানচিত্রে দেখুন</a>
+                {t.trackingPublic.locationTimePrefix}{fmt(data.riderLocation.recordedAt)} ·{" "}
+                <a href={data.riderLocation.mapsUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-700 underline">{t.trackingPublic.viewOnMap}</a>
               </p>
             </section>
           ) : null}
           <section className="rounded-2xl border bg-white p-4 shadow-sm">
-            <h2 className="mb-2 text-sm font-semibold text-slate-500">টাইমলাইন</h2>
+            <h2 className="mb-2 text-sm font-semibold text-slate-500">{t.trackingPublic.timelineTitle}</h2>
             <ul className="space-y-2 text-sm">
               <li className="flex items-baseline justify-between gap-3 border-b pb-2">
-                <span>📦 বুক হয়েছে</span><span className="text-slate-500">{fmt(data.bookedAt)}</span>
+                <span>{t.trackingPublic.booked}</span><span className="text-slate-500">{fmt(data.bookedAt)}</span>
               </li>
               <li className="flex items-baseline justify-between gap-3">
-                <span>সর্বশেষ অবস্থা: <b>{data.status}</b></span><span className="text-slate-500">{fmt(data.statusAt)}</span>
+                <span>{t.trackingPublic.lastStatusPrefix}<b>{data.status}</b></span><span className="text-slate-500">{fmt(data.statusAt)}</span>
               </li>
             </ul>
-            <p className="mt-3 text-xs text-slate-400">সর্বশেষ যাচাই: {data.lastCheckedAt ? fmt(data.lastCheckedAt) : "এখনো যাচাই হয়নি"} · এই পেজে শুধু দোকানের সিস্টেমে সংরক্ষিত তথ্যই দেখানো হয়।</p>
+            <p className="mt-3 text-xs text-slate-400">{t.trackingPublic.lastCheckedPrefix}{data.lastCheckedAt ? fmt(data.lastCheckedAt) : t.trackingPublic.notCheckedYet}{t.trackingPublic.footerNote}</p>
+
           </section>
         </>
       ) : null}

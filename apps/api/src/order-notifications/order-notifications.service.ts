@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
+import { notFound } from "../i18n";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ShopAccountService } from "../storefront/shop-account.service";
@@ -13,9 +14,14 @@ import {
   formatTakaMinor,
   mergeConfig,
   renderTemplate,
-  templateFor,
+  templateForLocale,
   validateConfig,
 } from "./order-notifications";
+import {
+  catalogText,
+  resolveCustomerLocale,
+  type ApiLocale,
+} from "../i18n/catalog/send-locale";
 
 /**
  * ON5 — Transactional Notification Engine (the single entry is
@@ -48,8 +54,9 @@ import {
  *
  * Email subject: EmailProvider requires a subject and the ON5
  * config shape carries only a body template per channel, so the
- * subject is the fixed `অর্ডার {orderNumber} — {shopName}` line
- * and the rendered template is the body (documented choice).
+ * subject is the catalog `orderNotification.emailSubject` line
+ * rendered in the recipient locale (MB4/ML11) and the rendered
+ * template is the body (documented choice).
  *
  * Channel loop: channels are tried in the event's configured
  * order; the loop STOPS after the first "sent" — channels after
@@ -161,7 +168,7 @@ export class OrderNotificationService {
 
   async listLogs(orgId: string, orderId: string) {
     const order = await this.t("order").findFirst({ where: { id: orderId, organizationId: orgId } }).catch(() => null);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("orderNotification.orderNotFound");
     const rows = await this.t("orderNotificationLog").findMany({
       where: { organizationId: orgId, orderId },
       orderBy: { createdAt: "desc" },
@@ -234,7 +241,7 @@ export class OrderNotificationService {
     } catch { return ""; }
   }
 
-  private async buildVars(orgId: string, order: any, customer: any, shipment: any): Promise<Record<string, string>> {
+  private async buildVars(orgId: string, order: any, customer: any, shipment: any, locale: ApiLocale = "bn"): Promise<Record<string, string>> {
     // shopName: StorefrontSetting.shopName || Organization.name
     // (the ShopAccountService resolution, replicated minimally).
     let shopName = "";
@@ -269,8 +276,11 @@ export class OrderNotificationService {
     return {
       customerName,
       orderNumber: String(order.externalNumber ?? order.id),
-      total: formatTakaMinor(total),
-      due: formatTakaMinor(due),
+      // MB5 (ML14, CD-2): money vars render in the RECIPIENT
+      // locale — bn gets Bengali digits (bn-BD grouping), en
+      // keeps the historical Latin/en-IN rendering.
+      total: formatTakaMinor(total, locale),
+      due: formatTakaMinor(due, locale),
       trackingUrl,
       shopName,
       courierName: shipment?.provider ? String(shipment.provider) : "",
@@ -340,9 +350,24 @@ export class OrderNotificationService {
         await this.writeLog(orgId, orderId, event, "none", "failed_no_channel");
         return { event, sent: false, statuses: ["failed_no_channel"] };
       }
+      // ML11 + MB5 (ML14): the recipient locale is resolved
+      // BEFORE the variables are built, because the money vars
+      // (total/due) now render in it (CD-2). The locale itself
+      // comes from the CUSTOMER recipient —
+      // CustomerMemory.languagePref (mixed → bn) → org
+      // dashboardLocale → bn (D-MB4-7). Merchant overrides and
+      // automation-rule custom messages are merchant-authored
+      // and never translated (D-MB4-5); the rule path keeps its
+      // historical bn rendering.
+      const recipientLocale: ApiLocale = isAutomationRule
+        ? "bn"
+        : await resolveCustomerLocale(this.prisma as any, orgId, {
+            customerId: order.customerId ?? customer?.id ?? null,
+            conversationId: order.conversationId ?? null,
+          });
       // e. variables from real data
       const shipment = await this.resolveShipment(orgId, orderId, data?.shipmentId);
-      const vars = await this.buildVars(orgId, order, customer, shipment);
+      const vars = await this.buildVars(orgId, order, customer, shipment, recipientLocale);
       // ON6: the reschedule date is a notify-call input, not
       // order data — "" when the call carries none.
       vars.rescheduleDate = data?.rescheduleDate ?? "";
@@ -364,7 +389,7 @@ export class OrderNotificationService {
         }
         const text = isAutomationRule
           ? String(data?.customMessage ?? "")
-          : renderTemplate(templateFor(config, ev, channel), vars);
+          : renderTemplate(templateForLocale(config, ev, channel, recipientLocale), vars);
         if (channel === "sms") {
           if (!this.shopAccount) {
             await this.writeLog(orgId, orderId, event, "sms", "skipped_no_channel"); rowsWritten++; statuses.push("skipped_no_channel"); continue;
@@ -399,7 +424,7 @@ export class OrderNotificationService {
             await this.writeLog(orgId, orderId, event, "email", "skipped_no_channel"); rowsWritten++; statuses.push("skipped_no_channel"); continue;
           }
           try {
-            const subject = `অর্ডার ${vars.orderNumber} — ${vars.shopName}`;
+            const subject = catalogText("orderNotification.emailSubject", recipientLocale, vars);
             // AB8 (AX24): a white-label org's order email carries
             // the org's own brand as the sender display name.
             // Failure-isolated: any load error ⇒ no fromName,

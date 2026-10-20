@@ -10,7 +10,7 @@ import {
   CommerceDiagnosticsView,
   SyncHistoryItem,
   SEVERITY_META,
-  TIMELINE_KIND_LABEL,
+  timelineKindLabel,
   formatWhen,
   overallMeta,
   stepStatusMeta,
@@ -21,12 +21,14 @@ import {
   adBucketMeta,
   canPauseSync,
   canRefreshProviderHealth,
-  SYNC_INTERVAL_PRESETS,
+  syncIntervalPresets,
   syncIntervalLabel,
   syncJobStatusLabel,
   webhookTopics,
   webhookTopicMeta,
 } from "@/lib/connections";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtNumber } from "@repo/contracts";
 
 /**
  * CC11 + CC13, per account card: "পরীক্ষা করুন" runs the
@@ -54,10 +56,11 @@ function targetPath(account: ConnectionAccount): string {
 }
 
 function StepsList({ run }: { run: HealthCheckRunView }) {
+  const { locale } = useLocale();
   return (
     <ul className="space-y-1.5">
       {run.steps.map((step) => {
-        const meta = stepStatusMeta(step.status);
+        const meta = stepStatusMeta(step.status, locale);
         return (
           <li key={step.key} className="flex flex-wrap items-start gap-2 text-xs">
             <span className={`shrink-0 rounded-full px-2 py-0.5 font-semibold ${meta.cls}`}>{meta.label}</span>
@@ -73,6 +76,8 @@ function StepsList({ run }: { run: HealthCheckRunView }) {
 }
 
 export function AccountInsights({ account, onChanged }: { account: ConnectionAccount; onChanged?: () => void }) {
+  const { dict, t, locale } = useLocale();
+  const D = dict.connections;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -112,7 +117,7 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       setWebhookStatus(tl.webhookStatus);
       setLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "বিস্তারিত লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.aiLoadFailed);
     }
   }, [account]);
 
@@ -121,11 +126,11 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     try {
       const run = await apiFetch<HealthCheckRunView>(`${targetPath(account)}/diagnose`, { method: "POST" });
       setLatestRun(run);
-      setNotice(`পরীক্ষা শেষ — ফলাফল: ${overallMeta(run.overall).label}। প্রতিটি ধাপের ফল provider-এর আসল উত্তরের ভিত্তিতে।`);
+      setNotice(t("connections.aiDiagnoseDone", { label: overallMeta(run.overall, locale).label }));
       onChanged?.();
       if (open) await loadDetails(onlyProblems);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "পরীক্ষা চালানো যায়নি");
+      setError(e instanceof Error ? e.message : D.aiDiagnoseFailed);
     } finally { setBusy(""); }
   }
 
@@ -144,9 +149,9 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     setBusy("snooze"); setError(""); setNotice("");
     try {
       await apiFetch(`${targetPath(account)}/snooze`, { method: "POST", body: JSON.stringify({ hours }) });
-      setNotice(hours > 0 ? `এই অ্যাকাউন্টের অ্যালার্ট ${hours} ঘণ্টা বন্ধ রাখা হলো।` : "Snooze তোলা হলো — অ্যালার্ট আবার আসবে।");
+      setNotice(hours > 0 ? t("connections.aiSnoozeSet", { hours: fmtNumber(locale, hours) }) : D.aiSnoozeOff);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Snooze সেট হয়নি");
+      setError(e instanceof Error ? e.message : D.aiSnoozeFailed);
     } finally { setBusy(""); }
   }
 
@@ -155,11 +160,11 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     try {
       const orgId = getOrganizationId();
       const job = await apiFetch<{ status?: string; fetched?: number }>(`/organizations/${orgId}/integrations/${account.id}/sync/${kind}`, { method: "POST" });
-      setNotice(`Sync শেষ (${kind === "products" ? "পণ্য" : "অর্ডার"}) — অবস্থা: ${job.status ?? "সম্পন্ন"}${typeof job.fetched === "number" ? `, পাওয়া গেছে ${job.fetched}টি` : ""}।`);
+      setNotice(t("connections.aiSyncDone", { kind: kind === "products" ? D.aiProducts : D.aiOrders, status: job.status ?? D.aiDoneStatus, fetched: typeof job.fetched === "number" ? t("connections.aiFetchedPart", { count: fmtNumber(locale, job.fetched) }) : "" }));
       onChanged?.();
       if (open) await loadDetails(onlyProblems);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync চালানো যায়নি");
+      setError(e instanceof Error ? e.message : D.aiSyncFailed);
     } finally { setBusy(""); }
   }
 
@@ -170,7 +175,7 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       const res = await apiFetch<{ jobs: SyncHistoryItem[] }>(`/organizations/${orgId}/connections/${account.id}/sync-history?limit=15`);
       setSyncHistory(res.jobs ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync ইতিহাস লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.aiHistoryFailed);
     } finally { setBusy(""); }
   }
 
@@ -183,12 +188,10 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
         method: "PATCH", body: JSON.stringify({ syncPaused: next }),
       });
       setPausedOverride(next);
-      setNotice(next
-        ? "Sync বিরতি দেওয়া হয়েছে — নির্ধারিত ও ম্যানুয়াল সব Sync এই কানেকশনের জন্য এড়িয়ে যাওয়া হবে (প্রতিটি এড়ানো Sync ইতিহাসে রেকর্ড থাকবে)।"
-        : "Sync আবার চালু হয়েছে।");
+      setNotice(next ? D.aiPausedNotice : D.aiResumedNotice);
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync বিরতি সেট হয়নি");
+      setError(e instanceof Error ? e.message : D.aiPauseFailed);
     } finally { setBusy(""); }
   }
 
@@ -201,11 +204,11 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       });
       setIntervalOverride(minutes);
       setNotice(minutes === null
-        ? "Cadence তোলা হয়েছে — এখন থেকে প্রতিটি নির্ধারিত (scheduled) Sync-ই চলবে।"
-        : `Cadence সেট হয়েছে: নির্ধারিত Sync ${syncIntervalLabel(minutes)} অন্তর সর্বোচ্চ একবার চলবে। ম্যানুয়াল Sync-এ এর কোনো প্রভাব নেই।`);
+        ? D.aiCadenceCleared
+        : t("connections.aiCadenceSet", { label: syncIntervalLabel(minutes, locale) }));
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Cadence সেট হয়নি");
+      setError(e instanceof Error ? e.message : D.aiCadenceFailed);
     } finally { setBusy(""); }
   }
 
@@ -217,11 +220,11 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       );
       setPhOverride({ health: res.providerHealth, at: res.providerHealthAt, error: res.providerHealthError });
       setNotice(res.ok
-        ? "Provider তথ্য আপডেট হয়েছে — যা যা Meta/প্রোভাইডার পাঠিয়েছে ঠিক তাই দেখানো হচ্ছে।"
-        : `তথ্য আনা যায়নি: ${res.error ?? res.providerHealthError ?? "অজানা ত্রুটি"} — আগের তথ্য (যদি থাকে) আগের সময়সহই আছে।`);
+        ? D.aiHealthRefreshed
+        : t("connections.aiHealthFetchFailed", { err: res.error ?? res.providerHealthError ?? D.aiUnknownErr }));
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Provider তথ্য আনা যায়নি");
+      setError(e instanceof Error ? e.message : D.aiHealthLoadFailed);
     } finally { setBusy(""); }
   }
 
@@ -232,7 +235,7 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       const diag = await apiFetch<CommerceDiagnosticsView>(`/organizations/${orgId}/connections/${account.id}/commerce-diagnostics`);
       setDiagnostics(diag);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Diagnostics লোড হয়নি");
+      setError(e instanceof Error ? e.message : D.aiDiagLoadFailed);
     } finally { setBusy(""); }
   }
 
@@ -241,11 +244,11 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     try {
       const orgId = getOrganizationId();
       const res = await apiFetch<{ webhookRegistration: string | null }>(`/organizations/${orgId}/connections/${account.id}/repair-webhooks`, { method: "POST" });
-      setNotice(`Webhook আবার নিবন্ধনের ফল: ${res.webhookRegistration ?? "অজানা"} — প্রতি topic-এর আসল ফল নিচে দেখুন।`);
+      setNotice(t("connections.aiRepairDone", { result: res.webhookRegistration ?? D.aiUnknown }));
       onChanged?.();
       await loadDiagnostics();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Webhook repair চালানো যায়নি");
+      setError(e instanceof Error ? e.message : D.aiRepairFailed);
     } finally { setBusy(""); }
   }
 
@@ -253,10 +256,10 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     ? { ...account, providerHealth: phOverride.health, providerHealthAt: phOverride.at, providerHealthError: phOverride.error }
     : account;
   const waHealth = whatsappHealth(effectiveAccount);
-  const completeness = completenessItems(effectiveAccount);
+  const completeness = completenessItems(effectiveAccount, locale);
   const canRefreshHealth = canRefreshProviderHealth(account);
   const isCommerce = account.source === "integration" && (account.provider === "woocommerce" || account.provider === "shopify");
-  const healthAtText = formatWhen(effectiveAccount.providerHealthAt ?? null);
+  const healthAtText = formatWhen(effectiveAccount.providerHealthAt ?? null, locale);
 
   const canSync = account.source === "integration" && (account.provider === "woocommerce" || account.provider === "shopify");
   const webhookText = webhookStatus && typeof webhookStatus === "object"
@@ -267,23 +270,23 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
     <div className="space-y-2 border-t border-slate-100 pt-2.5">
       <div className="flex flex-wrap gap-1.5">
         <button type="button" disabled={busy === "diagnose"} onClick={() => void diagnose()} className="rounded-lg bg-teal-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
-          {busy === "diagnose" ? "পরীক্ষা চলছে…" : "🩺 পরীক্ষা করুন"}
+          {busy === "diagnose" ? D.aiDiagnosing : D.aiDiagnoseBtn}
         </button>
         <button type="button" onClick={() => void toggleOpen()} className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-200">
-          {open ? "বিস্তারিত লুকান" : "📜 ইতিহাস ও টাইমলাইন"}
+          {open ? D.aiHideDetails : D.aiHistoryBtn}
         </button>
         <select
-          aria-label="অ্যালার্ট snooze"
+          aria-label={D.aiAriaSnooze}
           disabled={busy === "snooze"}
           defaultValue=""
           onChange={(e) => { const v = Number(e.target.value); if (!Number.isNaN(v)) void snooze(v); e.target.value = ""; }}
           className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-600"
         >
-          <option value="" disabled>🔕 অ্যালার্ট বন্ধ…</option>
-          <option value="24">২৪ ঘণ্টা</option>
-          <option value="72">৩ দিন</option>
-          <option value="168">৭ দিন</option>
-          <option value="0">Snooze তুলুন</option>
+          <option value="" disabled>{D.aiSnoozeOpt}</option>
+          <option value="24">{t("connections.aiHoursOpt", { n: fmtNumber(locale, 24) })}</option>
+          <option value="72">{t("connections.aiDaysOpt", { n: fmtNumber(locale, 3) })}</option>
+          <option value="168">{t("connections.aiDaysOpt", { n: fmtNumber(locale, 7) })}</option>
+          <option value="0">{D.aiSnoozeLift}</option>
         </select>
       </div>
 
@@ -293,47 +296,45 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       {canPauseSync(account) ? (
         <div className="space-y-2 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-100">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-600">Sync নিয়ন্ত্রণ</span>
+            <span className="text-[11px] font-semibold text-slate-600">{D.aiSyncControl}</span>
             {(pausedOverride ?? account.syncPaused ?? false) ? (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">⏸ Sync বিরতি দেওয়া আছে</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{D.aiSyncPausedChip}</span>
             ) : (
-              <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Sync চালু আছে</span>
+              <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">{D.aiSyncOnChip}</span>
             )}
             <button type="button" disabled={busy === "sync-pause"} onClick={() => void toggleSyncPaused()} className="rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
-              {busy === "sync-pause" ? "হচ্ছে…" : (pausedOverride ?? account.syncPaused ?? false) ? "Sync চালু করুন" : "Sync বিরতি দিন"}
+              {busy === "sync-pause" ? D.rfWorking : (pausedOverride ?? account.syncPaused ?? false) ? D.aiResumeSync : D.aiPauseSync}
             </button>
             <button type="button" disabled={busy === "sync-history"} onClick={() => void loadSyncHistory()} className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 disabled:opacity-50">
-              {busy === "sync-history" ? "লোড হচ্ছে…" : "Sync ইতিহাস"}
+              {busy === "sync-history" ? dict.common.loading : D.aiSyncHistoryBtn}
             </button>
           </div>
-          <p className="text-[11px] leading-snug text-slate-400">
-            বিরতি দিলে নির্ধারিত (scheduled) Sync এড়িয়ে যাওয়া হয় এবং ম্যানুয়াল Sync চেষ্টা স্পষ্ট বার্তায় থামে — প্রতিটি এড়ানো Sync ইতিহাসে রেকর্ড থাকে।
-          </p>
+          <p className="text-[11px] leading-snug text-slate-400">{D.aiPauseExplain}</p>
           {isCommerce ? (() => {
             const effectiveInterval = intervalOverride !== undefined ? intervalOverride : (account.syncIntervalMinutes ?? null);
-            const selectValue = customMode ? "custom" : effectiveInterval === null ? "default" : SYNC_INTERVAL_PRESETS.some((p) => p.minutes === effectiveInterval) ? String(effectiveInterval) : "custom";
+            const selectValue = customMode ? "custom" : effectiveInterval === null ? "default" : syncIntervalPresets(locale).some((p) => p.minutes === effectiveInterval) ? String(effectiveInterval) : "custom";
             return (
               <div className="space-y-1.5 border-t border-slate-200/70 pt-2">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-semibold text-slate-600">Scheduled Sync ব্যবধান (cadence)</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{syncIntervalLabel(effectiveInterval)}</span>
+                  <span className="text-[11px] font-semibold text-slate-600">{D.aiCadenceLabel}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{syncIntervalLabel(effectiveInterval, locale)}</span>
                   <select
                     aria-label="Sync cadence"
                     disabled={busy === "sync-interval"}
                     value={selectValue}
                     onChange={(e) => {
                       const v = e.target.value;
-                      if (v === "custom") { setCustomMode(true); setCustomInterval(effectiveInterval !== null && !SYNC_INTERVAL_PRESETS.some((p) => p.minutes === effectiveInterval) ? String(effectiveInterval) : ""); return; }
+                      if (v === "custom") { setCustomMode(true); setCustomInterval(effectiveInterval !== null && !syncIntervalPresets(locale).some((p) => p.minutes === effectiveInterval) ? String(effectiveInterval) : ""); return; }
                       setCustomMode(false);
                       void setSyncInterval(v === "default" ? null : Number(v));
                     }}
                     className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600"
                   >
-                    <option value="default">ডিফল্ট (cadence নেই)</option>
-                    {SYNC_INTERVAL_PRESETS.map((p) => (
+                    <option value="default">{D.aiCadenceDefault}</option>
+                    {syncIntervalPresets(locale).map((p) => (
                       <option key={p.minutes} value={String(p.minutes)}>{p.label}</option>
                     ))}
-                    <option value="custom">কাস্টম…</option>
+                    <option value="custom">{D.aiCustomOpt}</option>
                   </select>
                   {selectValue === "custom" ? (
                     <>
@@ -341,7 +342,7 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
                         type="number" min={5} max={10080} step={1}
                         value={customInterval}
                         onChange={(e) => setCustomInterval(e.target.value)}
-                        placeholder="মিনিট (৫–১০০৮০)"
+                        placeholder={t("connections.aiMinutesPh", { min: fmtNumber(locale, 5), max: fmtNumber(locale, 10080) })}
                         className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
                       />
                       <button
@@ -350,33 +351,31 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
                         onClick={() => void setSyncInterval(Number(customInterval))}
                         className="rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
                       >
-                        {busy === "sync-interval" ? "হচ্ছে…" : "সেট করুন"}
+                        {busy === "sync-interval" ? D.rfWorking : D.aiSetBtn}
                       </button>
                     </>
                   ) : null}
                 </div>
                 <p className="text-[11px] leading-snug text-slate-400">
-                  Cadence শুধু নির্ধারিত (scheduled) Sync-এর জন্য: শেষ আসল Sync-এর পর ব্যবধান না পেরোলে ওই চক্রটি এড়িয়ে যাওয়া হয় (job-এর ফলাফলে রেকর্ড থাকে, কোনো ভুয়া Sync রেকর্ড তৈরি হয় না)।
-                  ম্যানুয়াল "আবার Sync করুন" সবসময় তখনই চলে; বিরতি (pause) cadence-এর চেয়ে শক্তিশালী।
-                  সর্বশেষ Sync: {formatWhen(account.lastSyncAt) ?? "এখনো রেকর্ড নেই"} — cadence-এর হিসাব এই সময় থেকেই (প্রতি ধরনের Sync আলাদাভাবে)।
+                  {D.aiCadenceExplain}{formatWhen(account.lastSyncAt, locale) ?? D.aiNoRecord}{D.aiCadenceExplainSuffix}
                 </p>
               </div>
             );
           })() : null}
           {syncHistory ? (
             syncHistory.length === 0 ? (
-              <p className="text-[11px] text-slate-400">এখনও কোনো Sync রেকর্ড নেই।</p>
+              <p className="text-[11px] text-slate-400">{D.aiNoSyncRecords}</p>
             ) : (
               <ul className="space-y-1">
                 {syncHistory.map((job) => (
                   <li key={job.id} className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                     <span className={`rounded-full px-1.5 py-0.5 font-semibold ${job.error === "sync_paused" ? "bg-amber-100 text-amber-700" : job.status === "FAILED" ? "bg-red-100 text-red-700" : job.status === "COMPLETED" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}>
-                      {syncJobStatusLabel(job)}
+                      {syncJobStatusLabel(job, locale)}
                     </span>
                     <span className="font-medium text-slate-700">{job.kind}</span>
-                    <span>পাওয়া {job.fetched} · নতুন {job.created} · হালনাগাদ {job.updated} · এড়ানো {job.skipped}</span>
+                    <span>{t("connections.aiSyncCounts", { fetched: fmtNumber(locale, job.fetched), created: fmtNumber(locale, job.created), updated: fmtNumber(locale, job.updated), skipped: fmtNumber(locale, job.skipped) })}</span>
                     {job.error && job.error !== "sync_paused" ? <span className="text-red-500">{job.error}</span> : null}
-                    <span className="text-slate-400">{formatWhen(job.startedAt)}</span>
+                    <span className="text-slate-400">{formatWhen(job.startedAt, locale)}</span>
                   </li>
                 ))}
               </ul>
@@ -388,13 +387,13 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       {(canRefreshHealth || waHealth || completeness.length > 0 || effectiveAccount.providerHealthError) ? (
         <div className="space-y-2 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-100">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-600">Provider health — প্রোভাইডারের আসল তথ্য</span>
+            <span className="text-[11px] font-semibold text-slate-600">{D.aiHealthTitle}</span>
             {healthAtText
-              ? <span className="text-[11px] text-slate-400">সর্বশেষ আনা: {healthAtText}</span>
-              : <span className="text-[11px] text-slate-400">এখনো আনা হয়নি</span>}
+              ? <span className="text-[11px] text-slate-400">{D.aiLastFetched}{healthAtText}</span>
+              : <span className="text-[11px] text-slate-400">{D.aiNotFetched}</span>}
             {canRefreshHealth ? (
               <button type="button" disabled={busy === "provider-health"} onClick={() => void refreshProviderHealth()} className="rounded-lg bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 disabled:opacity-50">
-                {busy === "provider-health" ? "আনা হচ্ছে…" : "🔄 তথ্য আপডেট করুন"}
+                {busy === "provider-health" ? D.aiFetching : D.aiRefreshHealthBtn}
               </button>
             ) : null}
           </div>
@@ -402,8 +401,8 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
           {waHealth ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               {waHealth.qualityRating
-                ? <span className={`rounded-full px-2 py-0.5 font-semibold ${qualityMeta(waHealth.qualityRating).cls}`}>{qualityMeta(waHealth.qualityRating).label}</span>
-                : <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-500">Quality: তথ্য নেই</span>}
+                ? <span className={`rounded-full px-2 py-0.5 font-semibold ${qualityMeta(waHealth.qualityRating, locale).cls}`}>{qualityMeta(waHealth.qualityRating, locale).label}</span>
+                : <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-500">{D.aiQualityNone}</span>}
               {waHealth.messagingLimit ? <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">Messaging limit: {waHealth.messagingLimit}</span> : null}
               {waHealth.wabaReviewStatus ? <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">WABA review: {waHealth.wabaReviewStatus}</span> : null}
               {waHealth.displayPhoneNumber ? <span className="text-slate-500">{waHealth.displayPhoneNumber}{waHealth.verifiedName ? ` · ${waHealth.verifiedName}` : ""}</span> : null}
@@ -416,7 +415,7 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
               {completeness.map((item) => (
                 <li key={item.key} className="flex flex-wrap items-center gap-2 text-[11px]">
                   <span className={`rounded-full px-1.5 py-0.5 font-bold ${COMPLETENESS_META[item.state].cls}`}>
-                    {COMPLETENESS_META[item.state].icon} {item.state === "unknown" ? "তথ্য নেই" : item.state === "yes" ? "আছে" : "নেই"}
+                    {COMPLETENESS_META[item.state].icon} {item.state === "unknown" ? D.haNoInfo : item.state === "yes" ? D.aiStateYes : D.aiStateNo}
                   </span>
                   <span className="font-medium text-slate-700">{item.label}</span>
                   {item.detail ? <span className="text-slate-400">{item.detail}</span> : null}
@@ -426,28 +425,23 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
           ) : null}
 
           {effectiveAccount.providerHealth?.kind === "meta_page" && completeness.some((i) => i.state === "no") ? (
-            <p className="text-[11px] leading-snug text-slate-500">
-              যেগুলো "নেই" — সেগুলো Meta Business Suite / Events Manager-এ গিয়ে link করতে হয়; এখানে link করার কোনো ভান করা হয়নি।
-              এই পেজের তথ্য আবার আনতে উপরের "তথ্য আপডেট করুন" ব্যবহার করুন।
-            </p>
+            <p className="text-[11px] leading-snug text-slate-500">{D.aiMetaMissingNote}</p>
           ) : null}
 
           {account.source === "ad_account" ? (
             <div className="text-[11px] text-slate-500">
-              প্ল্যাটফর্ম অবস্থা (AD3):{" "}
-              <span className={`rounded-full px-1.5 py-0.5 font-semibold ${adBucketMeta(account.platformStatusBucket).cls}`}>{adBucketMeta(account.platformStatusBucket).label}</span>
-              {account.platformStatusRaw ? <span className="text-slate-400"> (Meta-র raw মান: {account.platformStatusRaw})</span> : null}
+              {D.aiPlatformStatus}
+              <span className={`rounded-full px-1.5 py-0.5 font-semibold ${adBucketMeta(account.platformStatusBucket, locale).cls}`}>{adBucketMeta(account.platformStatusBucket, locale).label}</span>
+              {account.platformStatusRaw ? <span className="text-slate-400">{t("connections.aiMetaRaw", { raw: account.platformStatusRaw })}</span> : null}
             </div>
           ) : null}
 
           {effectiveAccount.providerHealthError ? (
-            <p className="text-[11px] font-medium text-red-600">
-              সর্বশেষ চেষ্টা ব্যর্থ: {effectiveAccount.providerHealthError} — উপরের তথ্য (যদি থাকে) আগের সময়ের, নতুন বলে ধরা হয়নি।
-            </p>
+            <p className="text-[11px] font-medium text-red-600">{t("connections.aiLastAttemptFailed", { err: effectiveAccount.providerHealthError })}</p>
           ) : null}
 
           {!waHealth && completeness.length === 0 && !effectiveAccount.providerHealthError ? (
-            <p className="text-[11px] text-slate-400">এখনো কোনো provider তথ্য আনা হয়নি — "তথ্য আপডেট করুন" চাপুন।</p>
+            <p className="text-[11px] text-slate-400">{D.aiNoHealthYet}</p>
           ) : null}
         </div>
       ) : null}
@@ -457,25 +451,25 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11px] font-semibold text-slate-600">Commerce diagnostics</span>
             <button type="button" disabled={busy === "diagnostics"} onClick={() => void loadDiagnostics()} className="rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
-              {busy === "diagnostics" ? "লোড হচ্ছে…" : diagnostics ? "🛠 আবার লোড করুন" : "🛠 দেখুন"}
+              {busy === "diagnostics" ? dict.common.loading : diagnostics ? D.aiDiagReloadBtn : D.aiDiagLoadBtn}
             </button>
             {diagnostics ? (
               <button type="button" disabled={busy === "repair-webhooks"} onClick={() => void repairWebhooks()} className="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-                {busy === "repair-webhooks" ? "নিবন্ধন হচ্ছে…" : "Webhook আবার নিবন্ধন করুন"}
+                {busy === "repair-webhooks" ? D.aiRegistering : D.aiRepairBtn}
               </button>
             ) : null}
           </div>
           {diagnostics ? (
             <div className="space-y-2 text-[11px] text-slate-600">
               <div>
-                <span className="font-semibold text-slate-700">Auto-heal (CC21):</span>{" "}
+                <span className="font-semibold text-slate-700">{D.aiAutoHealLabel}</span>{" "}
                 {diagnostics.autoHealEnabled === false
-                  ? "বন্ধ — webhook ভাঙলে শুধু সতর্কবার্তা যাবে, sweep নিজে থেকে মেরামত করবে না (কার্ডের 🛠 বোতামে চালু করা যায়)"
-                  : "চালু — webhook ভাঙা ধরা পড়লে sweep নিজে থেকে আবার রেজিস্টার করার চেষ্টা করবে (দিনে সর্বোচ্চ ৩ বার)"}
+                  ? D.aiAutoHealOff
+                  : D.aiAutoHealOn}
               </div>
               <div>
-                <span className="font-semibold text-slate-700">Webhook (সেভ করা রেকর্ড):</span>{" "}
-                {diagnostics.webhookStatus?.status ? `সার্বিক অবস্থা: ${diagnostics.webhookStatus.status}` : "কোনো রেকর্ড নেই"}
+                <span className="font-semibold text-slate-700">{D.aiWebhookRecordLabel}</span>{" "}
+                {diagnostics.webhookStatus?.status ? t("connections.aiOverallStatus", { status: diagnostics.webhookStatus.status }) : D.aiNoRecordShort}
                 {webhookTopics(diagnostics.webhookStatus).length > 0 ? (
                   <ul className="mt-1 space-y-1">
                     {webhookTopics(diagnostics.webhookStatus).map((t) => (
@@ -492,28 +486,28 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
                 diagnostics.shopifyScopes ? (
                   diagnostics.shopifyScopes.missing.length > 0 ? (
                     <p className="rounded-lg bg-amber-50 px-2 py-1.5 font-medium text-amber-700">
-                      ⚠️ অনুপস্থিত Scope: {diagnostics.shopifyScopes.missing.join(", ")} — Shopify অ্যাপে এই scope-গুলো যোগ করে স্টোরটি আবার authorize (re-auth) করুন, নইলে সংশ্লিষ্ট feature কাজ করবে না।
+                      {t("connections.aiScopesMissing", { scopes: diagnostics.shopifyScopes.missing.join(", ") })}
                     </p>
                   ) : (
-                    <p className="font-medium text-green-700">✓ সব প্রয়োজনীয় Scope আছে ({diagnostics.shopifyScopes.granted.length}টি granted)।</p>
+                    <p className="font-medium text-green-700">{t("connections.aiScopesOk", { count: fmtNumber(locale, diagnostics.shopifyScopes.granted.length) })}</p>
                   )
                 ) : diagnostics.shopifyScopesError ? (
-                  <p className="font-medium text-amber-600">Scope যাচাই করা যায়নি: {diagnostics.shopifyScopesError} — অনুমান করা হয়নি।</p>
+                  <p className="font-medium text-amber-600">{t("connections.aiScopesUnknown", { err: diagnostics.shopifyScopesError })}</p>
                 ) : null
               ) : null}
               {diagnostics.tracker ? (
                 <p>
-                  <span className="font-semibold text-slate-700">Tracker:</span>{" "}
+                  <span className="font-semibold text-slate-700">{D.aiTrackerLabel}</span>{" "}
                   {diagnostics.tracker.lastEventAt
-                    ? `${diagnostics.tracker.label}: ${formatWhen(diagnostics.tracker.lastEventAt)}`
-                    : "এখনো কোনো tracker event রেকর্ড হয়নি।"}
+                    ? t("connections.aiTrackerEvent", { label: diagnostics.tracker.label, when: formatWhen(diagnostics.tracker.lastEventAt, locale) ?? "" })
+                    : D.aiTrackerNone}
                 </p>
               ) : null}
               {diagnostics.lastCheck ? (
                 <p>
-                  <span className="font-semibold text-slate-700">স্টোর reachable (সর্বশেষ Doctor পরীক্ষা):</span>{" "}
-                  <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(diagnostics.lastCheck.overall).cls}`}>{overallMeta(diagnostics.lastCheck.overall).label}</span>{" "}
-                  <span className="text-slate-400">{formatWhen(diagnostics.lastCheck.at)}</span>
+                  <span className="font-semibold text-slate-700">{D.aiStoreReachable}</span>{" "}
+                  <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(diagnostics.lastCheck.overall, locale).cls}`}>{overallMeta(diagnostics.lastCheck.overall, locale).label}</span>{" "}
+                  <span className="text-slate-400">{formatWhen(diagnostics.lastCheck.at, locale)}</span>
                 </p>
               ) : null}
             </div>
@@ -524,8 +518,8 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
       {latestRun ? (
         <div className="rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-100">
           <p className="mb-1.5 text-[11px] font-semibold text-slate-600">
-            সর্বশেষ পরীক্ষা: <span className={`rounded-full px-1.5 py-0.5 ${overallMeta(latestRun.overall).cls}`}>{overallMeta(latestRun.overall).label}</span>{" "}
-            <span className="font-normal text-slate-400">{formatWhen(latestRun.createdAt)}</span>
+            {D.aiLatestRun}<span className={`rounded-full px-1.5 py-0.5 ${overallMeta(latestRun.overall, locale).cls}`}>{overallMeta(latestRun.overall, locale).label}</span>{" "}
+            <span className="font-normal text-slate-400">{formatWhen(latestRun.createdAt, locale)}</span>
           </p>
           <StepsList run={latestRun} />
         </div>
@@ -535,30 +529,30 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
         <div className="space-y-3">
           {canSync ? (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-semibold text-slate-500">আবার চেষ্টা:</span>
-              <button type="button" disabled={busy === "sync-products"} onClick={() => void resync("products")} className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">পণ্য Sync আবার করুন</button>
-              <button type="button" disabled={busy === "sync-orders"} onClick={() => void resync("orders")} className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">অর্ডার Sync আবার করুন</button>
+              <span className="text-[11px] font-semibold text-slate-500">{D.aiRetryLabel}</span>
+              <button type="button" disabled={busy === "sync-products"} onClick={() => void resync("products")} className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{D.aiResyncProducts}</button>
+              <button type="button" disabled={busy === "sync-orders"} onClick={() => void resync("orders")} className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">{D.aiResyncOrders}</button>
             </div>
           ) : null}
 
           {webhookText ? (
             <p className="rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-500 ring-1 ring-inset ring-slate-100">
-              <span className="font-semibold text-slate-600">Webhook অবস্থা (সেভ করা রেকর্ড):</span> {webhookText}
+              <span className="font-semibold text-slate-600">{D.aiWebhookStatusLabel}</span> {webhookText}
             </p>
           ) : null}
 
           <div>
-            <p className="mb-1 text-[11px] font-semibold text-slate-500">আগের পরীক্ষাগুলো</p>
+            <p className="mb-1 text-[11px] font-semibold text-slate-500">{D.aiPrevRuns}</p>
             {history.length === 0 ? (
-              <p className="text-[11px] text-slate-400">এখনও কোনো পরীক্ষা চালানো হয়নি।</p>
+              <p className="text-[11px] text-slate-400">{D.aiNoRuns}</p>
             ) : (
               <ul className="space-y-1">
                 {history.map((run) => (
                   <li key={run.id} className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                    <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(run.overall).cls}`}>{overallMeta(run.overall).label}</span>
-                    <span>{formatWhen(run.createdAt)}</span>
-                    <span className="text-slate-400">{run.trigger === "sweep" ? "স্বয়ংক্রিয় পর্যবেক্ষণ" : "ম্যানুয়াল"}</span>
-                    <span className="text-slate-400">{run.steps.filter((s) => s.status === "fail").length}টি ধাপ ব্যর্থ</span>
+                    <span className={`rounded-full px-1.5 py-0.5 font-semibold ${overallMeta(run.overall, locale).cls}`}>{overallMeta(run.overall, locale).label}</span>
+                    <span>{formatWhen(run.createdAt, locale)}</span>
+                    <span className="text-slate-400">{run.trigger === "sweep" ? D.aiSweep : D.aiManual}</span>
+                    <span className="text-slate-400">{t("connections.aiStepsFailed", { count: fmtNumber(locale, run.steps.filter((s) => s.status === "fail").length) })}</span>
                   </li>
                 ))}
               </ul>
@@ -567,32 +561,32 @@ export function AccountInsights({ account, onChanged }: { account: ConnectionAcc
 
           <div>
             <div className="mb-1 flex items-center justify-between gap-2">
-              <p className="text-[11px] font-semibold text-slate-500">টাইমলাইন — আসল রেকর্ড থেকে</p>
+              <p className="text-[11px] font-semibold text-slate-500">{D.aiTimelineTitle}</p>
               <label className="flex items-center gap-1 text-[11px] text-slate-500">
                 <input type="checkbox" checked={onlyProblems} onChange={(e) => void changeProblems(e.target.checked)} />
-                শুধু সমস্যা
+                {D.aiOnlyProblems}
               </label>
             </div>
             {timeline.length === 0 ? (
-              <p className="text-[11px] text-slate-400">এই অ্যাকাউন্টের কোনো রেকর্ড এখনও নেই।</p>
+              <p className="text-[11px] text-slate-400">{D.aiNoTimeline}</p>
             ) : (
               <ul className="space-y-1.5">
                 {timeline.map((item) => (
                   <li key={item.id} className="flex flex-wrap items-start gap-2 text-[11px]">
                     <span className={`shrink-0 rounded-full px-1.5 py-0.5 font-semibold ${SEVERITY_META[item.severity]?.cls ?? "bg-slate-100 text-slate-600"}`}>
-                      {TIMELINE_KIND_LABEL[item.kind] ?? item.kind}
+                      {timelineKindLabel(item.kind, locale)}
                     </span>
                     <span className="min-w-0">
                       <span className="font-medium text-slate-700">{item.title}</span>
                       {item.detail ? <span className="block text-slate-400">{item.detail}</span> : null}
-                      <span className="block text-slate-400">{formatWhen(item.at)}</span>
+                      <span className="block text-slate-400">{formatWhen(item.at, locale)}</span>
                     </span>
                   </li>
                 ))}
               </ul>
             )}
             {nextCursor ? (
-              <button type="button" onClick={() => void loadDetails(onlyProblems, nextCursor)} className="mt-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">আরও দেখুন</button>
+              <button type="button" onClick={() => void loadDetails(onlyProblems, nextCursor)} className="mt-1.5 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200">{D.aiSeeMore}</button>
             ) : null}
           </div>
         </div>

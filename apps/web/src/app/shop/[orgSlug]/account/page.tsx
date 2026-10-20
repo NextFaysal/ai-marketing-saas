@@ -37,6 +37,7 @@ import {
   type WishlistItem,
 } from "@/lib/storefront-account";
 import { shopLocaleOf, shopT, type ShopLocale } from "@/lib/shop-i18n";
+import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
 import { creditReasonLabel } from "@/lib/membership";
 import { captchaSiteKeyFor, type CheckoutTrust } from "@/lib/orders-gb3";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
@@ -53,29 +54,36 @@ function money(minor: string): string {
 
 // AB1: loyalty ledger presentation (Bengali-first, like the
 // rest of this surface's newer blocks).
-const LOYALTY_REASON_LABELS: Record<string, string> = {
-  earn: "পয়েন্ট অর্জন",
-  redeem: "পয়েন্ট খরচ",
-  expire: "মেয়াদ উত্তীর্ণ",
-  adjust: "সমন্বয়",
-  referral_reward: "রেফারেল পুরস্কার",
-};
-
-const LOYALTY_NOTE_LABELS: Record<string, string> = {
-  redeem_reversal: "অর্ডার বাতিলে ফেরত",
-  earn_clawback: "রিফান্ডে কর্তন",
-  referral_reward_clawback: "রেফারেল পুরস্কারে কর্তন",
-};
-
-function loyaltyNoteText(note: string | null): string | null {
-  if (!note) return null;
-  return LOYALTY_NOTE_LABELS[note] ?? note;
+function loyaltyReasonLabels(locale: ShopLocale): Record<string, string> {
+  const x = shopT(locale).accountExtra;
+  return {
+    earn: x.reasonEarn,
+    redeem: x.reasonRedeem,
+    expire: x.reasonExpire,
+    adjust: x.reasonAdjust,
+    referral_reward: x.reasonReferral,
+  };
 }
 
-function referralCouponState(c: ReferralRewardCoupon): { label: string; cls: string } {
-  if (c.usedCount > 0) return { label: "ব্যবহৃত", cls: "bg-slate-100 text-slate-600" };
-  if (!c.active) return { label: "মেয়াদ শেষ", cls: "bg-rose-50 text-rose-600" };
-  return { label: "সক্রিয়", cls: "bg-emerald-100 text-emerald-700" };
+function loyaltyNoteLabels(locale: ShopLocale): Record<string, string> {
+  const x = shopT(locale).accountExtra;
+  return {
+    redeem_reversal: x.reasonRedeemReversal,
+    earn_clawback: x.reasonEarnClawback,
+    referral_reward_clawback: x.reasonReferralClawback,
+  };
+}
+
+function loyaltyNoteText(note: string | null, locale: ShopLocale): string | null {
+  if (!note) return null;
+  return loyaltyNoteLabels(locale)[note] ?? note;
+}
+
+function referralCouponState(c: ReferralRewardCoupon, locale: ShopLocale): { label: string; cls: string } {
+  const x = shopT(locale).accountExtra;
+  if (c.usedCount > 0) return { label: x.couponUsed, cls: "bg-slate-100 text-slate-600" };
+  if (!c.active) return { label: x.couponExpired, cls: "bg-rose-50 text-rose-600" };
+  return { label: x.couponActive, cls: "bg-emerald-100 text-emerald-700" };
 }
 
 type Tab = "orders" | "wishlist" | "addresses" | "profile" | "notifications";
@@ -560,14 +568,14 @@ function AccountInner() {
   const showLoyaltyCard = !!loyalty && (loyalty.enabled || loyalty.balance !== 0);
   const referralCoupons = loyalty?.referralRewards?.coupons ?? [];
   const showReferral = !!loyalty && (!!loyalty.referralCode || referralCoupons.length > 0);
-  const dateFmt = (iso: string) => new Date(iso).toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD");
+  const dateFmt = (iso: string) => fmtDate(locale, iso);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "orders", label: t.account.tabsOrders },
     { key: "wishlist", label: t.account.tabsWishlist },
     { key: "addresses", label: t.account.tabsAddresses },
     { key: "profile", label: t.account.tabsProfile },
-    { key: "notifications", label: notifUnread > 0 ? `🔔 নোটিফিকেশন (${notifUnread})` : "🔔 নোটিফিকেশন" },
+    { key: "notifications", label: notifUnread > 0 ? `${t.accountExtra.notifTabPrefix}${fmtNumber(locale, notifUnread)})` : t.accountExtra.notifTab },
   ];
 
   return (
@@ -590,28 +598,28 @@ function AccountInner() {
         <div className="space-y-4 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-black text-slate-900">⭐ লয়্যালটি পয়েন্ট</h2>
-              <p className="text-xs text-slate-500">কেনাকাটায় পয়েন্ট অর্জন করুন — পরের অর্ডারে ছাড় হিসেবে ব্যবহার করুন।</p>
+              <h2 className="font-black text-slate-900">{t.accountExtra.loyaltyTitle}</h2>
+              <p className="text-xs text-slate-500">{t.accountExtra.loyaltySub}</p>
             </div>
             <div className="text-right">
-              <p className="text-2xl font-black text-violet-700">{loyalty.balance} <span className="text-sm font-bold text-slate-600">পয়েন্ট</span></p>
-              <p className="text-xs font-semibold text-slate-500">মূল্য: {money(String(loyalty.balanceValueMinor))}</p>
+              <p className="text-2xl font-black text-violet-700">{fmtNumber(locale, loyalty.balance)} <span className="text-sm font-bold text-slate-600">{t.accountExtra.pointsSuffix}</span></p>
+              <p className="text-xs font-semibold text-slate-500">{t.accountExtra.valuePrefix}{money(String(loyalty.balanceValueMinor))}</p>
             </div>
           </div>
           {loyalty.entries.length > 0 ? (
             <ul className="divide-y border-t">
               {loyalty.entries.map((e) => {
-                const noteText = loyaltyNoteText(e.note);
+                const noteText = loyaltyNoteText(e.note, locale);
                 return (
                   <li key={e.id} className="flex items-start justify-between gap-3 py-2.5 text-sm">
                     <div className="min-w-0">
-                      <p className="font-bold text-slate-800">{LOYALTY_REASON_LABELS[e.reason] ?? e.reason}</p>
+                      <p className="font-bold text-slate-800">{loyaltyReasonLabels(locale)[e.reason] ?? e.reason}</p>
                       <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-slate-500">
                         <span>{dateFmt(e.createdAt)}</span>
-                        {e.orderNumber ? <span>অর্ডার: <span className="font-mono font-semibold">{e.orderNumber}</span></span> : null}
-                        <span>ব্যালেন্স: {e.balanceAfter}</span>
-                        {e.reason === "earn" && e.expiresAt ? <span>মেয়াদ: {dateFmt(e.expiresAt)}</span> : null}
-                        {e.reason === "earn" && e.remainingPoints != null ? <span>অবশিষ্ট: {e.remainingPoints}</span> : null}
+                        {e.orderNumber ? <span>{t.accountExtra.orderPrefix}<span className="font-mono font-semibold">{e.orderNumber}</span></span> : null}
+                        <span>{t.accountExtra.balancePrefix}{fmtNumber(locale, e.balanceAfter)}</span>
+                        {e.reason === "earn" && e.expiresAt ? <span>{t.accountExtra.expiryPrefix}{dateFmt(e.expiresAt)}</span> : null}
+                        {e.reason === "earn" && e.remainingPoints != null ? <span>{t.accountExtra.remainingPrefix}{fmtNumber(locale, e.remainingPoints)}</span> : null}
                       </p>
                       {noteText ? <p className="mt-0.5 text-xs text-slate-500">{noteText}</p> : null}
                     </div>
@@ -623,7 +631,7 @@ function AccountInner() {
               })}
             </ul>
           ) : (
-            <p className="border-t pt-3 text-sm font-semibold text-slate-500">এখনো কোনো পয়েন্ট লেনদেন নেই।</p>
+            <p className="border-t pt-3 text-sm font-semibold text-slate-500">{t.accountExtra.noPointsYet}</p>
           )}
         </div>
       ) : null}
@@ -633,15 +641,15 @@ function AccountInner() {
         <div className="space-y-4 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-black text-slate-900">💰 স্টোর ক্রেডিট</h2>
-              <p className="text-xs text-slate-500">আপনার ক্রেডিট — চেকআউটে নিজে থেকে খরচ করতে পারবেন। শুধু আপনারই; অন্য কেউ এটি দেখতে বা খরচ করতে পারবে না।</p>
+              <h2 className="font-black text-slate-900">{t.accountExtra.creditTitle}</h2>
+              <p className="text-xs text-slate-500">{t.accountExtra.creditSub}</p>
               {storeCredit.tier?.tierName ? (
-                <p className="mt-1 text-xs font-bold text-amber-700">🏅 আপনার টিয়ার: {storeCredit.tier.tierName} · সারা জীবনের সম্পন্ন খরচ: {money(storeCredit.tier.lifetimeSpendMinor)}</p>
+                <p className="mt-1 text-xs font-bold text-amber-700">{t.accountExtra.tierPrefix}{storeCredit.tier.tierName}{t.accountExtra.tierLifetimeMid}{money(storeCredit.tier.lifetimeSpendMinor)}</p>
               ) : null}
             </div>
             <div className="text-right">
               <p className="text-2xl font-black text-amber-700">{money(storeCredit.balanceMinor)}</p>
-              <p className="text-xs font-semibold text-slate-500">বর্তমান ব্যালেন্স</p>
+              <p className="text-xs font-semibold text-slate-500">{t.accountExtra.currentBalance}</p>
             </div>
           </div>
           {storeCredit.entries.length > 0 ? (
@@ -652,7 +660,7 @@ function AccountInner() {
                     <p className="font-bold text-slate-800">{creditReasonLabel(e.reason)}</p>
                     <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-slate-500">
                       {e.createdAt ? <span>{dateFmt(e.createdAt)}</span> : null}
-                      <span>ব্যালেন্স: {money(e.balanceAfter)}</span>
+                      <span>{t.accountExtra.balancePrefix}{money(e.balanceAfter)}</span>
                     </p>
                     {e.note ? <p className="mt-0.5 text-xs text-slate-500">{e.note}</p> : null}
                   </div>
@@ -663,7 +671,7 @@ function AccountInner() {
               ))}
             </ul>
           ) : (
-            <p className="border-t pt-3 text-sm font-semibold text-slate-500">এখনো কোনো ক্রেডিট লেনদেন নেই।</p>
+            <p className="border-t pt-3 text-sm font-semibold text-slate-500">{t.accountExtra.noCreditYet}</p>
           )}
         </div>
       ) : null}
@@ -671,7 +679,7 @@ function AccountInner() {
       {/* --- AB1: your referral (code + earned reward coupons) --- */}
       {showReferral && loyalty ? (
         <div className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5">
-          <h2 className="font-black text-slate-900">🎁 আপনার রেফারেল</h2>
+          <h2 className="font-black text-slate-900">{t.accountExtra.referralTitle}</h2>
           {loyalty.referralCode ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-xl border border-indigo-200 bg-white px-4 py-2 font-mono text-sm font-black tracking-wider text-indigo-800">{loyalty.referralCode}</span>
@@ -680,23 +688,23 @@ function AccountInner() {
                 onClick={copyReferralCode}
                 className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700"
               >
-                {refCopied ? "কপি হয়েছে ✅" : "কোড কপি করুন"}
+                {refCopied ? t.accountExtra.copied : t.accountExtra.copyCode}
               </button>
-              <p className="w-full text-xs text-slate-500">বন্ধুদের এই কোডটি দিন — তারা ছাড় পাবেন, আপনিও পুরস্কার পাবেন।</p>
+              <p className="w-full text-xs text-slate-500">{t.accountExtra.referralSub}</p>
             </div>
           ) : null}
           {referralCoupons.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-xs font-bold text-slate-700">রেফারেল পুরস্কারের কুপন</p>
+              <p className="text-xs font-bold text-slate-700">{t.accountExtra.referralCouponsTitle}</p>
               <ul className="space-y-2">
                 {referralCoupons.map((c) => {
-                  const state = referralCouponState(c);
+                  const state = referralCouponState(c, locale);
                   return (
                     <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-white px-4 py-2.5 text-sm">
                       <span className="font-mono font-black text-indigo-800">{c.code}</span>
-                      <span className="font-bold text-emerald-700">{c.value}% ছাড়</span>
-                      {c.sourceOrderNumber ? <span className="text-xs text-slate-500">অর্ডার {c.sourceOrderNumber} থেকে</span> : null}
-                      <span className="text-xs text-slate-500">{c.endsAt ? `মেয়াদ: ${dateFmt(c.endsAt)}` : "মেয়াদ নেই"}</span>
+                      <span className="font-bold text-emerald-700">{fmtNumber(locale, c.value)}{t.accountExtra.discountSuffix}</span>
+                      {c.sourceOrderNumber ? <span className="text-xs text-slate-500">{t.accountExtra.fromOrder.replace("{order}", c.sourceOrderNumber)}</span> : null}
+                      <span className="text-xs text-slate-500">{c.endsAt ? `${t.accountExtra.expiryPrefix}${dateFmt(c.endsAt)}` : t.accountExtra.noExpiry}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${state.cls}`}>{state.label}</span>
                     </li>
                   );
@@ -714,8 +722,8 @@ function AccountInner() {
         className="flex items-center justify-between gap-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-5 transition hover:shadow-sm"
       >
         <span>
-          <span className="block font-black text-slate-900">🎁 গিফট কার্ড</span>
-          <span className="mt-0.5 block text-xs text-slate-500">আপনার গিফট কার্ডের ব্যালেন্স ও মেয়াদ দেখুন — শুধু কার্ডের কোডটি লাগবে।</span>
+          <span className="block font-black text-slate-900">{t.accountExtra.giftCardTitle}</span>
+          <span className="mt-0.5 block text-xs text-slate-500">{t.accountExtra.giftCardSub}</span>
         </span>
         <span className="shrink-0 text-lg font-bold text-pink-600">→</span>
       </Link>
@@ -743,7 +751,7 @@ function AccountInner() {
                 <button type="button" onClick={() => setDetail(null)} className="text-xs font-bold text-indigo-700 hover:underline">{t.account.backToOrders}</button>
               </div>
               <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
-                <p>{t.account.placedAtLabel}: <b className="text-slate-900">{new Date(detail.placedAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD")}</b></p>
+                <p>{t.account.placedAtLabel}: <b className="text-slate-900">{fmtDateTime(locale, detail.placedAt)}</b></p>
                 <p>{t.account.statusLabel}: <b className="text-slate-900">{detail.status}</b></p>
                 <p>{t.account.totalLabel}: <b className="text-indigo-700">{money(detail.totalMinor)}</b></p>
               </div>
@@ -814,7 +822,7 @@ function AccountInner() {
                       <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-700">{o.status}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-slate-500">
-                      <span>{new Date(o.placedAt).toLocaleDateString(locale === "en" ? "en-GB" : "bn-BD")}</span>
+                      <span>{fmtDate(locale, o.placedAt)}</span>
                       <span>{o.itemCount} {t.account.itemsLabel}</span>
                       <span className="font-bold text-indigo-700">{money(o.totalMinor)}</span>
                     </div>
@@ -838,17 +846,17 @@ function AccountInner() {
       {tab === "notifications" ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-black text-slate-900">🔔 নোটিফিকেশন</h2>
+            <h2 className="font-black text-slate-900">{t.accountExtra.notifTitle}</h2>
             {notifUnread > 0 ? (
               <button type="button" onClick={markAllRead} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
-                সব পড়া হয়েছে হিসেবে চিহ্নিত করুন
+                {t.accountExtra.markAllRead}
               </button>
             ) : null}
           </div>
           {notifications.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
               <p className="text-3xl">🔔</p>
-              <p className="mt-2 text-sm font-semibold text-slate-600">এখনো কোনো নোটিফিকেশন নেই।</p>
+              <p className="mt-2 text-sm font-semibold text-slate-600">{t.accountExtra.noNotifYet}</p>
             </div>
           ) : (
             notifications.map((n) => (
@@ -860,12 +868,12 @@ function AccountInner() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-bold text-slate-900">{n.title}</span>
-                  {!n.isRead ? <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">নতুন</span> : null}
+                  {!n.isRead ? <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">{t.accountExtra.newBadge}</span> : null}
                 </div>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{n.body}</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  {n.createdAt ? new Date(n.createdAt).toLocaleString(locale === "en" ? "en-GB" : "bn-BD") : ""}
-                  {n.url ? " · খুলতে ক্লিক করুন →" : ""}
+                  {n.createdAt ? fmtDateTime(locale, n.createdAt) : ""}
+                  {n.url ? t.accountExtra.clickToOpen : ""}
                 </p>
               </button>
             ))

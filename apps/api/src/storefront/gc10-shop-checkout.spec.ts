@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 
 /**
@@ -236,7 +237,7 @@ describe("GC10 shop checkout placement", () => {
     const token = await cartReady(svc);
     await expect(svc.checkout("shop-one", dto(token, {
       onlinePayment: { provider: "bkash", source: "own" },
-    }) as any)).rejects.toBeInstanceOf(BadRequestException);
+    }) as any)).rejects.toBeInstanceOf(ApiException);
     expect(integrations.upsertOrder).not.toHaveBeenCalled();
   });
 

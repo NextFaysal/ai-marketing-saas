@@ -273,7 +273,7 @@ describe("SA-B6 BrainAdminService — answer store management", () => {
     const { service, fx } = makeService(true);
     await expect(service.setStoredAnswerStatus(ORG_A, "user-1", "ans-2", "active")).rejects.toMatchObject({
       status: 400,
-      response: { message: expect.stringContaining("product_changed") },
+      response: expect.stringContaining("product_changed"),
     });
     expect(fx.aiStoredAnswer.find((r: any) => r.id === "ans-2")!.status).toBe("invalidated");
     await expect(service.setStoredAnswerStatus(ORG_A, "user-1", "ans-2", "disabled")).rejects.toBeTruthy();

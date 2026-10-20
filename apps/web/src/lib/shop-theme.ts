@@ -3,6 +3,9 @@
  * Supports ready-to-use themes for different Bangladeshi & global commerce niches plus token-native v2.
  * "classic" MUST equal the pre-theme classes exactly for backwards compatibility.
  */
+import { ordersBn, ordersEn } from "@/lib/i18n/orders";
+import { interpolate } from "@/lib/i18n/lookup";
+
 export type ShopThemeId =
   | "classic"
   | "bold"
@@ -55,8 +58,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-2xl border border-slate-200 shadow-sm",
     cardImageWrapClass: "",
     pageBgClass: "bg-slate-50",
-    nameBn: "ক্লাসিক",
-    descBn: "চেনা, ভারসাম্যপূর্ণ ও স্ট্যান্ডার্ড শপ লুক",
+    nameBn: ordersBn.classic,
+    descBn: ordersBn.familiarBalancedStandardShopLook,
   },
   bold: {
     headerDark: true,
@@ -67,8 +70,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-xl border-2 border-slate-900/10 shadow-md",
     cardImageWrapClass: "",
     pageBgClass: "bg-slate-100",
-    nameBn: "বোল্ড",
-    descBn: "বড় হিরো, গাঢ় রঙ ও নজরকাড়া অফার",
+    nameBn: ordersBn.bold,
+    descBn: ordersBn.bigHeroDarkColorsEye,
   },
   minimal: {
     headerDark: false,
@@ -79,8 +82,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-none border-0 shadow-none",
     cardImageWrapClass: "",
     pageBgClass: "bg-white",
-    nameBn: "মিনিমাল",
-    descBn: "হালকা, পরিষ্কার, পণ্যে সরাসরি ফোকাস",
+    nameBn: ordersBn.minimal,
+    descBn: ordersBn.lightCleanDirectFocusOn,
   },
   luxury: {
     headerDark: true,
@@ -91,8 +94,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-2xl border border-amber-500/20 shadow-lg bg-zinc-900 text-zinc-100 hover:border-amber-400/50",
     cardImageWrapClass: "rounded-t-2xl overflow-hidden",
     pageBgClass: "bg-zinc-950 text-zinc-100",
-    nameBn: "লাক্সারি",
-    descBn: "অভিজাত ব্ল্যাক ও গোল্ডেন ভাইব — গয়না, ঘড়ি ও প্রিমিয়াম ব্র্যান্ড",
+    nameBn: ordersBn.luxury,
+    descBn: ordersBn.eliteBlackGoldenVibeJewellery,
   },
   organic: {
     headerDark: false,
@@ -103,8 +106,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-3xl border border-emerald-100/90 bg-white shadow-sm hover:border-emerald-300 hover:shadow-md",
     cardImageWrapClass: "rounded-t-3xl overflow-hidden",
     pageBgClass: "bg-[#f7f8f5]",
-    nameBn: "অর্গানিক",
-    descBn: "প্রাকৃতিক সবুজ ও মাটির টান — অর্গানিক ফুড ও ভেষজ পণ্য",
+    nameBn: ordersBn.organic,
+    descBn: ordersBn.naturalGreenEarthyTonesOrganic,
   },
   vibrant: {
     headerDark: false,
@@ -115,8 +118,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-3xl border-2 border-violet-100 bg-white shadow-md hover:shadow-xl hover:border-violet-300",
     cardImageWrapClass: "rounded-t-3xl overflow-hidden",
     pageBgClass: "bg-amber-50/30",
-    nameBn: "ভাইব্রেন্ট",
-    descBn: "উজ্জ্বল রঙের ছোঁয়া — ফ্যাশন, গিফট ও ট্রেন্ডি আইটেম",
+    nameBn: ordersBn.vibrant,
+    descBn: ordersBn.aTouchOfBrightColors,
   },
   modern: {
     headerDark: true,
@@ -127,8 +130,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-2xl border border-slate-700/60 bg-slate-900 shadow-md text-white hover:border-indigo-500/50",
     cardImageWrapClass: "rounded-t-2xl overflow-hidden",
     pageBgClass: "bg-slate-950 text-slate-100",
-    nameBn: "মডার্ন টেক",
-    descBn: "হাই-টেক ফিনিশ — গ্যাজেট, কম্পিউটার ও স্মার্ট অ্যাকসেসরিজ",
+    nameBn: ordersBn.modernTech,
+    descBn: ordersBn.highTechFinishGadgetsComputers,
   },
   pastel: {
     headerDark: false,
@@ -139,8 +142,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-2xl border border-pink-100 bg-white/95 shadow-sm hover:shadow-md hover:border-pink-300",
     cardImageWrapClass: "rounded-t-2xl overflow-hidden",
     pageBgClass: "bg-rose-50/30",
-    nameBn: "প্যাস্টেল",
-    descBn: "নরম মিষ্টি রং — স্কিনকেয়ার, কসমেটিকস ও ওমেন্স কালেকশন",
+    nameBn: ordersBn.pastel,
+    descBn: ordersBn.softSweetColorsSkincareCosmetics,
   },
   nordic: {
     headerDark: false,
@@ -151,8 +154,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-xl border border-stone-200 bg-white shadow-xs hover:border-stone-400",
     cardImageWrapClass: "rounded-t-xl overflow-hidden",
     pageBgClass: "bg-[#fbf9f5]",
-    nameBn: "নর্ডিক",
-    descBn: "স্ক্যান্ডিনেভিয়ান কাঠ ও ওয়ার্ম ফিনিশ — হোম ডেকর ও লাইফস্টাইল",
+    nameBn: ordersBn.nordic,
+    descBn: ordersBn.scandinavianWoodWarmFinishHome,
   },
   midnight: {
     headerDark: true,
@@ -163,8 +166,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "rounded-2xl border border-slate-800 bg-[#0f172a] shadow-lg text-white hover:border-cyan-400/60",
     cardImageWrapClass: "rounded-t-2xl overflow-hidden",
     pageBgClass: "bg-[#090d16] text-slate-100",
-    nameBn: "মিডনাইট",
-    descBn: "ট্রু ডার্ক মোড ও নিয়ন অ্যাকসেন্ট — স্ট্রিটওয়্যার, ফ্যাশন ও ইউথ ব্র্যান্ড",
+    nameBn: ordersBn.midnight,
+    descBn: ordersBn.trueDarkModeNeonAccents,
   },
   fashion: {
     headerDark: false,
@@ -175,8 +178,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-stone-200/80 shadow-xs hover:shadow-xl transition-all duration-300",
     cardImageWrapClass: "aspect-[3/4] overflow-hidden rounded-t-2xl",
     pageBgClass: "bg-[#faf9f6] text-stone-900",
-    nameBn: "ফ্যাশন ও ক্লদিং",
-    descBn: "৩:৪ পোর্ট্রেট কার্ড, সাইজ সিলেক্টর, জেন্ডার ডিপার্টমেন্ট ও সাইজ গাইড (আড়ং / ইয়েলো স্টাইল)",
+    nameBn: ordersBn.fashionClothing,
+    descBn: ordersBn.text1shnio4,
   },
   electronics: {
     headerDark: true,
@@ -187,8 +190,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-slate-200/90 shadow-sm hover:shadow-xl hover:border-indigo-500/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-slate-50",
     pageBgClass: "bg-[#f4f6f9] text-slate-900",
-    nameBn: "ইলেকট্রনিক্স ও গ্যাজেটস",
-    descBn: "টেক স্পেকস, ব্র্যান্ড ওয়ারেন্টি, EMI ক্যালকুলেটর ও গ্যাজেট কম্পেয়ার (স্টার টেক / রায়ান্স স্টাইল)",
+    nameBn: ordersBn.electronicsGadgets,
+    descBn: ordersBn.techSpecsBrandWarrantyEMI,
   },
   grocery: {
     headerDark: false,
@@ -199,8 +202,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-emerald-100/90 shadow-sm hover:shadow-xl hover:border-emerald-500/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-emerald-50/30",
     pageBgClass: "bg-[#f8faf8] text-slate-900",
-    nameBn: "গ্রোসারি ও অর্গানিক ফুডস",
-    descBn: "১ ঘণ্টার এক্সপ্রেস ডেলিভারি, ওজন/কেজি সিলেক্টর, ইনস্ট্যান্ট কোয়ান্টিটি স্টেপার ও অর্গানিক ল্যাব সার্টিফিকেট (চালডাল / খাস ফুড স্টাইল)",
+    nameBn: ordersBn.groceryOrganicFoods,
+    descBn: ordersBn.text1guee61,
   },
   beauty: {
     headerDark: false,
@@ -211,8 +214,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-rose-100 shadow-sm hover:shadow-xl hover:border-pink-400/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-pink-50/20",
     pageBgClass: "bg-[#fffafb] text-slate-900",
-    nameBn: "হেলথ, বিউটি ও কসমেটিক্স",
-    descBn: "১০০% অরিজিনাল অথেন্টিসিটি সনদ, স্কিন টাইপ ম্যাচিং, রুটিন কম্বো ও শেড পিকার (সাজগোজ / বাংলাশপার্স স্টাইল)",
+    nameBn: ordersBn.healthBeautyCosmetics,
+    descBn: ordersBn.textuiu3lr,
   },
   furniture: {
     headerDark: true,
@@ -223,8 +226,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-stone-200/90 shadow-sm hover:shadow-2xl hover:border-amber-600/50 transition-all duration-300",
     cardImageWrapClass: "aspect-[4/3] overflow-hidden rounded-t-2xl bg-stone-100",
     pageBgClass: "bg-[#fcfbf9] text-stone-900",
-    nameBn: "হোম ডেকর ও ফার্নিচার",
-    descBn: "১০ বছরের স্ট্রাকচারাল ওয়ারেন্টি, সেগুন/ওক কাঠ ও ফিনিশ সিলেক্টর, রুম সেট বান্ডেল ও ফিটিং সার্ভিস (হাতিল / অটবি / ইশো স্টাইল)",
+    nameBn: ordersBn.homeDecorFurniture,
+    descBn: ordersBn.text1rjema,
   },
   books: {
     headerDark: false,
@@ -235,8 +238,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-amber-900/10 shadow-sm hover:shadow-xl hover:border-amber-700/40 transition-all duration-300",
     cardImageWrapClass: "aspect-[3/4] overflow-hidden rounded-t-2xl bg-amber-50/20",
     pageBgClass: "bg-[#fdfcf7] text-slate-900",
-    nameBn: "বই, প্রকাশনী ও স্টেশনারি",
-    descBn: "একটু পড়ে দেখুন (Look Inside) প্রিভিউয়ার, লেখক ও প্রকাশনী ফিল্টার, বাইন্ডিং সিলেক্টর ও বইমেলা কালেকশন (রকমারি / বাতিঘর স্টাইল)",
+    nameBn: ordersBn.booksPublicationsStationery,
+    descBn: ordersBn.lookInsidePreviewerAuthorPublisher,
   },
   kids: {
     headerDark: false,
@@ -247,8 +250,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-3xl bg-white border border-sky-100 shadow-sm hover:shadow-xl hover:border-sky-300 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-3xl bg-sky-50/50",
     pageBgClass: "bg-[#f9fcff] text-slate-900",
-    nameBn: "বেবি কেয়ার, টয়স ও কিডস ফ্যাশন",
-    descBn: "বয়স ভিত্তিক সাইজ সিলেক্টর, ১০০% নন-টক্সিক ও BPA-Free গ্যারান্টি, নিউবর্ন গিফট হ্যাম্পার ও লার্নিং স্কিল ট্যাগ (হপসকচ / বেবি শপ বিডি স্টাইল)",
+    nameBn: ordersBn.babyCareToysKidsFashion,
+    descBn: ordersBn.ageBasedSizeSelector100,
   },
   automotive: {
     headerDark: true,
@@ -259,8 +262,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-zinc-200 shadow-sm hover:shadow-2xl hover:border-red-500/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-zinc-100",
     pageBgClass: "bg-[#f5f6f8] text-zinc-900",
-    nameBn: "অটোমোটিভ, বাইক ও মোটর পার্টস",
-    descBn: "বাইক মডেল ফিটমেন্ট চেকার, ইঞ্জিন অয়েল ভিসকোসিটি সিলেক্টর, ১০০% জেনুইন পার্টস সনদ ও পিরিওডিক সার্ভিসিং কম্বো (বাইকবিডি / মোটরপার্টস বিডি স্টাইল)",
+    nameBn: ordersBn.automotiveBikesMotorParts,
+    descBn: ordersBn.bikeModelFitmentCheckerEngine,
   },
   sports: {
     headerDark: false,
@@ -271,8 +274,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-2xl hover:border-sky-500/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-slate-50",
     pageBgClass: "bg-[#f8fafc] text-slate-900",
-    nameBn: "স্পোর্টস, ফিটনেস ও জিম ইকুইপমেন্ট",
-    descBn: "ডাম্বেল ও প্লেট সাইজ সিলেক্টর, হোম জিম অ্যাসেম্বলি ও টেকনিশিয়ান রিকোয়েস্ট, ১০০% অরিজিনাল অ্যাথলেটিক গিয়ার ও ওয়ার্কআউট কম্বো (ডেক্যাথলন / স্পোর্টস ওয়ার্ল্ড স্টাইল)",
+    nameBn: ordersBn.sportsFitnessGymEquipment,
+    descBn: ordersBn.dumbbellPlateSizeSelectorHome,
   },
   jewelry: {
     headerDark: true,
@@ -283,8 +286,8 @@ export const SHOP_THEMES: Record<ShopThemeId, ShopTheme> = {
     cardClass: "group rounded-2xl bg-white border border-amber-900/15 shadow-sm hover:shadow-2xl hover:border-amber-500/50 transition-all duration-300",
     cardImageWrapClass: "aspect-square overflow-hidden rounded-t-2xl bg-stone-50",
     pageBgClass: "bg-[#faf9f6] text-stone-900",
-    nameBn: "জুয়েলারি, ডায়মন্ড ও লাক্সারি ওয়াচেস",
-    descBn: "২২ ক্যারেট হলমার্ক গোল্ড সনদ, ডায়মন্ড ৪সি সার্টিফিকেট, রিং সাইজ গাইড ও ব্রাইডাল জুয়েলারি সেট (আপন জুয়েলার্স / ডায়মন্ড ওয়ার্ল্ড / টাইম জোন বিডি স্টাইল)",
+    nameBn: ordersBn.jewelleryDiamondsLuxuryWatches,
+    descBn: ordersBn.textk17nm5,
   },
   // ED7: token-native v2 — every colour / radius / shadow below
   // resolves through the EB1 CSS variables, so the shop follows
@@ -415,4 +418,41 @@ export const SHOP_THEME_PREVIEW_HEADER = "x-shop-theme-preview";
  */
 export function previewThemeIdFromHeaders(h: { get(name: string): string | null }): string | null {
   return h.get(SHOP_THEME_PREVIEW_HEADER);
+}
+
+/** ML5 i18n: dict keys for each theme's name/description so the
+ * dashboard theme picker can render them in the active locale
+ * (the ShopTheme nameBn/descBn fields stay the bn defaults). */
+export const THEME_TEXT_KEYS: Record<string, { name: string; desc: string }> = {
+  classic: { name: "classic", desc: "familiarBalancedStandardShopLook" },
+  bold: { name: "bold", desc: "bigHeroDarkColorsEye" },
+  minimal: { name: "minimal", desc: "lightCleanDirectFocusOn" },
+  luxury: { name: "luxury", desc: "eliteBlackGoldenVibeJewellery" },
+  organic: { name: "organic", desc: "naturalGreenEarthyTonesOrganic" },
+  vibrant: { name: "vibrant", desc: "aTouchOfBrightColors" },
+  modern: { name: "modernTech", desc: "highTechFinishGadgetsComputers" },
+  pastel: { name: "pastel", desc: "softSweetColorsSkincareCosmetics" },
+  nordic: { name: "nordic", desc: "scandinavianWoodWarmFinishHome" },
+  midnight: { name: "midnight", desc: "trueDarkModeNeonAccents" },
+  fashion: { name: "fashionClothing", desc: "text1shnio4" },
+  electronics: { name: "electronicsGadgets", desc: "techSpecsBrandWarrantyEMI" },
+  grocery: { name: "groceryOrganicFoods", desc: "text1guee61" },
+  beauty: { name: "healthBeautyCosmetics", desc: "textuiu3lr" },
+  furniture: { name: "homeDecorFurniture", desc: "text1rjema" },
+  books: { name: "booksPublicationsStationery", desc: "lookInsidePreviewerAuthorPublisher" },
+  kids: { name: "babyCareToysKidsFashion", desc: "ageBasedSizeSelector100" },
+  automotive: { name: "automotiveBikesMotorParts", desc: "bikeModelFitmentCheckerEngine" },
+  sports: { name: "sportsFitnessGymEquipment", desc: "dumbbellPlateSizeSelectorHome" },
+  jewelry: { name: "jewelleryDiamondsLuxuryWatches", desc: "textk17nm5" }
+};
+export function shopThemeText(
+  id: string,
+  locale: "bn" | "en" = "bn",
+): { name: string; desc: string } | null {
+  const keys = THEME_TEXT_KEYS[id];
+  const theme = SHOP_THEMES[id as ShopThemeId];
+  if (!theme) return null;
+  if (!keys || locale === "bn") return { name: theme.nameBn ?? id, desc: theme.descBn ?? "" };
+  const en = ordersEn as unknown as Record<string, string>;
+  return { name: en[keys.name] ?? theme.nameBn ?? id, desc: en[keys.desc] ?? theme.descBn ?? "" };
 }

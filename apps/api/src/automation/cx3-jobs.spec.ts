@@ -90,7 +90,7 @@ describe("CX3 job registration", () => {
   it("executeJob fails honestly when the sweep service is not wired", async () => {
     const { db } = fakeDb();
     const svc = service(db);
-    await expect(svc.executeJob({ organizationId: ORG, createdById: "owner", type: "inbox_autoreply_sweep", targetId: ORG })).rejects.toThrow(/not available/);
-    await expect(svc.executeJob({ organizationId: ORG, createdById: "owner", type: "comment_autoreply_sweep", targetId: ORG })).rejects.toThrow(/not available/);
+    await expect(svc.executeJob({ organizationId: ORG, createdById: "owner", type: "inbox_autoreply_sweep", targetId: ORG })).rejects.toMatchObject({ code: "automation.inboxServiceIsNotAvailableIn" });
+    await expect(svc.executeJob({ organizationId: ORG, createdById: "owner", type: "comment_autoreply_sweep", targetId: ORG })).rejects.toMatchObject({ code: "automation.socialCommentsServiceIsNotAvailable" });
   });
 });

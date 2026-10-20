@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -8,6 +8,7 @@ import type {
   CreateBinAssignmentDto, CreateBinDto, CreateStockCountDto,
   CreateWarehouseDto, UpdateBinDto, UpdateWarehouseDto,
 } from "./warehouse.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC21 — Warehouse & Stock Ops.
@@ -39,7 +40,7 @@ export class WarehouseService {
 
   private async loadWarehouseOr404(organizationId: string, warehouseId: string): Promise<any> {
     const row = await (this.prisma as any).warehouse.findFirst({ where: { id: warehouseId, organizationId } });
-    if (!row) throw new NotFoundException("গুদামটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!row) throw notFound("warehouse.theWarehouseWasNotFoundIn");
     return row;
   }
 
@@ -70,7 +71,7 @@ export class WarehouseService {
   /** AB3: validate a priority value (optional int, Min(0)). */
   private validatePriority(priority: unknown): number {
     if (!Number.isInteger(priority) || (priority as number) < 0) {
-      throw new BadRequestException("গুদামের অগ্রাধিকার (priority) অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("warehouse.theWarehousePriorityMustBeAn");
     }
     return priority as number;
   }
@@ -89,18 +90,18 @@ export class WarehouseService {
   private validateServiceDistricts(input: string[] | null | undefined): string[] | null {
     if (input == null) return null;
     if (!Array.isArray(input)) {
-      throw new BadRequestException("সার্ভিস জেলার তালিকা অবশ্যই একটি তালিকা (array) হতে হবে");
+      throw badRequest("warehouse.theServiceDistrictListMustBe");
     }
     const out: string[] = [];
     for (const raw of input) {
       const entry = String(raw ?? "").trim();
-      if (!entry) throw new BadRequestException("সার্ভিস জেলার নাম খালি হতে পারে না");
+      if (!entry) throw badRequest("warehouse.aServiceDistrictNameCannotBe");
       const wanted = entry.toLowerCase();
       const match = BD_DISTRICT_ENTRIES.find((d) =>
         d.canonical.toLowerCase() === wanted
         || d.bn.some((b) => b === entry)
         || d.variants.some((v) => v.toLowerCase() === wanted));
-      if (!match) throw new BadRequestException(`অজানা জেলা: ${entry} — সঠিক জেলার নাম দিন`);
+      if (!match) throw badRequest("warehouse.unknownDistrictGiveAValidDistrict", { entry: entry });
       if (!out.includes(match.canonical)) out.push(match.canonical);
     }
     return out;
@@ -108,7 +109,7 @@ export class WarehouseService {
 
   async createWarehouse(organizationId: string, actorId: string, dto: CreateWarehouseDto) {
     const name = (dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("গুদামের নাম দরকার");
+    if (!name) throw badRequest("warehouse.aWarehouseNameIsRequired");
     const row = await (this.prisma as any).warehouse.create({
       data: {
         organizationId, name, address: dto.address ?? null,
@@ -132,7 +133,7 @@ export class WarehouseService {
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException("গুদামের নাম দরকার");
+      if (!name) throw badRequest("warehouse.aWarehouseNameIsRequired");
       data.name = name;
     }
     if (dto.address !== undefined) data.address = dto.address;
@@ -169,7 +170,7 @@ export class WarehouseService {
     const row = await (this.prisma as any).binLocation.findFirst({
       where: { id: binId, organizationId, warehouseId },
     });
-    if (!row) throw new NotFoundException("বিনটি এই গুদামে পাওয়া যায়নি");
+    if (!row) throw notFound("warehouse.theBinWasNotFoundIn");
     return row;
   }
 
@@ -184,9 +185,9 @@ export class WarehouseService {
   async createBin(organizationId: string, actorId: string, warehouseId: string, dto: CreateBinDto) {
     await this.loadWarehouseOr404(organizationId, warehouseId);
     const code = (dto.code ?? "").trim();
-    if (!code) throw new BadRequestException("বিনের কোড দরকার");
+    if (!code) throw badRequest("warehouse.aBinCodeIsRequired");
     const duplicate = await (this.prisma as any).binLocation.findFirst({ where: { warehouseId, code } });
-    if (duplicate) throw new BadRequestException("এই গুদামে এই কোডের বিন আগেই আছে");
+    if (duplicate) throw badRequest("warehouse.aBinWithThisCodeAlready");
     const row = await (this.prisma as any).binLocation.create({
       data: { organizationId, warehouseId, code, note: dto.note ?? null },
     });
@@ -203,11 +204,11 @@ export class WarehouseService {
     const data: Record<string, any> = {};
     if (dto.code !== undefined) {
       const code = dto.code.trim();
-      if (!code) throw new BadRequestException("বিনের কোড দরকার");
+      if (!code) throw badRequest("warehouse.aBinCodeIsRequired");
       if (code !== existing.code) {
         const duplicate = await (this.prisma as any).binLocation.findFirst({ where: { warehouseId, code } });
         if (duplicate && duplicate.id !== existing.id) {
-          throw new BadRequestException("এই গুদামে এই কোডের বিন আগেই আছে");
+          throw badRequest("warehouse.aBinWithThisCodeAlready");
         }
       }
       data.code = code;
@@ -278,13 +279,13 @@ export class WarehouseService {
     const bin = await (this.prisma as any).binLocation.findFirst({
       where: { id: dto.binLocationId, organizationId, warehouseId: warehouse.id },
     });
-    if (!bin) throw new BadRequestException("বিনটি এই গুদামের নয়");
+    if (!bin) throw badRequest("warehouse.theBinDoesNotBelongTo");
     const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
-    if (!product) throw new NotFoundException("পণ্যটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!product) throw notFound("warehouse.theProductWasNotFoundIn");
     const variantId = dto.variantId ?? null;
     if (variantId) {
       const variant = await (this.prisma as any).productVariant.findFirst({ where: { id: variantId, productId: product.id } });
-      if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+      if (!variant) throw badRequest("warehouse.theVariantDoesNotBelongTo");
     }
     const siblings: any[] = ((await (this.prisma as any).productBinAssignment.findMany({
       where: { organizationId, warehouseId: warehouse.id, productId: product.id },
@@ -317,7 +318,7 @@ export class WarehouseService {
 
   async deleteAssignment(organizationId: string, actorId: string, assignmentId: string) {
     const row = await (this.prisma as any).productBinAssignment.findFirst({ where: { id: assignmentId, organizationId } });
-    if (!row) throw new NotFoundException("অ্যাসাইনমেন্টটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!row) throw notFound("warehouse.theAssignmentWasNotFoundIn");
     await (this.prisma as any).productBinAssignment.delete({ where: { id: row.id } });
     await this.log({
       organizationId, userId: actorId, action: "assignment.deleted",
@@ -331,7 +332,7 @@ export class WarehouseService {
 
   private async loadSessionOr404(organizationId: string, sessionId: string): Promise<any> {
     const row = await (this.prisma as any).stockCountSession.findFirst({ where: { id: sessionId, organizationId } });
-    if (!row) throw new NotFoundException("স্টক গণনাটি এই প্রতিষ্ঠানে পাওয়া যায়নি");
+    if (!row) throw notFound("warehouse.theStockCountWasNotFound");
     return row;
   }
 
@@ -342,7 +343,7 @@ export class WarehouseService {
       bin = await (this.prisma as any).binLocation.findFirst({
         where: { id: dto.binLocationId, organizationId, warehouseId: warehouse.id },
       });
-      if (!bin) throw new BadRequestException("বিনটি এই গুদামের নয়");
+      if (!bin) throw badRequest("warehouse.theBinDoesNotBelongTo");
     }
 
     // Candidate lines: { productId, variantId, systemQty } with
@@ -497,12 +498,12 @@ export class WarehouseService {
 
   async setCountedQty(organizationId: string, actorId: string, sessionId: string, lineId: string, countedQty: number) {
     const session = await this.loadSessionOr404(organizationId, sessionId);
-    if (session.status !== "open") throw new BadRequestException("এই গণনা বন্ধ হয়ে গেছে");
+    if (session.status !== "open") throw badRequest("warehouse.thisCountIsClosed");
     if (!Number.isInteger(countedQty) || countedQty < 0) {
-      throw new BadRequestException("গণনা করা সংখ্যা অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("warehouse.theCountedQuantityMustBeAn");
     }
     const line = await (this.prisma as any).stockCountLine.findFirst({ where: { id: lineId, sessionId: session.id } });
-    if (!line) throw new NotFoundException("গণনার লাইনটি পাওয়া যায়নি");
+    if (!line) throw notFound("warehouse.theCountLineWasNotFound");
     const updated = await (this.prisma as any).stockCountLine.update({
       where: { id: line.id }, data: { countedQty },
     });
@@ -511,8 +512,8 @@ export class WarehouseService {
 
   async closeStockCount(organizationId: string, actorId: string, sessionId: string) {
     const session = await this.loadSessionOr404(organizationId, sessionId);
-    if (session.status !== "open") throw new BadRequestException("এই গণনা বন্ধ হয়ে গেছে");
-    if (!this.inventory) throw new BadRequestException("ইনভেন্টরি সার্ভিস পাওয়া যাচ্ছে না");
+    if (session.status !== "open") throw badRequest("warehouse.thisCountIsClosed");
+    if (!this.inventory) throw badRequest("warehouse.theInventoryServiceIsNotAvailable");
     const lines: any[] = ((await (this.prisma as any).stockCountLine.findMany({ where: { sessionId: session.id } })) ?? []);
 
     const applied: { lineId: string; delta: number }[] = [];

@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { createHash } from "node:crypto";
 import {
   ProductsService,
@@ -152,7 +153,7 @@ describe("RM9 presign", () => {
     for (const fileName of ["setup.exe", "run.bat", "script.sh", "app.js", "page.html", "noext"]) {
       await expect(
         svc.presignDigitalFile("org-1", "u1", product.id, { fileName, contentType: "application/octet-stream", sizeBytes: 100 }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toBeInstanceOf(ApiException);
     }
   });
 
@@ -163,11 +164,11 @@ describe("RM9 presign", () => {
     const svc = makeService(prisma, storage);
     await expect(
       svc.presignDigitalFile("org-1", "u1", product.id, { fileName: "big.zip", contentType: "application/zip", sizeBytes: DIGITAL_FILE_MAX_BYTES + 1 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     storage.mode = "local";
     await expect(
       svc.presignDigitalFile("org-1", "u1", product.id, { fileName: "book.pdf", contentType: "application/pdf", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("hands out a PRIVATE quarantine key for a valid declaration", async () => {
@@ -188,7 +189,7 @@ describe("RM9 presign", () => {
     const svc = makeService(prisma, new FakeStorage());
     await expect(
       svc.presignDigitalFile("org-1", "u1", product.id, { fileName: "a.pdf", contentType: "application/pdf", sizeBytes: 10 }),
-    ).rejects.toThrow(/not found/i);
+    ).rejects.toMatchObject({ code: "products.productNotFoundInOrg", status: 404 });
   });
 });
 
@@ -255,7 +256,7 @@ describe("RM9 complete", () => {
     await storage.put("private", pre.key, Buffer.from("short"));
     await expect(
       svc.completeDigitalFile("org-1", "u1", product.id, { key: pre.key, fileName: "ebook.pdf", sizeBytes: 100 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(await storage.get("private", pre.key)).toBeNull();
     expect(prisma.product.rows[0].digitalStorageKey ?? null).toBeNull();
     expect(prisma.storedFile.rows.length).toBe(0);
@@ -269,7 +270,7 @@ describe("RM9 complete", () => {
       svc.completeDigitalFile("org-1", "u1", product.id, {
         key: "_quarantine/org-2/digital/abc", fileName: "ebook.pdf", sizeBytes: 10,
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("replacing the file trashes the previous registry row; the product points at the new key", async () => {

@@ -153,7 +153,7 @@ describe("IN2 merge — moves rows and writes the reversible record", () => {
     await expect(s.service.merge(ORG, "a", { sourceId: "c-source", targetId: "c-source" })).rejects.toThrow();
     await expect(s.service.merge(ORG, "a", { sourceId: "c-source", targetId: "c-foreign" })).rejects.toThrow();
     await s.service.merge(ORG, "a", { sourceId: "c-source", targetId: "c-target" });
-    await expect(s.service.merge(ORG, "a", { sourceId: "c-source", targetId: "c-third" })).rejects.toThrow(/already merged/);
+    await expect(s.service.merge(ORG, "a", { sourceId: "c-source", targetId: "c-third" })).rejects.toMatchObject({ code: "customers.sourceCustomerWasAlreadyMerged" });
   });
 });
 

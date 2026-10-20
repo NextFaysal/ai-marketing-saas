@@ -1,12 +1,5 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  OnModuleInit,
-  Optional,
-} from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
+import { badRequest, forbidden, notFound } from "../i18n";
 import { MessagingService } from "../messaging/messaging.service";
 import * as webpush from "web-push";
 import { PrismaService } from "../prisma/prisma.service";
@@ -125,7 +118,7 @@ export class WebPushService implements OnModuleInit {
   async updateSetting(orgId: string, actorId: string, dto: UpdatePushSettingDto) {
     if (dto.promptDelaySec !== undefined) {
       if (!Number.isInteger(dto.promptDelaySec) || dto.promptDelaySec < 5 || dto.promptDelaySec > 300) {
-        throw new BadRequestException("প্রম্পট দেখানোর বিলম্ব ৫ থেকে ৩০০ সেকেন্ডের মধ্যে হতে হবে");
+        throw badRequest("webpush.promptDelayRange");
       }
     }
     const existing = await this.findSetting(orgId);
@@ -167,7 +160,7 @@ export class WebPushService implements OnModuleInit {
 
   private async requireOrgBySlug(orgSlug: string): Promise<any> {
     const org = await this.findOrgBySlug(orgSlug);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("webpush.shopNotFound");
     return org;
   }
 
@@ -189,21 +182,21 @@ export class WebPushService implements OnModuleInit {
   private validateSubscription(dto: PushSubscribeDto): { endpoint: string; p256dh: string; auth: string } {
     const endpoint = typeof dto?.endpoint === "string" ? dto.endpoint.trim() : "";
     if (!endpoint || endpoint.length > 1000) {
-      throw new BadRequestException("সাবস্ক্রিপশনের endpoint সঠিক নয়");
+      throw badRequest("webpush.endpointInvalid");
     }
     let parsed: URL;
     try {
       parsed = new URL(endpoint);
     } catch {
-      throw new BadRequestException("সাবস্ক্রিপশনের endpoint সঠিক নয়");
+      throw badRequest("webpush.endpointInvalid");
     }
     if (parsed.protocol !== "https:") {
-      throw new BadRequestException("সাবস্ক্রিপশনের endpoint অবশ্যই https হতে হবে");
+      throw badRequest("webpush.endpointMustBeHttps");
     }
     const p256dh = typeof dto?.keys?.p256dh === "string" ? dto.keys.p256dh.trim() : "";
     const auth = typeof dto?.keys?.auth === "string" ? dto.keys.auth.trim() : "";
     if (!p256dh || p256dh.length > 512 || !auth || auth.length > 512) {
-      throw new BadRequestException("সাবস্ক্রিপশনের keys সঠিক নয়");
+      throw badRequest("webpush.keysInvalid");
     }
     return { endpoint, p256dh, auth };
   }
@@ -244,7 +237,7 @@ export class WebPushService implements OnModuleInit {
     const org = await this.requireOrgBySlug(orgSlug);
     const setting = await this.findSetting(org.id);
     if (setting?.enabled !== true) {
-      throw new ForbiddenException("এই দোকানে ওয়েব পুশ এখন চালু নেই");
+      throw forbidden("webpush.pushDisabledForShop");
     }
     const sub = this.validateSubscription(dto);
     // A customerId only sticks when the customer really belongs
@@ -266,7 +259,7 @@ export class WebPushService implements OnModuleInit {
   async unsubscribe(orgSlug: string, dto: PushUnsubscribeDto) {
     const org = await this.requireOrgBySlug(orgSlug);
     const endpoint = typeof dto?.endpoint === "string" ? dto.endpoint.trim() : "";
-    if (!endpoint) throw new BadRequestException("সাবস্ক্রিপশনের endpoint সঠিক নয়");
+    if (!endpoint) throw badRequest("webpush.endpointInvalid");
     const existing = await this.t("webPushSubscription").findFirst({
       where: { organizationId: org.id, endpoint },
     });
@@ -295,8 +288,8 @@ export class WebPushService implements OnModuleInit {
   private validateSend(dto: PushSendDto): { title: string; body: string; url: string | null } {
     const title = typeof dto?.title === "string" ? dto.title.trim() : "";
     const body = typeof dto?.body === "string" ? dto.body.trim() : "";
-    if (!title || title.length > 120) throw new BadRequestException("পুশের শিরোনাম আবশ্যক এবং সর্বোচ্চ ১২০ অক্ষরের হতে হবে");
-    if (!body || body.length > 300) throw new BadRequestException("পুশের বার্তা আবশ্যক এবং সর্বোচ্চ ৩০০ অক্ষরের হতে হবে");
+    if (!title || title.length > 120) throw badRequest("webpush.titleRequired");
+    if (!body || body.length > 300) throw badRequest("webpush.bodyRequired");
     let url: string | null = null;
     if (dto?.url !== undefined && dto.url !== null && String(dto.url).trim() !== "") {
       const raw = String(dto.url).trim();
@@ -304,7 +297,7 @@ export class WebPushService implements OnModuleInit {
       // URLs are refused so a campaign can never push visitors
       // off the shop's own pages.
       if (!raw.startsWith("/") || raw.startsWith("//") || raw.length > 500) {
-        throw new BadRequestException("পুশের লিংক অবশ্যই দোকানের নিজের পেজের হতে হবে (যেমন /sale) — বাইরের লিংক দেওয়া যাবে না");
+        throw badRequest("webpush.linkMustBeOwnShop");
       }
       url = raw;
     }
@@ -315,7 +308,7 @@ export class WebPushService implements OnModuleInit {
     const publicKey = setting?.vapidPublicKey ? String(setting.vapidPublicKey) : "";
     const privateKey = unseal(setting?.vapidPrivateKeySealed);
     if (!publicKey || !privateKey) {
-      throw new BadRequestException("ওয়েব পুশের VAPID key এখনো তৈরি হয়নি — আগে সেটিংসে পুশ চালু করুন");
+      throw badRequest("webpush.vapidNotCreated");
     }
     return { publicKey, privateKey };
   }
@@ -523,7 +516,7 @@ export class WebPushService implements OnModuleInit {
     const send = this.validateSend(dto);
     const setting = await this.findSetting(orgId);
     if (setting?.enabled !== true) {
-      throw new BadRequestException("ওয়েব পুশ চালু না থাকলে ক্যাম্পেইন পাঠানো যাবে না — আগে সেটিংসে পুশ চালু করুন");
+      throw badRequest("webpush.campaignPushDisabled");
     }
     this.requireKeys(setting);
     const campaign = await this.t("webPushCampaign").create({
@@ -584,7 +577,7 @@ export class WebPushService implements OnModuleInit {
     const campaign = await this.t("webPushCampaign").findFirst({
       where: { id: campaignId, organizationId: orgId },
     });
-    if (!campaign) throw new NotFoundException("পুশ ক্যাম্পেইনটি পাওয়া যায়নি");
+    if (!campaign) throw notFound("webpush.campaignNotFound");
     const deliveries = await this.t("webPushDelivery").findMany({ where: { campaignId: campaign.id } });
     const deliverySummary = { sent: 0, failed: 0, gone: 0, total: 0 };
     for (const d of deliveries as any[]) {

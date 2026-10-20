@@ -8,7 +8,13 @@
  * (validateSegmentCriteria) so the form can refuse BEFORE
  * sending, with the same limits and Bengali messages.
  */
+import type { UiLocale } from "@repo/contracts";
+import { crmBn, crmEn } from "./i18n/crm";
+import { interpolate } from "./i18n/lookup";
 import { minorToTaka, takaToMinor } from "./orders-on1";
+
+/** crm dictionary for the given UI locale (bn is the default). */
+const D = (locale?: string) => (locale === "en" ? crmEn : crmBn);
 
 // --- Customer tags ------------------------------------------------
 
@@ -28,11 +34,12 @@ export function normalizeTags(tags: readonly string[]): string[] {
 
 /** Mirror of the server tag rules: at most 10 tags, each
  * 1–30 chars after trimming. Returns a Bengali error or null. */
-export function validateTags(tags: readonly string[]): string | null {
-  if (tags.length > MAX_CUSTOMER_TAGS) return "সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে";
+export function validateTags(tags: readonly string[], locale: UiLocale = "bn"): string | null {
+  const d = D(locale);
+  if (tags.length > MAX_CUSTOMER_TAGS) return d.zzGb6TagMax;
   for (const raw of tags) {
     const tag = String(raw ?? "").trim();
-    if (tag.length < 1 || tag.length > MAX_TAG_LENGTH) return "প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে";
+    if (tag.length < 1 || tag.length > MAX_TAG_LENGTH) return d.zzGb6TagLength;
   }
   return null;
 }
@@ -40,13 +47,14 @@ export function validateTags(tags: readonly string[]): string | null {
 /** Validate ONE candidate tag against the current list (the
  * tags editor adds one chip at a time). Checks the candidate's
  * own length, the 10-tag ceiling and duplicates. */
-export function validateNewTag(existing: readonly string[], candidate: string): string | null {
+export function validateNewTag(existing: readonly string[], candidate: string, locale: UiLocale = "bn"): string | null {
+  const d = D(locale);
   const tag = candidate.trim();
-  if (!tag) return "ট্যাগ লিখুন।";
-  if (tag.length > MAX_TAG_LENGTH) return "প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে";
+  if (!tag) return d.zzGb6TagEmpty;
+  if (tag.length > MAX_TAG_LENGTH) return d.zzGb6TagLength;
   const current = normalizeTags(existing);
-  if (current.includes(tag)) return "এই ট্যাগটি ইতিমধ্যে আছে।";
-  if (current.length >= MAX_CUSTOMER_TAGS) return "সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে";
+  if (current.includes(tag)) return d.zzGb6TagDuplicate;
+  if (current.length >= MAX_CUSTOMER_TAGS) return d.zzGb6TagMax;
   return null;
 }
 
@@ -54,13 +62,19 @@ export function validateNewTag(existing: readonly string[], candidate: string): 
 
 export type CustomerTypeFilter = "all" | "first" | "repeat" | "vip" | "blocked";
 
-export const CUSTOMER_TYPE_OPTIONS: { value: CustomerTypeFilter; label: string }[] = [
-  { value: "all", label: "সব" },
-  { value: "first", label: "প্রথমবার" },
-  { value: "repeat", label: "পুনরাবৃত্ত" },
-  { value: "vip", label: "VIP" },
-  { value: "blocked", label: "ব্লক করা" },
-];
+/** Customer-type filter options for the given UI locale (bn default). */
+export function customerTypeOptions(locale: UiLocale = "bn"): { value: CustomerTypeFilter; label: string }[] {
+  const d = D(locale);
+  return [
+    { value: "all", label: d.zzGb6TypeAll },
+    { value: "first", label: d.zzGb6TypeFirst },
+    { value: "repeat", label: d.zzGb6TypeRepeat },
+    { value: "vip", label: d.zzGb6TypeVip },
+    { value: "blocked", label: d.zzGb6TypeBlocked },
+  ];
+}
+
+export const CUSTOMER_TYPE_OPTIONS: { value: CustomerTypeFilter; label: string }[] = customerTypeOptions("bn");
 
 export interface CustomerListFilters {
   q: string;
@@ -130,13 +144,15 @@ export const EMPTY_SEGMENT_DRAFT: SegmentCriteriaDraft = {
  */
 export function buildSegmentCriteria(
   draft: SegmentCriteriaDraft,
+  locale: UiLocale = "bn",
 ): { criteria: SegmentCriteria | null; errors: string[] } {
+  const d = D(locale);
   const errors: string[] = [];
   const criteria: SegmentCriteria = {};
 
   const tags = normalizeTags(draft.tagsAny);
   if (tags.length > 0 || draft.tagsAny.length > 0) {
-    const tagError = validateTags(draft.tagsAny.map((t) => t.trim()).filter(Boolean));
+    const tagError = validateTags(draft.tagsAny.map((t) => t.trim()).filter(Boolean), locale);
     if (tagError) errors.push(tagError);
     else if (tags.length) criteria.tagsAny = tags;
   }
@@ -144,12 +160,12 @@ export function buildSegmentCriteria(
   if (draft.repeatOnly) criteria.isRepeat = true;
   if (draft.minSpentTaka.trim()) {
     const minor = takaToMinor(draft.minSpentTaka);
-    if (minor === null) errors.push("সর্বনিম্ন কেনাকাটা টাকায় ঠিকভাবে লিখুন (যেমন: 5000 বা 5000.50)।");
+    if (minor === null) errors.push(d.zzGb6MinSpentInvalid);
     else criteria.minSpentMinor = minor;
   }
   const district = draft.district.trim();
   if (district) {
-    if (district.length > 100) errors.push("জেলার নাম ১–১০০ অক্ষরের হতে হবে।");
+    if (district.length > 100) errors.push(d.zzGb6DistrictLength);
     else criteria.district = district;
   }
 
@@ -178,26 +194,28 @@ export function segmentCriteriaToDraft(criteria: SegmentCriteria | null | undefi
 export function buildSegmentPayload(
   name: string,
   draft: SegmentCriteriaDraft,
+  locale: UiLocale = "bn",
 ): { payload: { name: string; criteria: SegmentCriteria } | null; errors: string[] } {
   const errors: string[] = [];
   const trimmed = name.trim();
-  if (!trimmed || trimmed.length > 120) errors.push("সেগমেন্টের নাম ১–১২০ অক্ষরের হতে হবে।");
-  const { criteria, errors: criteriaErrors } = buildSegmentCriteria(draft);
+  if (!trimmed || trimmed.length > 120) errors.push(D(locale).zzGb6SegmentNameLength);
+  const { criteria, errors: criteriaErrors } = buildSegmentCriteria(draft, locale);
   errors.push(...criteriaErrors);
   if (errors.length || !criteria) return { payload: null, errors };
   return { payload: { name: trimmed, criteria }, errors: [] };
 }
 
-/** Short Bengali summary of a segment's criteria for list rows. */
-export function segmentCriteriaSummary(criteria: SegmentCriteria | null | undefined): string {
+/** Short summary of a segment's criteria for list rows (bn default). */
+export function segmentCriteriaSummary(criteria: SegmentCriteria | null | undefined, locale: UiLocale = "bn"): string {
+  const d = D(locale);
   const c = criteria ?? {};
   const parts: string[] = [];
-  if (c.tagsAny?.length) parts.push(`ট্যাগ: ${c.tagsAny.join(", ")}`);
-  if (c.isVip === true) parts.push("VIP");
-  if (c.isVip === false) parts.push("VIP নয়");
-  if (c.isRepeat === true) parts.push("পুনরাবৃত্ত");
-  if (c.isRepeat === false) parts.push("প্রথমবার");
-  if (c.minSpentMinor) parts.push(`কমপক্ষে ৳${minorToTaka(c.minSpentMinor)} কেনাকাটা`);
-  if (c.district) parts.push(`জেলা: ${c.district}`);
-  return parts.length ? parts.join(" · ") : "কোনো শর্ত নেই — সব গ্রাহক";
+  if (c.tagsAny?.length) parts.push(interpolate(d.zzGb6SummaryTags, { tags: c.tagsAny.join(", ") }));
+  if (c.isVip === true) parts.push(d.zzGb6SummaryVip);
+  if (c.isVip === false) parts.push(d.zzGb6SummaryNotVip);
+  if (c.isRepeat === true) parts.push(d.zzGb6SummaryRepeat);
+  if (c.isRepeat === false) parts.push(d.zzGb6SummaryFirst);
+  if (c.minSpentMinor) parts.push(interpolate(d.zzGb6SummaryMinSpent, { amount: minorToTaka(c.minSpentMinor) }));
+  if (c.district) parts.push(interpolate(d.zzGb6SummaryDistrict, { district: c.district }));
+  return parts.length ? parts.join(" · ") : d.zzGb6SummaryNone;
 }

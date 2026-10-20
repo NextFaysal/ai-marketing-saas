@@ -1,3 +1,5 @@
+import { catalogText, type ApiLocale } from "../i18n/catalog/send-locale";
+
 /**
  * MS7 — pure helpers for the per-broadcast report. Kept free of
  * Prisma so the funnel arithmetic, the failure-reason grouping
@@ -70,7 +72,7 @@ export interface FunnelLite {
  * no comparable signal, or an exact tie yields leader null
  * with the reason in the note.
  */
-export function abSuggestion(variants: { A?: FunnelLite | null; B?: FunnelLite | null }): {
+export function abSuggestion(variants: { A?: FunnelLite | null; B?: FunnelLite | null }, locale: ApiLocale = "bn"): {
   basis: "readRate" | "clickRate" | null;
   leader: "A" | "B" | null;
   note: string;
@@ -78,28 +80,28 @@ export function abSuggestion(variants: { A?: FunnelLite | null; B?: FunnelLite |
   const a = variants.A ?? null;
   const b = variants.B ?? null;
   if (!a || !b) {
-    return { basis: null, leader: null, note: "দুটি ভ্যারিয়েন্টের ডেটাই পাওয়া যায়নি — পরামর্শ দেওয়া যাচ্ছে না।" };
+    return { basis: null, leader: null, note: catalogText("messaging.abNoData", locale) };
   }
   const basis: "readRate" | "clickRate" | null =
     a.read !== null && b.read !== null ? "readRate"
     : a.clickedRecipients !== null && b.clickedRecipients !== null ? "clickRate"
     : null;
   if (!basis) {
-    return { basis: null, leader: null, note: "এই চ্যানেলে তুলনার মতো read/click ডেটা পাওয়া যায় না — পরামর্শ দেওয়া যাচ্ছে না।" };
+    return { basis: null, leader: null, note: catalogText("messaging.abNoComparable", locale) };
   }
   if (a.sent < 30 || b.sent < 30) {
-    return { basis, leader: null, note: `নমুনা খুব ছোট (A: ${a.sent}টি, B: ${b.sent}টি পাঠানো; কমপক্ষে ৩০টি করে দরকার) — পরামর্শ দেওয়া হচ্ছে না।` };
+    return { basis, leader: null, note: catalogText("messaging.abSampleTooSmall", locale, { aSent: a.sent, bSent: b.sent }) };
   }
   const rate = (f: FunnelLite) => (basis === "readRate" ? (f.read ?? 0) / f.sent : (f.clickedRecipients ?? 0) / f.sent);
   const ra = rate(a);
   const rb = rate(b);
   const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
   if (ra === rb) {
-    return { basis, leader: null, note: `দুটি ভ্যারিয়েন্টের হার সমান (${pct(ra)}) — কোনোটিকেই এগিয়ে বলা যাচ্ছে না।` };
+    return { basis, leader: null, note: catalogText("messaging.abTie", locale, { rate: pct(ra) }) };
   }
   const leader = ra > rb ? "A" : "B";
   return {
     basis, leader,
-    note: `${basis === "readRate" ? "Read" : "Click"} হার — A: ${pct(ra)}, B: ${pct(rb)}। এটি শুধু পরামর্শ; কিছুই স্বয়ংক্রিয়ভাবে পাঠানো বা বেছে নেওয়া হয়নি।`,
+    note: catalogText("messaging.abNote", locale, { basis: basis === "readRate" ? "Read" : "Click", aRate: pct(ra), bRate: pct(rb) }),
   };
 }

@@ -216,8 +216,8 @@ describe("SP1 discover (picker step 1)", () => {
     const db = fakeDb();
     jest.spyOn(MetaClient.prototype, "verifyToken").mockRejectedValue(new Error("Invalid OAuth access token - Cannot parse access token"));
     const err = await service(db).discoverMetaPages(ORG, { accessToken: "bad-token-value" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Meta token verification failed: Invalid OAuth access token");
+    expect(err).toMatchObject({ code: "social.metaTokenVerificationFailed" });
+    expect(err.message).toContain("Meta token verification ব্যর্থ হয়েছে: Invalid OAuth access token");
     expect(db.integrations).toHaveLength(0);
     expect(db.credentials).toHaveLength(0);
     expect(db.socialAccounts).toHaveLength(0);
@@ -229,8 +229,8 @@ describe("SP1 discover (picker step 1)", () => {
     jest.spyOn(MetaClient.prototype, "verifyToken").mockResolvedValue({ id: "user-42" });
     jest.spyOn(MetaClient.prototype, "listPages").mockRejectedValue(new Error("(#190) OAuthException"));
     const err = await service(db).discoverMetaPages(ORG, { accessToken: "some-token" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Could not list Meta pages: (#190)");
+    expect(err).toMatchObject({ code: "social.couldNotListMetaPages" });
+    expect(err.message).toContain("Meta pages তালিকা করা যায়নি: (#190)");
     expect(db.integrations).toHaveLength(0);
     expect(db.auditRows).toHaveLength(0);
   });
@@ -273,7 +273,7 @@ describe("SP1 connect", () => {
     const svc = service(db);
     for (const pageIds of [[], undefined]) {
       const err = await svc.connectMetaPages(ORG, ACTOR, { accessToken: "tok", pageIds } as any).catch((e) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toMatchObject({ code: "social.noPageHasBeenSelectedChoose" });
       expect(err.message).toContain("কোনো Page নির্বাচন করা হয়নি");
     }
     expect(db.integrations).toHaveLength(0);
@@ -283,7 +283,7 @@ describe("SP1 connect", () => {
   it("an unknown pageId → Bengali 400 BEFORE any write", async () => {
     const db = fakeDb(); stubMetaOk();
     const err = await service(db).connectMetaPages(ORG, ACTOR, { accessToken: "tok", pageIds: ["page-1", "page-zzz"] }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theSelectedPageWasNotFound" });
     expect(err.message).toContain("page-zzz");
     expect(db.integrations).toHaveLength(0);
     expect(db.credentials).toHaveLength(0);
@@ -295,8 +295,8 @@ describe("SP1 connect", () => {
     const db = fakeDb();
     jest.spyOn(MetaClient.prototype, "verifyToken").mockRejectedValue(new Error("Session has expired"));
     const err = await service(db).connectMetaPages(ORG, ACTOR, { accessToken: "tok", pageIds: ["page-1"] }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toContain("Meta token verification failed: Session has expired");
+    expect(err).toMatchObject({ code: "social.metaTokenVerificationFailed" });
+    expect(err.message).toContain("Meta token verification ব্যর্থ হয়েছে: Session has expired");
     expect(db.integrations).toHaveLength(0);
   });
 
@@ -424,7 +424,7 @@ describe("SP1 disconnect", () => {
     expect(again.status).toBe("disconnected");
 
     const err = await svc.disconnectAccount(ORG2, ACTOR, acc.id).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "social.socialAccountNotFoundInThis" });
   });
 });
 
@@ -433,7 +433,7 @@ describe("SP1 media", () => {
     const db = fakeDb(); stubMediaStore();
     const pdf = Buffer.from("%PDF-1.4 not-an-image").toString("base64");
     const err = await service(db).uploadMedia(ORG, ACTOR, { dataBase64: pdf, fileName: "doc.pdf", contentType: "application/pdf" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.onlyImagesOrVideosCanBe" });
     expect(err.message).toContain("শুধু ছবি বা ভিডিও আপলোড করা যাবে");
     expect(db.mediaAssets).toHaveLength(0);
   });
@@ -442,11 +442,11 @@ describe("SP1 media", () => {
     const db = fakeDb(); stubMediaStore();
     const svc = service(db);
     const bad = await svc.uploadMedia(ORG, ACTOR, { dataBase64: "!!!not-base64!!!" }).catch((e) => e);
-    expect(bad).toBeInstanceOf(BadRequestException);
+    expect(bad).toMatchObject({ code: "social.theImageVideoDataIsNot" });
     const big = Buffer.alloc(2_100_001);
     PNG_BYTES.copy(big, 0);
     const tooBig = await svc.uploadMedia(ORG, ACTOR, { dataBase64: big.toString("base64") }).catch((e) => e);
-    expect(tooBig).toBeInstanceOf(BadRequestException);
+    expect(tooBig).toMatchObject({ code: "social.filesOnThisPathCanBe" });
     expect(tooBig.message).toContain("২.১ MB");
     expect(db.mediaAssets).toHaveLength(0);
   });
@@ -468,7 +468,7 @@ describe("SP1 media", () => {
     expect(file.bytes.equals(PNG_BYTES)).toBe(true);
     expect(file.contentType).toBe("image/png");
     const foreign = await svc.getMediaFile(ORG2, asset.id).catch((e) => e);
-    expect(foreign).toBeInstanceOf(NotFoundException);
+    expect(foreign).toMatchObject({ code: "social.mediaAssetNotFoundInThis" });
   });
 
   it("public link: opt-in, idempotent, resolvable by token only; the token never lands in audit metadata", async () => {
@@ -529,19 +529,19 @@ describe("SP1 posts", () => {
     const foreign = seedAsset(db, { id: "asset-foreign", organizationId: ORG2, kind: "image" });
 
     const foreignErr = await svc.createPost(ORG, ACTOR, { socialAccountId: account.id, caption: "hi", mediaRefs: [{ assetId: foreign.id, kind: "image" }] }).catch((e) => e);
-    expect(foreignErr).toBeInstanceOf(BadRequestException);
+    expect(foreignErr).toMatchObject({ code: "social.mediaAssetNotFound" });
     expect(foreignErr.message).toContain("asset-foreign");
 
     const kindErr = await svc.createPost(ORG, ACTOR, { socialAccountId: account.id, caption: "hi", mediaRefs: [{ assetId: own.id, kind: "video" }] }).catch((e) => e);
-    expect(kindErr).toBeInstanceOf(BadRequestException);
+    expect(kindErr).toMatchObject({ code: "social.mediaAssetTypeMismatchTheAsset" });
     expect(kindErr.message).toContain("asset-own");
 
     const captionErr = await svc.createPost(ORG, ACTOR, { socialAccountId: account.id, caption: "   " }).catch((e) => e);
-    expect(captionErr).toBeInstanceOf(BadRequestException);
+    expect(captionErr).toMatchObject({ code: "social.theCaptionCannotBeLeftEmpty" });
 
     for (const linkUrl of ["notaurl", "ftp://example.com/x"]) {
       const linkErr = await svc.createPost(ORG, ACTOR, { socialAccountId: account.id, caption: "hi", linkUrl }).catch((e) => e);
-      expect(linkErr).toBeInstanceOf(BadRequestException);
+      expect(linkErr).toMatchObject({ code: "social.linkurlHttpSUrl" });
     }
     expect(db.socialPosts).toHaveLength(0);
   });
@@ -560,14 +560,14 @@ describe("SP1 posts", () => {
     expect(scanKeys(post)).toEqual([]);
 
     const err = await svc.createPost(ORG2, ACTOR, { socialAccountId: account.id, caption: "hi" }).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "social.socialAccountNotFoundInThis" });
   });
 
   it("list filters: invalid status → Bengali 400; status/accountId filters apply; foreign org sees nothing", async () => {
     const { svc, account } = await setup();
     await svc.createPost(ORG, ACTOR, { socialAccountId: account.id, caption: "one" });
     const badStatus = await svc.listPosts(ORG, { status: "bogus" }).catch((e) => e);
-    expect(badStatus).toBeInstanceOf(BadRequestException);
+    expect(badStatus).toMatchObject({ code: "social.invalidPostStatus" });
     expect((await svc.listPosts(ORG, { status: "draft" })).length).toBe(1);
     expect((await svc.listPosts(ORG, { status: "published" })).length).toBe(0);
     expect((await svc.listPosts(ORG, { accountId: account.id })).length).toBe(1);
@@ -586,10 +586,10 @@ describe("SP1 posts", () => {
     db.socialPosts.push(scheduledRow);
 
     const patchErr = await svc.updatePost(ORG, ACTOR, "post-scheduled", { caption: "x" }).catch((e) => e);
-    expect(patchErr).toBeInstanceOf(ConflictException);
+    expect(patchErr).toMatchObject({ code: "social.onlyDraftPostsCanBeEdited" });
     expect(patchErr.message).toContain("শুধু Draft পোস্ট সম্পাদনা করা যায়");
     const delErr = await svc.deletePost(ORG, ACTOR, "post-scheduled").catch((e) => e);
-    expect(delErr).toBeInstanceOf(ConflictException);
+    expect(delErr).toMatchObject({ code: "social.onlyDraftPostsCanBeDeleted" });
 
     const updated = await svc.updatePost(ORG, ACTOR, draft.id, { caption: "edited", linkUrl: "https://a.b/c" });
     expect(updated.caption).toBe("edited");
@@ -597,7 +597,7 @@ describe("SP1 posts", () => {
     expect(db.auditRows.some((r: Row) => r.action === "social.post_updated")).toBe(true);
 
     const foreign = await svc.getPost(ORG2, draft.id).catch((e) => e);
-    expect(foreign).toBeInstanceOf(NotFoundException);
+    expect(foreign).toMatchObject({ code: "social.socialPostNotFoundInThis" });
 
     const del = await svc.deletePost(ORG, ACTOR, draft.id);
     expect(del).toEqual({ deleted: true, id: draft.id });

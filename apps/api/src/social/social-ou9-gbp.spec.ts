@@ -393,7 +393,7 @@ describe("OU9 GBP connect flow", () => {
     expect(db.socialAccounts).toHaveLength(1);
     // The pick state is single-use.
     await expect(svc.selectGoogleBusinessLocation(ORG, ACTOR, { state: pickState, locationId: "accounts/111/locations/222" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "social.locationGoogleBusinessProfileConnect" });
   });
 
   it("callback with ZERO locations: honest error redirect, nothing stored", async () => {

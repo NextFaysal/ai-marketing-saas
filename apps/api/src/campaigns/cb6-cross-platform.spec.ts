@@ -107,6 +107,6 @@ describe("CB6 cross-platform drafts", () => {
     const plan: any = await svc.createPlan("org", "u1", { name: "Draft", objective: "OUTCOME_SALES", adAccountId: "acc-meta" });
     await expect(svc.crossPlatformDraft("org", plan.id, "u1", { platform: "google", targetAdAccountId: "acc-google" })).rejects.toThrow(/approved/);
     const ok = await approvedPlan(svc, tables, { interests: ["Fashion"] });
-    await expect(svc.crossPlatformDraft("org", ok.plan.id, "u1", { platform: "google", targetAdAccountId: "acc-tiktok" })).rejects.toThrow(/not google/);
+    await expect(svc.crossPlatformDraft("org", ok.plan.id, "u1", { platform: "google", targetAdAccountId: "acc-tiktok" })).rejects.toMatchObject({ code: "campaigns.targetAccountIsAAccountNot" });
   });
 });

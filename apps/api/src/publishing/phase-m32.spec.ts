@@ -78,7 +78,7 @@ describe("Milestone 32 — TikTok video creative", () => {
     await expect(svc.publishTikTok("org-1", "u-1", {
       adAccountId: "acc-1", name: "No Creative", dailyBudget: "10", countryCodes: ["BD"],
       adText: "x", landingUrl: "https://shop.example/p",
-    })).rejects.toThrow(/image URL or a video URL/);
+    })).rejects.toMatchObject({ code: "publishing.provideAnImageUrlOrA" });
   });
 });
 
@@ -134,9 +134,9 @@ describe("Milestone 32 — Google Performance Max", () => {
   it("validation refuses thin asset sets before any API call or record", async () => {
     const p = prismaWith("google");
     const svc = new PublishingService(p, audit);
-    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, headlines: ["only", "two"] })).rejects.toThrow(/3-15 headlines/);
-    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, businessName: "x".repeat(26) })).rejects.toThrow(/25 characters/);
-    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, imageUrls: [] })).rejects.toThrow(/1-20 marketing image/);
+    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, headlines: ["only", "two"] })).rejects.toMatchObject({ code: "publishing.performanceMaxNeeds315Headlines" });
+    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, businessName: "x".repeat(26) })).rejects.toMatchObject({ code: "publishing.businessNameIsRequiredMax25" });
+    await expect(svc.publishGooglePmax("org-1", "u-1", { ...pmaxDto, imageUrls: [] })).rejects.toMatchObject({ code: "publishing.performanceMaxNeeds120Marketing" });
     expect(p.platformPublication.rows).toHaveLength(0);
     expect(calls).toHaveLength(0);
   });

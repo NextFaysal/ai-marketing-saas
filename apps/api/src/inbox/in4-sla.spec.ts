@@ -209,10 +209,10 @@ describe("IN4 settings round-trip + validation", () => {
   });
   it("refuses invalid layering at the write boundary", async () => {
     const { svc } = setup();
-    await expect(svc.updateSettings(ORG, "owner", { slaByChannel: { evil: 30 } as any })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(ORG, "owner", { slaByChannel: { whatsapp: 0 } })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(ORG, "owner", { slaVipMinutes: 0 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateSettings(ORG, "owner", { slaEscalateAfterMinutes: 99999 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSettings(ORG, "owner", { slaByChannel: { evil: 30 } as any })).rejects.toMatchObject({ code: "inbox.unknownChannel" });
+    await expect(svc.updateSettings(ORG, "owner", { slaByChannel: { whatsapp: 0 } })).rejects.toMatchObject({ code: "inbox.invalidSlaMinutesForChannelMust" });
+    await expect(svc.updateSettings(ORG, "owner", { slaVipMinutes: 0 })).rejects.toMatchObject({ code: "inbox.slavipminutesMustBeNullOrAn" });
+    await expect(svc.updateSettings(ORG, "owner", { slaEscalateAfterMinutes: 99999 })).rejects.toMatchObject({ code: "inbox.slaescalateafterminutesMustBeAnInteger1" });
   });
 });
 

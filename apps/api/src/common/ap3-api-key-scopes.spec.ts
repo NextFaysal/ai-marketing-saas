@@ -29,9 +29,10 @@ describe("AP3 scope helpers", () => {
   it("validateScopes rejects junk and accepts the catalog", () => {
     expect(validateScopes(undefined)).toEqual(["*"]);
     expect(validateScopes(["tenants:read", "billing:*"])).toEqual(["tenants:read", "billing:*"]);
-    expect(() => validateScopes(["nope:read"])).toThrow(/Unknown scope area/);
-    expect(() => validateScopes(["tenants:fly"])).toThrow(/Unknown scope grant/);
-    expect(() => validateScopes([])).toThrow(/at least one/);
+    const codeOf = (fn: () => unknown) => { try { fn(); return null; } catch (e: any) { return e?.code ?? null; } };
+    expect(codeOf(() => validateScopes(["nope:read"]))).toBe("common.apiKeyScopeAreaUnknown");
+    expect(codeOf(() => validateScopes(["tenants:fly"]))).toBe("common.apiKeyScopeGrantUnknown");
+    expect(codeOf(() => validateScopes([]))).toBe("common.apiKeyScopesChooseAtLeastOne");
   });
 });
 
@@ -56,7 +57,7 @@ describe("AP3 JwtAuthGuard enforcement", () => {
   it("a tenants:read key can read orgs but not write them", async () => {
     const g = guardWith(["tenants:read"]);
     await expect(g.canActivate(ctxFor("GET", "/admin/orgs").ctx)).resolves.toBe(true);
-    await expect(g.canActivate(ctxFor("POST", "/admin/orgs/x/suspend").ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(g.canActivate(ctxFor("POST", "/admin/orgs/x/suspend").ctx)).rejects.toMatchObject({ code: "common.apiKeyLacksScope", status: 403 });
   });
   it("a billing key is refused on tenants routes, with the grant named", async () => {
     const g = guardWith(["billing:*"]);

@@ -3,6 +3,10 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { fmtMoneyBn, fmtNumBn } from "@/lib/money-bn";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 import { API_URL } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 
@@ -65,9 +69,9 @@ export default function PublicReportPage() {
           {report?.branding?.name ?? report?.business ?? "Campaign Report"}
         </p>
         <h1 className="mt-1 text-2xl font-bold">{report?.title ?? "Campaign Report"}</h1>
-        {report ? <p className="text-sm text-slate-500">শেষ {report.days} দিন · তৈরি: {new Date(report.generatedAt).toLocaleString("bn-BD")}</p> : null}
+        {report ? <p className="text-sm text-slate-500">{t.reportPublic.lastDaysPrefix}{fmtNumber("bn", report.days)}{t.reportPublic.daysSuffix}{fmtDateTime("bn", report.generatedAt)}</p> : null}
       </header>
-      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">এই রিপোর্ট লিংকটি পাওয়া যায়নি বা মেয়াদ শেষ হয়ে গেছে। ({error})</div> : null}
+      {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t.reportPublic.notFoundPrefix}{error})</div> : null}
       {!report && !error ? (
         <div className="space-y-4">
           <div className="space-y-3" aria-hidden>
@@ -79,7 +83,7 @@ export default function PublicReportPage() {
             </div>
             <div className="skeleton h-40 w-full" />
           </div>
-          <p className="sr-only">লোড হচ্ছে...</p>
+          <p className="sr-only">{t.reportPublic.loading}</p>
         </div>
       ) : null}
       {report?.kind === "executive" && report.sales && report.ads ? (<>
@@ -92,7 +96,7 @@ export default function PublicReportPage() {
             ["Ad Spend", money(report.ads.spendMinor)],
             ["MER", report.ads.mer === null ? "—" : String(report.ads.mer)],
             ["Platform ROAS", report.ads.platformRoas === null ? "—" : String(report.ads.platformRoas)],
-            ["নতুন Customer", String(report.customers?.newInRange ?? 0)],
+            [t.reportPublic.newCustomer, String(report.customers?.newInRange ?? 0)],
           ].map(([label, value]) => (
             <div key={label} className="rounded-xl border bg-white p-4">
               <div className="text-xs text-slate-400">{label}</div>
@@ -113,7 +117,7 @@ export default function PublicReportPage() {
         {report.operations && report.operations.topProducts.length > 0 ? (
           <section className="overflow-hidden rounded-xl border bg-white">
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Top Product</th><th className="px-4 py-3">পরিমাণ</th><th className="px-4 py-3">বিক্রি</th></tr></thead>
+              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Top Product</th><th className="px-4 py-3">{t.reportPublic.quantityHeader}</th><th className="px-4 py-3">{t.reportPublic.salesHeader}</th></tr></thead>
               <tbody>{report.operations.topProducts.map((p, i) => (
                 <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{p.name}</td><td className="px-4 py-3">{p.quantity}</td><td className="px-4 py-3">{money(p.totalMinor)}</td></tr>
               ))}</tbody>
@@ -126,7 +130,7 @@ export default function PublicReportPage() {
         const ct = report.totals as unknown as CampaignTotals | null;
         return (<>
           <p className="text-sm leading-[1.7] text-slate-500">Campaign: <b>{report.plan?.name}</b> · Objective: {report.plan?.objective}</p>
-          {!report.published || !ct ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">এই Campaign-এর কোনো সিঙ্ক হওয়া Performance Data এখনো নেই।</p> : (<>
+          {!report.published || !ct ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{t.reportPublic.noCampaignData}</p> : (<>
             <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[
                 ["Ad Spend", fmtMoneyBn(ct.spendMinor)],
@@ -135,7 +139,7 @@ export default function PublicReportPage() {
                 ["CTR", ct.ctrPercent === null ? "—" : `${ct.ctrPercent}%`],
                 ["Conversions (Platform)", String(ct.conversions)],
                 ["CPA", ct.cpaMinor === null ? "—" : fmtMoneyBn(ct.cpaMinor)],
-                ["নিজস্ব অর্ডার (Associated)", String(ct.firstPartyOrders)],
+                [t.reportPublic.associatedOrders, String(ct.firstPartyOrders)],
                 ["Revenue (Associated)", fmtMoneyBn(ct.firstPartyRevenueMinor)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border bg-white p-4">
@@ -166,10 +170,10 @@ export default function PublicReportPage() {
                       ))}</tbody>
                     </table>
                   </div>
-                ) : <p className="text-xs text-slate-400">এই ভাগে কোনো Data নেই।</p>}
+                ) : <p className="text-xs text-slate-400">{t.reportPublic.noDataInSegment}</p>}
               </section>
             )) : null}
-            {report.pacing ? <p className="text-xs leading-[1.7] text-slate-500">Pacing ({report.pacing.label}): অবস্থা {report.pacing.status} · খরচ হয়েছে {fmtMoneyBn(report.pacing.spentMinor)}{report.pacing.expectedMinor ? ` · এই সময়ে প্রত্যাশিত ${fmtMoneyBn(report.pacing.expectedMinor)}` : ""}{report.pacing.daysElapsed !== null ? ` · দিন ${report.pacing.daysElapsed}${report.pacing.daysTotal ? `/${report.pacing.daysTotal}` : ""}` : ""}</p> : null}
+            {report.pacing ? <p className="text-xs leading-[1.7] text-slate-500">Pacing ({report.pacing.label}):{t.reportPublic.pacingStatusPrefix}{report.pacing.status}{t.reportPublic.pacingSpentPrefix}{fmtMoneyBn(report.pacing.spentMinor)}{report.pacing.expectedMinor ? `${t.reportPublic.pacingExpectedPrefix}${fmtMoneyBn(report.pacing.expectedMinor)}` : ""}{report.pacing.daysElapsed !== null ? `${t.reportPublic.pacingDaysPrefix}${fmtNumber("bn", report.pacing.daysElapsed)}${report.pacing.daysTotal ? `/${fmtNumber("bn", report.pacing.daysTotal)}` : ""}` : ""}</p> : null}
           </>)}
           <p className="text-xs text-slate-400">{report.note}</p>
         </>);
@@ -194,13 +198,13 @@ export default function PublicReportPage() {
         </section>
         {report.delivery ? (
           <section>
-            <h2 className="mb-2 text-sm font-bold text-slate-700">🚚 ডেলিভারি সারসংক্ষেপ (এই সময়ে)</h2>
+            <h2 className="mb-2 text-sm font-bold text-slate-700">{t.reportPublic.deliverySummary}</h2>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[
-                ["মোট পার্সেল পাঠানো হয়েছে", String(report.delivery.shipments)],
-                ["ডেলিভারি হয়েছে", String(report.delivery.delivered)],
-                ["রিটার্ন এসেছে", String(report.delivery.returned)],
-                ["রিটার্ন হার", report.delivery.returnRatePercent === null ? "—" : `${report.delivery.returnRatePercent}%`],
+                [t.reportPublic.deliveryShipments, String(report.delivery.shipments)],
+                [t.reportPublic.deliveryDelivered, String(report.delivery.delivered)],
+                [t.reportPublic.deliveryReturned, String(report.delivery.returned)],
+                [t.reportPublic.deliveryReturnRate, report.delivery.returnRatePercent === null ? "—" : `${report.delivery.returnRatePercent}%`],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border bg-white p-4">
                   <div className="text-xs text-slate-400">{label}</div>
@@ -214,7 +218,8 @@ export default function PublicReportPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3">Campaign</th><th className="px-4 py-3">Spend</th><th className="px-4 py-3">Clicks</th><th className="px-4 py-3">CTR</th><th className="px-4 py-3">Conv.</th><th className="px-4 py-3">ROAS</th></tr></thead>
             <tbody>{report.campaigns.map((c, i) => (
-              <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{c.name}</td><td className="px-4 py-3">{money(c.spendMinor)}</td><td className="px-4 py-3">{c.clicks.toLocaleString()}</td><td className="px-4 py-3">{c.ctrPercent === null ? "—" : `${c.ctrPercent}%`}</td><td className="px-4 py-3">{c.platformConversions}</td><td className="px-4 py-3">{c.platformRoas === null ? "—" : c.platformRoas}</td></tr>
+              <tr key={i} className="border-t"><td className="px-4 py-3 font-medium">{c.name}</td><td className="px-4 py-3">{money(c.spendMinor)}</td><td className="px-4 py-3">{fmtNumber("bn", c.clicks)}</td>
+<td className="px-4 py-3">{c.ctrPercent === null ? "—" : `${c.ctrPercent}%`}</td><td className="px-4 py-3">{c.platformConversions}</td><td className="px-4 py-3">{c.platformRoas === null ? "—" : c.platformRoas}</td></tr>
             ))}</tbody>
           </table>
         </section>

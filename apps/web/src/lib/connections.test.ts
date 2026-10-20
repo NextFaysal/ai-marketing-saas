@@ -64,7 +64,7 @@ describe("CC1 connections view helpers", () => {
   it("categoryStatusLabel is honest for platform-managed and empty categories", () => {
     expect(categoryStatusLabel({ ...overview.categories[2], status: "platform_managed" })).toBe("প্ল্যাটফর্মের AI দিয়ে চলছে");
     expect(categoryStatusLabel(overview.categories[2])).toBe("কনফিগার করা হয়নি");
-    expect(categoryStatusLabel(overview.categories[0])).toBe("2/2 কানেক্টেড");
+    expect(categoryStatusLabel(overview.categories[0])).toBe("২/২ কানেক্টেড");
   });
 });
 

@@ -103,7 +103,7 @@ describe("RB4 createAdVariant — MediaAsset branch URL choice", () => {
     const { tables, svc } = setup(publicMedia);
     seedAsset(tables);
     await expect(svc.createAdVariant("org", "plan-1", "ad-1", "user-1", { mediaAssetId: "ma-1" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "campaigns.apiPublicUrlIsNotConfigured" });
   });
 
   it("tokenless asset is refused BEFORE the helper is consulted (token stays the gate)", async () => {
@@ -112,7 +112,7 @@ describe("RB4 createAdVariant — MediaAsset branch URL choice", () => {
     const { tables, svc } = setup(publicMedia);
     seedAsset(tables, { publicToken: null });
     await expect(svc.createAdVariant("org", "plan-1", "ad-1", "user-1", { mediaAssetId: "ma-1" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "campaigns.thisMediaAssetHasNoPublic" });
     expect(called).toBe(false);
   });
 

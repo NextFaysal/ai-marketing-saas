@@ -241,3 +241,8 @@ export const csvProductImportSchema = z.object({
   csvText: z.string().min(1).max(2_000_000),
 });
 export type CsvProductImportInput = z.infer<typeof csvProductImportSchema>;
+
+// ---------- Multi-Language (MB1: ML1 locale core, ML2 format, ML3 glossary) ----------
+export * from "./i18n";
+export * from "./i18n-format";
+export * from "./i18n-glossary";

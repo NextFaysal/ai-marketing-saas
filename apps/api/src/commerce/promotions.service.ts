@@ -16,13 +16,14 @@ import {
   normalizeReferralCode,
   phoneKeyLoose,
   validatePromotionConfig,
-  PROMOTION_CONFIG_MESSAGES,
+  PROMOTION_CONFIG_CODES,
   type GiftConfig,
   type PromotionLine,
 } from "./promotions";
 import type { PromotionDto, PromotionPreviewDto } from "./commerce.dto";
 import { EventsService } from "../common/events.service";
 import { computeTax, serializeTaxBreakdown, type TaxBreakdownEntry } from "./tax";
+import { badRequest, notFound } from "../i18n";
 
 export interface CheckoutEvaluation {
   /** Merchandise subtotal (product lines + bump), pre-discount. */
@@ -185,7 +186,7 @@ export class PromotionsService {
 
   private async loadOr404(orgId: string, id: string): Promise<any> {
     const row = await this.table().findFirst({ where: { id, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Promotion not found in this organization");
+    if (!row) throw notFound("commerce.promotionNotFoundInOrg");
     return row;
   }
 
@@ -199,20 +200,20 @@ export class PromotionsService {
     endsAt: Date | null,
   ): Promise<any> {
     if (!(PROMOTION_TYPES as readonly string[]).includes(type)) {
-      throw new BadRequestException("প্রমোশনের ধরন সঠিক নয় (bogo | tiered | flash | gift)");
+      throw badRequest("commerce.promotionTypeInvalid");
     }
     let normalized: any;
     try {
       normalized = validatePromotionConfig(type, config);
     } catch (e) {
       const key = e instanceof Error ? e.message : "unknown_type";
-      throw new BadRequestException(PROMOTION_CONFIG_MESSAGES[key] ?? "প্রমোশন কনফিগ সঠিক নয়");
+      throw badRequest(PROMOTION_CONFIG_CODES[key] ?? "commerce.promotionConfigUnknownType");
     }
     if (type === "flash" && (!startsAt || !endsAt)) {
-      throw new BadRequestException("Flash প্রমোশনে শুরু ও শেষের সময় দুটোই আবশ্যক");
+      throw badRequest("commerce.flashPromotionTimesRequired");
     }
     if (startsAt && endsAt && endsAt <= startsAt) {
-      throw new BadRequestException("শেষের সময় শুরুর সময়ের পরে হতে হবে");
+      throw badRequest("commerce.endTimeBeforeStart");
     }
     const productIds = new Set<string>();
     const categoryIds = new Set<string>();
@@ -233,13 +234,13 @@ export class PromotionsService {
       const p = await (this.prisma as any).product.findFirst({
         where: { id: pid, organizationId: orgId },
       });
-      if (!p) throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${pid}`);
+      if (!p) throw badRequest("commerce.productNotOfOrg", { productId: pid });
     }
     for (const cid of categoryIds) {
       const c = await (this.prisma as any).category.findFirst({
         where: { id: cid, organizationId: orgId },
       });
-      if (!c) throw new BadRequestException(`ক্যাটাগরি পাওয়া যায়নি (এই সংস্থার নয়): ${cid}`);
+      if (!c) throw badRequest("commerce.categoryNotOfOrg", { categoryId: cid });
     }
     if (type === "gift" && normalized.giftVariantSku) {
       const variantTable = (this.prisma as any).productVariant;
@@ -251,7 +252,7 @@ export class PromotionsService {
             .catch(() => null)
         : null;
       if (!variant) {
-        throw new BadRequestException("উপহারের ভ্যারিয়েন্ট SKU পাওয়া যায়নি");
+        throw badRequest("commerce.giftVariantSkuNotFound");
       }
     }
     return normalized;
@@ -271,7 +272,7 @@ export class PromotionsService {
 
   async create(orgId: string, actorId: string, dto: PromotionDto) {
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("প্রমোশনের নাম আবশ্যক");
+    if (!name) throw badRequest("commerce.promotionNameRequired");
     const startsAt = toDateOrNull(dto.startsAt);
     const endsAt = toDateOrNull(dto.endsAt);
     const config = await this.validateAndNormalize(orgId, String(dto.type ?? ""), dto.config, startsAt, endsAt);
@@ -310,7 +311,7 @@ export class PromotionsService {
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("প্রমোশনের নাম আবশ্যক");
+      if (!name) throw badRequest("commerce.promotionNameRequired");
       data.name = name;
     }
     if (dto.type !== undefined || dto.config !== undefined || dto.startsAt !== undefined || dto.endsAt !== undefined) {
@@ -459,9 +460,7 @@ export class PromotionsService {
         excludeOrderId: input.excludeOrderId,
       });
       if (!v.valid) {
-        throw new BadRequestException(
-          `কুপন প্রয়োগ করা যায়নি: ${DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason}`,
-        );
+        throw badRequest("commerce.couponApplyFailed", { reason: DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason });
       }
       couponDiscountMinor = v.discountMinor;
       couponFreeShipping = v.freeShipping;
@@ -981,12 +980,12 @@ export class PromotionsService {
     let from = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
     if (fromRaw) {
       const d = new Date(fromRaw);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শুরুর তারিখটি সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("commerce.startDateInvalid");
       from = d;
     }
     if (toRaw) {
       const d = new Date(toRaw);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শেষের তারিখটি সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("commerce.endDateInvalid");
       to = d;
     }
     const orderTable = (this.prisma as any).order;
@@ -1176,7 +1175,7 @@ export class PromotionsService {
         where: { id: item.productId, organizationId: orgId, status: "ACTIVE" },
       });
       if (!product) {
-        throw new BadRequestException(`পণ্য পাওয়া যায়নি অথবা সক্রিয় নয়: ${item.productId}`);
+        throw badRequest("commerce.productNotFoundOrInactiveId", { productId: item.productId });
       }
       const qty = Math.max(1, Math.min(999, Number(item.quantity ?? 1) || 1));
       lines.push({
@@ -1187,7 +1186,7 @@ export class PromotionsService {
         compareAtMinor: product.compareAtMinor != null ? BigInt(product.compareAtMinor) : null,
       });
     }
-    if (lines.length === 0) throw new BadRequestException("প্রিভিউয়ের জন্য অন্তত একটি পণ্য দিন");
+    if (lines.length === 0) throw badRequest("commerce.previewNeedsProduct");
     // GB7: resolve the preview buyer's identity/history when a
     // phone was given, so customer-conditioned rules preview truly.
     let previewCustomerId: string | null = null;

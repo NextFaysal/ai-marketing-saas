@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SocialService } from "./social.service";
 import { computeBestTime, engagementScore } from "./social-insights.service";
 import { computeNextBestTime, computeNextSlot } from "./social-queue-helpers";
 import type { CreateSocialPostingSlotDto, UpdateEvergreenDto, UpdateSocialPostingSlotDto } from "./social.dto";
+import { badRequest, conflict, notFound } from "../i18n/api-exception";
 
 // SU2: re-exported so callers/tests can reach the pure helpers
 // through the queue service module as well.
@@ -49,16 +50,16 @@ export class SocialQueueService {
 
   private async getPostRow(organizationId: string, postId: string) {
     const post = await (this.prisma as any).socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
     return post;
   }
 
   private validateSlotFields(weekday: unknown, time: unknown): void {
     if (weekday !== undefined && (!Number.isInteger(weekday) || (weekday as number) < 0 || (weekday as number) > 6)) {
-      throw new BadRequestException("সপ্তাহের দিন ০ (রবিবার) থেকে ৬ (শনিবার)-এর মধ্যে হতে হবে।");
+      throw badRequest("social.theDayOfTheWeekMust");
     }
     if (time !== undefined && (typeof time !== "string" || !TIME_RE.test(time))) {
-      throw new BadRequestException("Slot-এর সময় সঠিক HH:MM আকারে দিন (যেমন 10:30)।");
+      throw badRequest("social.slotHhMm1030");
     }
   }
 
@@ -76,14 +77,14 @@ export class SocialQueueService {
     const account = await (this.prisma as any).socialAccount.findFirst({
       where: { id: dto.socialAccountId, organizationId },
     });
-    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (!account) throw notFound("social.socialAccountNotFoundInThis");
     const dup = await (this.prisma as any).socialPostingSlot.findFirst({
       where: {
         organizationId, socialAccountId: dto.socialAccountId,
         weekday: dto.weekday, time: dto.time,
       },
     });
-    if (dup) throw new ConflictException("এই অ্যাকাউন্টে ওই দিন ও সময়ে একটি Slot আগেই আছে।");
+    if (dup) throw conflict("social.aSlotAlreadyExistsForThis");
     const row = await (this.prisma as any).socialPostingSlot.create({
       data: {
         organizationId, socialAccountId: dto.socialAccountId,
@@ -101,7 +102,7 @@ export class SocialQueueService {
 
   private async getSlotRow(organizationId: string, slotId: string) {
     const row = await (this.prisma as any).socialPostingSlot.findFirst({ where: { id: slotId, organizationId } });
-    if (!row) throw new NotFoundException("Posting slot not found in this organization");
+    if (!row) throw notFound("social.postingSlotNotFoundInThis");
     return row;
   }
 
@@ -115,7 +116,7 @@ export class SocialQueueService {
         where: { organizationId, socialAccountId: row.socialAccountId, weekday, time },
       });
       if (dup && dup.id !== row.id) {
-        throw new ConflictException("এই অ্যাকাউন্টে ওই দিন ও সময়ে একটি Slot আগেই আছে।");
+        throw conflict("social.aSlotAlreadyExistsForThis");
       }
     }
     const data: Record<string, unknown> = {};
@@ -147,7 +148,7 @@ export class SocialQueueService {
   async addToQueue(organizationId: string, actorId: string, postId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (!["draft", "scheduled", "failed"].includes(post.status)) {
-      throw new ConflictException(`এই অবস্থায় পোস্টটি Queue-তে দেওয়া যাবে না (বর্তমান অবস্থা: ${post.status})।`);
+      throw conflict("social.thePostCannotBeQueuedIn", { postStatus: post.status });
     }
     const timeZone = await this.orgTimezone(organizationId);
     const slotRows = await (this.prisma as any).socialPostingSlot.findMany({
@@ -155,7 +156,7 @@ export class SocialQueueService {
     }).catch(() => []);
     const slots = Array.isArray(slotRows) ? slotRows : [];
     if (slots.length === 0) {
-      throw new BadRequestException("এই অ্যাকাউন্টের জন্য কোনো Posting Slot নেই — আগে Slot যোগ করুন");
+      throw badRequest("social.thereIsNoPostingSlotFor");
     }
     const scheduledRows = await (this.prisma as any).socialPost.findMany({
       where: { organizationId, socialAccountId: post.socialAccountId, status: "scheduled" },
@@ -166,7 +167,7 @@ export class SocialQueueService {
       .map((d: any) => new Date(d));
     const next = computeNextSlot(slots, occupied, new Date(), timeZone);
     if (!next) {
-      throw new BadRequestException("আগামী এক বছরের মধ্যে কোনো খালি Posting Slot পাওয়া যায়নি — Slot বাড়িয়ে আবার চেষ্টা করুন।");
+      throw badRequest("social.noFreePostingSlotWasFound");
     }
     return this.social.schedulePost(organizationId, actorId, postId, { scheduledAt: next.toISOString() });
   }
@@ -188,9 +189,7 @@ export class SocialQueueService {
     );
     if (!best) {
       const bn = String(scored).replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
-      throw new BadRequestException(
-        `সেরা সময় বের করার মতো যথেষ্ট Data নেই — অন্তত ১০টি Published পোস্টের Insights লাগবে, এখন আছে ${bn}টি।`,
-      );
+      throw badRequest("social.thereIsNotEnoughDataTo", { bn: bn });
     }
     const next = computeNextBestTime(best, new Date(), timeZone);
     return this.social.schedulePost(organizationId, actorId, postId, { scheduledAt: next.toISOString() });

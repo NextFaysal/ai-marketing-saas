@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import type { StepDraftLike } from "@/lib/workflow-graph";
+import { useLocale } from "@/lib/i18n/provider";
 
 export interface TemplateOption {
   id: string;
@@ -20,24 +21,35 @@ export interface MemberOption {
 }
 
 export const DYNAMIC_VARIABLES = [
-  { tag: "{{contactName}}", label: "গ্রাহকের নাম", category: "গ্রাহক" },
-  { tag: "{{contactPhone}}", label: "ফোন নম্বর", category: "গ্রাহক" },
-  { tag: "{{contactEmail}}", label: "ইমেইল", category: "গ্রাহক" },
-  { tag: "{{orderNumber}}", label: "অর্ডার নম্বর", category: "অর্ডার" },
-  { tag: "{{total}}", label: "মোট টাকা (৳)", category: "অর্ডার" },
-  { tag: "{{currency}}", label: "কারেন্সি (BDT)", category: "অর্ডার" },
-  { tag: "{{cartValue}}", label: "কার্টের মূল্য (৳)", category: "কার্ট" },
-  { tag: "{{itemsCount}}", label: "পণ্য সংখ্যা", category: "কার্ট" },
-  { tag: "{{itemsSummary}}", label: "পণ্যের তালিকা", category: "কার্ট" },
-  { tag: "{{cartUrl}}", label: "কার্ট লিংক", category: "কার্ট" },
-  { tag: "{{stage}}", label: "লিড স্টেজ", category: "লিড" },
-  { tag: "{{source}}", label: "সোর্স / মাধ্যম", category: "লিড" },
-  { tag: "{{channel}}", label: "মেসেজ চ্যানেল", category: "ইনবক্স" },
-  { tag: "{{refundAmount}}", label: "রিফান্ড টাকা", category: "অর্ডার" },
-  { tag: "{{trackingCode}}", label: "কুরিয়ার ট্র্যাকিং কোড", category: "শিপমেন্ট" },
+  { tag: "{{contactName}}", label: "গ্রাহকের নাম", labelEn: "Customer name", category: "গ্রাহক", categoryEn: "Customer" },
+  { tag: "{{contactPhone}}", label: "ফোন নম্বর", labelEn: "Phone number", category: "গ্রাহক", categoryEn: "Customer" },
+  { tag: "{{contactEmail}}", label: "ইমেইল", labelEn: "Email", category: "গ্রাহক", categoryEn: "Customer" },
+  { tag: "{{orderNumber}}", label: "অর্ডার নম্বর", labelEn: "Order number", category: "অর্ডার", categoryEn: "Order" },
+  { tag: "{{total}}", label: "মোট টাকা (৳)", labelEn: "Total amount (৳)", category: "অর্ডার", categoryEn: "Order" },
+  { tag: "{{currency}}", label: "কারেন্সি (BDT)", labelEn: "Currency (BDT)", category: "অর্ডার", categoryEn: "Order" },
+  { tag: "{{cartValue}}", label: "কার্টের মূল্য (৳)", labelEn: "Cart value (৳)", category: "কার্ট", categoryEn: "Cart" },
+  { tag: "{{itemsCount}}", label: "পণ্য সংখ্যা", labelEn: "Item count", category: "কার্ট", categoryEn: "Cart" },
+  { tag: "{{itemsSummary}}", label: "পণ্যের তালিকা", labelEn: "Item list", category: "কার্ট", categoryEn: "Cart" },
+  { tag: "{{cartUrl}}", label: "কার্ট লিংক", labelEn: "Cart link", category: "কার্ট", categoryEn: "Cart" },
+  { tag: "{{stage}}", label: "লিড স্টেজ", labelEn: "Lead stage", category: "লিড", categoryEn: "Lead" },
+  { tag: "{{source}}", label: "সোর্স / মাধ্যম", labelEn: "Source / medium", category: "লিড", categoryEn: "Lead" },
+  { tag: "{{channel}}", label: "মেসেজ চ্যানেল", labelEn: "Message channel", category: "ইনবক্স", categoryEn: "Inbox" },
+  { tag: "{{refundAmount}}", label: "রিফান্ড টাকা", labelEn: "Refund amount", category: "অর্ডার", categoryEn: "Order" },
+  { tag: "{{trackingCode}}", label: "কুরিয়ার ট্র্যাকিং কোড", labelEn: "Courier tracking code", category: "শিপমেন্ট", categoryEn: "Shipment" },
 ];
 
+/** D7 picker: variable labels/categories by UI locale (bn fields stay
+ * the source of truth; en companions are additive). */
+export function dynamicVariablesForLocale(locale: "bn" | "en") {
+  return DYNAMIC_VARIABLES.map((v) => ({
+    tag: v.tag,
+    label: locale === "en" ? v.labelEn : v.label,
+    category: locale === "en" ? v.categoryEn : v.category,
+  }));
+}
+
 function VariablePicker({ onInsert }: { onInsert: (tag: string) => void }) {
+  const { t, locale } = useLocale();
   const [open, setOpen] = useState(false);
 
   return (
@@ -46,15 +58,15 @@ function VariablePicker({ onInsert }: { onInsert: (tag: string) => void }) {
         type="button"
         onClick={() => setOpen(!open)}
         className="inline-flex items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 hover:bg-brand-100 transition"
-        title="ডাইনামিক ভ্যারিয়েবল ইনসার্ট করুন"
+        title={t("misc.sfVarInsertTitle")}
       >
-        <span>⚡ + ভ্যারিয়েবল</span>
+        <span>{t("misc.sfVarButton")}</span>
       </button>
 
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-60 rounded-xl border border-slate-200 bg-white p-2 shadow-xl animate-fadeIn">
           <div className="flex items-center justify-between border-b pb-1 mb-1 text-[11px] font-bold text-slate-700">
-            <span>স্মার্ট ভ্যারিয়েবল বেছে নিন:</span>
+            <span>{t("misc.sfVarPick")}</span>
             <button
               type="button"
               className="text-slate-400 hover:text-slate-600"
@@ -64,7 +76,7 @@ function VariablePicker({ onInsert }: { onInsert: (tag: string) => void }) {
             </button>
           </div>
           <div className="max-h-48 overflow-y-auto space-y-1">
-            {DYNAMIC_VARIABLES.map((v) => (
+            {dynamicVariablesForLocale(locale).map((v) => (
               <button
                 key={v.tag}
                 type="button"
@@ -104,6 +116,7 @@ export function StepFields({
   inArm?: boolean;
   inputCls?: string;
 }) {
+  const { t } = useLocale();
   const s = draft;
   const set = (patch: Partial<StepDraftLike>) => onChange({ ...s, ...patch });
 
@@ -116,32 +129,32 @@ export function StepFields({
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-3">
         <label className="block text-sm min-w-[200px]">
-          পদক্ষেপের ধরন (Action Type)
+          {t("misc.sfActionType")}
           <select className={inputCls} value={s.type} onChange={(e) => set({ type: e.target.value })}>
-            <optgroup label="মেসেজিং ও যোগাযোগ">
-              <option value="send_email">✉️ Email পাঠান</option>
-              <option value="send_sms">📱 SMS পাঠান</option>
-              <option value="send_inbox_message">💬 Inbox এ বার্তা পাঠান</option>
+            <optgroup label={t("misc.sfGroupMessaging")}>
+              <option value="send_email">{t("misc.sfSendEmail")}</option>
+              <option value="send_sms">{t("misc.sfSendSms")}</option>
+              <option value="send_inbox_message">{t("misc.sfSendInbox")}</option>
             </optgroup>
-            <optgroup label="টিম ও সিআরএম (CRM)">
-              <option value="add_lead_activity">📝 Lead এ Note যোগ করুন</option>
-              <option value="add_conversation_note">🔒 Conversation এ Internal Note</option>
-              <option value="assign_conversation">👤 কথোপকথন Assign করুন</option>
-              <option value="change_lead_stage">🏷️ Lead Stage বদলান</option>
-              <option value="add_tag">🏷️ Tag যোগ করুন</option>
-              <option value="notify_team">👥 টিমকে জানান (Notify Team)</option>
-              <option value="create_follow_up">📅 Follow-up তৈরি করুন</option>
+            <optgroup label={t("misc.sfGroupCrm")}>
+              <option value="add_lead_activity">{t("misc.sfLeadNote")}</option>
+              <option value="add_conversation_note">{t("misc.sfConvNote")}</option>
+              <option value="assign_conversation">{t("misc.sfAssign")}</option>
+              <option value="change_lead_stage">{t("misc.sfChangeStage")}</option>
+              <option value="add_tag">{t("misc.sfAddTag")}</option>
+              <option value="notify_team">{t("misc.sfNotifyTeam")}</option>
+              <option value="create_follow_up">{t("misc.sfFollowUp")}</option>
             </optgroup>
-            <optgroup label="অটোমেশন ও এআই (AI)">
-              <option value="ai_generate">🤖 AI দিয়ে তৈরি করুন (AI Action)</option>
-              <option value="notify_channel">📢 চ্যানেল অ্যালার্ট (Slack / Discord)</option>
-              <option value="http_webhook">🌐 Webhook পাঠান (HTTPS)</option>
+            <optgroup label={t("misc.sfGroupAi")}>
+              <option value="ai_generate">{t("misc.sfAiGenerate")}</option>
+              <option value="notify_channel">{t("misc.sfNotifyChannel")}</option>
+              <option value="http_webhook">{t("misc.sfWebhook")}</option>
             </optgroup>
             {inArm ? null : (
-              <optgroup label="প্রবাহ নিয়ন্ত্রণ (Logic & Flow)">
-                <option value="wait">⏱️ অপেক্ষা (Wait)</option>
-                <option value="condition">🔍 শর্ত (থামুন/এগোন)</option>
-                <option value="branch">🔀 শাখা (যদি / নয়তো)</option>
+              <optgroup label={t("misc.sfGroupFlow")}>
+                <option value="wait">{t("misc.sfWait")}</option>
+                <option value="condition">{t("misc.sfCondition")}</option>
+                <option value="branch">{t("misc.sfBranch")}</option>
               </optgroup>
             )}
           </select>
@@ -149,7 +162,7 @@ export function StepFields({
 
         {s.type === "wait" ? (
           <label className="block text-sm w-44">
-            অপেক্ষার সময় (মিনিট)
+            {t("misc.sfWaitMinutes")}
             <input
               className={inputCls}
               type="number"
@@ -174,13 +187,13 @@ export function StepFields({
               <label className="block text-sm">
                 Op
                 <select className={inputCls} value={s.op ?? "eq"} onChange={(e) => set({ op: e.target.value })}>
-                  <option value="eq">eq (সমান)</option>
-                  <option value="neq">neq (সমান নয়)</option>
-                  <option value="gt">gt (বেশি)</option>
-                  <option value="gte">gte (কমপক্ষে)</option>
-                  <option value="lt">lt (কম)</option>
-                  <option value="lte">lte (সর্বোচ্চ)</option>
-                  <option value="contains">contains (রয়েছে)</option>
+                  <option value="eq">{t("misc.sfOpEq")}</option>
+                  <option value="neq">{t("misc.sfOpNeq")}</option>
+                  <option value="gt">{t("misc.sfOpGt")}</option>
+                  <option value="gte">{t("misc.sfOpGte")}</option>
+                  <option value="lt">{t("misc.sfOpLt")}</option>
+                  <option value="lte">{t("misc.sfOpLte")}</option>
+                  <option value="contains">{t("misc.sfOpContains")}</option>
                 </select>
               </label>
               <label className="block text-sm">
@@ -196,7 +209,7 @@ export function StepFields({
             {(["then", "else"] as const).map((arm) => (
               <div key={arm} className="space-y-2 rounded-lg bg-white/80 p-3 shadow-sm border border-purple-100">
                 <div className="text-xs font-semibold text-purple-900">
-                  {arm === "then" ? "✓ শর্ত মিললে (True Arm)" : "✗ শর্ত না মিললে (False Arm)"}
+                  {arm === "then" ? t("misc.sfArmThen") : t("misc.sfArmElse")}
                 </div>
                 {(s[arm] ?? []).map((sub, i) => (
                   <div key={i} className="flex flex-wrap items-end gap-2 border-b border-dashed pb-2">
@@ -218,7 +231,7 @@ export function StepFields({
                       className="rounded-lg border px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                       onClick={() => set({ [arm]: (s[arm] ?? []).filter((_, j) => j !== i) })}
                     >
-                      মুছুন
+                      {t("misc.sfDelete")}
                     </button>
                   </div>
                 ))}
@@ -229,7 +242,7 @@ export function StepFields({
                     set({ [arm]: [...(s[arm] ?? []), { type: "send_inbox_message", templateId: "", text: "" }] })
                   }
                 >
-                  + এই শাখায় ধাপ যোগ করুন
+                  {t("misc.sfAddStepToArm")}
                 </button>
               </div>
             ))}
@@ -271,27 +284,27 @@ export function StepFields({
           <div className="flex flex-1 flex-wrap items-end gap-2">
             <div className="flex-1 min-w-[260px]">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">বার্তা (Custom Message)</label>
+                <label className="block text-xs font-semibold text-slate-700">{t("misc.sfMessageLabel")}</label>
                 <VariablePicker onInsert={(tag) => appendText("text", tag)} />
               </div>
               <input
                 className={inputCls}
                 value={s.text ?? ""}
-                placeholder="আসসালামু আলাইকুম {{contactName}}, অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে..."
+                placeholder={t("misc.sfMessagePlaceholder")}
                 onChange={(e) => set({ text: e.target.value, whatsappTemplateId: "" })}
               />
             </div>
             <label className="block text-sm min-w-[200px]">
-              অথবা WhatsApp Template
+              {t("misc.sfOrWaTemplate")}
               <select
                 className={inputCls}
                 value={s.whatsappTemplateId ?? ""}
                 onChange={(e) => set({ whatsappTemplateId: e.target.value })}
               >
-                <option value="">নেই (সরাসরি টেক্সট যাবে)</option>
-                {waTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.language})
+                <option value="">{t("misc.sfNoTemplate")}</option>
+                {waTemplates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name} ({tpl.language})
                   </option>
                 ))}
               </select>
@@ -300,20 +313,20 @@ export function StepFields({
         ) : s.type === "add_lead_activity" || s.type === "add_conversation_note" ? (
           <div className="flex-1 min-w-[260px]">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-semibold text-slate-700">নোট (Note Content)</label>
+              <label className="block text-xs font-semibold text-slate-700">{t("misc.sfNoteLabel")}</label>
               <VariablePicker onInsert={(tag) => appendText("text", tag)} />
             </div>
             <input
               className={inputCls}
               value={s.text ?? ""}
               onChange={(e) => set({ text: e.target.value })}
-              placeholder="যেমন: {{contactName}} এর অর্ডার ভ্যালু ৳{{total}} — বিশেষ ফলো-আপ দিন"
+              placeholder={t("misc.sfNotePlaceholder")}
             />
           </div>
         ) : s.type === "assign_conversation" ? (
           <div className="flex flex-wrap items-end gap-2">
             <label className="block text-sm min-w-[220px]">
-              কাকে Assign করবেন
+              {t("misc.sfAssignTo")}
               <select
                 className={inputCls}
                 value={s.clear ? "__clear__" : s.userId ?? ""}
@@ -323,8 +336,8 @@ export function StepFields({
                     : set({ clear: false, userId: e.target.value })
                 }
               >
-                <option value="">সদস্য বেছে নিন</option>
-                <option value="__clear__">Assign সরান (Unassign)</option>
+                <option value="">{t("misc.sfPickMember")}</option>
+                <option value="__clear__">{t("misc.sfUnassign")}</option>
                 {members.map((m) => (
                   <option key={m.userId} value={m.userId}>
                     {m.name} ({m.role})
@@ -333,40 +346,40 @@ export function StepFields({
               </select>
             </label>
             {members.length === 0 && (
-              <span className="text-xs text-slate-500">টিম সদস্য পাওয়া যায়নি — Team পেজে সদস্য যোগ করুন</span>
+              <span className="text-xs text-slate-500">{t("misc.sfNoMembers")}</span>
             )}
           </div>
         ) : s.type === "change_lead_stage" ? (
           <label className="block text-sm w-44">
-            নতুন Stage
+            {t("misc.sfNewStage")}
             <select
               className={inputCls}
               value={s.stage ?? "contacted"}
               onChange={(e) => set({ stage: e.target.value })}
             >
-              <option value="new">new (নতুন)</option>
-              <option value="contacted">contacted (যোগাযোগকৃত)</option>
-              <option value="qualified">qualified (উপযুক্ত)</option>
-              <option value="proposal">proposal (প্রস্তাবনা)</option>
-              <option value="won">won (জয়ী)</option>
-              <option value="lost">lost (ব্যর্থ)</option>
+              <option value="new">{t("misc.sfStageNew")}</option>
+              <option value="contacted">{t("misc.sfStageContacted")}</option>
+              <option value="qualified">{t("misc.sfStageQualified")}</option>
+              <option value="proposal">{t("misc.sfStageProposal")}</option>
+              <option value="won">{t("misc.sfStageWon")}</option>
+              <option value="lost">{t("misc.sfStageLost")}</option>
             </select>
           </label>
         ) : s.type === "add_tag" ? (
           <div className="flex flex-wrap items-end gap-2">
             <label className="block text-sm w-40">
-              কোথায় ট্যাগ হবে
+              {t("misc.sfTagTarget")}
               <select
                 className={inputCls}
                 value={s.target ?? "lead"}
                 onChange={(e) => set({ target: e.target.value })}
               >
-                <option value="lead">Lead (লিড)</option>
-                <option value="conversation">কথোপকথন (Conversation)</option>
+                <option value="lead">{t("misc.sfTagLead")}</option>
+                <option value="conversation">{t("misc.sfTagConversation")}</option>
               </select>
             </label>
             <label className="block text-sm min-w-[160px]">
-              Tag নাম
+              {t("misc.sfTagName")}
               <input
                 className={inputCls}
                 value={s.tag ?? ""}
@@ -378,33 +391,33 @@ export function StepFields({
         ) : s.type === "notify_team" ? (
           <div className="flex flex-1 flex-wrap items-end gap-2">
             <label className="block text-sm w-44">
-              কাদের নোটিফিকেশন যাবে
+              {t("misc.sfNotifyWho")}
               <select className={inputCls} value={s.role ?? ""} onChange={(e) => set({ role: e.target.value })}>
-                <option value="">সব সক্রিয় সদস্য</option>
-                <option value="OWNER">OWNER (মালিক)</option>
+                <option value="">{t("misc.sfAllActiveMembers")}</option>
+                <option value="OWNER">{t("misc.sfOwnerRole")}</option>
                 <option value="ADMIN">ADMIN</option>
                 <option value="MARKETING_MANAGER">MARKETING_MANAGER</option>
                 <option value="SUPPORT_AGENT">SUPPORT_AGENT</option>
               </select>
             </label>
             <label className="block text-sm min-w-[160px]">
-              শিরোনাম
+              {t("misc.sfTitleLabel")}
               <input
                 className={inputCls}
                 value={s.title ?? ""}
-                placeholder="🚨 জরুরি নোটিফিকেশন"
+                placeholder={t("misc.sfTitlePlaceholder")}
                 onChange={(e) => set({ title: e.target.value })}
               />
             </label>
             <div className="flex-1 min-w-[240px]">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">বার্তা</label>
+                <label className="block text-xs font-semibold text-slate-700">{t("misc.sfMessage")}</label>
                 <VariablePicker onInsert={(tag) => appendText("text", tag)} />
               </div>
               <input
                 className={inputCls}
                 value={s.text ?? ""}
-                placeholder="অর্ডার #{{orderNumber}} এর বিষয়ে দেখুন..."
+                placeholder={t("misc.sfNotifyTextPlaceholder")}
                 onChange={(e) => set({ text: e.target.value })}
               />
             </div>
@@ -412,7 +425,7 @@ export function StepFields({
         ) : s.type === "create_follow_up" ? (
           <div className="flex flex-wrap items-end gap-2">
             <label className="block text-sm w-36">
-              কত দিন পরে
+              {t("misc.sfDaysLater")}
               <input
                 className={inputCls}
                 type="number"
@@ -424,14 +437,14 @@ export function StepFields({
             </label>
             <div className="flex-1 min-w-[200px]">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">নোট (ঐচ্ছিক)</label>
+                <label className="block text-xs font-semibold text-slate-700">{t("misc.sfNoteOptional")}</label>
                 <VariablePicker onInsert={(tag) => appendText("text", tag)} />
               </div>
               <input
                 className={inputCls}
                 value={s.text ?? ""}
                 onChange={(e) => set({ text: e.target.value })}
-                placeholder="গ্রাহক {{contactName}} এর সাথে ফলো-আপ করুন"
+                placeholder={t("misc.sfFollowUpPlaceholder")}
               />
             </div>
           </div>
@@ -447,7 +460,7 @@ export function StepFields({
               />
             </label>
             <label className="block text-sm w-48">
-              Secret (HMAC ঐচ্ছিক)
+              {t("misc.sfSecretLabel")}
               <input
                 className={inputCls}
                 value={s.secret ?? ""}
@@ -459,32 +472,32 @@ export function StepFields({
         ) : s.type === "notify_channel" ? (
           <div className="flex flex-1 flex-wrap items-end gap-2">
             <label className="block flex-1 text-sm min-w-[220px]">
-              চ্যানেল Webhook URL (Slack / Discord)
+              {t("misc.sfChannelUrlLabel")}
               <input
                 className={inputCls}
                 value={s.url ?? ""}
-                placeholder="https://hooks.slack.com/services/... বা discord.com/api/webhooks/..."
+                placeholder={t("misc.sfChannelUrlPlaceholder")}
                 onChange={(e) => set({ url: e.target.value })}
               />
             </label>
             <label className="block text-sm w-44">
-              শিরোনাম (ঐচ্ছিক)
+              {t("misc.sfTitleOptional")}
               <input
                 className={inputCls}
                 value={s.title ?? ""}
-                placeholder="🚨 অর্ডার অ্যালার্ট"
+                placeholder={t("misc.sfAlertTitlePlaceholder")}
                 onChange={(e) => set({ title: e.target.value })}
               />
             </label>
             <div className="flex-1 min-w-[220px]">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">বার্তা</label>
+                <label className="block text-xs font-semibold text-slate-700">{t("misc.sfMessage")}</label>
                 <VariablePicker onInsert={(tag) => appendText("text", tag)} />
               </div>
               <input
                 className={inputCls}
                 value={s.text ?? ""}
-                placeholder="অর্ডার #{{orderNumber}} সম্পন্ন হয়েছে (৳{{total}})"
+                placeholder={t("misc.sfChannelTextPlaceholder")}
                 onChange={(e) => set({ text: e.target.value })}
               />
             </div>
@@ -493,30 +506,30 @@ export function StepFields({
           <div className="flex flex-1 flex-wrap items-end gap-2">
             <div className="flex-1 min-w-[260px]">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">AI নির্দেশিকা (Prompt)</label>
+                <label className="block text-xs font-semibold text-slate-700">{t("misc.sfAiPromptLabel")}</label>
                 <VariablePicker onInsert={(tag) => appendText("prompt", tag)} />
               </div>
               <input
                 className={inputCls}
                 value={s.prompt ?? ""}
-                placeholder="গ্রাহক {{contactName}} এর জন্য একটি সুন্দর ধন্যবাদ বার্তা লিখুন..."
+                placeholder={t("misc.sfAiPromptPlaceholder")}
                 onChange={(e) => set({ prompt: e.target.value })}
               />
             </div>
             <label className="block text-sm min-w-[200px]">
-              ফলাফল কোথায় রাখবেন
+              {t("misc.sfAiResultWhere")}
               <select
                 className={inputCls}
                 value={s.action ?? "add_conversation_note"}
                 onChange={(e) => set({ action: e.target.value })}
               >
-                <option value="add_conversation_note">কথোপকথনে Internal Note হিসেবে</option>
-                <option value="add_lead_activity">Lead টাইমলাইনে Note হিসেবে</option>
-                <option value="save_to_context">ভ্যারিয়েবলে সংরক্ষণ</option>
+                <option value="add_conversation_note">{t("misc.sfAiResultNote")}</option>
+                <option value="add_lead_activity">{t("misc.sfAiResultLead")}</option>
+                <option value="save_to_context">{t("misc.sfAiResultVar")}</option>
               </select>
             </label>
             <label className="block text-sm w-36">
-              ভ্যারিয়েবলের নাম
+              {t("misc.sfVarName")}
               <input
                 className={inputCls}
                 value={s.outputField ?? "aiResult"}
@@ -527,19 +540,19 @@ export function StepFields({
           </div>
         ) : (
           <label className="block text-sm min-w-[200px]">
-            টেমপ্লেট (Template)
+            {t("misc.sfTemplateLabel")}
             <select
               className={inputCls}
               value={s.templateId ?? ""}
               onChange={(e) => set({ templateId: e.target.value })}
               required
             >
-              <option value="">বেছে নিন</option>
+              <option value="">{t("misc.sfPick")}</option>
               {templates
-                .filter((t) => t.channel === (s.type === "send_email" ? "email" : "sms"))
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
+                .filter((tpl) => tpl.channel === (s.type === "send_email" ? "email" : "sms"))
+                .map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name}
                   </option>
                 ))}
             </select>

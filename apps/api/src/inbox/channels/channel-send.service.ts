@@ -1,8 +1,9 @@
-import { BadRequestException } from "@nestjs/common";
+
 import * as nodemailer from "nodemailer";
 import { decryptJson } from "../../integrations/crypto";
 import { TelegramAdapter } from "./telegram.service";
 import type { EmailCredentials } from "./email.service";
+import { badRequest } from "../../i18n/api-exception";
 
 /**
  * Outbound dispatch for the U4 channels (used by InboxService's
@@ -23,7 +24,7 @@ export class ChannelSendService {
       where: { organizationId: conv.organizationId, provider: conv.channel, status: "CONNECTED" },
       include: { credential: true }, orderBy: { createdAt: "desc" },
     });
-    if (!latest?.credential) throw new BadRequestException(`No connected ${conv.channel} integration for this organization`);
+    if (!latest?.credential) throw badRequest("inbox.noConnectedIntegrationForThisOrganization", { convChannel: conv.channel });
     return latest;
   }
 
@@ -52,10 +53,10 @@ export class ChannelSendService {
         text: content,
         ...(lastInbound?.externalId ? { inReplyTo: lastInbound.externalId, references: lastInbound.externalId } : {}),
       });
-      if (!info?.messageId) throw new BadRequestException("SMTP did not confirm the email send");
+      if (!info?.messageId) throw badRequest("inbox.smtpDidNotConfirmTheEmail");
       return String(info.messageId);
     }
-    throw new BadRequestException(`ChannelSendService does not handle channel "${conv.channel}"`);
+    throw badRequest("inbox.channelsendserviceDoesNotHandleChannel", { convChannel: conv.channel });
   }
 
   /**
@@ -89,9 +90,9 @@ export class ChannelSendService {
         attachments: [{ filename: media.fileName, content: media.bytes, contentType: media.contentType }],
         ...(lastInbound?.externalId ? { inReplyTo: lastInbound.externalId, references: lastInbound.externalId } : {}),
       });
-      if (!info?.messageId) throw new BadRequestException("SMTP did not confirm the email send");
+      if (!info?.messageId) throw badRequest("inbox.smtpDidNotConfirmTheEmail");
       return String(info.messageId);
     }
-    throw new BadRequestException(`ChannelSendService does not handle channel "${conv.channel}"`);
+    throw badRequest("inbox.channelsendserviceDoesNotHandleChannel", { convChannel: conv.channel });
   }
 }

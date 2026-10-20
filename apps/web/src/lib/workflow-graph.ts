@@ -29,6 +29,17 @@
  * scope + positional node id) - see workflow-canvas.tsx.
  */
 
+import type { UiLocale } from "./i18n/dict";
+import { interpolate } from "./i18n/lookup";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: step labels, structural-error messages and step
+ * summaries resolve through the `shared` namespace; locale
+ * defaults to "bn" everywhere so existing callers/tests stay
+ * byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 export interface ConditionRule {
   field: string;
   op: string;
@@ -68,25 +79,33 @@ export const KNOWN_STEP_TYPES = [
   "ai_generate",
 ] as const;
 
-export const STEP_TYPE_META: Record<string, { label: string; color: string }> = {
-  send_email: { label: "Email পাঠান", color: "#2563eb" },
-  send_sms: { label: "SMS পাঠান", color: "#0891b2" },
-  add_lead_activity: { label: "Lead এ Note যোগ করুন", color: "#65a30d" },
-  add_conversation_note: { label: "Conversation এ Internal Note", color: "#65a30d" },
-  wait: { label: "অপেক্ষা (Wait)", color: "#d97706" },
-  condition: { label: "শর্ত (Branch)", color: "#9333ea" },
-  send_inbox_message: { label: "Inbox এ বার্তা পাঠান", color: "#db2777" },
-  assign_conversation: { label: "কথোপকথন Assign করুন", color: "#0f766e" },
-  change_lead_stage: { label: "Lead Stage বদলান", color: "#7c3aed" },
-  add_tag: { label: "Tag যোগ করুন", color: "#b45309" },
-  notify_team: { label: "টিমকে জানান", color: "#be185d" },
-  create_follow_up: { label: "Follow-up তৈরি করুন", color: "#15803d" },
-  http_webhook: { label: "Webhook পাঠান", color: "#334155" },
-  branch: { label: "শাখা (যদি / নয়তো)", color: "#9333ea" },
-  notify_channel: { label: "চ্যানেল অ্যালার্ট (Slack/Discord)", color: "#0284c7" },
-  ai_generate: { label: "AI টেক্সট / নোট জেনারেশন", color: "#6366f1" },
-  unknown: { label: "অজানা ধাপ (Locked)", color: "#64748b" },
-};
+/** Step-type meta per locale: labels from the `shared`
+ * namespace, colors locale-free. */
+export function stepTypeMetaFor(locale: UiLocale = "bn"): Record<string, { label: string; color: string }> {
+  const d = SD(locale);
+  return {
+    send_email: { label: d.stepSendEmail, color: "#2563eb" },
+    send_sms: { label: d.stepSendSms, color: "#0891b2" },
+    add_lead_activity: { label: d.stepAddLeadActivity, color: "#65a30d" },
+    add_conversation_note: { label: d.stepAddConversationNote, color: "#65a30d" },
+    wait: { label: d.stepWait, color: "#d97706" },
+    condition: { label: d.stepCondition, color: "#9333ea" },
+    send_inbox_message: { label: d.stepSendInboxMessage, color: "#db2777" },
+    assign_conversation: { label: d.stepAssignConversation, color: "#0f766e" },
+    change_lead_stage: { label: d.stepChangeLeadStage, color: "#7c3aed" },
+    add_tag: { label: d.stepAddTag, color: "#b45309" },
+    notify_team: { label: d.stepNotifyTeam, color: "#be185d" },
+    create_follow_up: { label: d.stepCreateFollowUp, color: "#15803d" },
+    http_webhook: { label: d.stepHttpWebhook, color: "#334155" },
+    branch: { label: d.stepBranch, color: "#9333ea" },
+    notify_channel: { label: d.stepNotifyChannel, color: "#0284c7" },
+    ai_generate: { label: d.stepAiGenerate, color: "#6366f1" },
+    unknown: { label: d.stepUnknown, color: "#64748b" },
+  };
+}
+
+/** The bn meta record stays the pinned default export shape. */
+export const STEP_TYPE_META: Record<string, { label: string; color: string }> = stepTypeMetaFor("bn");
 
 export function isKnownStepType(type: string): boolean {
   return (KNOWN_STEP_TYPES as readonly string[]).includes(type);
@@ -231,13 +250,14 @@ export class GraphStructureError extends Error {}
  * not written back. Throws GraphStructureError when the graph is not
  * one connected path covering every step node exactly once.
  */
-export function graphToDefinition(graph: WorkflowGraph): WorkflowDefinition {
+export function graphToDefinition(graph: WorkflowGraph, locale: UiLocale = "bn"): WorkflowDefinition {
+  const d = SD(locale);
   const stepNodes = graph.nodes.filter((n) => n.kind === "step");
   const mainEdge = new Map<string, GraphEdge>();
   for (const e of graph.edges) {
     if (e.kind === "no") continue; // presentation only
     if (mainEdge.has(e.source)) {
-      throw new GraphStructureError(`একটি ধাপ থেকে একাধিক পথ বের হয়েছে (${e.source})`);
+      throw new GraphStructureError(interpolate(d.graphErrMultiplePaths, { source: e.source }));
     }
     mainEdge.set(e.source, e);
   }
@@ -248,19 +268,19 @@ export function graphToDefinition(graph: WorkflowGraph): WorkflowDefinition {
   for (;;) {
     const edge = mainEdge.get(cursor);
     if (!edge) {
-      throw new GraphStructureError("Flow-টি শেষ ধাপ (End) পর্যন্ত যুক্ত নয় — মাঝের সংযোগ ভেঙে গেছে");
+      throw new GraphStructureError(d.graphErrNotConnectedToEnd);
     }
     const target = byId.get(edge.target);
-    if (!target) throw new GraphStructureError(`অজানা ধাপে সংযোগ গেছে (${edge.target})`);
+    if (!target) throw new GraphStructureError(interpolate(d.graphErrUnknownTarget, { target: edge.target }));
     if (target.kind === "end") break;
-    if (target.kind !== "step") throw new GraphStructureError("সংযোগ ভুল জায়গায় গেছে");
-    if (seen.has(target.id)) throw new GraphStructureError("Flow-তে বৃত্ত (cycle) তৈরি হয়েছে");
+    if (target.kind !== "step") throw new GraphStructureError(d.graphErrWrongTarget);
+    if (seen.has(target.id)) throw new GraphStructureError(d.graphErrCycle);
     seen.add(target.id);
     ordered.push(deepClone(target.step as RawStep));
     cursor = target.id;
   }
   if (seen.size !== stepNodes.length) {
-    throw new GraphStructureError("কিছু ধাপ মূল Flow-র সাথে যুক্ত নেই — সব ধাপ এক লাইনে যুক্ত করুন, নয়তো অপ্রয়োজনীয় ধাপ মুছে ফেলুন");
+    throw new GraphStructureError(d.graphErrOrphanSteps);
   }
   const def: WorkflowDefinition = {
     name: graph.name,
@@ -314,9 +334,9 @@ function graphPositions(graph: WorkflowGraph): Record<string, { x: number; y: nu
 /** graphToDefinition for edits: the canvas keeps graphs valid by
  *  construction during add/remove, but if a user has disconnected an
  *  edge we still need the step list - fall back to node order. */
-export function graphToDefinitionLenient(graph: WorkflowGraph): WorkflowDefinition {
+export function graphToDefinitionLenient(graph: WorkflowGraph, locale: UiLocale = "bn"): WorkflowDefinition {
   try {
-    return graphToDefinition(graph);
+    return graphToDefinition(graph, locale);
   } catch {
     const steps = graph.nodes
       .filter((n) => n.kind === "step")
@@ -453,32 +473,37 @@ export function applyDraftToStep(raw: RawStep, draft: StepDraftLike): RawStep {
   return next;
 }
 
-/** One-line Bengali summary of a step for node display. */
-export function stepSummary(step: RawStep): string {
+/** One-line summary of a step for node display, in the UI
+ * locale (bn default — byte-identical to the original). */
+export function stepSummary(step: RawStep, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (step.type) {
     case "wait":
-      return `${String(step.minutes ?? "?")} মিনিট অপেক্ষা`;
+      return interpolate(d.wgWaitSummary, { minutes: String(step.minutes ?? "?") });
     case "condition":
       return `${String(step.field ?? "?")} ${String(step.op ?? "eq")} ${JSON.stringify(step.value ?? "")}`;
     case "send_email":
     case "send_sms":
-      return step.templateId ? "Template নির্ধারিত" : "Template বেছে নেওয়া হয়নি";
+      return step.templateId ? d.wgTemplateSet : d.wgTemplateNotSet;
     case "send_inbox_message":
       if (step.whatsappTemplateId) return "WhatsApp Template";
-      return typeof step.text === "string" && step.text ? step.text.slice(0, 42) : "বার্তা খালি";
+      return typeof step.text === "string" && step.text ? step.text.slice(0, 42) : d.wgMessageEmpty;
     case "add_lead_activity":
     case "add_conversation_note":
-      return typeof step.text === "string" && step.text ? step.text.slice(0, 42) : "Note খালি";
+      return typeof step.text === "string" && step.text ? step.text.slice(0, 42) : d.wgNoteEmpty;
     case "branch": {
       const t = Array.isArray(step.then) ? step.then.length : 0;
       const e = Array.isArray(step.else) ? step.else.length : 0;
-      return `${String(step.field ?? "?")} ${String(step.op ?? "eq")} ${JSON.stringify(step.value ?? "")} · ✓ ${t} ধাপ / ✗ ${e} ধাপ`;
+      const cond = `${String(step.field ?? "?")} ${String(step.op ?? "eq")} ${JSON.stringify(step.value ?? "")}`;
+      return interpolate(d.wgBranchSummary, { cond, thenCount: t, elseCount: e });
     }
     case "notify_channel":
-      return typeof step.text === "string" && step.text ? `চ্যানেল অ্যালার্ট: ${step.text.slice(0, 30)}` : "চ্যানেল অ্যালার্ট";
+      return typeof step.text === "string" && step.text
+        ? interpolate(d.wgChannelAlertText, { text: step.text.slice(0, 30) })
+        : d.wgChannelAlert;
     case "ai_generate":
-      return typeof step.prompt === "string" && step.prompt ? `AI: ${step.prompt.slice(0, 30)}` : "AI অ্যাসিস্ট্যান্ট ধাপ";
+      return typeof step.prompt === "string" && step.prompt ? `AI: ${step.prompt.slice(0, 30)}` : d.wgAiStep;
     default:
-      return "ক্যানভাসে বদলানো যাবে না — যেমন আছে তেমনই থাকবে";
+      return d.wgLockedStep;
   }
 }

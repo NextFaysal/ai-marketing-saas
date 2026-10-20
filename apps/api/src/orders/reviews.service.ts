@@ -15,6 +15,7 @@ import {
   CREATIVE_UPLOAD_CONTENT_TYPES,
   CREATIVE_VIDEO_UPLOAD_MAX_BYTES,
 } from "../creatives/creatives.service";
+import { badRequest, notFound } from "../i18n";
 
 /** NF8: at most this many photo/video attachments per review. */
 export const REVIEW_MEDIA_MAX_ITEMS = 4;
@@ -315,7 +316,7 @@ export class ReviewsService {
    * only; an already-received review renders read-only. */
   async publicReview(token: string) {
     const row = await this.p().orderReview?.findFirst({ where: { reviewToken: token } });
-    if (!row) throw new NotFoundException("এই রিভিউ লিংকটি পাওয়া যায়নি");
+    if (!row) throw notFound("orders.reviewLinkNotFound");
     const org = await this.p().organization.findFirst({ where: { id: row.organizationId } }).catch(() => null);
     const order = await this.p().order.findFirst({ where: { id: row.orderId, organizationId: row.organizationId }, select: { externalNumber: true } }).catch(() => null);
     const rewardCoupon = {
@@ -392,9 +393,7 @@ export class ReviewsService {
 
   private reviewStorageOr400(): StorageService {
     if (!this.storage || this.storage.mode !== "s3") {
-      throw new BadRequestException(
-        "সরাসরি ফাইল আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি।",
-      );
+      throw badRequest("orders.directUploadDisabled");
     }
     return this.storage;
   }
@@ -404,33 +403,25 @@ export class ReviewsService {
   private normalizeReviewUpload(kind: unknown, contentType: unknown, sizeBytes: unknown) {
     const k = String(kind ?? "");
     const allowed = CREATIVE_UPLOAD_CONTENT_TYPES[k];
-    if (!allowed) throw new BadRequestException("kind must be image or video");
+    if (!allowed) throw badRequest("orders.kindMustBeImageOrVideo");
     const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
     if (!allowed.includes(ct)) {
-      throw new BadRequestException(
-        k === "image"
-          ? "শুধু PNG, JPEG অথবা WebP ছবি আপলোড করা যাবে।"
-          : "শুধু MP4, MOV অথবা WebM ভিডিও আপলোড করা যাবে।",
-      );
+      throw badRequest(k === "image" ? "orders.reviewMediaImageOnly" : "orders.reviewMediaVideoOnly");
     }
     const size = Number(sizeBytes);
     if (!Number.isInteger(size) || size < 1) {
-      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+      throw badRequest("orders.fileSizeInvalid");
     }
     const cap = k === "image" ? CREATIVE_IMAGE_UPLOAD_MAX_BYTES : CREATIVE_VIDEO_UPLOAD_MAX_BYTES;
     if (size > cap) {
-      throw new BadRequestException(
-        k === "image"
-          ? "ছবিটি অনেক বড় — সর্বোচ্চ ১০ MB পর্যন্ত আপলোড করা যাবে।"
-          : "ভিডিওটি অনেক বড় — সরাসরি আপলোডে সর্বোচ্চ ৫০ MB পর্যন্ত আপলোড করা যাবে।",
-      );
+      throw badRequest(k === "image" ? "orders.reviewImageTooLarge" : "orders.reviewVideoTooLarge");
     }
     return { kind: k, contentType: ct, sizeBytes: size };
   }
 
   private async reviewRowByToken(token: string) {
     const row = await this.p().orderReview?.findFirst({ where: { reviewToken: token } });
-    if (!row) throw new NotFoundException("এই রিভিউ লিংকটি পাওয়া যায়নি");
+    if (!row) throw notFound("orders.reviewLinkNotFound");
     return row;
   }
 
@@ -439,10 +430,10 @@ export class ReviewsService {
    * token holder cannot silently change it afterwards. */
   private assertMediaAttachable(row: any) {
     if (row.rating != null) {
-      throw new BadRequestException("রিভিউ ইতিমধ্যে জমা হয়ে গেছে — এখন আর ছবি/ভিডিও যোগ করা যাবে না।");
+      throw badRequest("orders.reviewSubmittedMediaLocked");
     }
     if (reviewMediaOf(row).length >= REVIEW_MEDIA_MAX_ITEMS) {
-      throw new BadRequestException(`সর্বোচ্চ ${REVIEW_MEDIA_MAX_ITEMS}টি ছবি/ভিডিও যোগ করা যাবে।`);
+      throw badRequest("orders.reviewMediaMax", { max: REVIEW_MEDIA_MAX_ITEMS });
     }
   }
 
@@ -454,7 +445,7 @@ export class ReviewsService {
     const key = `_quarantine/${row.organizationId}/review/${randomUUID()}`;
     const uploadUrl = storage.presignedPutUrl("private", key);
     if (!uploadUrl) {
-      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+      throw badRequest("orders.uploadUrlFailed");
     }
     return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
   }
@@ -467,22 +458,22 @@ export class ReviewsService {
     const key = String(dto?.key ?? "");
     const quarantinePrefix = `_quarantine/${row.organizationId}/review/`;
     if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
-      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+      throw badRequest("orders.uploadKeyInvalid");
     }
     const dropQuarantine = () => storage.delete("private", key).catch(() => undefined);
 
     const head = await storage.head("private", key).catch(() => null);
     if (!head) {
-      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+      throw badRequest("orders.uploadedFileNotFound");
     }
     if (head.sizeBytes !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+      throw badRequest("orders.uploadedSizeMismatch");
     }
     const bytes = await storage.get("private", key).catch(() => null);
     if (!bytes || bytes.length !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+      throw badRequest("orders.uploadedFileUnreadable");
     }
     // Magic bytes decide, never the declaration — the same sniff
     // discipline as the creative / library completes.
@@ -490,7 +481,7 @@ export class ReviewsService {
     if (!detected || detected.kind !== kind || detected.contentType !== contentType) {
       await dropQuarantine();
       const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
-      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+      throw badRequest("orders.uploadedFormatMismatch", { what: what });
     }
 
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -542,10 +533,10 @@ export class ReviewsService {
    * is refused honestly instead of overwriting the first. */
   async submitPublicReview(token: string, dto: { rating?: number; comment?: string }) {
     const row = await this.p().orderReview?.findFirst({ where: { reviewToken: token } });
-    if (!row) throw new NotFoundException("এই রিভিউ লিংকটি পাওয়া যায়নি");
+    if (!row) throw notFound("orders.reviewLinkNotFound");
     const rating = Number(dto?.rating);
-    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new BadRequestException("রেটিং ১ থেকে ৫ এর মধ্যে হতে হবে");
-    if (row.rating != null) throw new BadRequestException("এই অর্ডারের রিভিউ ইতিমধ্যে দেওয়া হয়েছে — ধন্যবাদ!");
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw badRequest("orders.ratingRange");
+    if (row.rating != null) throw badRequest("orders.reviewAlreadyGiven");
     const comment = String(dto?.comment ?? "").trim().slice(0, 1000) || null;
     const updated = await this.p().orderReview.update({
       where: { id: row.id },

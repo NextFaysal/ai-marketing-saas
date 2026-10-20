@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 import { getOrganizationId } from "../../../lib/org";
 import { subscribeTicketStream } from "../../../lib/support-stream";
+import { fmtDate, fmtDateTime, fmtNumber, fmtRelative, fmtTime } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface TicketAttachment {
   name: string;
@@ -43,12 +45,12 @@ interface SolutionSuggestion {
   link?: string;
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  open: "খোলা",
-  pending: "উত্তরের অপেক্ষায়",
-  in_progress: "কাজ চলছে",
-  resolved: "সমাধান হয়েছে",
-  closed: "বন্ধ",
+const STATUS_TEXT_KEY: Record<string, string> = {
+  open: "misc.supStatusOpen",
+  pending: "misc.supStatusPending",
+  in_progress: "misc.supStatusInProgress",
+  resolved: "misc.supStatusResolved",
+  closed: "misc.supStatusClosed",
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -67,62 +69,56 @@ const STATUS_DOT: Record<string, string> = {
   closed: "bg-slate-400",
 };
 
-const PRIORITY_TEXT: Record<string, string> = {
-  normal: "সাধারণ",
-  high: "জরুরি",
-  urgent: "🚨 অতি জরুরি",
+const PRIORITY_TEXT_KEY: Record<string, string> = {
+  normal: "misc.supPriorityNormal",
+  high: "misc.supPriorityHigh",
+  urgent: "misc.supPriorityUrgent",
 };
 
-const CATEGORY_TEXT: Record<string, string> = {
-  general: "💬 সাধারণ",
-  billing: "💳 বিলিং ও পেমেন্ট",
-  technical: "⚙️ কারিগরি সমস্যা",
-  campaigns: "📢 বিজ্ঞাপন ক্যাম্পেইন",
-  integration: "🔌 ইন্টিগ্রেশন ও পিক্সেল",
-  account: "👤 অ্যাকাউন্ট",
-  feature: "✨ ফিচার অনুরোধ",
-  other: "📁 অন্যান্য",
+const CATEGORY_TEXT_KEY: Record<string, string> = {
+  general: "misc.supCatGeneral",
+  billing: "misc.supCatBilling",
+  technical: "misc.supCatTechnical",
+  campaigns: "misc.supCatCampaigns",
+  integration: "misc.supCatIntegration",
+  account: "misc.supCatAccount",
+  feature: "misc.supCatFeature",
+  other: "misc.supCatOther",
 };
 
-const STATUS_BANNER: Record<string, { tone: string; text: string }> = {
-  open: { tone: "alert-slate", text: "টিকিটটি খোলা আছে — প্ল্যাটফর্ম টিমের উত্তর এখানেই আসবে, ইমেইলেও জানানো হবে।" },
-  pending: { tone: "alert-amber", text: "প্ল্যাটফর্ম টিম উত্তর দিয়েছে — এখন আপনার জবাবের অপেক্ষায়। নিচে উত্তর লিখুন।" },
-  in_progress: { tone: "alert-brand", text: "আমাদের ইঞ্জিনিয়াররা সমস্যাটির ওপর সক্রিয়ভাবে কাজ করছেন। শীঘ্রই আপডেট পাবেন।" },
-  resolved: { tone: "alert-green", text: "টিকিটটি সমাধান হয়েছে বলে চিহ্নিত করা হয়েছে। সমস্যাটি থেকে গেলে নিচে উত্তর লিখলেই টিকিটটি আবার খুলে যাবে।" },
-  closed: { tone: "alert-slate", text: "টিকিটটি বন্ধ আছে। উত্তর পাঠালে অথবা “আবার খুলুন” চাপলে এটি আবার খুলে যাবে।" },
+const STATUS_BANNER: Record<string, { tone: string; textKey: string }> = {
+  open: { tone: "alert-slate", textKey: "misc.supBannerOpen" },
+  pending: { tone: "alert-amber", textKey: "misc.supBannerPending" },
+  in_progress: { tone: "alert-brand", textKey: "misc.supBannerInProgress" },
+  resolved: { tone: "alert-green", textKey: "misc.supBannerResolved" },
+  closed: { tone: "alert-slate", textKey: "misc.supBannerClosed" },
 };
-
-const bnNum = (n: number) => n.toLocaleString("bn-BD", { maximumFractionDigits: 0 });
-
-function relativeBn(iso: string): string {
-  if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const mins = Math.floor((Date.now() - then) / 60000);
-  if (mins < 1) return "এইমাত্র";
-  if (mins < 60) return `${bnNum(mins)} মিনিট আগে`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${bnNum(hours)} ঘণ্টা আগে`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${bnNum(days)} দিন আগে`;
-  return new Date(iso).toLocaleDateString("bn-BD", { day: "numeric", month: "short", year: "numeric" });
-}
-
-const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("bn-BD", { day: "numeric", month: "long", year: "numeric" });
-const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString("bn-BD", { hour: "numeric", minute: "2-digit" });
-const fullLabel = (iso: string) => new Date(iso).toLocaleString("bn-BD");
 
 function StatusBadge({ status }: { status: string }) {
-  const known = status in STATUS_TEXT;
+  const { t } = useLocale();
+  const known = status in STATUS_TEXT_KEY;
   return (
     <span className={known ? STATUS_BADGE[status] : "badge-slate"}>
       {known ? <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} /> : null}
-      {known ? STATUS_TEXT[status] : status}
+      {known ? t(STATUS_TEXT_KEY[status]) : status}
     </span>
   );
 }
 
 export default function SupportPage() {
+  const { t, locale } = useLocale();
+  const bnNum = (n: number) => fmtNumber(locale, n);
+  const relativeBn = (iso: string): string => {
+    if (!iso) return "";
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return "";
+    const days = Math.floor((Date.now() - then) / 86400000);
+    if (days >= 7) return fmtDate(locale, new Date(iso));
+    return fmtRelative(locale, new Date(iso));
+  };
+  const dayLabel = (iso: string) => fmtDate(locale, new Date(iso));
+  const timeLabel = (iso: string) => fmtTime(locale, new Date(iso));
+  const fullLabel = (iso: string) => fmtDateTime(locale, new Date(iso));
   const [orgId, setOrgId] = useState<string | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selected, setSelected] = useState<Ticket | null>(null);
@@ -248,7 +244,7 @@ export default function SupportPage() {
     try {
       setSelected(await apiFetch<Ticket>(`/organizations/${orgId}/tickets/${id}`));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ticket খোলা যাচ্ছে না");
+      setError(e instanceof Error ? e.message : t("misc.supOpenError"));
     } finally {
       setOpening(false);
     }
@@ -287,7 +283,7 @@ export default function SupportPage() {
   // File upload / paste handlers
   const handleAttachmentUpload = (file: File, isReply: boolean) => {
     if (file.size > 8 * 1024 * 1024) {
-      setError("ফাইলের সাইজ সর্বোচ্চ 8MB হতে পারে");
+      setError(t("misc.supFileTooBig"));
       return;
     }
     const reader = new FileReader();
@@ -332,7 +328,7 @@ export default function SupportPage() {
         screen: typeof window !== "undefined" ? `${window.innerWidth}x${window.innerHeight}` : null,
       };
 
-      const t = await apiFetch<Ticket>(`/organizations/${orgId}/tickets`, {
+      const created = await apiFetch<Ticket>(`/organizations/${orgId}/tickets`, {
         method: "POST",
         body: JSON.stringify({
           subject,
@@ -351,9 +347,9 @@ export default function SupportPage() {
       setSuggestions([]);
       setAiTip(null);
       await load();
-      setSelected(t);
+      setSelected(created);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ticket তৈরি হয়নি");
+      setError(e instanceof Error ? e.message : t("misc.supCreateError"));
     }
   };
 
@@ -373,7 +369,7 @@ export default function SupportPage() {
       await open(selected.id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "উত্তর পাঠানো যায়নি");
+      setError(e instanceof Error ? e.message : t("misc.supReplyError"));
     }
   };
 
@@ -387,7 +383,7 @@ export default function SupportPage() {
       await open(selected.id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Status বদলায়নি");
+      setError(e instanceof Error ? e.message : t("misc.supStatusError"));
     }
   };
 
@@ -402,7 +398,7 @@ export default function SupportPage() {
       setCsatSubmitted(true);
       await open(selected.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "রেটিং সংরক্ষণ করা যায়নি");
+      setError(e instanceof Error ? e.message : t("misc.supCsatError"));
     } finally {
       setCsatSubmitting(false);
     }
@@ -419,7 +415,7 @@ export default function SupportPage() {
       setTrackingUrl(url);
       await navigator.clipboard.writeText(url).catch(() => undefined);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ট্র্যাকিং লিংক তৈরি যায়নি");
+      setError(e instanceof Error ? e.message : t("misc.supTrackingError"));
     }
   }
 
@@ -438,21 +434,21 @@ export default function SupportPage() {
 
   const filteredTickets = statusFilter === "all" ? tickets : tickets.filter((t) => t.status === statusFilter);
 
-  const getSlaBadge = (t: Ticket) => {
-    if (t.status === "resolved" || t.status === "closed") return null;
-    if (!t.slaDueAt) return null;
-    const diff = new Date(t.slaDueAt).getTime() - Date.now();
+  const getSlaBadge = (tk: Ticket) => {
+    if (tk.status === "resolved" || tk.status === "closed") return null;
+    if (!tk.slaDueAt) return null;
+    const diff = new Date(tk.slaDueAt).getTime() - Date.now();
     if (diff <= 0) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700 animate-pulse">
-          <span>⚠️</span> SLA অতিক্রান্ত
+          <span>⚠️</span> {t("misc.supSlaOverdue")}
         </span>
       );
     }
     const hours = Math.round(diff / (1000 * 60 * 60));
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-        <span>⏳</span> SLA: ~{hours}h বাকি
+        <span>⏳</span> {t("misc.supSlaLeft", { hours: fmtNumber(locale, hours) })}
       </span>
     );
   };
@@ -470,13 +466,13 @@ export default function SupportPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-2">
               <span className="live-pulse" />
-              <span className="text-xs font-semibold text-emerald-300">২৪/৭ এআই ও লাইভ সাপোর্ট সক্রিয়</span>
+              <span className="text-xs font-semibold text-emerald-300">{t("misc.supLiveBadge")}</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white sm:text-[28px]">
-              সাপোর্ট ও হেল্পডেস্ক হাব
+              {t("misc.supTitle")}
             </h1>
             <p className="mt-1 max-w-xl text-sm text-white/80 leading-relaxed">
-              যেকোনো কারিগরি ত্রুটি, পিক্সেল বা বিলিং সংক্রান্ত প্রয়োজনে সরাসরি আমাদের সাপোর্ট টিমের সাহায্য নিন।
+              {t("misc.supIntro")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -487,7 +483,7 @@ export default function SupportPage() {
               }}
               className="px-4 py-2 text-xs font-bold rounded-xl bg-white text-slate-900 hover:bg-slate-100 shadow-md transition-all flex items-center gap-1.5"
             >
-              <span>＋</span> নতুন টিকিট খুলুন
+              <span>＋</span> {t("misc.supNewTicket")}
             </button>
           </div>
         </div>
@@ -516,7 +512,7 @@ export default function SupportPage() {
               <span className="text-xl leading-none">🎫</span>
               <span>
                 <span className="count-chip-value">{bnNum(counts.total)}</span>
-                <span className="count-chip-label block">মোট টিকিট</span>
+                <span className="count-chip-label block">{t("misc.supTotalTickets")}</span>
               </span>
             </button>
             <button
@@ -529,7 +525,7 @@ export default function SupportPage() {
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500" />
               <span>
                 <span className="count-chip-value">{bnNum(counts.open)}</span>
-                <span className="count-chip-label block">খোলা</span>
+                <span className="count-chip-label block">{t("misc.supOpenChip")}</span>
               </span>
             </button>
             <button
@@ -542,7 +538,7 @@ export default function SupportPage() {
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
               <span>
                 <span className="count-chip-value">{bnNum(counts.pending)}</span>
-                <span className="count-chip-label block">অপেক্ষমাণ</span>
+                <span className="count-chip-label block">{t("misc.supPendingChip")}</span>
               </span>
             </button>
             <button
@@ -555,7 +551,7 @@ export default function SupportPage() {
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-500" />
               <span>
                 <span className="count-chip-value">{bnNum(counts.resolved)}</span>
-                <span className="count-chip-label block">সমাধান</span>
+                <span className="count-chip-label block">{t("misc.supResolvedChip")}</span>
               </span>
             </button>
             <button
@@ -568,7 +564,7 @@ export default function SupportPage() {
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-400" />
               <span>
                 <span className="count-chip-value">{bnNum(counts.closed)}</span>
-                <span className="count-chip-label block">বন্ধ</span>
+                <span className="count-chip-label block">{t("misc.supClosedChip")}</span>
               </span>
             </button>
           </>
@@ -593,7 +589,7 @@ export default function SupportPage() {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              💬 টিকিটসমূহ ({bnNum(filteredTickets.length)})
+              {t("misc.supTicketsTab", { count: bnNum(filteredTickets.length) })}
             </button>
             <button
               type="button"
@@ -607,7 +603,7 @@ export default function SupportPage() {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              ＋ নতুন টিকিট
+              {t("misc.supNewTicketTab")}
             </button>
           </div>
 
@@ -616,13 +612,13 @@ export default function SupportPage() {
             <section id="new-ticket" className="card p-5 animate-fade-in shadow-card-v2">
               <h2 className="section-title flex items-center gap-2">
                 <span className="stat-icon stat-icon-brand !h-9 !w-9 !rounded-xl text-base">✉️</span>
-                নতুন টিকিট তৈরি করুন
+                {t("misc.supCreateTitle")}
               </h2>
 
               <input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                placeholder="বিষয় — যেমন: Meta Pixel কনভার্সন ট্র্যাকিং হচ্ছে না"
+                placeholder={t("misc.supSubjectPlaceholder")}
                 className="input mt-4"
               />
 
@@ -631,11 +627,11 @@ export default function SupportPage() {
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   className="input text-xs"
-                  aria-label="ক্যাটাগরি"
+                  aria-label={t("misc.supCategoryAria")}
                 >
-                  {Object.entries(CATEGORY_TEXT).map(([key, label]) => (
+                  {Object.entries(CATEGORY_TEXT_KEY).map(([key, labelKey]) => (
                     <option key={key} value={key}>
-                      {label}
+                      {t(labelKey)}
                     </option>
                   ))}
                 </select>
@@ -644,11 +640,11 @@ export default function SupportPage() {
                   value={priority}
                   onChange={(e) => setPriority(e.target.value)}
                   className="input text-xs font-medium"
-                  aria-label="গুরুত্ব"
+                  aria-label={t("misc.supPriorityAria")}
                 >
-                  <option value="normal">সাধারণ (Normal)</option>
-                  <option value="high">জরুরি (High)</option>
-                  <option value="urgent">🚨 অতি জরুরি (Urgent)</option>
+                  <option value="normal">{t("misc.supPriorityNormalOpt")}</option>
+                  <option value="high">{t("misc.supPriorityHighOpt")}</option>
+                  <option value="urgent">{t("misc.supPriorityUrgentOpt")}</option>
                 </select>
               </div>
 
@@ -657,7 +653,7 @@ export default function SupportPage() {
                 onChange={(e) => setBody(e.target.value)}
                 onPaste={(e) => handlePaste(e, false)}
                 rows={4}
-                placeholder="সমস্যাটা বিস্তারিত লিখুন (স্ক্রিনশট সরাসরি পেস্ট Ctrl+V করতে পারেন)…"
+                placeholder={t("misc.supBodyPlaceholder")}
                 className="input mt-2 resize-none text-sm"
               />
 
@@ -684,7 +680,7 @@ export default function SupportPage() {
                 <div className="mt-3 rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50/80 to-indigo-50/40 p-3.5 text-xs text-indigo-950 shadow-2xs">
                   <div className="flex items-center gap-1.5 font-bold text-sky-950 mb-2">
                     <span>💡</span>
-                    <span>তাৎক্ষণিক সমাধান টিপস (টিকিট খোলার আগে দেখে নিন):</span>
+                    <span>{t("misc.supTipsTitle")}</span>
                   </div>
                   {aiTip ? <p className="mb-2 leading-relaxed text-slate-800 bg-white/80 p-2.5 rounded-xl border border-sky-100">{aiTip}</p> : null}
                   <div className="space-y-1.5">
@@ -720,7 +716,7 @@ export default function SupportPage() {
                     onClick={() => createFileInputRef.current?.click()}
                     className="btn-secondary btn-sm min-h-[40px] text-xs flex items-center gap-1"
                   >
-                    📎 ফাইল/স্ক্রিনশট
+                    {t("misc.supAttach")}
                   </button>
                 </div>
 
@@ -729,7 +725,7 @@ export default function SupportPage() {
                   disabled={!subject.trim() || !body.trim()}
                   className="btn-primary min-h-[40px] px-5 text-xs font-bold"
                 >
-                  টিকিট সাবমিট করুন ➤
+                  {t("misc.supSubmit")}
                 </button>
               </div>
             </section>
@@ -742,10 +738,10 @@ export default function SupportPage() {
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-6 text-center">
                   <div className="text-3xl">🎫</div>
                   <p className="mt-2 text-sm font-semibold text-slate-800">
-                    {statusFilter !== "all" ? `"${STATUS_TEXT[statusFilter]}" কোনো টিকিট পাওয়া যায়নি।` : "এখনো কোনো টিকিট নেই।"}
+                    {statusFilter !== "all" ? t("misc.supNoTicketsFiltered", { status: t(STATUS_TEXT_KEY[statusFilter]) }) : t("misc.supNoTickets")}
                   </p>
                   <p className="mx-auto mt-1 max-w-[260px] text-xs leading-relaxed text-slate-500">
-                    সমস্যা বা প্রশ্ন থাকলে নতুন টিকিট খুলুন — আমাদের সাপোর্ট টিম দ্রুত উত্তর দেবে।
+                    {t("misc.supNoTicketsSub")}
                   </p>
                   <button
                     type="button"
@@ -755,16 +751,16 @@ export default function SupportPage() {
                     }}
                     className="btn-primary mt-4 min-h-[40px] text-xs px-4"
                   >
-                    ＋ নতুন টিকিট খুলুন
+                    {t("misc.supNewTicketTab")}
                   </button>
                 </div>
               ) : (
-                filteredTickets.map((t) => {
-                  const isSel = selected?.id === t.id;
+                filteredTickets.map((tk) => {
+                  const isSel = selected?.id === tk.id;
                   return (
                     <button
-                      key={t.id}
-                      onClick={() => open(t.id)}
+                      key={tk.id}
+                      onClick={() => open(tk.id)}
                       aria-current={isSel ? "true" : undefined}
                       className={`block w-full text-left rounded-2xl border p-3.5 transition-all ${
                         isSel
@@ -774,18 +770,18 @@ export default function SupportPage() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="min-w-0 truncate text-sm font-bold text-slate-900">
-                          {t.priority === "urgent" ? "🚨 " : t.priority === "high" ? "🔴 " : ""}
-                          {t.subject}
+                          {tk.priority === "urgent" ? "🚨 " : tk.priority === "high" ? "🔴 " : ""}
+                          {tk.subject}
                         </span>
-                        <StatusBadge status={t.status} />
+                        <StatusBadge status={tk.status} />
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                         <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700">
-                          {CATEGORY_TEXT[t.category ?? "general"] ?? t.category}
+                          {CATEGORY_TEXT_KEY[tk.category ?? "general"] ? t(CATEGORY_TEXT_KEY[tk.category ?? "general"]) : tk.category}
                         </span>
-                        {getSlaBadge(t)}
-                        <span>💬 {bnNum(t.messageCount ?? 0)}টি বার্তা</span>
-                        <span className="ml-auto text-[11px] text-slate-400">{relativeBn(t.lastMessageAt)}</span>
+                        {getSlaBadge(tk)}
+                        <span>{t("misc.supMessagesSuffix", { count: bnNum(tk.messageCount ?? 0) })}</span>
+                        <span className="ml-auto text-[11px] text-slate-400">{relativeBn(tk.lastMessageAt)}</span>
                       </div>
                     </button>
                   );
@@ -800,13 +796,13 @@ export default function SupportPage() {
           {!selected && !opening ? (
             <div className="p-12 text-center my-auto">
               <div className="text-4xl mb-3">💬</div>
-              <h3 className="text-base font-bold text-slate-800">কোনো টিকিট নির্বাচন করা হয়নি</h3>
+              <h3 className="text-base font-bold text-slate-800">{t("misc.supNoneSelectedTitle")}</h3>
               <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-slate-500">
-                বাম পাশের তালিকা থেকে একটি টিকিট বেছে নিন অথবা নতুন টিকিট সাবমিট করুন।
+                {t("misc.supNoneSelectedSub")}
               </p>
             </div>
           ) : opening && !selected ? (
-            <div className="space-y-4 p-6" aria-label="লোড হচ্ছে">
+            <div className="space-y-4 p-6" aria-label={t("misc.supLoadingAria")}>
               <div className="skeleton h-6 w-2/3" />
               <div className="skeleton h-16 w-3/4" />
               <div className="skeleton ml-auto h-16 w-2/3" />
@@ -821,26 +817,26 @@ export default function SupportPage() {
                     <button
                       onClick={() => setSelected(null)}
                       className="btn-secondary btn-sm min-h-[38px] px-2.5 lg:hidden text-xs"
-                      aria-label="টিকিটের তালিকায় ফিরুন"
+                      aria-label={t("misc.supBackAria")}
                     >
-                      ← তালিকা
+                      {t("misc.supBackToList")}
                     </button>
                     <h2 className="min-w-0 truncate text-base font-bold text-slate-900">
                       {selected.subject}
                     </h2>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => void copyTrackingLink()} className="btn-secondary btn-sm min-h-[36px] text-xs" title="লগইন ছাড়া টিকেট দেখার পাবলিক লিংক (শুধু পাবলিক উত্তর দেখাবে)">
-                      🔗 ট্র্যাকিং লিংক কপি
+                    <button onClick={() => void copyTrackingLink()} className="btn-secondary btn-sm min-h-[36px] text-xs" title={t("misc.supTrackingTitle")}>
+                      {t("misc.supTrackingCopy")}
                     </button>
                     {selected.status !== "closed" ? (
                       <button onClick={() => setStatus("closed")} className="btn-secondary btn-sm min-h-[36px] text-xs">
-                        🔒 বন্ধ করুন
+                        {t("misc.supClose")}
                       </button>
                     ) : null}
                     {selected.status === "closed" || selected.status === "resolved" ? (
                       <button onClick={() => setStatus("open")} className="btn-primary btn-sm min-h-[36px] text-xs font-bold">
-                        🔄 আবার খুলুন
+                        {t("misc.supReopen")}
                       </button>
                     ) : null}
                   </div>
@@ -849,14 +845,14 @@ export default function SupportPage() {
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                   <StatusBadge status={selected.status} />
                   <span className="rounded-lg bg-white border border-slate-200 px-2 py-0.5 text-slate-700 font-medium shadow-2xs">
-                    {CATEGORY_TEXT[selected.category ?? "general"] ?? selected.category}
+                    {CATEGORY_TEXT_KEY[selected.category ?? "general"] ? t(CATEGORY_TEXT_KEY[selected.category ?? "general"]) : selected.category}
                   </span>
                   <span
                     className={
                       selected.priority === "urgent" || selected.priority === "high" ? "badge-red" : "badge-slate"
                     }
                   >
-                    {PRIORITY_TEXT[selected.priority] ?? selected.priority}
+                    {PRIORITY_TEXT_KEY[selected.priority] ? t(PRIORITY_TEXT_KEY[selected.priority]) : selected.priority}
                   </span>
                   {getSlaBadge(selected)}
                   <span className="text-slate-400">·</span>
@@ -867,13 +863,13 @@ export default function SupportPage() {
 
                 {trackingUrl ? (
                   <p className="mt-3 break-all rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-600">
-                    পাবলিক ট্র্যাকিং লিংক (কপি হয়েছে): {trackingUrl}
+                    {t("misc.supTrackingUrl", { url: trackingUrl })}
                   </p>
                 ) : null}
 
                 {banner ? (
                   <div className={`alert ${banner.tone} mt-4`}>
-                    <span>{banner.text}</span>
+                    <span>{t(banner.textKey)}</span>
                   </div>
                 ) : null}
 
@@ -884,15 +880,15 @@ export default function SupportPage() {
                       <div>
                         <h4 className="font-bold text-sm text-amber-900">
                           {selected.csatRating
-                            ? `ধন্যবাদ! আপনার রেটিং সংরক্ষিত: ⭐ ${selected.csatRating}/5`
-                            : "আমাদের সাপোর্ট টিমের সহায়তা কেমন ছিল?"}
+                            ? t("misc.supCsatThanks", { rating: fmtNumber(locale, selected.csatRating) })
+                            : t("misc.supCsatAsk")}
                         </h4>
                         <p className="text-xs text-slate-600 mt-0.5">
                           {selected.csatRating
                             ? selected.csatFeedback
-                              ? `“${selected.csatFeedback}”`
-                              : "আপনার মূল্যবান মতামতের জন্য ধন্যবাদ।"
-                            : "আপনার রেটিং আমাদের সেবার মান আরও উন্নত করতে সাহায্য করবে।"}
+                              ? t("misc.supCsatFeedbackQuote", { feedback: selected.csatFeedback })
+                              : t("misc.supCsatThanksPlain")
+                            : t("misc.supCsatHelp")}
                         </p>
                       </div>
 
@@ -921,7 +917,7 @@ export default function SupportPage() {
                         <input
                           value={feedbackInput}
                           onChange={(e) => setFeedbackInput(e.target.value)}
-                          placeholder="আপনার মতামত বা পরামর্শ লিখুন (ঐচ্ছিক)…"
+                          placeholder={t("misc.supCsatPlaceholder")}
                           className="input text-xs flex-1"
                         />
                         <button
@@ -930,7 +926,7 @@ export default function SupportPage() {
                           disabled={csatSubmitting}
                           className="btn-primary btn-sm min-h-[38px] text-xs px-4"
                         >
-                          {csatSubmitting ? "জমা হচ্ছে..." : "রেটিং জমা দিন"}
+                          {csatSubmitting ? t("misc.supCsatSubmitting") : t("misc.supCsatSubmit")}
                         </button>
                       </div>
                     ) : null}
@@ -956,7 +952,7 @@ export default function SupportPage() {
                           className={`msg-avatar ${support ? "msg-avatar-support" : "msg-avatar-own"}`}
                           aria-hidden
                         >
-                          {support ? "প" : "আ"}
+                          {support ? t("misc.supAvatarSupport") : t("misc.supAvatarOwn")}
                         </span>
                         <div className={`msg-bubble ${support ? "msg-bubble-support" : "msg-bubble-own"}`}>
                           <p
@@ -964,7 +960,7 @@ export default function SupportPage() {
                               support ? "text-slate-500" : "text-white/75"
                             }`}
                           >
-                            {support ? "🛠 প্ল্যাটফর্ম সাপোর্ট টিম" : "আপনি"} · {timeLabel(m.createdAt)}
+                            {support ? t("misc.supSupportTeam") : t("misc.supYou")} · {timeLabel(m.createdAt)}
                           </p>
                           <p className="mt-1 whitespace-pre-wrap leading-relaxed">{m.body}</p>
 
@@ -1015,7 +1011,7 @@ export default function SupportPage() {
                 {adminTyping ? (
                   <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-xl border border-emerald-100 max-w-max animate-pulse">
                     <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-                    <span>সাপোর্ট টিম উত্তর লিখছেন...</span>
+                    <span>{t("misc.supTyping")}</span>
                   </div>
                 ) : null}
                 <div ref={threadEndRef} />
@@ -1054,9 +1050,9 @@ export default function SupportPage() {
                       }}
                       onPaste={(e) => handlePaste(e, true)}
                       rows={2}
-                      placeholder="উত্তর লিখুন (স্ক্রিনশট পেস্ট Ctrl+V করা যাবে)…"
+                      placeholder={t("misc.supReplyPlaceholder")}
                       className="input !border-0 !shadow-none flex-1 resize-none focus:!ring-0 text-sm"
-                      aria-label="উত্তর লিখুন"
+                      aria-label={t("misc.supReplyAria")}
                     />
 
                     <div>
@@ -1074,7 +1070,7 @@ export default function SupportPage() {
                         type="button"
                         onClick={() => replyFileInputRef.current?.click()}
                         className="btn-secondary btn-sm min-h-[44px] shrink-0 text-sm"
-                        title="ফাইল বা স্ক্রিনশট যোগ করুন"
+                        title={t("misc.supAttachTitle")}
                       >
                         📎
                       </button>
@@ -1085,7 +1081,7 @@ export default function SupportPage() {
                       disabled={!reply.trim() && replyAttachments.length === 0}
                       className="btn-primary min-h-[44px] shrink-0"
                     >
-                      পাঠান
+                      {t("misc.supSend")}
                     </button>
                   </div>
                 </div>
@@ -1100,6 +1096,7 @@ export default function SupportPage() {
 
 /** Milestone 41: quick NPS feedback — goes straight to the platform team. */
 function FeedbackCard({ orgId }: { orgId: string | null }) {
+  const { t, locale } = useLocale();
   const [score, setScore] = useState<number | null>(null);
   const [comment, setComment] = useState("");
   const [done, setDone] = useState(false);
@@ -1108,17 +1105,17 @@ function FeedbackCard({ orgId }: { orgId: string | null }) {
   if (done) {
     return (
       <div className="alert alert-green">
-        <span>🙏 ধন্যবাদ! আপনার মতামত প্ল্যাটফর্ম টিমের কাছে পৌঁছেছে।</span>
+        <span>{t("misc.supFeedbackThanks")}</span>
       </div>
     );
   }
   return (
     <div className="card p-5">
       <div className="section-title flex items-center gap-2">
-        <span className="stat-icon stat-icon-brand !h-9 !w-9 !rounded-xl text-base">💬</span>এক মিনিটে মতামত দিন
+        <span className="stat-icon stat-icon-brand !h-9 !w-9 !rounded-xl text-base">💬</span>{t("misc.supFeedbackTitle")}
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
-        বন্ধু বা পরিচিত কারো কাছে এই প্ল্যাটফর্মটি সুপারিশ করার সম্ভাবনা কতটা? (০ = একদমই না, ১০ = অবশ্যই)
+        {t("misc.supFeedbackIntro")}
       </p>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {Array.from({ length: 11 }, (_, i) => (
@@ -1135,14 +1132,14 @@ function FeedbackCard({ orgId }: { orgId: string | null }) {
               score === i ? { backgroundImage: "linear-gradient(135deg, var(--brand-from), var(--brand-to))" } : undefined
             }
           >
-            {bnNum(i)}
+            {fmtNumber(locale, i)}
           </button>
         ))}
       </div>
       <textarea
         className="input mt-3 resize-none"
         rows={2}
-        placeholder="কী ভালো লাগলো / কী উন্নত করা দরকার? (ঐচ্ছিক)"
+        placeholder={t("misc.supFeedbackPlaceholder")}
         value={comment}
         onChange={(e) => setComment(e.target.value)}
       />
@@ -1158,11 +1155,11 @@ function FeedbackCard({ orgId }: { orgId: string | null }) {
             });
             setDone(true);
           } catch (e) {
-            setErr(e instanceof Error ? e.message : "পাঠানো যায়নি");
+            setErr(e instanceof Error ? e.message : t("misc.supFeedbackError"));
           }
         }}
       >
-        মতামত পাঠান
+        {t("misc.supFeedbackSend")}
       </button>
     </div>
   );

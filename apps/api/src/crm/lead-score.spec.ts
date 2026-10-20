@@ -214,7 +214,7 @@ describe("Lead score surfaces", () => {
   it("getOne of another org's lead is a 404 (tenant isolation)", async () => {
     const { prisma, svc } = setup();
     const foreign = await prisma.lead.create({ data: leadData({ organizationId: "org-2" }) });
-    await expect(svc.getOne("org-1", foreign.id)).rejects.toThrow("Lead not found");
+    await expect(svc.getOne("org-1", foreign.id)).rejects.toMatchObject({ code: "crm.leadNotFoundInThisOrganization" });
     const rows = await svc.list("org-1", {});
     expect(rows).toHaveLength(0);
   });

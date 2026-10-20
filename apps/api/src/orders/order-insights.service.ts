@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { badRequest, forbidden, notFound } from "../i18n";
 
 /**
  * ON2 — Order Insights: unified timeline, Customer 360 and the
@@ -98,7 +99,7 @@ export class OrderInsightsService {
 
   private async loadOrder(organizationId: string, orderId: string) {
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     return order;
   }
 
@@ -482,10 +483,10 @@ export class OrderInsightsService {
     await this.loadOrder(organizationId, orderId);
     const body = String(bodyRaw ?? "").trim();
     if (body.length < 1 || body.length > 2000) {
-      throw new BadRequestException("মন্তব্য ১–২০০০ অক্ষরের হতে হবে");
+      throw badRequest("orders.commentLength");
     }
     const table = (this.prisma as any).orderComment;
-    if (!table?.create) throw new BadRequestException("মন্তব্য সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!table?.create) throw badRequest("orders.commentFeatureUnavailable");
     const row = await table.create({ data: { organizationId, orderId, authorId: actorId, body } });
     await this.audit?.log({
       organizationId, userId: actorId, action: "orders.comment_created",
@@ -505,7 +506,7 @@ export class OrderInsightsService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id: commentId, organizationId, orderId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Comment not found");
+    if (!row) throw notFound("orders.commentNotFound");
     if (String(row.authorId) !== String(actorId)) {
       // Not the author: only OWNER / ADMIN members may delete.
       let role: string | null = null;
@@ -516,7 +517,7 @@ export class OrderInsightsService {
         role = member?.role ?? null;
       } catch { role = null; }
       if (role !== "OWNER" && role !== "ADMIN") {
-        throw new ForbiddenException("শুধু মন্তব্যের লেখক অথবা অ্যাডমিন এই মন্তব্য মুছতে পারবেন");
+        throw forbidden("orders.commentDeleteForbidden");
       }
     }
     await table.delete({ where: { id: row.id } });

@@ -22,10 +22,10 @@ import type {
   UpdateAddressDto,
   UpdateProfileDto,
 } from "./storefront.dto";
+import { badRequest, notFound, tooManyRequests, unauthorized } from "../i18n";
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
-const OTP_FAILURE_MESSAGE = "কোডটি সঠিক নয় অথবা মেয়াদ শেষ হয়ে গেছে";
 
 /**
  * EC25 (the EC17 completion) — native-storefront customer
@@ -81,7 +81,7 @@ export class ShopAccountService {
   /** Same gate as StorefrontService.requireEnabledShop. */
   private async requireShop(orgSlug: string): Promise<{ org: any; setting: any }> {
     const org = await this.findOrgBySlug(orgSlug);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     let setting: any = null;
     try {
       setting = await this.t("storefrontSetting").findFirst({
@@ -91,7 +91,7 @@ export class ShopAccountService {
       setting = null;
     }
     if (!setting || setting.shopEnabled !== true) {
-      throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+      throw notFound("orders.storeNotFound");
     }
     return { org, setting };
   }
@@ -232,7 +232,7 @@ export class ShopAccountService {
     }
     const phoneKey = phoneKeyLoose(phoneRaw);
     if (phoneKey.length < 11) {
-      throw new BadRequestException("সঠিক মোবাইল নম্বর দিন");
+      throw badRequest("storefront.mobileNumberInvalid");
     }
     const now = new Date();
     const table = this.t("shopOtpChallenge");
@@ -246,11 +246,11 @@ export class ShopAccountService {
       (c) => now.getTime() - new Date(c.createdAt).getTime() < 60 * 60 * 1000,
     );
     if (withinHour.length >= 3) {
-      throw new HttpException("অনেকবার কোড চাওয়া হয়েছে — কিছুক্ষণ পর আবার চেষ্টা করুন", 429);
+      throw tooManyRequests("auth.codeRequestedTooOften");
     }
     const latest = recent[0];
     if (latest && now.getTime() - new Date(latest.createdAt).getTime() < 60 * 1000) {
-      throw new HttpException("কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন", 429);
+      throw tooManyRequests("auth.waitAndRetry");
     }
 
     // Supersede: every still-open challenge for this phone dies.
@@ -307,7 +307,7 @@ export class ShopAccountService {
     if (!send.sent) {
       await this.consumeChallenge(challenge.id);
       if (send.notConfigured) {
-        throw new BadRequestException("এই দোকানে SMS লগইন সেটআপ করা নেই — দোকানে যোগাযোগ করুন");
+        throw badRequest("storefront.smsLoginNotSetUp");
       }
       throw new BadRequestException(send.reason);
     }
@@ -319,7 +319,7 @@ export class ShopAccountService {
     const { org } = await this.requireShop(orgSlug);
     const phoneKey = phoneKeyLoose(phoneRaw);
     const fail = (): never => {
-      throw new BadRequestException(OTP_FAILURE_MESSAGE);
+      throw badRequest("storefront.shopOtpFailed");
     };
     const table = this.t("shopOtpChallenge");
     const open: any[] =
@@ -401,14 +401,14 @@ export class ShopAccountService {
     const { org, setting } = await this.requireShop(orgSlug);
     const customer = await this.resolveSession(org.id, token);
     if (!customer) {
-      throw new UnauthorizedException("লগইন সেশন পাওয়া যায়নি — আবার লগইন করুন");
+      throw unauthorized("storefront.shopSessionMissing");
     }
     return { org, setting, customer };
   }
 
   async logout(orgSlug: string, token: string | null | undefined) {
     const org = await this.findOrgBySlug(orgSlug);
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     if (token?.trim()) {
       try {
         const table = this.t("shopSession");
@@ -552,7 +552,7 @@ export class ShopAccountService {
           .findFirst({ where: { id: notificationId, organizationId: org.id, customerId: customer.id } })
           .catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("নোটিফিকেশনটি পাওয়া যায়নি");
+    if (!row) throw notFound("storefront.notificationNotFound");
     if (row.readAt) return this.serializeNotification(row);
     const now = new Date();
     const saved = await table.update({ where: { id: row.id }, data: { readAt: now } });
@@ -671,7 +671,7 @@ export class ShopAccountService {
     const row = await this.t("customerAddress").findFirst({
       where: { id: addressId, organizationId: orgId, customerId },
     });
-    if (!row) throw new NotFoundException("ঠিকানাটি পাওয়া যায়নি");
+    if (!row) throw notFound("storefront.addressNotFound");
     return row;
   }
 
@@ -785,7 +785,7 @@ export class ShopAccountService {
     const order = await this.t("order").findFirst({
       where: { id: orderId, organizationId: orgId, customerId },
     });
-    if (!order) throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
+    if (!order) throw notFound("courier.orderNotFoundShort");
     return order;
   }
 
@@ -912,7 +912,7 @@ export class ShopAccountService {
       where: { id: productId, organizationId: org.id },
     });
     if (!product || product.status !== "ACTIVE") {
-      throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+      throw notFound("commerce.productNotFoundShort");
     }
     const existing = await this.t("wishlistItem").findFirst({
       where: { customerId: customer.id, productId: product.id },

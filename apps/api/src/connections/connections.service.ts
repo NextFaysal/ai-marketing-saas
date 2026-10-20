@@ -7,6 +7,7 @@ import { decryptJson, encryptJson } from "../integrations/crypto";
 import { MetaAppClient } from "./meta-app.client";
 import { LlmVerifyClient } from "./llm-verify.client";
 import { StepUpService, stepUpMarker } from "./step-up.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC1/CC2 — Connect Center.
@@ -535,7 +536,7 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     const category = categoryForProvider(target.provider);
     const siblingProviders = category === "other" ? [target.provider] : providersForCategory(category);
     const siblings = await this.safeFindMany("integration", {
@@ -569,7 +570,7 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     await (this.prisma as any).integrationCredential.deleteMany({ where: { integrationId: target.id } });
     const updated = await (this.prisma as any).integration.update({
       where: { id: target.id }, data: { status: "DISCONNECTED", isDefault: false },
@@ -591,7 +592,7 @@ export class ConnectionsService {
     if (value === undefined) return undefined as never;
     if (value === null) return null;
     const trimmed = String(value).trim();
-    if (trimmed.length > 60) throw new BadRequestException(`${fieldBn} সর্বোচ্চ ৬০ অক্ষরের হতে পারবে।`);
+    if (trimmed.length > 60) throw badRequest("connections.fieldMax60", { field: fieldBn });
     return trimmed === "" ? null : trimmed;
   }
 
@@ -611,9 +612,9 @@ export class ConnectionsService {
    */
   async setAccountMeta(organizationId: string, actorId: string, source: string, targetId: string, dto: { label?: string | null; groupName?: string | null }) {
     const table = this.accountTable(source);
-    if (!table) throw new BadRequestException("এই ধরনের অ্যাকাউন্টে লেবেল/গ্রুপ দেওয়া যায় না।");
+    if (!table) throw badRequest("connections.accountTypeNoLabels");
     const row = await (this.prisma as any)[table].findFirst({ where: { id: targetId, organizationId } });
-    if (!row) throw new NotFoundException("Account not found");
+    if (!row) throw notFound("connections.accountNotFound");
     const data: Record<string, unknown> = {};
     if (dto.label !== undefined) data.label = this.cleanShortText(dto.label, "লেবেল");
     if (dto.groupName !== undefined) data.groupName = this.cleanShortText(dto.groupName, "গ্রুপের নাম");
@@ -638,7 +639,7 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     const updated = await (this.prisma as any).integration.update({
       where: { id: target.id }, data: { syncPaused: Boolean(paused) },
     });
@@ -658,12 +659,12 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     let value: number | null = null;
     if (minutes !== null && minutes !== undefined) {
       const n = Number(minutes);
       if (!Number.isInteger(n) || n < 5 || n > 10080) {
-        throw new BadRequestException("Sync ব্যবধান ৫ থেকে ১০০৮০ মিনিটের মধ্যে হতে হবে (বা বন্ধ করতে খালি পাঠান)।");
+        throw badRequest("connections.syncIntervalRange");
       }
       value = n;
     }
@@ -686,7 +687,7 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     const updated = await (this.prisma as any).integration.update({
       where: { id: target.id }, data: { autoHealEnabled: Boolean(enabled) },
     });
@@ -705,7 +706,7 @@ export class ConnectionsService {
     const target = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId },
     });
-    if (!target) throw new NotFoundException("Integration not found");
+    if (!target) throw notFound("connections.integrationNotFound");
     const take = Math.min(100, Math.max(1, Math.round(Number(limit) || 20)));
     const rows = await this.safeFindMany("syncJob", {
       where: { integrationId: target.id }, orderBy: { startedAt: "desc" }, take,
@@ -786,9 +787,9 @@ export class ConnectionsService {
     const target = await p.membership.findUnique({
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
     });
-    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    if (!target) throw notFound("connections.userNotOrgMember");
     if (target.role === "OWNER") {
-      throw new BadRequestException("Owner-এর অ্যাক্সেস সীমাবদ্ধ করা যায় না — owner সবসময় সব কানেকশন ব্যবহার করতে পারবেন।");
+      throw badRequest("connections.ownerAccessUnrestrictable");
     }
     const denied = normalizeDeniedConnections(deniedIdsRaw);
     if (denied.length > 0) {
@@ -800,7 +801,7 @@ export class ConnectionsService {
       const known = new Set([...integrations, ...socialAccounts, ...adAccounts].map((r: any) => r.id));
       const unknown = denied.filter((id) => !known.has(id));
       if (unknown.length) {
-        throw new BadRequestException(`এই কানেকশনগুলো পাওয়া যায়নি: ${unknown.join(", ")}`);
+        throw badRequest("connections.connectionsNotFoundList", { list: unknown.join(", ") });
       }
     }
     const before = normalizeDeniedConnections(target.deniedConnections);
@@ -902,15 +903,15 @@ export class ConnectionsService {
    */
   async putAppConfig(organizationId: string, actorId: string, platform: string, dto: { appId: string; appSecret: string }) {
     if (!["meta", "tiktok", "google", "linkedin", "threads"].includes(platform)) {
-      throw new BadRequestException("platform must be meta, tiktok, google, linkedin or threads");
+      throw badRequest("connections.platformEnumInvalid");
     }
     const appId = (dto?.appId ?? "").trim();
     const appSecret = (dto?.appSecret ?? "").trim();
     if (!appId || !appSecret) {
-      throw new BadRequestException("App ID (বা Client Key) ও App Secret দুটোই প্রয়োজন।");
+      throw badRequest("connections.appIdAndSecretRequired");
     }
     if (platform === "google" && !appId.endsWith(".apps.googleusercontent.com")) {
-      throw new BadRequestException("Google Client ID-এর ফরম্যাট সঠিক নয় — Google Cloud Console-এর OAuth Client ID সাধারণত '.apps.googleusercontent.com' দিয়ে শেষ হয়। সঠিক Client ID টি কপি করে আবার চেষ্টা করুন।");
+      throw badRequest("connections.googleClientIdFormat");
     }
 
     const existing = await (this.prisma as any).tenantAppConfig.findFirst({
@@ -922,7 +923,7 @@ export class ConnectionsService {
     let rotated = false;
     if (platform === "meta") {
       await this.metaApp.verifyApp(appId, appSecret).catch((e) => {
-        throw new BadRequestException(e instanceof Error ? e.message : "Meta app verification failed");
+        throw e instanceof Error ? new BadRequestException(e.message) : badRequest("connections.metaVerificationFailed");
       });
       status = "verified";
       lastVerifiedAt = new Date();
@@ -956,7 +957,7 @@ export class ConnectionsService {
    */
   async deleteAppConfig(organizationId: string, actorId: string, platform: string, totpCode?: string | null) {
     if (!["meta", "tiktok", "google", "linkedin", "threads"].includes(platform)) {
-      throw new BadRequestException("platform must be meta, tiktok, google, linkedin or threads");
+      throw badRequest("connections.platformEnumInvalid");
     }
     // CC23: deleting the tenant's own app config is a sensitive
     // action — TOTP step-up runs BEFORE anything is deleted
@@ -965,7 +966,7 @@ export class ConnectionsService {
     const existing = await (this.prisma as any).tenantAppConfig.findFirst({
       where: { organizationId, platform },
     });
-    if (!existing) throw new NotFoundException("App config not found");
+    if (!existing) throw notFound("connections.appConfigNotFound");
     await (this.prisma as any).tenantAppConfig.delete({ where: { id: existing.id } });
     await this.audit.log({
       organizationId, userId: actorId, action: "tenant_app_config.deleted",
@@ -1011,11 +1012,11 @@ export class ConnectionsService {
     const apiKey = String(dto?.apiKey ?? "").trim();
     const model = dto?.model?.trim() ? dto.model.trim() : null;
     if (!["openai", "anthropic", "gemini"].includes(provider)) {
-      throw new BadRequestException("provider must be openai | anthropic | gemini");
+      throw badRequest("connections.providerLlmEnum");
     }
-    if (!apiKey) throw new BadRequestException("API Key প্রয়োজন।");
+    if (!apiKey) throw badRequest("connections.apiKeyRequiredDot");
     await this.llmVerify.verifyKey(provider, apiKey, model ?? undefined).catch((e) => {
-      throw new BadRequestException(e instanceof Error ? e.message : "LLM key verification failed");
+      throw e instanceof Error ? new BadRequestException(e.message) : badRequest("connections.llmVerificationFailed");
     });
     const data = {
       provider, model, encryptedData: encryptJson({ apiKey }),
@@ -1039,7 +1040,7 @@ export class ConnectionsService {
    */
   async deleteLlmConfig(organizationId: string, actorId: string) {
     const existing = await this.safeFindUnique("orgLlmConfig", { where: { organizationId } });
-    if (!existing) throw new NotFoundException("LLM config not found");
+    if (!existing) throw notFound("connections.llmConfigNotFound");
     await (this.prisma as any).orgLlmConfig.delete({ where: { id: existing.id } });
     await this.audit.log({
       organizationId, userId: actorId, action: "org_llm_config.deleted",

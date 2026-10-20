@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { formatMinor } from "@repo/contracts";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InboxService, normalizeTags } from "../../inbox/inbox.service";
 import { SocialCommentsService } from "../../inbox/social-comments.service";
 import { CampaignsService } from "../../campaigns/campaigns.service";
 import { PublishingService } from "../../publishing/publishing.service";
+import { badRequest, notFound } from "../../i18n/api-exception";
 
 /**
  * SA-B10 (Smart AI Phase 2, W1) — action builders / executors /
@@ -45,7 +46,7 @@ export type ActionVerifier = (organizationId: string, payload: any, result: any)
 
 function reqString(payload: any, field: string): string {
   const v = payload?.[field];
-  if (typeof v !== "string" || !v.trim()) throw new BadRequestException(`${field} is required`);
+  if (typeof v !== "string" || !v.trim()) throw badRequest("ai.isRequired", { field: field });
   return v.trim();
 }
 
@@ -97,8 +98,8 @@ export class ActionExecutorsService {
     this.builders.set("close_conversation", async (organizationId, payload) => {
       const conversationId = reqString(payload, "conversationId");
       const conv = await this.p().channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-      if (!conv) throw new NotFoundException("Conversation not found in this organization");
-      if (conv.status === "closed") throw new BadRequestException("এই কথোপকথনটি ইতিমধ্যে বন্ধ আছে — বন্ধ করার কিছু নেই।");
+      if (!conv) throw notFound("ai.conversationNotFoundInThisOrganization");
+      if (conv.status === "closed") throw badRequest("ai.thisConversationIsAlreadyClosedThere");
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
         title: `কথোপকথন বন্ধ: ${who}`,
@@ -125,8 +126,8 @@ export class ActionExecutorsService {
     this.builders.set("hide_comment", async (organizationId, payload) => {
       const commentId = reqString(payload, "commentId");
       const comment = await this.p().socialComment.findFirst({ where: { id: commentId, organizationId } });
-      if (!comment) throw new NotFoundException("Comment not found in this organization");
-      if (comment.status === "HIDDEN") throw new BadRequestException("এই কমেন্টটি ইতিমধ্যে লুকানো আছে — লুকানোর কিছু নেই।");
+      if (!comment) throw notFound("ai.commentNotFoundInThisOrganization");
+      if (comment.status === "HIDDEN") throw badRequest("ai.thisCommentIsAlreadyHiddenThere");
       const author = comment.authorName ?? "অজানা";
       const snippet = String(comment.commentText ?? "").slice(0, 120);
       return {
@@ -157,14 +158,14 @@ export class ActionExecutorsService {
     this.builders.set("request_refund", async (organizationId, payload) => {
       const conversationId = reqString(payload, "conversationId");
       const reason = typeof payload?.reason === "string" ? payload.reason.trim().slice(0, 500) : "";
-      if (!reason) throw new BadRequestException("রিফান্ডের অনুরোধে একটি কারণ (reason) দরকার");
+      if (!reason) throw badRequest("ai.aReasonIsNeededInThe");
       const conv = await this.p().channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-      if (!conv) throw new NotFoundException("Conversation not found in this organization");
+      if (!conv) throw notFound("ai.conversationNotFoundInThisOrganization");
       let order: any = null;
       if (payload?.orderId !== undefined && payload?.orderId !== null) {
         const orderId = reqString(payload, "orderId");
         order = await this.p().order.findFirst({ where: { id: orderId, organizationId } });
-        if (!order) throw new NotFoundException("Order not found in this organization");
+        if (!order) throw notFound("ai.orderNotFoundInThisOrganization");
       }
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
@@ -185,7 +186,7 @@ export class ActionExecutorsService {
   private async conversationOrThrow(organizationId: string, payload: any) {
     const conversationId = reqString(payload, "conversationId");
     const conv = await this.p().channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-    if (!conv) throw new NotFoundException("Conversation not found in this organization");
+    if (!conv) throw notFound("ai.conversationNotFoundInThisOrganization");
     return conv;
   }
 
@@ -201,7 +202,7 @@ export class ActionExecutorsService {
       const conv = await this.conversationOrThrow(organizationId, payload);
       const raw = payload?.assignedUserId;
       if (raw !== undefined && raw !== null && (typeof raw !== "string" || !raw.trim())) {
-        throw new BadRequestException("assignedUserId must be a user id string or null (unassign)");
+        throw badRequest("ai.assigneduseridMustBeAUserId");
       }
       const assignedUserId = typeof raw === "string" && raw.trim() ? raw.trim() : null;
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
@@ -252,13 +253,13 @@ export class ActionExecutorsService {
     this.builders.set("tag_conversation", async (organizationId, payload) => {
       const conv = await this.conversationOrThrow(organizationId, payload);
       if (!Array.isArray(payload?.addTags) || payload.addTags.length === 0) {
-        throw new BadRequestException("addTags must be a non-empty array of tag strings");
+        throw badRequest("ai.addtagsMustBeANonEmpty");
       }
       const addTags = normalizeTags(payload.addTags.map((t: any) => String(t ?? "")));
-      if (addTags.length === 0) throw new BadRequestException("addTags-এ কোনো বৈধ ট্যাগ নেই (খালি/শুধু space)।");
+      if (addTags.length === 0) throw badRequest("ai.addtagsHasNoValidTagEmpty");
       const current = new Set((conv.tags ?? []).map((t: string) => String(t).toLowerCase()));
       const fresh = addTags.filter((t) => !current.has(t.toLowerCase()));
-      if (fresh.length === 0) throw new BadRequestException("এই ট্যাগগুলো কথোপকথনে ইতিমধ্যে আছে — যোগ করার কিছু নেই।");
+      if (fresh.length === 0) throw badRequest("ai.theseTagsAreAlreadyOnThe");
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
         title: `ট্যাগ যোগ: ${who} — ${fresh.join(", ")}`,
@@ -269,7 +270,7 @@ export class ActionExecutorsService {
     });
     this.executors.set("inbox.tag_conversation", async (organizationId, actorId, payload) => {
       const conv = await this.p().channelConversation.findFirst({ where: { id: payload.conversationId, organizationId } });
-      if (!conv) throw new NotFoundException("Conversation not found in this organization");
+      if (!conv) throw notFound("ai.conversationNotFoundInThisOrganization");
       const merged = normalizeTags([...(conv.tags ?? []), ...(payload.addTags ?? [])]);
       const updated: any = await this.inbox.updateConversation(organizationId, actorId, payload.conversationId, { tags: merged });
       return { conversationId: payload.conversationId, tags: updated?.tags ?? merged };
@@ -289,7 +290,7 @@ export class ActionExecutorsService {
   private registerReopenConversation() {
     this.builders.set("reopen_conversation", async (organizationId, payload) => {
       const conv = await this.conversationOrThrow(organizationId, payload);
-      if (conv.status === "open") throw new BadRequestException("এই কথোপকথনটি ইতিমধ্যে খোলা (open) আছে — আবার খোলার কিছু নেই।");
+      if (conv.status === "open") throw badRequest("ai.thisConversationIsAlreadyOpenThere");
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
         title: `কথোপকথন আবার খোলা: ${who}`,
@@ -319,7 +320,7 @@ export class ActionExecutorsService {
   private registerMarkConversationSpam() {
     this.builders.set("mark_conversation_spam", async (organizationId, payload) => {
       const conv = await this.conversationOrThrow(organizationId, payload);
-      if (conv.spamFlag) throw new BadRequestException("এই কথোপকথনটি ইতিমধ্যে স্প্যাম হিসেবে চিহ্নিত — আবার চিহ্নিত করার কিছু নেই।");
+      if (conv.spamFlag) throw badRequest("ai.thisConversationIsAlreadyMarkedAs");
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
         title: `স্প্যাম হিসেবে চিহ্নিত: ${who}`,
@@ -349,7 +350,7 @@ export class ActionExecutorsService {
   private registerBlockSender() {
     this.builders.set("block_sender", async (organizationId, payload) => {
       const conv = await this.conversationOrThrow(organizationId, payload);
-      if (conv.blockedAt) throw new BadRequestException("এই প্রেরক ইতিমধ্যে ব্লক করা আছে — আবার ব্লক করার কিছু নেই।");
+      if (conv.blockedAt) throw badRequest("ai.thisSenderIsAlreadyBlockedThere");
       const reason = typeof payload?.reason === "string" ? payload.reason.trim().slice(0, 300) : "";
       const who = conv.contactName ?? conv.externalContactId ?? conv.id;
       return {
@@ -387,7 +388,7 @@ export class ActionExecutorsService {
   private async commentOrThrow(organizationId: string, payload: any) {
     const commentId = reqString(payload, "commentId");
     const comment = await this.p().socialComment.findFirst({ where: { id: commentId, organizationId } });
-    if (!comment) throw new NotFoundException("Comment not found in this organization");
+    if (!comment) throw notFound("ai.commentNotFoundInThisOrganization");
     return comment;
   }
 
@@ -414,7 +415,7 @@ export class ActionExecutorsService {
     this.builders.set("unhide_comment", async (organizationId, payload) => {
       const comment = await this.commentOrThrow(organizationId, payload);
       if (comment.status !== "HIDDEN") {
-        throw new BadRequestException(`এই কমেন্টটি লুকানো (HIDDEN) অবস্থায় নেই (বর্তমান status: ${comment.status ?? "অজানা"}) — আবার দেখানোর কিছু নেই।`);
+        throw badRequest("ai.thisCommentIsNotInHidden", { p1: comment.status ?? "অজানা" });
       }
       const { author, snippet } = this.commentLabel(comment);
       return {
@@ -451,11 +452,11 @@ export class ActionExecutorsService {
     this.builders.set("reply_to_comment", async (organizationId, payload) => {
       const comment = await this.commentOrThrow(organizationId, payload);
       if (comment.status === "DELETED") {
-        throw new BadRequestException("এই কমেন্টটি মুছে ফেলা হয়েছে — এর উত্তর দেওয়া যায় না।");
+        throw badRequest("ai.thisCommentHasBeenDeletedIt");
       }
       const replyText = reqString(payload, "replyText");
       if (replyText.length > 1000) {
-        throw new BadRequestException("replyText সর্বোচ্চ ১০০০ অক্ষরের হতে পারবে (SA-B8 grounded compose-এর সীমা)।");
+        throw badRequest("ai.replytextCanBeAtMost1000");
       }
       const { author, snippet } = this.commentLabel(comment);
       return {
@@ -467,9 +468,7 @@ export class ActionExecutorsService {
     this.executors.set("comment.reply_to_comment", async (organizationId, actorId, payload) => {
       const guard = await this.socialComments.checkCommentReplyGuard(organizationId, payload.commentId, payload.replyText);
       if (guard.inventedNumbers.length) {
-        throw new BadRequestException(
-          `number guard: উত্তরের এই সংখ্যাগুলো তাজা যাচাইকৃত তথ্যে নেই — ${guard.inventedNumbers.join(", ")}। অনুমোদনের পর তথ্য বদলে গেছে (বা লেখাটি কখনোই grounded ছিল না) — কিছুই পোস্ট হয়নি।`,
-        );
+        throw badRequest("ai.numberGuardTheseNumbersInThe", { p1: guard.inventedNumbers.join(", ") });
       }
       const res: any = await this.socialComments.sendReply(organizationId, actorId, payload.commentId, { replyText: payload.replyText });
       return { commentId: payload.commentId, status: res?.status ?? null, graphReplyId: res?.graphReplyId ?? null };
@@ -505,14 +504,14 @@ export class ActionExecutorsService {
     this.builders.set("send_dm_to_commenter", async (organizationId, payload) => {
       const comment = await this.commentOrThrow(organizationId, payload);
       if (comment.status === "DELETED") {
-        throw new BadRequestException("এই কমেন্টটি মুছে ফেলা হয়েছে — এর লেখককে DM পাঠানো যায় না।");
+        throw badRequest("ai.thisCommentHasBeenDeletedIts");
       }
       if (comment.isPrivateDmSent) {
-        throw new BadRequestException("এই কমেন্টের জন্য ইতিমধ্যে একটি private reply (DM) পাঠানো হয়েছে — Meta প্রতি কমেন্টে একটির বেশি private reply দেয় না।");
+        throw badRequest("ai.aPrivateReplyDmHasAlready");
       }
       const message = reqString(payload, "message");
       if (message.length > 1000) {
-        throw new BadRequestException("message সর্বোচ্চ ১০০০ অক্ষরের হতে পারবে।");
+        throw badRequest("ai.theMessageCanBeAtMost");
       }
       const { author, snippet } = this.commentLabel(comment);
       return {
@@ -556,7 +555,7 @@ export class ActionExecutorsService {
     this.builders.set("delete_comment", async (organizationId, payload) => {
       const comment = await this.commentOrThrow(organizationId, payload);
       if (comment.status === "DELETED") {
-        throw new BadRequestException("এই কমেন্টটি ইতিমধ্যে মুছে ফেলা হয়েছে — আবার মোছার কিছু নেই।");
+        throw badRequest("ai.thisCommentHasAlreadyBeenDeleted");
       }
       const { author, snippet } = this.commentLabel(comment);
       return {
@@ -602,12 +601,12 @@ export class ActionExecutorsService {
   // =====================================================================
 
   private campaignsOrThrow(): CampaignsService {
-    if (!this.campaigns) throw new BadRequestException("Campaigns service is not available in this context");
+    if (!this.campaigns) throw badRequest("ai.campaignsServiceIsNotAvailableIn");
     return this.campaigns;
   }
 
   private publishingOrThrow(): PublishingService {
-    if (!this.publishing) throw new BadRequestException("Publishing service is not available in this context");
+    if (!this.publishing) throw badRequest("ai.publishingServiceIsNotAvailableIn");
     return this.publishing;
   }
 
@@ -616,7 +615,7 @@ export class ActionExecutorsService {
   private async resolveAdsTarget(organizationId: string, payload: any) {
     const platform = reqString(payload, "platform").toLowerCase();
     if (!["meta", "google", "tiktok"].includes(platform)) {
-      throw new BadRequestException(`platform must be meta, google or tiktok (got "${platform}") — manual/CSV-only data has no platform to act on`);
+      throw badRequest("ai.platformMustBeMetaGoogleOr", { platform: platform });
     }
     const campaignExternalId = reqString(payload, "campaignExternalId");
     const wantAccountId =
@@ -688,20 +687,14 @@ export class ActionExecutorsService {
     });
     const matches = (rows as any[]).filter((r) => String(r.adAccount?.platform ?? "").toLowerCase() === platform);
     if (matches.length > 1) {
-      throw new BadRequestException(
-        `একই campaign id (${campaignExternalId}) এই org-এর একাধিক ${platform} অ্যাকাউন্টে আছে — কোন অ্যাকাউন্টের campaign তা adAccountId দিয়ে নির্দিষ্ট করুন।`,
-      );
+      throw badRequest("ai.theSameCampaignIdExistsIn", { campaignExternalId: campaignExternalId, platform: platform });
     }
     const row = matches[0] ?? null;
     if (!row) {
-      throw new NotFoundException(
-        `এই org-এ ${platform} campaign "${campaignExternalId}"-এর কোনো record নেই — campaign-টি আগে sync/connect করুন।`,
-      );
+      throw notFound("ai.thisOrgHasNoRecordOf", { platform: platform, campaignExternalId: campaignExternalId });
     }
     if (!row.adAccount?.integrationId) {
-      throw new BadRequestException(
-        `“${row.name}” campaign-এর অ্যাকাউন্ট (${row.adAccount?.name ?? "অজানা"}) API দিয়ে connected নয় (CSV/manual) — platform-এ সরাসরি কাজ করার কোনো পথ এই system-এ নেই; campaign-টি Ads Manager থেকে পরিচালনা করুন।`,
-      );
+      throw badRequest("ai.theAccountOfTheCampaignIs", { rowName: row.name, p2: row.adAccount?.name ?? "অজানা" });
     }
     return {
       route: platform === "meta" ? ("meta_account" as const) : ("cross_platform" as const),
@@ -836,7 +829,7 @@ export class ActionExecutorsService {
         return { ...base, providerStatus: res?.providerStatus ?? null, providerStatusRaw: res?.providerStatusRaw ?? null };
       }
       default:
-        throw new BadRequestException(`Unknown ads lifecycle route: ${route || "(missing)"}`);
+        throw badRequest("ai.unknownAdsLifecycleRoute", { p1: route || "(missing)" });
     }
   }
 
@@ -925,16 +918,14 @@ export class ActionExecutorsService {
       try {
         requested = BigInt(payload?.requestedBudgetMinor);
       } catch {
-        throw new BadRequestException("requestedBudgetMinor must be an integer amount in minor units");
+        throw badRequest("ai.requestedbudgetminorMustBeAnIntegerAmount");
       }
-      if (requested <= 0n) throw new BadRequestException("requestedBudgetMinor must be positive");
+      if (requested <= 0n) throw badRequest("ai.requestedbudgetminorMustBePositive");
       const budgetKind = payload?.budgetKind === "lifetime" ? "lifetime" : "daily";
       const t = await this.resolveAdsTarget(organizationId, payload);
       const current = await this.currentCampaignBudget(organizationId, t);
       if (!current) {
-        throw new BadRequestException(
-          `“${t.campaignName}” campaign-এর বর্তমান বাজেট এই system-এ পড়ার কোনো পথ নেই (কোনো platform client-এ budget read নেই, আর এই campaign-এর hub-এ কোনো সংরক্ষিত budget record-ও নেই) — বর্তমান বাজেট না জানিয়ে বাজেট-বদলের প্রস্তাব তৈরি করা হয় না। বাজেট জানতে/বদলাতে Ads Manager বা hub-এর campaign plan দেখুন।`,
-        );
+        throw badRequest("ai.theCurrentBudgetOfTheCampaign", { tCampaignName: t.campaignName });
       }
       const currency = t.accountCurrency ?? "BDT";
       const kindBn = (k: string) => (k === "lifetime" ? "lifetime" : "দৈনিক");

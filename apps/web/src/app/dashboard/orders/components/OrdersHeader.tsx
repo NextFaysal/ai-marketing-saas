@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface OrdersHeaderProps {
   total: number;
@@ -32,18 +33,17 @@ export function OrdersHeader({
   onOpenFraud,
   onOpenNotif,
 }: OrdersHeaderProps) {
+  const { dict, t, locale } = useLocale();
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">অর্ডার ম্যানেজমেন্ট</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{dict.orders.orderManagement}</h1>
           <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 ring-1 ring-inset ring-indigo-200">
-            {total} টি অর্ডার
-          </span>
+            {total} {dict.orders.orders}</span>
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          রিয়েল-টাইম অর্ডার ট্র্যাকিং, কুরিয়ার বুকিং, পেমেন্ট ও স্টোর সিঙ্ক অটোমেশন।
-        </p>
+          {dict.orders.realTimeOrderTrackingCourier}</p>
 
         {/* Quick Link Pills */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -51,33 +51,29 @@ export function OrdersHeader({
             href="/dashboard/orders/manual"
             className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300"
           >
-            <span>+</span> ম্যানুয়াল অর্ডার / CSV
-          </a>
+            <span>+</span> {dict.orders.manualOrderCSV}</a>
           <a
             href="/dashboard/orders/ndr"
             className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50/70 px-2.5 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
           >
-            <span>🚨</span> NDR রিকভারি
-          </a>
+            <span>🚨</span> {dict.orders.nDRRecovery}</a>
           <a
             href="/dashboard/orders/reconciliation"
             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
           >
-            <span>💰</span> ক্যাশ রিকনসিলিয়েশন
-          </a>
+            <span>💰</span> {dict.orders.cashReconciliation}</a>
           <a
             href="/dashboard/team/performance"
             className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1 text-xs font-semibold text-indigo-800 transition hover:bg-indigo-100"
           >
-            <span>🏆</span> টিম স্কোরবোর্ড
-          </a>
+            <span>🏆</span> {dict.orders.teamScoreboard}</a>
           {duplicateCount > 0 && (
             <button
               type="button"
               onClick={onOpenDuplicates}
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800 transition hover:bg-amber-100 animate-pulse"
             >
-              <span>⚠️</span> ডুপ্লিকেট অর্ডার ({duplicateCount})
+              <span>⚠️</span> {dict.orders.duplicateOrders}{duplicateCount})
             </button>
           )}
         </div>
@@ -91,8 +87,7 @@ export function OrdersHeader({
             onClick={onOpenAutomation}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>🤖</span> অটোমেশন
-          </button>
+            <span>🤖</span> {dict.orders.automation}</button>
         )}
         {onOpenAnalytics && (
           <button
@@ -100,8 +95,7 @@ export function OrdersHeader({
             onClick={onOpenAnalytics}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>📊</span> অ্যানালিটিক্স
-          </button>
+            <span>📊</span> {dict.orders.analytics}</button>
         )}
         {onOpenPrint && (
           <button
@@ -109,8 +103,7 @@ export function OrdersHeader({
             onClick={onOpenPrint}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>🖨️</span> প্রিন্ট সেন্টার
-          </button>
+            <span>🖨️</span> {dict.orders.printCenter2}</button>
         )}
         {onOpenTeam && (
           <button
@@ -118,8 +111,7 @@ export function OrdersHeader({
             onClick={onOpenTeam}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>👥</span> টিম
-          </button>
+            <span>👥</span> {dict.orders.team}</button>
         )}
         {onOpenFraud && (
           <button
@@ -127,8 +119,7 @@ export function OrdersHeader({
             onClick={onOpenFraud}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>🛡️</span> ফ্রড শিল্ড
-          </button>
+            <span>🛡️</span> {dict.orders.fraudShield2}</button>
         )}
         {onOpenNotif && (
           <button
@@ -136,30 +127,27 @@ export function OrdersHeader({
             onClick={onOpenNotif}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
           >
-            <span>🔔</span> নোটিফিকেশন
-          </button>
+            <span>🔔</span> {dict.orders.notification}</button>
         )}
         <button
           type="button"
           onClick={onOpenLabelScanner}
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
         >
-          <span>📷</span> লেবেল স্ক্যানার
-        </button>
+          <span>📷</span> {dict.orders.labelScanner}</button>
         <button
           type="button"
           onClick={onOpenCourierHub}
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 active:scale-95"
         >
-          <span>🚚</span> কুরিয়ার হাব ও সেটিংস
-        </button>
+          <span>🚚</span> {dict.orders.courierHubSettings}</button>
         <button
           type="button"
           disabled={exportBusy}
           onClick={onDownloadExport}
           className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-95 disabled:opacity-50"
         >
-          <span>📥</span> {exportBusy ? "ডাউনলোড হচ্ছে..." : "এক্সপোর্ট (CSV)"}
+          <span>📥</span> {exportBusy ? dict.orders.downloading : dict.orders.exportCSV}
         </button>
       </div>
     </div>

@@ -200,7 +200,7 @@ describe("CA10 suggest mode", () => {
     await svc.createRule("org-1", "owner", { name: "CPA guard", metric: "platform_cpa", comparator: "gt", threshold: "300", action: "pause_campaign" });
     await svc.evaluateRules("org-1", "owner");
     const s = tables.ruleSuggestion.rows[0];
-    await expect(svc.approveSuggestion("org-2", "admin-9", s.id)).rejects.toThrow(/not found/i);
+    await expect(svc.approveSuggestion("org-2", "admin-9", s.id)).rejects.toMatchObject({ code: "automation.suggestionNotFound" });
     const listed = await svc.listSuggestions("org-2");
     expect(listed.suggestions).toHaveLength(0);
     expect(tables.ruleSuggestion.rows[0].status).toBe("pending");

@@ -6,6 +6,8 @@ import { useNavCounts, presentCounts } from "@/components/useNavCounts";
 import type { NavCounts } from "@/components/nav";
 import { apiFetch, formatMinorStr } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
+import { useAdminLocale } from "@/components/AdminLocale";
 
 interface Overview {
   organizations: number; users: number; newOrganizations30d: number; newUsers30d: number;
@@ -33,41 +35,42 @@ interface StorageOverview {
 /** Decimal-string bytes -> human size (registry sums are BigInt
  *  strings; formatting must never go through a lossy Number for
  *  the integer part — TB-scale tenants stay exact). */
-function formatBytes(bytes: string): string {
+function formatBytes(bytes: string, locale: UiLocale): string {
   let v: bigint;
   try { v = BigInt(bytes); } catch { return "—"; }
   const units = ["B", "KB", "MB", "GB", "TB"];
   let u = 0;
   let scaled = v;
   while (scaled >= 1024n && u < units.length - 1) { scaled = scaled / 1024n; u += 1; }
-  if (u === 0) return `${v} B`;
+  if (u === 0) return `${fmtNumber(locale, Number(v))} B`;
   // One decimal from the remainder, integer math only.
   let rem = v;
   for (let i = 0; i < u - 1; i += 1) rem = rem / 1024n;
   const tenth = Number((rem % 1024n) * 10n / 1024n);
-  return `${scaled}.${tenth} ${units[u]}`;
+  return `${fmtNumber(locale, Number(scaled))}.${fmtNumber(locale, tenth)} ${units[u]}`;
 }
 
 /** ADX5: TODAY row config — one card per nav-counts field, each
  *  linking to its queue page. Same labels as the Attention Bell. */
-const TODO_ROWS: Record<keyof NavCounts, { label: string; href: string; hint: string }> = {
-  pendingPayouts: { label: "অপেক্ষমাণ Payout", href: "/payouts", hint: "সিদ্ধান্ত বাকি" },
-  openTickets: { label: "খোলা Ticket", href: "/tickets", hint: "open + pending" },
-  failedJobs24h: { label: "ব্যর্থ Job (২৪ ঘণ্টা)", href: "/health", hint: "Health-এ Retry" },
-  activeAlerts: { label: "সক্রিয় Alert", href: "/alerts", hint: "Proactive Alerts" },
-  overdueSubscriptions: { label: "বকেয়া Subscription", href: "/billing", hint: "Billing-এ তালিকা" },
+const TODO_ROWS: Record<keyof NavCounts, { labelKey: string; href: string; hintKey: string }> = {
+  pendingPayouts: { labelKey: "overview.todoPendingPayouts", href: "/payouts", hintKey: "overview.todoPendingHint" },
+  openTickets: { labelKey: "overview.todoOpenTickets", href: "/tickets", hintKey: "overview.todoOpenTicketsHint" },
+  failedJobs24h: { labelKey: "overview.todoFailedJobs", href: "/health", hintKey: "overview.todoFailedJobsHint" },
+  activeAlerts: { labelKey: "overview.todoActiveAlerts", href: "/alerts", hintKey: "overview.todoActiveAlertsHint" },
+  overdueSubscriptions: { labelKey: "overview.todoOverdue", href: "/billing", hintKey: "overview.todoOverdueHint" },
 };
 
 /** Task-first order (ADX5): fix problems → pay out → bill → guard → configure. */
 const QUICK_ACTIONS = [
-  { icon: "💚", label: "Platform Health", sub: "ব্যর্থ Job, ইন্টিগ্রেশন অবস্থা", href: "/health" },
-  { icon: "🏦", label: "Wallet Payouts", sub: "অপেক্ষমাণ অনুরোধ, Approve / Mark Paid", href: "/payouts" },
-  { icon: "💳", label: "বিলিং ও পেমেন্ট", sub: "MRR, ওভারডিউ, ম্যানুয়াল পেমেন্ট", href: "/billing" },
-  { icon: "🔐", label: "Security ও 2FA", sub: "Admin তালিকা, সেশন রিভোক", href: "/security" },
-  { icon: "⚙️", label: "Dynamic Config", sub: "LLM, Meta App, SMTP, SSLCommerz", href: "/settings" },
+  { icon: "💚", labelKey: "overview.qaHealth", subKey: "overview.qaHealthSub", href: "/health" },
+  { icon: "🏦", labelKey: "overview.qaPayouts", subKey: "overview.qaPayoutsSub", href: "/payouts" },
+  { icon: "💳", labelKey: "overview.qaBilling", subKey: "overview.qaBillingSub", href: "/billing" },
+  { icon: "🔐", labelKey: "overview.qaSecurity", subKey: "overview.qaSecuritySub", href: "/security" },
+  { icon: "⚙️", labelKey: "overview.qaConfig", subKey: "overview.qaConfigSub", href: "/settings" },
 ];
 
 export default function OverviewPage() {
+  const { dict, locale, t } = useAdminLocale();
   const [data, setData] = React.useState<Overview | null>(null);
   const [dbOk, setDbOk] = React.useState<boolean | null>(null);
   const [error, setError] = React.useState("");
@@ -115,37 +118,37 @@ export default function OverviewPage() {
 
   const failedTotal = data ? data.failedSyncJobs24h + data.failedAutomationRuns24h : 0;
   const cards = data ? [
-    { icon: "🏢", label: "মোট Organization", value: String(data.organizations), sub: `নতুন (৩০ দিন): ${data.newOrganizations30d}` },
-    { icon: "👤", label: "মোট User", value: String(data.users), sub: `নতুন (৩০ দিন): ${data.newUsers30d}` },
-    { icon: "🧾", label: "এই মাসের Order", value: String(data.monthOrders), sub: `আয় ${formatMinorStr(data.monthOrderRevenueMinor)} · সব Tenant`, cmp: prevMonth ? `গত মাস: ${prevMonth.orders}টি Order · আয় ${formatMinorStr(prevMonth.orderRevenueMinor)}` : undefined },
-    { icon: "📣", label: "Ad Spend (Tracked)", value: formatMinorStr(data.monthAdSpendMinor), sub: "এই মাস · Campaign-level, সব Tenant" },
-    { icon: "🤖", label: "AI ব্যবহার (এই মাস)", value: `${data.monthAiCalls} কল`, sub: `${data.monthAiTokens.toLocaleString()} টোকেন` },
-    { icon: failedTotal > 0 ? "⚠️" : "✅", label: "ব্যর্থ Job (২৪ ঘণ্টা)", value: String(failedTotal), sub: `Sync ${data.failedSyncJobs24h} · Automation ${data.failedAutomationRuns24h}` },
+    { icon: "🏢", label: dict.overview.cardTotalOrgs, value: fmtNumber(locale, data.organizations), sub: t("overview.newIn30d", { count: fmtNumber(locale, data.newOrganizations30d) }) },
+    { icon: "👤", label: dict.overview.cardTotalUsers, value: fmtNumber(locale, data.users), sub: t("overview.newIn30d", { count: fmtNumber(locale, data.newUsers30d) }) },
+    { icon: "🧾", label: dict.overview.cardMonthOrders, value: fmtNumber(locale, data.monthOrders), sub: t("overview.monthOrdersSub", { revenue: formatMinorStr(data.monthOrderRevenueMinor, locale) }), cmp: prevMonth ? t("overview.prevMonth", { orders: fmtNumber(locale, prevMonth.orders), revenue: formatMinorStr(prevMonth.orderRevenueMinor, locale) }) : undefined },
+    { icon: "📣", label: dict.overview.cardAdSpend, value: formatMinorStr(data.monthAdSpendMinor, locale), sub: dict.overview.adSpendSub },
+    { icon: "🤖", label: dict.overview.cardAiUsage, value: t("overview.aiCallsValue", { count: fmtNumber(locale, data.monthAiCalls) }), sub: t("overview.aiTokensSub", { count: fmtNumber(locale, data.monthAiTokens) }) },
+    { icon: failedTotal > 0 ? "⚠️" : "✅", label: dict.overview.cardFailedJobs, value: fmtNumber(locale, failedTotal), sub: t("overview.failedJobsSub", { sync: fmtNumber(locale, data.failedSyncJobs24h), automation: fmtNumber(locale, data.failedAutomationRuns24h) }) },
   ] : [];
 
-  const today = fmtDateTime(new Date(), "date", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const today = fmtDateTime(locale, new Date(), "date", { weekday: true });
 
   return (
-    <AdminShell title="📊 Command Center">
+    <AdminShell title={dict.overview.title}>
       {/* ADNX7: PageHead adoption (first adopter) — the shell owns
           the h1, so PageHead carries the sub-line + the page's
           status badges as its actions. */}
-      <PageHead sub="আজকের করণীয়, KPI ও সাম্প্রতিক কার্যকলাপ — সব এক পর্দায়।">
+      <PageHead sub={dict.overview.sub}>
         <span className={dbOk === null ? "abadge-slate" : dbOk ? "abadge-green" : "abadge-red"}>
-          {dbOk === null ? "Database: যাচাই হচ্ছে…" : dbOk ? "● Database সংযুক্ত" : "● Database সমস্যা"}
+          {dbOk === null ? dict.overview.dbChecking : dbOk ? dict.overview.dbConnected : dict.overview.dbProblem}
         </span>
-        <span className="abadge-indigo">● API চলছে</span>
+        <span className="abadge-indigo">{dict.overview.apiRunning}</span>
         {data ? (
           <span className={failedTotal > 0 ? "abadge-amber" : "abadge-green"}>
-            {failedTotal > 0 ? `⚠ ${failedTotal}টি ব্যর্থ Job (২৪ ঘণ্টা)` : "✓ কোনো ব্যর্থ Job নেই (২৪ ঘণ্টা)"}
+            {failedTotal > 0 ? t("overview.failedJobsBadge", { count: fmtNumber(locale, failedTotal) }) : dict.overview.noFailedJobsBadge}
           </span>
         ) : null}
       </PageHead>
       {/* Hero strip */}
       <div className="acard mb-5 flex flex-wrap items-center gap-4 overflow-hidden !p-5">
         <div className="min-w-0">
-          <div className="text-lg font-bold tracking-tight">প্ল্যাটফর্মের আজকের চিত্র</div>
-          <div className="mt-0.5 text-sm text-slate-400">{today} · সব সংখ্যা আসল ডেটা থেকে — কোনো অনুমান নয়।</div>
+          <div className="text-lg font-bold tracking-tight">{dict.overview.heroTitle}</div>
+          <div className="mt-0.5 text-sm text-slate-400">{t("overview.heroSub", { date: today })}</div>
         </div>
       </div>
 
@@ -155,16 +158,16 @@ export default function OverviewPage() {
           shows the calm state of that queue. */}
       {todoPresent.length > 0 ? (
         <div className="mb-5">
-          <div className="mb-2.5 text-sm font-semibold text-slate-300">আজকের করণীয়</div>
+          <div className="mb-2.5 text-sm font-semibold text-slate-300">{dict.overview.todayTodo}</div>
           <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 sm:grid sm:snap-none sm:grid-cols-2 sm:overflow-visible sm:pb-0 xl:grid-cols-5">
             {todoPresent.map(([key, value]) => {
               const row = TODO_ROWS[key];
               const calm = value === 0;
               return (
                 <a key={key} href={row.href} className={`acard acard-hover block min-w-[228px] snap-start !p-4 sm:min-w-0 ${calm ? "" : "border-red-500/40"}`}>
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{row.label}</div>
-                  <div className={`mt-1.5 text-[26px] font-bold leading-none tracking-tight ${calm ? "text-emerald-300" : "text-red-300"}`}>{value}</div>
-                  <div className="mt-1.5 text-xs text-slate-400">{calm ? "কিছু বাকি নেই" : row.hint} →</div>
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{t(row.labelKey)}</div>
+                  <div className={`mt-1.5 text-[26px] font-bold leading-none tracking-tight ${calm ? "text-emerald-300" : "text-red-300"}`}>{fmtNumber(locale, value)}</div>
+                  <div className="mt-1.5 text-xs text-slate-400">{calm ? dict.overview.nothingLeft : t(row.hintKey)} →</div>
                 </a>
               );
             })}
@@ -208,51 +211,51 @@ export default function OverviewPage() {
       {storage && storage.registryAvailable ? (
         <div className="acard mt-5">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <button type="button" className="font-semibold" aria-expanded={storageOpen} onClick={toggleStorage}>🗄️ মিডিয়া স্টোরেজ {storageOpen ? "▲" : "▼"}</button>
+            <button type="button" className="font-semibold" aria-expanded={storageOpen} onClick={toggleStorage}>{dict.overview.storageTitle} {storageOpen ? "▲" : "▼"}</button>
             {storage.mode === "s3" ? (
-              <span className="abadge-green">● Cloudflare R2 (Object Storage)</span>
+              <span className="abadge-green">{dict.overview.storageR2}</span>
             ) : (
-              <span className="abadge-amber">● Local Disk — Redeploy-এ ঝুঁকি</span>
+              <span className="abadge-amber">{dict.overview.storageLocal}</span>
             )}
-            {storage.truncated ? <span className="abadge-slate">আংশিক হিসাব (cap)</span> : null}
-            <span className="ml-auto text-xs text-slate-400">সূত্র: StoredFile রেজিস্ট্রি</span>
+            {storage.truncated ? <span className="abadge-slate">{dict.overview.storagePartial}</span> : null}
+            <span className="ml-auto text-xs text-slate-400">{dict.overview.storageSource}</span>
           </div>
           {storageOpen ? (
           <>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">মোট ফাইল</div>
-              <div className="mt-1 text-[22px] font-bold leading-none">{storage.totalObjects.toLocaleString()}</div>
-              <div className="mt-1.5 text-xs text-slate-400">মোট {formatBytes(storage.totalBytes)}</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{dict.overview.totalFiles}</div>
+              <div className="mt-1 text-[22px] font-bold leading-none">{fmtNumber(locale, storage.totalObjects)}</div>
+              <div className="mt-1.5 text-xs text-slate-400">{t("overview.totalSize", { size: formatBytes(storage.totalBytes, locale) })}</div>
             </div>
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Public / Private</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{dict.overview.publicPrivate}</div>
               <div className="mt-1 text-sm text-slate-300">
                 {storage.byVisibility.map((v) => (
                   <div key={v.visibility} className="flex justify-between gap-2 py-0.5">
-                    <span className="text-slate-400">{v.visibility === "public" ? "Public" : "Private"}</span>
-                    <span>{v.objects.toLocaleString()}টি · {formatBytes(v.bytes)}</span>
+                    <span className="text-slate-400">{v.visibility === "public" ? dict.overview.publicLabel : dict.overview.privateLabel}</span>
+                    <span>{t("overview.filesCount", { count: fmtNumber(locale, v.objects) })} · {formatBytes(v.bytes, locale)}</span>
                   </div>
                 ))}
-                {storage.byVisibility.length === 0 ? <span className="text-slate-400">কোনো ফাইল নেই</span> : null}
+                {storage.byVisibility.length === 0 ? <span className="text-slate-400">{dict.overview.noFiles}</span> : null}
               </div>
             </div>
             <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">শীর্ষ Organization</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">{dict.overview.topOrgs}</div>
               <div className="mt-1 text-sm text-slate-300">
                 {storage.topOrgs.slice(0, 5).map((o) => (
                   <div key={o.organizationId} className="flex justify-between gap-2 py-0.5">
                     <span className="min-w-0 truncate text-slate-400">{o.name ?? o.organizationId.slice(0, 8)}</span>
-                    <span className="shrink-0">{formatBytes(o.bytes)}</span>
+                    <span className="shrink-0">{formatBytes(o.bytes, locale)}</span>
                   </div>
                 ))}
-                {storage.topOrgs.length === 0 ? <span className="text-slate-400">কোনো ডেটা নেই</span> : null}
+                {storage.topOrgs.length === 0 ? <span className="text-slate-400">{dict.overview.noData}</span> : null}
               </div>
             </div>
           </div>
           {storage.trashedObjects > 0 ? (
             <div className="mt-3 border-t border-slate-800 pt-2.5 text-xs text-slate-400">
-              ট্র্যাশে {storage.trashedObjects.toLocaleString()}টি ফাইল ({formatBytes(storage.trashedBytes)}) — retention শেষ হলে Lifecycle Sweep আসলেই মুছবে।
+              {t("overview.trashedLine", { count: fmtNumber(locale, storage.trashedObjects), size: formatBytes(storage.trashedBytes, locale) })}
             </div>
           ) : null}
           </>
@@ -264,13 +267,13 @@ export default function OverviewPage() {
         {/* Recent admin activity — timeline */}
         <div className="acard">
           <div className="mb-3 flex items-center justify-between">
-            <div className="font-semibold">সাম্প্রতিক Admin কার্যকলাপ</div>
-            <a className="text-sm font-medium text-indigo-300 hover:text-indigo-200" href="/audit">সব Audit →</a>
+            <div className="font-semibold">{dict.overview.recentActivity}</div>
+            <a className="text-sm font-medium text-indigo-300 hover:text-indigo-200" href="/audit">{dict.overview.allAudit}</a>
           </div>
           {!data && !error ? (
               <div className="space-y-2.5" aria-hidden="true"><div className="askel-line" /><div className="askel-line" /><div className="askel-line" /><div className="askel-line" /></div>
             ) : !data ? null
-            : data.recentAdminActions.length === 0 ? <EmptyState title="এখনো কোনো Admin অ্যাকশন হয়নি।" sub="কোনো Admin অ্যাকশন হলেই সর্বশেষগুলো এখানে দেখা যাবে।" /> : (
+            : data.recentAdminActions.length === 0 ? <EmptyState title={dict.overview.noActionsTitle} sub={dict.overview.noActionsSub} /> : (
               <ol className="relative space-y-0 border-l border-slate-800 pl-5">
                 {data.recentAdminActions.map((a) => (
                   <li key={a.id} className="relative pb-4 last:pb-0">
@@ -279,7 +282,7 @@ export default function OverviewPage() {
                       <span className="text-sm font-medium">{a.action}
                         <span className="ml-1.5 font-normal text-slate-400">({a.entityType}{a.entityId ? ` · ${a.entityId.slice(0, 8)}…` : ""})</span>
                       </span>
-                      <span className="text-xs text-slate-400">{fmtDateTime(a.createdAt)}</span>
+                      <span className="text-xs text-slate-400">{fmtDateTime(locale, a.createdAt)}</span>
                     </div>
                   </li>
                 ))}
@@ -291,24 +294,24 @@ export default function OverviewPage() {
         <div className="space-y-4">
           {data && failedTotal > 0 ? (
             <a href="/health" className="acard acard-hover block border-amber-500/40">
-              <div className="font-semibold text-amber-300">⚠ মনোযোগ দরকার</div>
-              <p className="mt-1 text-sm text-slate-400">গত ২৪ ঘণ্টায় {failedTotal}টি Job ব্যর্থ হয়েছে (Sync {data.failedSyncJobs24h} · Automation {data.failedAutomationRuns24h})। Health পেজে গিয়ে Retry করুন।</p>
+              <div className="font-semibold text-amber-300">{dict.overview.attentionTitle}</div>
+              <p className="mt-1 text-sm text-slate-400">{t("overview.attentionBody", { total: fmtNumber(locale, failedTotal), sync: fmtNumber(locale, data.failedSyncJobs24h), automation: fmtNumber(locale, data.failedAutomationRuns24h) })}</p>
             </a>
           ) : data ? (
             <div className="acard border-emerald-500/30">
-              <div className="font-semibold text-emerald-300">✅ সব ঠিকঠাক চলছে</div>
-              <p className="mt-1 text-sm text-slate-400">গত ২৪ ঘণ্টায় কোনো Sync বা Automation Job ব্যর্থ হয়নি।</p>
+              <div className="font-semibold text-emerald-300">{dict.overview.allOkTitle}</div>
+              <p className="mt-1 text-sm text-slate-400">{dict.overview.allOkBody}</p>
             </div>
           ) : null}
           <div className="acard">
-            <div className="mb-3 font-semibold">দ্রুত কাজ</div>
+            <div className="mb-3 font-semibold">{dict.overview.quickActions}</div>
             <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
               {QUICK_ACTIONS.map((qa) => (
                 <a key={qa.href} href={qa.href} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-3.5 py-3 transition hover:border-indigo-500/50 hover:bg-slate-800/70">
                   <span className="text-lg">{qa.icon}</span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{qa.label}</span>
-                    <span className="block truncate text-xs text-slate-400">{qa.sub}</span>
+                    <span className="block truncate text-sm font-medium">{t(qa.labelKey)}</span>
+                    <span className="block truncate text-xs text-slate-400">{t(qa.subKey)}</span>
                   </span>
                   <span className="ml-auto text-slate-400">→</span>
                 </a>

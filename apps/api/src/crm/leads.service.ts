@@ -1,5 +1,5 @@
 import { normalizeTags } from "../inbox/inbox.service";
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
 import { parseMoneyToMinor } from "@repo/contracts";
@@ -10,6 +10,7 @@ import { CustomFieldsService, renderCustomFieldValue } from "./custom-fields.ser
 import { classifyDue, dhakaDayKey, dhakaDayStartUtc, followUpDateFor, followUpNotificationText, normalizeFollowUpDefaults, validateFollowUpDefaults } from "./lead-followups";
 import { scoreLead, type LeadScore } from "./lead-score";
 import { LeadAssignmentService } from "./lead-assignment.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const LEAD_STAGES = ["new", "contacted", "qualified", "proposal", "won", "lost"] as const;
 export const LEAD_SOURCES = ["manual", "whatsapp", "messenger", "woocommerce", "website"] as const;
@@ -98,8 +99,8 @@ export class LeadsService {
     // org's strategy decides (see LeadAssignmentService).
     ownerUserId?: string | null;
   }, opts: { skipRequiredCustomFields?: boolean } = {}) {
-    if (dto.source && !(LEAD_SOURCES as readonly string[]).includes(dto.source)) throw new BadRequestException("Invalid source");
-    if (dto.stage && !(LEAD_STAGES as readonly string[]).includes(dto.stage)) throw new BadRequestException("Invalid stage");
+    if (dto.source && !(LEAD_SOURCES as readonly string[]).includes(dto.source)) throw badRequest("crm.invalidSource");
+    if (dto.stage && !(LEAD_STAGES as readonly string[]).includes(dto.stage)) throw badRequest("crm.invalidStage");
     // CRM C4: required defs are enforced on create (unless the
     // caller is the CSV importer — bulk legacy rows carry no custom
     // values; see docs/crm-c4-acceptance.md). Types are ALWAYS
@@ -112,7 +113,7 @@ export class LeadsService {
       const merged = this.customFields.mergeValues(null, sanitized);
       customFields = Object.keys(merged).length ? merged : null;
     } else if (dto.customFields && Object.keys(dto.customFields).length) {
-      throw new BadRequestException("Custom fields are not available in this deployment");
+      throw badRequest("crm.customFieldsAreNotAvailableIn");
     }
     const explicitOwner = dto.ownerUserId !== undefined;
     // CX10: no explicit follow-up date → the org's per-stage
@@ -418,7 +419,7 @@ export class LeadsService {
   async importLeadsCsv(organizationId: string, actorId: string, dto: { csvText: string; fileName?: string }) {
     const { rows, errors, totalRows } = parseLeadsCsv(dto.csvText);
     if (totalRows > LEAD_IMPORT_ROW_CAP) {
-      throw new BadRequestException(`CSV-তে সর্বোচ্চ ${LEAD_IMPORT_ROW_CAP}টি সারি আমদানি করা যায় (এই ফাইলে ${totalRows}টি)। ফাইলটি ভাগ করে আবার চেষ্টা করুন।`);
+      throw badRequest("crm.atMostRowsCanBeImported", { LEAD_IMPORT_ROW_CAP: LEAD_IMPORT_ROW_CAP, totalRows: totalRows });
     }
     const job = await (this.prisma as any).importJob.create({
       data: { organizationId, kind: "leads", status: "PENDING", fileName: dto.fileName ?? null, createdById: actorId },
@@ -534,11 +535,11 @@ export class LeadsService {
    * deleted - its history stays auditable through the target).
    */
   async merge(organizationId: string, actorId: string, targetId: string, sourceId: string) {
-    if (targetId === sourceId) throw new BadRequestException("Cannot merge a lead into itself");
+    if (targetId === sourceId) throw badRequest("crm.cannotMergeALeadIntoItself");
     const target = await this.getOrThrow(organizationId, targetId);
     const source = await this.getOrThrow(organizationId, sourceId);
-    if (source.mergedIntoId) throw new BadRequestException("Source lead is already merged");
-    if (target.mergedIntoId) throw new BadRequestException("Target lead is itself merged into another lead");
+    if (source.mergedIntoId) throw badRequest("crm.sourceLeadIsAlreadyMerged");
+    if (target.mergedIntoId) throw badRequest("crm.targetLeadIsItselfMergedInto");
 
     const activities = await (this.prisma as any).leadActivity.findMany({ where: { leadId: sourceId }, take: 500 });
     for (const a of activities) {
@@ -569,7 +570,7 @@ export class LeadsService {
 
   private async getOrThrow(organizationId: string, leadId: string) {
     const lead = await (this.prisma as any).lead.findFirst({ where: { id: leadId, organizationId } });
-    if (!lead) throw new NotFoundException("Lead not found in this organization");
+    if (!lead) throw notFound("crm.leadNotFoundInThisOrganization");
     return lead;
   }
 
@@ -591,7 +592,7 @@ export class LeadsService {
     customFields?: Record<string, unknown> | null;
   }) {
     const lead = await this.getOrThrow(organizationId, leadId);
-    if (dto.stage && !(LEAD_STAGES as readonly string[]).includes(dto.stage)) throw new BadRequestException("Invalid stage");
+    if (dto.stage && !(LEAD_STAGES as readonly string[]).includes(dto.stage)) throw badRequest("crm.invalidStage");
     const data: Record<string, unknown> = {};
     if (dto.customFields !== undefined) {
       if (dto.customFields === null) data.customFields = null;
@@ -599,7 +600,7 @@ export class LeadsService {
         const sanitized = await this.customFields.validateAndSanitize(organizationId, "lead", dto.customFields, { forCreate: false });
         data.customFields = this.customFields.mergeValues(lead.customFields ?? null, sanitized);
       } else if (Object.keys(dto.customFields).length) {
-        throw new BadRequestException("Custom fields are not available in this deployment");
+        throw badRequest("crm.customFieldsAreNotAvailableIn");
       }
     }
     if (dto.name !== undefined) data.name = dto.name;
@@ -682,7 +683,7 @@ export class LeadsService {
   async funnel(organizationId: string, daysInput?: number | string | null, now = new Date()) {
     const days = daysInput === undefined || daysInput === null || daysInput === "" ? 30 : Number(daysInput);
     if (!Number.isInteger(days) || days < 1 || days > 365) {
-      throw new BadRequestException("days must be an integer between 1 and 365");
+      throw badRequest("crm.daysMustBeAnIntegerBetween");
     }
     const end = new Date(dhakaDayStartUtc(now).getTime() + 86400000);
     const start = new Date(end.getTime() - days * 86400000);

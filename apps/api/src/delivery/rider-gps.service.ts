@@ -1,8 +1,5 @@
 import {
-  BadRequestException,
-  ForbiddenException,
   Injectable,
-  NotFoundException,
 } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +12,7 @@ import {
   mapsUrlFor,
   shareLinkIsSharing,
 } from "./rider-location-visibility";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF9 (FB4) — Rider live GPS.
@@ -90,7 +88,7 @@ export class RiderGpsService {
 
   private async riderOr404(organizationId: string, riderId: string) {
     const rider = await this.t("rider").findFirst({ where: { id: riderId, organizationId } });
-    if (!rider) throw new NotFoundException("রাইডার পাওয়া যায়নি");
+    if (!rider) throw notFound("delivery.theRiderWasNotFound");
     return rider;
   }
 
@@ -100,7 +98,7 @@ export class RiderGpsService {
   async issueShareLink(organizationId: string, actorId: string, riderId: string) {
     const rider = await this.riderOr404(organizationId, riderId);
     if (!rider.active) {
-      throw new BadRequestException("এই রাইডার সক্রিয় নন — আগে রাইডার সক্রিয় করুন");
+      throw badRequest("delivery.thisRiderIsNotActiveActivate");
     }
     const raw = newRiderShareToken();
     const expiresAt = new Date(Date.now() + NF9_SHARE_LINK_TTL_MS);
@@ -142,7 +140,7 @@ export class RiderGpsService {
     const rider = await this.riderOr404(organizationId, riderId);
     const table = this.t("riderShareLink");
     const link = await table.findFirst({ where: { organizationId, riderId: rider.id } });
-    if (!link) throw new NotFoundException("এই রাইডারের কোনো শেয়ার লিংক নেই");
+    if (!link) throw notFound("delivery.thisRiderHasNoShareLink");
     const updated = await table.update({
       where: { id: link.id },
       data: { revokedAt: new Date(), sharingEnabled: false },
@@ -185,21 +183,21 @@ export class RiderGpsService {
    * read is scoped to that org + that rider. */
   async resolveShareToken(rawToken: string) {
     const clean = String(rawToken ?? "").trim();
-    if (clean.length < 10) throw new NotFoundException("এই রাইডার লিংকটি পাওয়া যায়নি");
+    if (clean.length < 10) throw notFound("delivery.thisRiderLinkWasNotFound");
     const link = await this.t("riderShareLink").findFirst({
       where: { tokenHash: hashRiderShareToken(clean) },
     });
-    if (!link) throw new NotFoundException("এই রাইডার লিংকটি পাওয়া যায়নি");
+    if (!link) throw notFound("delivery.thisRiderLinkWasNotFound");
     if (link.revokedAt) {
-      throw new ForbiddenException("এই লোকেশন শেয়ার লিংকটি বাতিল করা হয়েছে — দোকান থেকে নতুন লিংক নিন");
+      throw forbidden("delivery.thisLocationShareLinkHasBeen");
     }
     if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
-      throw new ForbiddenException("এই লোকেশন শেয়ার লিংকের মেয়াদ শেষ — দোকান থেকে নতুন লিংক নিন");
+      throw forbidden("delivery.thisLocationShareLinkHasExpired");
     }
     const rider = await this.t("rider").findFirst({
       where: { id: link.riderId, organizationId: link.organizationId },
     });
-    if (!rider) throw new NotFoundException("রাইডার পাওয়া যায়নি");
+    if (!rider) throw notFound("delivery.theRiderWasNotFound");
     return { link, rider };
   }
 
@@ -278,30 +276,30 @@ export class RiderGpsService {
   ) {
     const { link, rider } = await this.resolveShareToken(rawToken);
     if (!link.sharingEnabled) {
-      throw new ForbiddenException("লোকেশন শেয়ারিং বন্ধ আছে — আগে এই পেজ থেকে শেয়ারিং চালু করুন");
+      throw forbidden("delivery.locationSharingIsOffTurnSharing");
     }
     if (!rider.active) {
-      throw new ForbiddenException("এই রাইডার সক্রিয় নন — লোকেশন পাঠানো যাচ্ছে না");
+      throw forbidden("delivery.thisRiderIsNotActiveLocation");
     }
     const lat = Number(dto?.lat);
     const lng = Number(dto?.lng);
     if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
-      throw new BadRequestException("lat সঠিক নয় (-90 থেকে 90 এর মধ্যে হতে হবে)");
+      throw badRequest("delivery.latIsNotValidMustBe");
     }
     if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
-      throw new BadRequestException("lng সঠিক নয় (-180 থেকে 180 এর মধ্যে হতে হবে)");
+      throw badRequest("delivery.lngIsNotValidMustBe");
     }
     let accuracy: number | null = null;
     if (dto?.accuracy != null && dto?.accuracy !== "") {
       accuracy = Number(dto.accuracy);
       if (!Number.isFinite(accuracy) || accuracy < 0) {
-        throw new BadRequestException("accuracy সঠিক নয়");
+        throw badRequest("delivery.accuracyIsNotValid");
       }
     }
     let recordedAt = new Date();
     if (dto?.recordedAt != null && dto?.recordedAt !== "") {
       const parsed = new Date(dto.recordedAt as any);
-      if (Number.isNaN(parsed.getTime())) throw new BadRequestException("recordedAt সঠিক নয়");
+      if (Number.isNaN(parsed.getTime())) throw badRequest("delivery.recordedatIsNotValid");
       // Device clocks skew: a fix stamped more than 60s in the
       // future is clamped to server time rather than trusted.
       recordedAt = parsed.getTime() > Date.now() + 60_000 ? new Date() : parsed;
@@ -309,7 +307,7 @@ export class RiderGpsService {
 
     const assignment = await this.activeAssignmentFor(link.organizationId, rider.id);
     if (!assignment) {
-      throw new BadRequestException("এখন কোনো সক্রিয় ডেলিভারি অ্যাসাইনমেন্ট নেই — লোকেশন পাঠানো যাচ্ছে না");
+      throw badRequest("delivery.thereIsNoActiveDeliveryAssignment");
     }
 
     const ping = await this.t("riderLocationPing").create({

@@ -1,13 +1,11 @@
 import {
-  BadRequestException,
-  ForbiddenException,
   Injectable,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrdersService } from "../orders/orders.service";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF12 (FB4) — Dropship network.
@@ -92,7 +90,7 @@ export class DropshipService {
     if (typeof value === "bigint" && value >= 0n) return value;
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) return BigInt(value);
     if (typeof value === "string" && /^\d+$/.test(value.trim())) return BigInt(value.trim());
-    throw new BadRequestException(`${label} অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা (পয়সায়) হতে হবে`);
+    throw badRequest("dropship.mustBeAnIntegerOf0", { label: label });
   }
 
   // ---------------- agreements ----------------
@@ -102,24 +100,24 @@ export class DropshipService {
    * the response carries name + slug of the counterparty). */
   async invite(orgId: string, actorId: string, dto: { slug?: unknown; role?: unknown }) {
     const slug = String(dto.slug ?? "").trim();
-    if (!slug) throw new BadRequestException("অন্য প্রতিষ্ঠানের স্লাগ (slug) আবশ্যক");
+    if (!slug) throw badRequest("dropship.theOtherOrganizationSSlugIs");
     const role = String(dto.role ?? "");
     if (role !== "supplier" && role !== "seller") {
-      throw new BadRequestException("role অবশ্যই supplier অথবা seller হতে হবে — অন্য প্রতিষ্ঠানটি আপনার supplier না seller?");
+      throw badRequest("dropship.roleMustBeSupplierOrSeller");
     }
     const other = await this.t("organization").findFirst({ where: { slug } });
-    if (!other) throw new NotFoundException("এই স্লাগে কোনো প্রতিষ্ঠান পাওয়া যায়নি");
-    if (other.id === orgId) throw new BadRequestException("নিজের প্রতিষ্ঠানকেই আমন্ত্রণ জানানো যাবে না");
+    if (!other) throw notFound("dropship.noOrganizationWasFoundWithThis");
+    if (other.id === orgId) throw badRequest("dropship.youCannotInviteYourOwnOrganization");
     const supplierOrgId = role === "supplier" ? other.id : orgId;
     const sellerOrgId = role === "seller" ? other.id : orgId;
     const existing = await this.t("dropshipAgreement").findFirst({
       where: { supplierOrgId, sellerOrgId },
     });
     if (existing && existing.status === "pending") {
-      throw new BadRequestException("এই প্রতিষ্ঠান জুটির মধ্যে ইতিমধ্যে একটি অপেক্ষমাণ আমন্ত্রণ আছে");
+      throw badRequest("dropship.thereIsAlreadyAPendingInvitation");
     }
     if (existing && existing.status === "accepted") {
-      throw new BadRequestException("এই প্রতিষ্ঠান জুটির মধ্যে ইতিমধ্যে একটি সক্রিয় চুক্তি আছে");
+      throw badRequest("dropship.thereIsAlreadyAnActiveAgreement");
     }
     const data = {
       supplierOrgId, sellerOrgId, invitedByOrgId: orgId,
@@ -168,14 +166,14 @@ export class DropshipService {
     const a = await this.t("dropshipAgreement").findFirst({
       where: { id: agreementId, OR: [{ supplierOrgId: orgId }, { sellerOrgId: orgId }] },
     });
-    if (!a) throw new NotFoundException("চুক্তিটি পাওয়া যায়নি");
+    if (!a) throw notFound("dropship.theAgreementWasNotFound");
     return a;
   }
 
   private async acceptedAgreementOrRefuse(orgId: string, agreementId: string) {
     const a = await this.agreementOr404(orgId, agreementId);
     if (a.status !== "accepted") {
-      throw new ForbiddenException("চুক্তিটি এখনো সক্রিয় নয় — গ্রহণ (accepted) না হওয়া পর্যন্ত কিছুই শেয়ার করা হয় না");
+      throw forbidden("dropship.theAgreementIsNotActiveYet");
     }
     return a;
   }
@@ -185,9 +183,9 @@ export class DropshipService {
    * enforced). The inviter cannot respond to their own invite. */
   async respond(orgId: string, actorId: string, agreementId: string, accept: boolean) {
     const a = await this.agreementOr404(orgId, agreementId);
-    if (a.status !== "pending") throw new BadRequestException("এই আমন্ত্রণটির উত্তর ইতিমধ্যে দেওয়া হয়েছে");
+    if (a.status !== "pending") throw badRequest("dropship.thisInvitationHasAlreadyBeenAnswered");
     if (a.invitedByOrgId === orgId) {
-      throw new ForbiddenException("নিজের পাঠানো আমন্ত্রণের উত্তর নিজে দেওয়া যাবে না — অন্য প্রতিষ্ঠানের মালিক/অ্যাডমিন উত্তর দেবেন");
+      throw forbidden("dropship.youCannotAnswerAnInvitationYou");
     }
     const updated = await this.t("dropshipAgreement").update({
       where: { id: a.id },
@@ -207,8 +205,8 @@ export class DropshipService {
    * their own lifecycle — documented in the acceptance doc). */
   async revoke(orgId: string, actorId: string, agreementId: string) {
     const a = await this.agreementOr404(orgId, agreementId);
-    if (a.status === "revoked") throw new BadRequestException("চুক্তিটি ইতিমধ্যে বাতিল করা হয়েছে");
-    if (a.status === "declined") throw new BadRequestException("প্রত্যাখ্যাত আমন্ত্রণ বাতিল করার কিছু নেই");
+    if (a.status === "revoked") throw badRequest("dropship.theAgreementHasAlreadyBeenCancelled");
+    if (a.status === "declined") throw badRequest("dropship.thereIsNothingToCancelIn");
     const updated = await this.t("dropshipAgreement").update({
       where: { id: a.id },
       data: { status: "revoked", revokedByOrgId: orgId, revokedAt: new Date() },
@@ -229,12 +227,12 @@ export class DropshipService {
   async setOffer(orgId: string, actorId: string, agreementId: string, dto: { productId?: unknown; floorPriceMinor?: unknown; active?: unknown }) {
     const a = await this.acceptedAgreementOrRefuse(orgId, agreementId);
     if (a.supplierOrgId !== orgId) {
-      throw new ForbiddenException("শুধুমাত্র source (supplier) প্রতিষ্ঠানই পণ্য অফার করতে পারে");
+      throw forbidden("dropship.onlyASourceSupplierOrganizationCan");
     }
     const product = await this.t("product").findFirst({
       where: { id: String(dto.productId ?? ""), organizationId: orgId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("dropship.productNotFoundInThisOrganization");
     const floor = this.parseMinor(dto.floorPriceMinor, "ফ্লোর মূল্য (floorPriceMinor)");
     const table = this.t("dropshipOffer");
     const existing = await table.findFirst({ where: { agreementId: a.id, productId: product.id } });
@@ -298,26 +296,24 @@ export class DropshipService {
   async createListing(orgId: string, actorId: string, dto: { agreementId?: unknown; offerId?: unknown; priceMinor?: unknown }) {
     const a = await this.acceptedAgreementOrRefuse(orgId, String(dto.agreementId ?? ""));
     if (a.sellerOrgId !== orgId) {
-      throw new ForbiddenException("শুধুমাত্র seller প্রতিষ্ঠানই তাদের দোকানে লিস্টিং তৈরি করতে পারে");
+      throw forbidden("dropship.onlyASellerOrganizationCanCreate");
     }
     const offer = await this.t("dropshipOffer").findFirst({
       where: { id: String(dto.offerId ?? ""), agreementId: a.id, active: true },
     });
-    if (!offer) throw new NotFoundException("অফারটি পাওয়া যায়নি অথবা সক্রিয় নয়");
+    if (!offer) throw notFound("dropship.theOfferWasNotFoundOr");
     const price = this.parseMinor(dto.priceMinor, "বিক্রয় মূল্য (priceMinor)");
     if (price < BigInt(offer.floorPriceMinor)) {
-      throw new BadRequestException(
-        `বিক্রয় মূল্য ফ্লোর মূল্যের (${String(offer.floorPriceMinor)}) চেয়ে কম হতে পারবে না`,
-      );
+      throw badRequest("dropship.theSellingPriceCannotBeLower", { p1: String(offer.floorPriceMinor) });
     }
     const existing = await this.t("dropshipListing").findFirst({
       where: { agreementId: a.id, sourceProductId: offer.productId },
     });
-    if (existing) throw new BadRequestException("এই পণ্যের লিস্টিং ইতিমধ্যে আছে");
+    if (existing) throw badRequest("dropship.aListingForThisProductAlready");
     const source = await this.t("product").findFirst({
       where: { id: offer.productId, organizationId: a.supplierOrgId },
     });
-    if (!source) throw new NotFoundException("Source পণ্যটি পাওয়া যায়নি");
+    if (!source) throw notFound("dropship.theSourceProductWasNotFound");
     // The listing IS a real Product in the SELLER org (so the
     // shop, cart and order paths treat it like any product) —
     // with stockQuantity = null: partner stock is read live
@@ -383,7 +379,7 @@ export class DropshipService {
 
   async setListingActive(orgId: string, actorId: string, listingId: string, active: boolean) {
     const l = await this.t("dropshipListing").findFirst({ where: { id: listingId, sellerOrgId: orgId } });
-    if (!l) throw new NotFoundException("লিস্টিংটি পাওয়া যায়নি");
+    if (!l) throw notFound("dropship.theListingWasNotFound");
     const updated = await this.t("dropshipListing").update({ where: { id: l.id }, data: { active } });
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: active ? "dropship.listing_activated" : "dropship.listing_deactivated",
@@ -403,12 +399,12 @@ export class DropshipService {
    */
   async processSellerOrder(sellerOrgId: string, actorId: string, sellerOrderId: string) {
     if (!this.orders?.createManual) {
-      throw new BadRequestException("Dropship অর্ডার সুবিধা এই deployment-এ নেই");
+      throw badRequest("dropship.theDropshipOrderFacilityIsNot");
     }
     const sellerOrder = await this.t("order").findFirst({
       where: { id: sellerOrderId, organizationId: sellerOrgId },
     });
-    if (!sellerOrder) throw new NotFoundException("Order not found in this organization");
+    if (!sellerOrder) throw notFound("dropship.orderNotFoundInThisOrganization");
     const items = ((await this.t("orderItem").findMany({ where: { orderId: sellerOrder.id } })) ?? []) as any[];
     const customer = sellerOrder.customerId
       ? await this.t("customer").findFirst({ where: { id: sellerOrder.customerId, organizationId: sellerOrgId } })
@@ -417,7 +413,7 @@ export class DropshipService {
       [customer?.firstName, customer?.lastName].filter(Boolean).join(" ").trim() || customer?.phone || "Customer";
     const customerPhone = customer?.phone ?? "";
     if (!customerPhone) {
-      throw new BadRequestException("ক্রেতার ফোন নম্বর ছাড়া সরবরাহকারীর কাছে ফুলফিলমেন্ট অর্ডার পাঠানো যাবে না");
+      throw badRequest("dropship.aFulfilmentOrderCannotBeSent");
     }
     const custAddr = customer?.address && typeof customer.address === "object" ? customer.address : null;
     const address = sellerOrder.address ?? custAddr?.address_1 ?? custAddr?.address ?? null;
@@ -647,20 +643,18 @@ export class DropshipService {
     const link = await this.t("dropshipOrderLink").findFirst({
       where: { id: linkId, OR: [{ sellerOrgId: orgId }, { supplierOrgId: orgId }] },
     });
-    if (!link) throw new NotFoundException("Dropship অর্ডার লিংকটি পাওয়া যায়নি");
-    if (!link.supplierOrderId) throw new BadRequestException("এই লিংকের কোনো supplier অর্ডার নেই");
+    if (!link) throw notFound("dropship.theDropshipOrderLinkWasNot");
+    if (!link.supplierOrderId) throw badRequest("dropship.thisLinkHasNoSupplierOrder");
     const supplierOrder = await this.t("order").findFirst({
       where: { id: link.supplierOrderId, organizationId: link.supplierOrgId },
     });
-    if (!supplierOrder) throw new NotFoundException("Supplier অর্ডারটি পাওয়া যায়নি");
+    if (!supplierOrder) throw notFound("dropship.theSupplierOrderWasNotFound");
     const status = String(supplierOrder.status ?? "");
     if ((DROPSHIP_SOLD_STATUSES as readonly string[]).includes(status)) {
-      throw new BadRequestException(
-        `Supplier অর্ডারটি ইতিমধ্যে "${status}" — সরবরাহ সম্পন্ন হয়ে গেছে, তাই বাতিল করা যাবে না`,
-      );
+      throw badRequest("dropship.theSupplierOrderIsAlreadySupply", { status: status });
     }
     if (status === "cancelled") return this.linkView(orgId, link, null);
-    if (!this.orders?.updateOrder) throw new BadRequestException("অর্ডার বাতিলের সুবিধা এই deployment-এ নেই");
+    if (!this.orders?.updateOrder) throw badRequest("dropship.theOrderCancellationFacilityIsNot");
     await this.orders.updateOrder(link.supplierOrgId, actorId, supplierOrder.id, { status: "cancelled" } as any);
     const fresh = await this.t("dropshipOrderLink").update({
       where: { id: link.id },

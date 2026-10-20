@@ -203,7 +203,7 @@ describe("PP2 streamed upload — caps by sniffed kind", () => {
     const err = await svc.uploadMediaStream(ORG, ACTOR, {
       stream: streamOf(Buffer.from("just some text, definitely not media".repeat(10))), declaredContentType: "text/plain",
     }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.onlyImagesOrVideosCanBe" });
     expect(err.message).toContain("শুধু ছবি বা ভিডিও আপলোড করা যাবে");
     expect(db.mediaAssets).toHaveLength(0);
   });

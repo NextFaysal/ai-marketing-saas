@@ -204,9 +204,9 @@ describe("NF1 sessions — create / lifecycle / org isolation", () => {
   it("meta session requires BOTH socialAccountId and externalLiveVideoId", async () => {
     const s = setup();
     await expect(s.service.createSession("org-1", "staff-1", { title: "L", source: "meta", socialAccountId: "sa-1" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "liveCommerce.bothSocialaccountidAndExternallivevideoidAreRequired" });
     await expect(s.service.createSession("org-1", "staff-1", { title: "L", source: "meta", externalLiveVideoId: "vid-1" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "liveCommerce.bothSocialaccountidAndExternallivevideoidAreRequired" });
     const ok: any = await s.service.createSession("org-1", "staff-1", {
       title: "L", source: "meta", socialAccountId: "sa-1", externalLiveVideoId: "vid-1",
     });
@@ -218,7 +218,7 @@ describe("NF1 sessions — create / lifecycle / org isolation", () => {
     const s = setup();
     await expect(s.service.createSession("org-1", "staff-1", {
       title: "L", source: "meta", socialAccountId: "sa-9", externalLiveVideoId: "vid-9",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "liveCommerce.theSocialAccountDoesNotBelong" });
     expect(s.sessions).toHaveLength(0);
   });
 
@@ -233,21 +233,21 @@ describe("NF1 sessions — create / lifecycle / org isolation", () => {
     const ended: any = await s.service.endSession("org-1", "staff-1", c.id);
     expect(ended.status).toBe("ended");
     expect(ended.endedAt).toBeTruthy();
-    await expect(s.service.startSession("org-1", "staff-1", c.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.service.startSession("org-1", "staff-1", c.id)).rejects.toMatchObject({ code: "liveCommerce.anEndedSessionCannotBeStarted" });
   });
 
   it("org B cannot read, start, end, pin on, comment on, recap or segment org A's session (404 everywhere)", async () => {
     const s = setup();
     const c: any = await s.service.createSession("org-1", "staff-1", { title: "A-এর লাইভ" });
-    await expect(s.service.getSession("org-2", c.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.startSession("org-2", "staff-9", c.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.endSession("org-2", "staff-9", c.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.setProducts("org-2", "staff-9", c.id, ["p1"])).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.listComments("org-2", c.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s.service.getSession("org-2", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.startSession("org-2", "staff-9", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.endSession("org-2", "staff-9", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.setProducts("org-2", "staff-9", c.id, ["p1"])).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.listComments("org-2", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
     await expect(s.service.importComments("org-2", "staff-9", c.id, { commenterName: "X", message: "hi" }))
-      .rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.recap("org-2", c.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.service.buildFollowUpSegment("org-2", "staff-9", c.id)).rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.recap("org-2", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
+    await expect(s.service.buildFollowUpSegment("org-2", "staff-9", c.id)).rejects.toMatchObject({ code: "liveCommerce.theLiveSessionWasNotFound" });
     // And org B's list never contains org A's session.
     const listB = await s.service.listSessions("org-2");
     expect(listB).toHaveLength(0);
@@ -265,7 +265,7 @@ describe("NF1 pinned products + now-showing", () => {
     expect(r1.products.map((p: any) => p.productId)).toEqual(["p2", "p1"]);
     expect(r1.products.map((p: any) => p.displayOrder)).toEqual([0, 1]);
     await expect(s.service.setProducts("org-1", "staff-1", c.id, ["p1", "p9"]))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "liveCommerce.someProductsDoNotBelongTo" });
     // The refused replace left the previous list intact.
     const after = await s.service.getSession("org-1", c.id);
     expect(after.products.map((p: any) => p.productId)).toEqual(["p2", "p1"]);
@@ -281,7 +281,7 @@ describe("NF1 pinned products + now-showing", () => {
     await s.service.setNowShowing("org-1", "staff-1", c.id, "p3");
     view = await s.service.getSession("org-1", c.id);
     expect(view.products.filter((p: any) => p.isNowShowing).map((p: any) => p.productId)).toEqual(["p3"]);
-    await expect(s.service.setNowShowing("org-1", "staff-1", c.id, "p9")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s.service.setNowShowing("org-1", "staff-1", c.id, "p9")).rejects.toMatchObject({ code: "liveCommerce.theProductIsNotPinnedIn" });
   });
 });
 
@@ -406,7 +406,7 @@ describe("NF1 comment → order (existing createManual path, exactly-once)", () 
     const b: any = await s.service.createSession("org-1", "staff-1", { title: "B" });
     const imp: any = await s.service.importComments("org-1", "staff-1", a.id, { commenterName: "X", message: "hi" });
     await expect(s.service.createOrderFromComment("org-1", "staff-1", b.id, imp.comments[0].id, ORDER_DTO as any))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "liveCommerce.theCommentWasNotFoundIn" });
     expect(s.ordersService.createManual).not.toHaveBeenCalled();
   });
 });

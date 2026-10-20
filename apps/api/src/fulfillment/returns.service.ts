@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -10,6 +10,7 @@ import { EmailProvider } from "../messaging/email.provider";
 import { EventsService } from "../common/events.service";
 import { resolveShopifyClient } from "../integrations/commerce/shopify-catalog";
 import { readExternalVariantMap } from "../integrations/commerce/catalog-content";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const SHOPIFY_INVENTORY_ADJUST = `mutation cpInventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
   inventoryAdjustQuantities(input: $input) {
@@ -83,13 +84,13 @@ export class ReturnsService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId }, include: { items: true, customer: true },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("fulfillment.orderNotFoundInThisOrganization");
     return order;
   }
 
   async loadReturn(organizationId: string, returnId: string) {
     const rr = await (this.prisma as any).returnRequest.findFirst({ where: { id: returnId, organizationId } });
-    if (!rr) throw new NotFoundException("Return request not found in this organization");
+    if (!rr) throw notFound("fulfillment.returnRequestNotFoundInThis");
     return rr;
   }
 
@@ -123,11 +124,11 @@ export class ReturnsService {
   /** Public view for the token holder: order + returnable items. */
   async publicView(token: string) {
     const rr = await (this.prisma as any).returnRequest.findFirst({ where: { token } });
-    if (!rr) throw new NotFoundException("Return link not found");
+    if (!rr) throw notFound("fulfillment.returnLinkNotFound");
     const order = await (this.prisma as any).order.findFirst({
       where: { id: rr.orderId, organizationId: rr.organizationId }, include: { items: true },
     });
-    if (!order) throw new NotFoundException("Return link not found");
+    if (!order) throw notFound("fulfillment.returnLinkNotFound");
     return {
       status: rr.status,
       submitted: rr.items != null,
@@ -144,18 +145,18 @@ export class ReturnsService {
 
   async publicSubmit(token: string, dto: { reason?: string; items: ReturnLine[] }) {
     const rr = await (this.prisma as any).returnRequest.findFirst({ where: { token } });
-    if (!rr) throw new NotFoundException("Return link not found");
-    if (rr.items != null) throw new BadRequestException("এই রিটার্নের আবেদন আগেই জমা দেওয়া হয়েছে");
-    if (rr.status !== "requested") throw new BadRequestException("এই রিটার্ন লিংকটি আর সক্রিয় নয়");
-    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException("কমপক্ষে একটি আইটেম বেছে দিন");
+    if (!rr) throw notFound("fulfillment.returnLinkNotFound");
+    if (rr.items != null) throw badRequest("fulfillment.aReturnRequestForThisReturn");
+    if (rr.status !== "requested") throw badRequest("fulfillment.thisReturnLinkIsNoLonger");
+    if (!Array.isArray(dto.items) || dto.items.length === 0) throw badRequest("fulfillment.selectAtLeastOneItem");
     const order = await this.loadOrder(rr.organizationId, rr.orderId);
     const byId = new Map<string, any>((order.items ?? []).map((i: any) => [i.id, i]));
     const lines: ReturnLine[] = [];
     for (const line of dto.items) {
       const oi = byId.get(line.orderItemId);
-      if (!oi) throw new BadRequestException("অর্ডারে এই আইটেমটি নেই");
+      if (!oi) throw badRequest("fulfillment.thisItemIsNotInThe");
       const qty = Math.floor(line.quantity);
-      if (!(qty > 0) || qty > oi.quantity) throw new BadRequestException(`"${oi.name}"-এর পরিমাণ অর্ডারের পরিমাণের বেশি হতে পারবে না`);
+      if (!(qty > 0) || qty > oi.quantity) throw badRequest("fulfillment.theQuantityOfCannotExceedThe", { oiName: oi.name });
       lines.push({ orderItemId: line.orderItemId, quantity: qty });
     }
     const updated = await (this.prisma as any).returnRequest.update({
@@ -186,20 +187,20 @@ export class ReturnsService {
     refundAmountMinor?: string;
   }) {
     const rr = await this.loadReturn(organizationId, returnId);
-    if (rr.status !== "requested") throw new BadRequestException("শুধু আবেদন করা (requested) রিটার্নেই সিদ্ধান্ত দেওয়া যায়");
-    if (rr.items == null) throw new BadRequestException("কাস্টমার এখনো আবেদন জমা দেননি");
+    if (rr.status !== "requested") throw badRequest("fulfillment.aDecisionCanOnlyBeGiven");
+    if (rr.items == null) throw badRequest("fulfillment.theCustomerHasNotSubmittedThe");
     const data: Record<string, any> = { staffNote: dto.note ?? rr.staffNote ?? null };
     if (dto.decision === "reject") {
       data.status = "rejected";
     } else {
       const resolution = dto.resolution ?? "refund";
       if (!(RETURN_RESOLUTIONS as readonly string[]).includes(resolution)) {
-        throw new BadRequestException(`resolution অবশ্যই এর একটি হতে হবে: ${RETURN_RESOLUTIONS.join(", ")}`);
+        throw badRequest("fulfillment.resolutionMustBeOneOf", { p1: RETURN_RESOLUTIONS.join(", ") });
       }
       data.status = "approved";
       data.resolution = resolution;
       if (dto.refundAmountMinor !== undefined) {
-        if (!/^\d+$/.test(dto.refundAmountMinor)) throw new BadRequestException("refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+        if (!/^\d+$/.test(dto.refundAmountMinor)) throw badRequest("fulfillment.sendTheRefundAmountAsA");
         data.refundAmountMinor = BigInt(dto.refundAmountMinor);
       }
     }
@@ -222,15 +223,15 @@ export class ReturnsService {
     recipientAddress?: string; recipientName?: string; recipientPhone?: string;
   }) {
     const rr = await this.loadReturn(organizationId, returnId);
-    if (rr.status !== "approved") throw new BadRequestException("শুধু অনুমোদিত রিটার্নের জন্য return courier বুক করা যায়");
-    if (!this.courier) throw new BadRequestException("Courier service is not available in this deployment");
+    if (rr.status !== "approved") throw badRequest("fulfillment.aReturnCourierCanOnlyBe");
+    if (!this.courier) throw badRequest("fulfillment.courierServiceIsNotAvailableIn");
     const profile = await (this.prisma as any).businessProfile.findFirst({ where: { organizationId } }).catch(() => null);
     const org = await (this.prisma as any).organization.findFirst({ where: { id: organizationId } }).catch(() => null);
     const recipientAddress = dto.recipientAddress?.trim() || [profile?.address, profile?.city].filter(Boolean).join(", ");
     const recipientName = dto.recipientName?.trim() || org?.name || "";
     const recipientPhone = dto.recipientPhone?.trim() || profile?.contactPhone || "";
     if (!recipientAddress || recipientAddress.length < 8 || !recipientPhone) {
-      throw new BadRequestException("মার্চেন্টের ফেরতের ঠিকানা/ফোন পাওয়া যায়নি — Settings-এ ব্যবসার ঠিকানা ও ফোন বসান, অথবা অনুরোধে ঠিকানা পাঠান");
+      throw badRequest("fulfillment.theMerchantSReturnAddressPhone");
     }
     const shipment = await this.courier.bookShipment(organizationId, actorId, {
       provider: dto.provider,
@@ -254,7 +255,7 @@ export class ReturnsService {
   }) {
     const rr = await this.loadReturn(organizationId, returnId);
     if (!["approved", "return_shipped"].includes(rr.status)) {
-      throw new BadRequestException("শুধু অনুমোদিত/পাঠানো রিটার্নই received করা যায়");
+      throw badRequest("fulfillment.onlyAnApprovedSentReturnCan");
     }
     const conditionBy = new Map((dto.items ?? []).map((i) => [i.orderItemId, i]));
     const lines: ReturnLine[] = ((rr.items ?? []) as ReturnLine[]).map((l) => {
@@ -276,7 +277,7 @@ export class ReturnsService {
 
   async complete(organizationId: string, actorId: string, returnId: string) {
     const rr = await this.loadReturn(organizationId, returnId);
-    if (rr.status !== "received") throw new BadRequestException("শুধু received রিটার্নই complete করা যায়");
+    if (rr.status !== "received") throw badRequest("fulfillment.onlyAReceivedReturnCanBe");
     const order = await this.loadOrder(organizationId, rr.orderId);
     const data: Record<string, any> = { status: "completed" };
 
@@ -322,7 +323,7 @@ export class ReturnsService {
     } else if (rr.resolution === "exchange") {
       if (!rr.exchangeOrderId && this.orders) {
         const customer = order.customer;
-        if (!customer?.phone) throw new BadRequestException("এক্সচেঞ্জ অর্ডারের জন্য কাস্টমারের ফোন নম্বর দরকার — কাস্টমার রেকর্ডে ফোন নেই");
+        if (!customer?.phone) throw badRequest("fulfillment.aCustomerPhoneNumberIsNeeded");
         const byId = new Map<string, any>((order.items ?? []).map((i: any) => [i.id, i]));
         const items = ((rr.items ?? []) as ReturnLine[]).map((l) => {
           const oi = byId.get(l.orderItemId);

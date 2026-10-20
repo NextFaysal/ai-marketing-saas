@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { useLocale } from "@/lib/i18n/provider";
 
 interface NewMessageModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export function NewMessageModal({
   setForm,
   onSend,
 }: NewMessageModalProps) {
+  const { t } = useLocale();
   if (!isOpen) return null;
 
   return (
@@ -24,14 +26,14 @@ export function NewMessageModal({
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-600 text-sm">✉️</span>
-            <span className="text-base font-bold text-slate-900">নতুন বার্তা পাঠান</span>
+            <span className="text-base font-bold text-slate-900">{t("inbox.newMessage")}</span>
           </div>
           <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={onClose}>✕</button>
         </div>
 
         <div className="space-y-4 pt-4">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">কোন চ্যানেলে পাঠাবেন?</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">{t("inbox.whichChannel")}</label>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {([
                 { id: "whatsapp", label: "WhatsApp", icon: "🟢", cls: "border-emerald-200 bg-emerald-50/60 text-emerald-800" },
@@ -57,21 +59,21 @@ export function NewMessageModal({
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">প্রাপক (ফোন নম্বর / ইউজার আইডি)</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">{t("inbox.recipientLabel")}</label>
             <input
               className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              placeholder="যেমন: +8801712345678"
+              placeholder={t("inbox.recipientPlaceholder")}
               value={form.recipient}
               onChange={(e) => setForm({ ...form, recipient: e.target.value })}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">মেসেজের বিষয়বস্তু</label>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">{t("inbox.messageContentLabel")}</label>
             <textarea
               rows={4}
               className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              placeholder="নমস্কার! আমরা আপনার জন্য একটি বিশেষ অফার নিয়ে এসেছি..."
+              placeholder={t("inbox.sampleOfferText")}
               value={form.message}
               onChange={(e) => setForm({ ...form, message: e.target.value })}
             />
@@ -83,7 +85,7 @@ export function NewMessageModal({
               className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               onClick={onClose}
             >
-              বাতিল
+              {t("inbox.cancel")}
             </button>
             <button
               type="button"
@@ -91,7 +93,7 @@ export function NewMessageModal({
               className="flex items-center gap-1.5 rounded-2xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50 transition"
               onClick={() => onSend(form.channel)}
             >
-              <span>পাঠান</span>
+              <span>{t("inbox.sendBtn")}</span>
               <span>🚀</span>
             </button>
           </div>

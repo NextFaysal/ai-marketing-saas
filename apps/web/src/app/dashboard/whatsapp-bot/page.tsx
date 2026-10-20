@@ -14,6 +14,8 @@ import {
   generateWhatsAppOrderSummaryReceipt,
   normalizeBdPhoneNumber,
 } from "@/lib/whatsapp-catalog-bot";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtTime, fmtNumber } from "@repo/contracts";
 
 interface ProductRow {
   id: string;
@@ -34,6 +36,7 @@ interface ChatMessage {
 }
 
 export default function WhatsAppBotPage() {
+  const { t, locale } = useLocale();
   const [config, setConfig] = useState<WhatsAppBotConfig>(DEFAULT_BOT_CONFIG);
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,9 +49,7 @@ export default function WhatsAppBotPage() {
   const [copiedSnippetId, setCopiedSnippetId] = useState<string | null>(null);
 
   // Address Parser Interactive Test
-  const [rawCustomerMsg, setRawCustomerMsg] = useState(
-    "ভাই আমার নাম তানভীর আহমেদ, মোবাইল: 01712345678, ঠিকানা: বাড়ি ১০, রোড ৪, সেক্টর ৭, উত্তরা, ঢাকা। ১টা পাঠায় দিয়েন।"
-  );
+  const [rawCustomerMsg, setRawCustomerMsg] = useState(() => t("messaging.waSampleMsg"));
   const [parserProductId, setParserProductId] = useState<string>("");
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<any>(null);
@@ -83,7 +84,7 @@ export default function WhatsAppBotPage() {
       if (items.length > 0) {
         setSelectedProductId(items[0].id);
         setParserProductId(items[0].id);
-        setCustomCtwaText(`আমি '${items[0].name}' সম্পর্কে জানতে চাই ও অর্ডার করতে চাই।`);
+        setCustomCtwaText(t("messaging.waCtwaText", { name: items[0].name }));
       }
 
       // Restore saved bot config or phone number
@@ -130,10 +131,10 @@ export default function WhatsAppBotPage() {
       } catch {
         // ignore
       }
-      setSaveSuccessMsg("✅ WhatsApp বট কনফিগারেশন ও নম্বর সফলভাবে সংরক্ষিত হয়েছে!");
+      setSaveSuccessMsg(t("messaging.waSaved"));
       setTimeout(() => setSaveSuccessMsg(""), 4000);
     } catch (err) {
-      setSaveErrorMsg(err instanceof Error ? err.message : "সেটিংস সংরক্ষণ ব্যর্থ হয়েছে।");
+      setSaveErrorMsg(err instanceof Error ? err.message : t("messaging.waSaveFailed"));
     } finally {
       setSavingSettings(false);
     }
@@ -144,13 +145,13 @@ export default function WhatsAppBotPage() {
     const orgId = getOrganizationId();
     if (!orgId) return;
     if (!parsed.phone) {
-      setOrderError("গ্রাহকের ১১ ডিজিটের মোবাইল নম্বর পাওয়া যায়নি। অনুগ্রহ করে কাঁচা মেসেজে সঠিক ফোন নম্বর অন্তর্ভুক্ত করুন।");
+      setOrderError(t("messaging.waNoPhone"));
       return;
     }
 
     const targetProduct = products.find((p) => p.id === (parserProductId || selectedProductId)) || products[0];
     if (!targetProduct) {
-      setOrderError("অর্ডার করার জন্য কোনো প্রোডাক্ট নির্বাচন করা নেই।");
+      setOrderError(t("messaging.waNoProduct"));
       return;
     }
 
@@ -179,7 +180,7 @@ export default function WhatsAppBotPage() {
       });
       setOrderSuccess(res);
     } catch (err) {
-      setOrderError(err instanceof Error ? err.message : "অর্ডার তৈরিতে ত্রুটি দেখা দিয়েছে।");
+      setOrderError(err instanceof Error ? err.message : t("messaging.waOrderFailed"));
     } finally {
       setCreatingOrder(false);
     }
@@ -187,7 +188,7 @@ export default function WhatsAppBotPage() {
 
   // Initialize Simulator Chat
   useEffect(() => {
-    const now = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "numeric", hour12: true });
+    const now = fmtTime(locale, new Date());
     setChatLog([
       {
         id: "msg-1",
@@ -203,7 +204,7 @@ export default function WhatsAppBotPage() {
     const msg = customText || simInput.trim();
     if (!msg) return;
 
-    const now = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "numeric", hour12: true });
+    const now = fmtTime(locale, new Date());
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: "user",
@@ -216,7 +217,7 @@ export default function WhatsAppBotPage() {
 
     // Simulate Bot Intelligence
     setTimeout(() => {
-      const botTime = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "numeric", hour12: true });
+      const botTime = fmtTime(locale, new Date());
       let botResponse = "";
       let isReceipt = false;
 
@@ -226,35 +227,35 @@ export default function WhatsAppBotPage() {
       if (lower.includes("1") || lower.includes("ক্যাটালগ") || lower.includes("প্রডাক্ট")) {
         const topProd = products[0];
         if (topProd) {
-          botResponse = formatWhatsAppProductSnippet(topProd, "স্মার্ট শপ", topProd.slug || undefined);
+          botResponse = formatWhatsAppProductSnippet(topProd, t("messaging.waDemoStore"), topProd.slug || undefined, locale);
         } else {
-          botResponse = "🛍️ আমাদের শীর্ষ প্রডাক্টগুলো দেখতে ভিজিট করুন: https://myshop.com/products\n\nপছন্দ হলে এখানে নাম ও ঠিকানা পাঠালেই আমরা ক্যাশ অন ডেলিভারিতে পাঠিয়ে দিবো।";
+          botResponse = t("messaging.waCatalogFallback");
         }
       } else if (lower.includes("2") || lower.includes("অফার") || lower.includes("ধামাকা")) {
-        botResponse = `🔥 আজকের স্পেশাল মেগা অফার!\nযেকোনো ২টি প্রডাক্ট কিনলেই ২০০ টাকা ছাড় + ফ্রি হোম ডেলিভারি!\n\n${config.orderPromptMessage}`;
+        botResponse = `${t("messaging.waOfferResponse")}\n\n${config.orderPromptMessage}`;
       } else if (lower.includes("3") || lower.includes("ট্র্যাক") || lower.includes("অবস্থা")) {
-        botResponse = "📦 আপনার অর্ডারটি ট্র্যাক করতে অনুগ্রহ করে আপনার অর্ডার আইডি অথবা যে মোবাইল নম্বর দিয়ে অর্ডার করেছিলেন তা লিখে পাঠান।";
+        botResponse = t("messaging.waTrackResponse");
       } else if (lower.includes("4") || lower.includes("প্রতিনিধি") || lower.includes("কথা")) {
-        botResponse = "💬 আমাদের কাস্টমার কেয়ার প্রতিনিধি খুব শীঘ্রই আপনার সাথে যুক্ত হচ্ছেন। অনুগ্রহ করে লাইনে থাকুন।";
+        botResponse = t("messaging.waHumanResponse");
       } else {
         // Attempt to parse order details
         const parsed = parseCustomerOrderDetails(msg);
         if (parsed.phone) {
           isReceipt = true;
-          const targetProd = products[0] || { name: "প্রিমিয়াম প্রডাক্ট", priceMinor: "125000" };
+          const targetProd = products[0] || { name: t("messaging.waFallbackProduct"), priceMinor: "125000" };
           botResponse = generateWhatsAppOrderSummaryReceipt({
             orderNumber: `WA-${1000 + orderCount}`,
-            customerName: parsed.customerName || "সম্মানিত গ্রাহক",
+            customerName: parsed.customerName || t("messaging.waFallbackCustomer"),
             phone: parsed.phone,
-            address: parsed.address || "ঢাকা, বাংলাদেশ",
+            address: parsed.address || t("messaging.waFallbackAddress"),
             productName: targetProd.name,
             quantity: 1,
             totalMinor: Number(targetProd.priceMinor) + 6000,
             deliveryChargeMinor: 6000,
-          });
+          }, locale);
           setOrderCount((c) => c + 1);
         } else {
-          botResponse = `ধন্যবাদ আপনার বার্তার জন্য! 😊\n\n${config.orderPromptMessage}`;
+          botResponse = `${t("messaging.waThanksPrefix")}\n\n${config.orderPromptMessage}`;
         }
       }
 
@@ -297,11 +298,11 @@ export default function WhatsAppBotPage() {
                 💬
               </span>
               <h1 className="text-xl font-black text-slate-900">
-                WhatsApp ক্যাটালগ ও ১-ক্লিক অর্ডার বট
+                {t("messaging.waTitle")}
               </h1>
             </div>
             <p className="mt-1 text-xs text-slate-600 max-w-2xl">
-              হোয়াটসঅ্যাপে গ্রাহকদের অটোমেটিক প্রোডাক্ট ক্যাটালগ প্রদর্শন, সাইজ/কালার সিলেকশন ও সরাসরি ক্যাশ অন ডেলিভারি (COD) অর্ডার কালেকশন।
+              {t("messaging.waIntro")}
             </p>
           </div>
 
@@ -310,13 +311,13 @@ export default function WhatsAppBotPage() {
               href="/dashboard/inbox"
               className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
             >
-              📥 লাইভ ইনবক্স
+              {t("messaging.waLiveInbox")}
             </Link>
             <Link
               href="/dashboard/messaging"
               className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition"
             >
-              📢 ব্রডকাস্ট ক্যাম্পেইন
+              {t("messaging.waBroadcast")}
             </Link>
           </div>
         </div>
@@ -337,7 +338,7 @@ export default function WhatsAppBotPage() {
                   : "border-transparent text-slate-600 hover:text-slate-900"
               }`}
             >
-              🤖 বট কনফিগারেশন
+              {t("messaging.waTabBot")}
             </button>
             <button
               type="button"
@@ -348,7 +349,7 @@ export default function WhatsAppBotPage() {
                   : "border-transparent text-slate-600 hover:text-slate-900"
               }`}
             >
-              🛍️ প্রডাক্ট ক্যাটালগ শেয়ার
+              {t("messaging.waTabCatalog")}
             </button>
             <button
               type="button"
@@ -359,7 +360,7 @@ export default function WhatsAppBotPage() {
                   : "border-transparent text-slate-600 hover:text-slate-900"
               }`}
             >
-              🔗 Click-to-WhatsApp লিঙ্ক
+              {t("messaging.waTabCtwa")}
             </button>
             <button
               type="button"
@@ -370,7 +371,7 @@ export default function WhatsAppBotPage() {
                   : "border-transparent text-slate-600 hover:text-slate-900"
               }`}
             >
-              🧠 অটো-অর্ডার পার্সার
+              {t("messaging.waTabParser")}
             </button>
           </div>
 
@@ -381,7 +382,7 @@ export default function WhatsAppBotPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      WhatsApp Business নম্বর
+                      {t("messaging.waBusinessNumber")}
                     </label>
                     <input
                       type="text"
@@ -391,13 +392,13 @@ export default function WhatsAppBotPage() {
                       className="w-full rounded-xl border border-slate-300 p-2 text-xs font-mono font-bold text-slate-800"
                     />
                     <p className="mt-1 text-[11px] text-slate-400">
-                      ইন্টারন্যাশনাল ফরম্যাটে রূপান্তর হবে (+৮৮)
+                      {t("messaging.waNumberNote")}
                     </p>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ভার্চুয়াল সহকারীর নাম
+                      {t("messaging.waBotNameLabel")}
                     </label>
                     <input
                       type="text"
@@ -410,7 +411,7 @@ export default function WhatsAppBotPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    স্বাগতম বার্তা (Welcome Auto-Greeting)
+                    {t("messaging.waWelcomeLabel")}
                   </label>
                   <textarea
                     rows={3}
@@ -422,7 +423,7 @@ export default function WhatsAppBotPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-2">
-                    ইন্টারেক্টিভ কুইক মেনু অপশনসমূহ:
+                    {t("messaging.waMenuLabel")}
                   </label>
                   <div className="space-y-2">
                     {config.menuOptions.map((opt, i) => (
@@ -447,7 +448,7 @@ export default function WhatsAppBotPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    COD অর্ডার কালেকশন প্রম্পট বার্তা
+                    {t("messaging.waCodPromptLabel")}
                   </label>
                   <textarea
                     rows={3}
@@ -456,7 +457,7 @@ export default function WhatsAppBotPage() {
                     className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-800"
                   />
                   <p className="mt-1 text-[11px] text-slate-400">
-                    গ্রাহক প্রোডাক্ট পছন্দ করার পর বট এই তথ্যগুলো চাইবে।
+                    {t("messaging.waCodPromptNote")}
                   </p>
                 </div>
 
@@ -479,7 +480,7 @@ export default function WhatsAppBotPage() {
                     disabled={savingSettings}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-2.5 text-xs font-bold text-white shadow-md hover:bg-black transition disabled:opacity-50"
                   >
-                    {savingSettings ? "সংরক্ষণ হচ্ছে..." : "💾 বট সেটিংস ও নম্বর সংরক্ষণ করুন"}
+                    {savingSettings ? t("messaging.waSavingSettings") : t("messaging.waSaveSettings")}
                   </button>
                 </div>
               </div>
@@ -490,10 +491,10 @@ export default function WhatsAppBotPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-bold text-slate-700">
-                    আপনার শপের প্রোডাক্ট ক্যাটালগ ({products.length}টি সক্রিয়)
+                    {t("messaging.waCatalogTitle", { count: fmtNumber(locale, products.length) })}
                   </p>
                   <span className="text-[11px] text-slate-400">
-                    ১-ক্লিকে টেক্সট কপি বা টেস্ট চ্যাটে পাঠান
+                    {t("messaging.waCatalogHint")}
                   </span>
                 </div>
 
@@ -503,11 +504,11 @@ export default function WhatsAppBotPage() {
                     <div className="h-16 rounded-xl bg-slate-100 animate-pulse" />
                   </div>
                 ) : products.length === 0 ? (
-                  <p className="text-xs text-slate-400 text-center py-4">কোনো প্রোডাক্ট পাওয়া যায়নি।</p>
+                  <p className="text-xs text-slate-400 text-center py-4">{t("messaging.waNoProducts")}</p>
                 ) : (
                   <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
                     {products.map((p) => {
-                      const snippet = formatWhatsAppProductSnippet(p, "স্মার্ট শপ", p.slug || undefined);
+                      const snippet = formatWhatsAppProductSnippet(p, t("messaging.waDemoStore"), p.slug || undefined, locale);
                       return (
                         <div
                           key={p.id}
@@ -538,11 +539,11 @@ export default function WhatsAppBotPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                handleSimulatorSend(`আমি এই প্রডাক্টের বিবরণ দেখতে চাই: ${p.name}`);
+                                handleSimulatorSend(t("messaging.waViewDetailsMsg", { name: p.name }));
                               }}
                               className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200"
                             >
-                              চ্যাটে টেস্ট ↗
+                              {t("messaging.waTestInChat")}
                             </button>
                             <button
                               type="button"
@@ -552,7 +553,7 @@ export default function WhatsAppBotPage() {
                               }}
                               className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
                             >
-                              {copiedSnippetId === p.id ? "✓ কপি হয়েছে!" : "📋 WA কপি"}
+                              {copiedSnippetId === p.id ? t("messaging.waCopied") : t("messaging.waCopySnippet")}
                             </button>
                           </div>
                         </div>
@@ -567,12 +568,12 @@ export default function WhatsAppBotPage() {
             {activeTab === "ctwa" && (
               <div className="space-y-4">
                 <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-900 leading-relaxed">
-                  💡 <strong>মেটা অ্যাডস ও সোশ্যাল বায়ো লিংক:</strong> এই লিংকটি দিয়ে Facebook / Instagram / TikTok বিজ্ঞাপনে &ldquo;Send WhatsApp Message&rdquo; কল-টু-অ্যাকশন তৈরি করুন। গ্রাহক ক্লিক করলেই পণ্যটির নামসহ সরাসরি আপনার চ্যাটে চলে আসবে!
+                  {t("messaging.waCtwaNote")}
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    প্রোডাক্ট নির্বাচন করুন (ঐচ্ছিক)
+                    {t("messaging.waSelectProduct")}
                   </label>
                   <select
                     value={selectedProductId}
@@ -580,12 +581,12 @@ export default function WhatsAppBotPage() {
                       setSelectedProductId(e.target.value);
                       const p = products.find((x) => x.id === e.target.value);
                       if (p) {
-                        setCustomCtwaText(`আমি '${p.name}' সম্পর্কে জানতে চাই ও অর্ডার করতে চাই।`);
+                        setCustomCtwaText(t("messaging.waCtwaText", { name: p.name }));
                       }
                     }}
                     className="w-full rounded-xl border border-slate-300 p-2 text-xs font-semibold text-slate-800"
                   >
-                    <option value="">— সাধারণ অনুসন্ধান —</option>
+                    <option value="">{t("messaging.waGeneralEnquiry")}</option>
                     {products.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
@@ -596,7 +597,7 @@ export default function WhatsAppBotPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    গ্রাহকের পূর্ব-নির্ধারিত বার্তা (Pre-filled Message)
+                    {t("messaging.waPrefilledLabel")}
                   </label>
                   <textarea
                     rows={2}
@@ -608,7 +609,7 @@ export default function WhatsAppBotPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    রেডিমেড Click-to-WhatsApp (CTWA) লিংক:
+                    {t("messaging.waCtwaLinkLabel")}
                   </label>
                   <div className="flex items-center gap-2">
                     <input
@@ -622,7 +623,7 @@ export default function WhatsAppBotPage() {
                       onClick={() => copyToClipboard(ctwaUrl, setCopiedCtwa)}
                       className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 shrink-0"
                     >
-                      {copiedCtwa ? "✓ কপি হয়েছে!" : "📋 কপি লিংক"}
+                      {copiedCtwa ? t("messaging.waCopied") : t("messaging.waCopyLink")}
                     </button>
                   </div>
                 </div>
@@ -634,7 +635,7 @@ export default function WhatsAppBotPage() {
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:underline"
                   >
-                    <span>💬</span> আপনার WhatsApp এ সরাসরি টেস্ট করুন ↗
+                    <span>💬</span> {t("messaging.waTestDirectly")}
                   </a>
                 </div>
               </div>
@@ -644,12 +645,12 @@ export default function WhatsAppBotPage() {
             {activeTab === "parser" && (
               <div className="space-y-4">
                 <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900 leading-relaxed">
-                  🧠 <strong>স্বয়ংক্রিয় অর্ডার এক্সট্র্যাক্টর:</strong> চ্যাটে গ্রাহক যেভাবেই নাম, ফোন ও ঠিকানা লিখুক না কেন, আমাদের এআই ইঞ্জিন স্বয়ংক্রিয়ভাবে ফিল্ডগুলো আলাদা করে অর্ডার রেডি করে ফেলে।
+                  {t("messaging.waParserNote")}
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    গ্রাহকের পাঠানো কাঁচা মেসেজ (Test Message):
+                    {t("messaging.waRawMsgLabel")}
                   </label>
                   <textarea
                     rows={3}
@@ -662,7 +663,7 @@ export default function WhatsAppBotPage() {
                 {/* Parsed Output Card */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700">এক্সট্র্যাক্টেড ফিল্ডসমূহ:</span>
+                    <span className="text-xs font-bold text-slate-700">{t("messaging.waExtractedTitle")}</span>
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                         parsedPreview.confidence === "high"
@@ -670,31 +671,31 @@ export default function WhatsAppBotPage() {
                           : "bg-amber-100 text-amber-800"
                       }`}
                     >
-                      কনফিডেন্স: {parsedPreview.confidence === "high" ? "উচ্চ (High)" : "আংশিক"}
+                      {t("messaging.waConfidence")}: {parsedPreview.confidence === "high" ? t("messaging.waConfidenceHigh") : t("messaging.waConfidencePartial")}
                     </span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     <div className="bg-white p-2 rounded-lg border border-slate-200">
-                      <span className="text-slate-400 block text-[10px]">গ্রাহকের নাম:</span>
-                      <strong className="text-slate-900">{parsedPreview.customerName || "শনাক্ত হয়নি"}</strong>
+                      <span className="text-slate-400 block text-[10px]">{t("messaging.waCustomerNameLabel")}</span>
+                      <strong className="text-slate-900">{parsedPreview.customerName || t("messaging.waNotDetected")}</strong>
                     </div>
 
                     <div className="bg-white p-2 rounded-lg border border-slate-200">
-                      <span className="text-slate-400 block text-[10px]">১১ ডিজিট ফোন:</span>
-                      <strong className="text-slate-900 font-mono">{parsedPreview.phone || "শনাক্ত হয়নি"}</strong>
+                      <span className="text-slate-400 block text-[10px]">{t("messaging.waPhoneLabel")}</span>
+                      <strong className="text-slate-900 font-mono">{parsedPreview.phone || t("messaging.waNotDetected")}</strong>
                     </div>
 
                     <div className="sm:col-span-2 bg-white p-2 rounded-lg border border-slate-200">
-                      <span className="text-slate-400 block text-[10px]">ডেলিভারি ঠিকানা:</span>
-                      <strong className="text-slate-900">{parsedPreview.address || "শনাক্ত হয়নি"}</strong>
+                      <span className="text-slate-400 block text-[10px]">{t("messaging.waAddressLabel")}</span>
+                      <strong className="text-slate-900">{parsedPreview.address || t("messaging.waNotDetected")}</strong>
                     </div>
                   </div>
 
                   {/* Product Picker for Real Order */}
                   <div className="pt-2 border-t border-slate-200 space-y-1.5">
                     <label className="block text-xs font-bold text-slate-700">
-                      অর্ডারের প্রোডাক্ট নির্বাচন করুন:
+                      {t("messaging.waOrderProductLabel")}
                     </label>
                     <select
                       value={parserProductId}
@@ -713,17 +714,17 @@ export default function WhatsAppBotPage() {
                     <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-900 space-y-1.5">
                       <div className="font-bold flex items-center gap-1.5 text-emerald-800">
                         <span>🎉</span>
-                        <span>রিয়েল অর্ডার সফলভাবে তৈরি হয়েছে!</span>
+                        <span>{t("messaging.waOrderCreated")}</span>
                       </div>
                       <p>
-                        অর্ডার ট্র্যাকিং রেফারেন্স:{" "}
+                        {t("messaging.waTrackingRef")}{" "}
                         <strong className="font-mono">{orderSuccess.orderNumber || orderSuccess.id?.slice(0, 8)}</strong>
                       </p>
                       <Link
                         href="/dashboard/orders"
                         className="inline-block mt-1 font-bold text-emerald-700 underline hover:text-emerald-900"
                       >
-                        ড্যাশবোর্ড অর্ডার লিস্টে দেখুন ↗
+                        {t("messaging.waViewOrders")}
                       </Link>
                     </div>
                   ) : null}
@@ -741,7 +742,7 @@ export default function WhatsAppBotPage() {
                       disabled={creatingOrder}
                       className="rounded-xl bg-emerald-600 p-2.5 text-xs font-extrabold text-white hover:bg-emerald-700 shadow-md transition disabled:opacity-50 text-center"
                     >
-                      {creatingOrder ? "অর্ডার তৈরি হচ্ছে..." : "🛍️ ১-ক্লিকে আসল অর্ডার তৈরি করুন"}
+                      {creatingOrder ? t("messaging.waCreatingOrder") : t("messaging.waCreateOrder")}
                     </button>
 
                     <button
@@ -749,7 +750,7 @@ export default function WhatsAppBotPage() {
                       onClick={() => handleSimulatorSend(rawCustomerMsg)}
                       className="rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition text-center"
                     >
-                      চ্যাট সিমুলেটরে টেস্ট ➔
+                      {t("messaging.waTestInSimulator")}
                     </button>
                   </div>
                 </div>
@@ -761,7 +762,7 @@ export default function WhatsAppBotPage() {
         {/* Right Column (5 cols): Authentic Realtime WhatsApp Phone Simulator */}
         <div className="lg:col-span-5 flex flex-col items-center">
           <p className="text-xs font-bold text-slate-600 mb-2">
-            📱 লাইভ WhatsApp চ্যাট সিমুলেটর
+            {t("messaging.waSimulatorTitle")}
           </p>
 
           <div className="w-[360px] rounded-[36px] border-4 border-slate-800 bg-slate-900 p-2 shadow-2xl overflow-hidden">
@@ -777,7 +778,7 @@ export default function WhatsAppBotPage() {
                     <h4 className="text-xs font-bold leading-none">{config.botName}</h4>
                     <span className="text-[10px] text-emerald-200 flex items-center gap-1 mt-0.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 inline-block" />
-                      অনলাইন
+                      {t("messaging.waOnline")}
                     </span>
                   </div>
                 </div>
@@ -820,21 +821,21 @@ export default function WhatsAppBotPage() {
                   onClick={() => handleSimulatorSend("1")}
                   className="rounded-full bg-white px-2.5 py-1 font-semibold text-emerald-800 border border-slate-200 shadow-2xs shrink-0"
                 >
-                  🛍️ ক্যাটালগ
+                  {t("messaging.waQuickCatalog")}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleSimulatorSend("2")}
                   className="rounded-full bg-white px-2.5 py-1 font-semibold text-emerald-800 border border-slate-200 shadow-2xs shrink-0"
                 >
-                  🔥 অফার
+                  {t("messaging.waQuickOffer")}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleSimulatorSend("3")}
                   className="rounded-full bg-white px-2.5 py-1 font-semibold text-emerald-800 border border-slate-200 shadow-2xs shrink-0"
                 >
-                  📦 ট্র্যাকিং
+                  {t("messaging.waQuickTrack")}
                 </button>
               </div>
 
@@ -847,7 +848,7 @@ export default function WhatsAppBotPage() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleSimulatorSend();
                   }}
-                  placeholder="মেসেজ লিখুন..."
+                  placeholder={t("messaging.waMessagePlaceholder")}
                   className="flex-1 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:outline-hidden"
                 />
                 <button

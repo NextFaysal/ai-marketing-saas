@@ -1,15 +1,16 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import {
   NOTIFICATION_CHANNELS,
-  NOTIFICATION_CHANNEL_LABEL,
   NOTIFICATION_EVENTS,
-  NOTIFICATION_EVENT_LABEL,
-  DEFAULT_TEMPLATES,
   TEMPLATE_VARIABLES,
+  notificationEventLabel,
+  notificationChannelLabel,
+  defaultTemplates,
   calculateSmsSegments,
   renderNotificationTemplate,
   generateWhatsAppTrackingShareUrl,
@@ -17,13 +18,26 @@ import {
   type NotificationEventKey,
 } from "@/lib/orders-on5";
 
+/**
+ * MB5 (ML14): a channel template override is either a plain
+ * string (one generic override for every recipient locale) or
+ * the merchant's own per-locale variants { bn?, en? } — the API
+ * config shape since ML14. The editor edits the variant for the
+ * CURRENT UI locale and preserves the other locale's entry
+ * untouched; it never flattens an object into a string.
+ */
+type TemplateOverride =
+  | string
+  | Partial<Record<"bn" | "en", string | null>>
+  | null;
+
 interface EventConfig {
   enabled: boolean;
   channels: NotificationChannelKey[];
   templates: {
-    sms: string | null;
-    whatsapp: string | null;
-    email: string | null;
+    sms: TemplateOverride;
+    whatsapp: TemplateOverride;
+    email: TemplateOverride;
   };
 }
 
@@ -42,24 +56,32 @@ interface SampleOrderData {
   phone: string;
 }
 
-const DEFAULT_SAMPLE_DATA: SampleOrderData = {
-  customerName: "তানভীর আহমেদ",
+// ML5 i18n: the localized sample fields come from dict.orders at
+// state init; the rest are locale-neutral sample identifiers.
+const DEFAULT_SAMPLE_DATA: Omit<
+  SampleOrderData,
+  "customerName" | "total" | "due" | "shopName" | "rescheduleDate"
+> = {
   orderNumber: "ORD-9421",
-  total: "৳1,850",
-  due: "৳1,850",
   trackingUrl: "https://shop.com/track/tk_982ab1",
-  shopName: "স্মার্ট লাইফস্টাইল",
   courierName: "Steadfast",
   trackingCode: "ST-8829104",
-  rescheduleDate: "২০২৬-১০-১৮",
   phone: "01712345678",
 };
 
 export default function OrderNotificationsPage() {
+  const { dict, t, locale } = useLocale();
   const [config, setConfig] = useState<NotificationConfig | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<NotificationEventKey>("handed_to_courier");
   const [activeChannel, setActiveChannel] = useState<NotificationChannelKey>("whatsapp");
-  const [sampleData, setSampleData] = useState<SampleOrderData>(DEFAULT_SAMPLE_DATA);
+  const [sampleData, setSampleData] = useState<SampleOrderData>(() => ({
+    ...DEFAULT_SAMPLE_DATA,
+    customerName: dict.orders.tanvirAhmed,
+    total: dict.orders.text1y7ppz9,
+    due: dict.orders.text1y7ppz9,
+    shopName: dict.orders.smartLifestyle,
+    rescheduleDate: dict.orders.textpq8gwa,
+  }));
   const [previewChannel, setPreviewChannel] = useState<"whatsapp" | "sms">("whatsapp");
 
   const [loading, setLoading] = useState(true);
@@ -80,7 +102,7 @@ export default function OrderNotificationsPage() {
       );
       setConfig(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "নোটিফিকেশন সেটিংস লোড করা সম্ভব হয়নি");
+      setError(err instanceof Error ? err.message : dict.orders.couldNotLoadNotificationSettings);
     } finally {
       setLoading(false);
     }
@@ -103,8 +125,19 @@ export default function OrderNotificationsPage() {
     if (typeof override === "string" && override.trim()) {
       return override;
     }
-    return DEFAULT_TEMPLATES[selectedEvent] ?? "";
-  }, [currentEventConfig, selectedEvent, activeChannel]);
+    if (override && typeof override === "object") {
+      // MB5 (ML14): per-locale variant object — show THIS UI
+      // locale's variant; when the merchant has not written one
+      // for this locale, the platform default for the locale
+      // shows (the other locale's variant stays untouched in
+      // state and is never displayed as this locale's text).
+      const variant = override[locale];
+      if (typeof variant === "string" && variant.trim()) {
+        return variant;
+      }
+    }
+    return defaultTemplates(locale)[selectedEvent] ?? "";
+  }, [currentEventConfig, selectedEvent, activeChannel, locale]);
 
   // Rendered preview text with sample variables
   const renderedMessage = useMemo(() => {
@@ -137,13 +170,25 @@ export default function OrderNotificationsPage() {
     const ev = config[selectedEvent];
     if (!ev) return;
 
+    // MB5 (ML14): when the stored override is a per-locale
+    // variant object, the edit lands on the CURRENT UI locale's
+    // entry only — the other locale's variant is preserved
+    // verbatim (never silently flattened into a plain string).
+    const existing = ev.templates[activeChannel];
+    const nextOverride: TemplateOverride =
+      existing && typeof existing === "object"
+        ? { ...existing, [locale]: text === "" ? null : text }
+        : text === ""
+          ? null
+          : text;
+
     setConfig({
       ...config,
       [selectedEvent]: {
         ...ev,
         templates: {
           ...ev.templates,
-          [activeChannel]: text === "" ? null : text,
+          [activeChannel]: nextOverride,
         },
       },
     });
@@ -212,10 +257,10 @@ export default function OrderNotificationsPage() {
           body: JSON.stringify({ config }),
         }
       );
-      setNotice("✅ নোটিফিকেশন টেমপ্লেট ও সেটিংস সফলভাবে সংরক্ষিত হয়েছে!");
+      setNotice(dict.orders.notificationTemplatesSettingsSavedSuccessfully);
       setTimeout(() => setNotice(""), 4000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "সেটিংস সংরক্ষণ ব্যর্থ হয়েছে");
+      setError(err instanceof Error ? err.message : dict.orders.settingsSaveFailed2);
     } finally {
       setSaving(false);
     }
@@ -242,22 +287,17 @@ export default function OrderNotificationsPage() {
               🔔
             </span>
             <h1 className="text-xl font-black text-slate-900 sm:text-2xl">
-              SMS ও কুরিয়ার ট্র্যাকিং নোটিফিকেশন ইঞ্জিন
-            </h1>
+              {dict.orders.sMSCourierTrackingNotificationEngine}</h1>
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            অর্ডারের প্রতিটি ধাপে (কনফার্মেশন, প্যাকিং, কুরিয়ার হ্যান্ডওভার, আউট ফর ডেলিভারি ও রিসিভ) স্বয়ংক্রিয় SMS ও WhatsApp ট্র্যাকিং নোটিফিকেশন পাঠান।
-          </p>
+            {dict.orders.sendAutomaticSMSWhatsAppTracking}</p>
           <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-600">
             <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-emerald-800 border border-emerald-200">
-              ✓ Steadfast, Pathao, RedX সাপোর্টেড
-            </span>
+              {dict.orders.steadfastPathaoRedXSupported}</span>
             <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-indigo-800 border border-indigo-200">
-              ⚡ অটো-ফলব্যাক: SMS ➔ WhatsApp ➔ Email
-            </span>
+              {dict.orders.autoFallbackSMSWhatsAppEmail}</span>
             <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-amber-900 border border-amber-200">
-              🔒 ডুপ্লিকেট সেন্ট প্রোটেকশন
-            </span>
+              {dict.orders.duplicateSendProtection}</span>
           </div>
         </div>
 
@@ -266,8 +306,7 @@ export default function OrderNotificationsPage() {
             href="/dashboard/orders"
             className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
           >
-            অর্ডার ড্যাশবোর্ড ↗
-          </Link>
+            {dict.orders.orderDashboard}</Link>
 
           <button
             type="button"
@@ -275,7 +314,7 @@ export default function OrderNotificationsPage() {
             disabled={saving || loading || !config}
             className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-extrabold text-white shadow-md shadow-indigo-600/25 hover:bg-indigo-700 transition disabled:opacity-50"
           >
-            {saving ? "সংরক্ষণ হচ্ছে..." : "💾 কনফিগারেশন সংরক্ষণ করুন"}
+            {saving ? dict.orders.saving2 : dict.orders.saveConfiguration}
           </button>
         </div>
       </div>
@@ -299,11 +338,11 @@ export default function OrderNotificationsPage() {
           {/* 1. Courier Lifecycle Event Selector */}
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
             <h2 className="text-sm font-bold text-slate-900 flex items-center justify-between">
-              <span>১. কুরিয়ার ও ডেলিভারি লাইফসাইকেল ইভেন্ট নির্বাচন করুন</span>
+              <span>{dict.orders.text8z5j17}</span>
               {currentEventConfig && (
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-bold">
                   <span className={currentEventConfig.enabled ? "text-emerald-700" : "text-slate-400"}>
-                    {currentEventConfig.enabled ? "সক্রিয় (Active)" : "নিষ্ক্রিয় (Disabled)"}
+                    {currentEventConfig.enabled ? dict.orders.active3 : dict.orders.disabled}
                   </span>
                   <input
                     type="checkbox"
@@ -331,12 +370,12 @@ export default function OrderNotificationsPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs truncate">{NOTIFICATION_EVENT_LABEL[eventKey]}</span>
+                      <span className="text-xs truncate">{notificationEventLabel(eventKey, locale)}</span>
                       <span
                         className={`h-2 w-2 rounded-full shrink-0 ${
                           isEnabled ? "bg-emerald-500" : "bg-slate-300"
                         }`}
-                        title={isEnabled ? "এই ইভেন্টে নোটিফিকেশন চালু" : "বন্ধ"}
+                        title={isEnabled ? dict.orders.notificationOnForThisEvent : dict.orders.off}
                       />
                     </div>
                   </button>
@@ -350,11 +389,9 @@ export default function OrderNotificationsPage() {
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
-                  ২. {NOTIFICATION_EVENT_LABEL[selectedEvent]} — মেসেজ টেমপ্লেট
-                </h3>
+                  {dict.orders.text1op2}{notificationEventLabel(selectedEvent, locale)} {dict.orders.messageTemplate}</h3>
                 <p className="text-[11px] text-slate-500">
-                  গ্রাহকের কাছে পাঠানোর জন্য চ্যানেলভিত্তিক বার্তা কাস্টমাইজ করুন
-                </p>
+                  {dict.orders.customizeChannelWiseMessagesTo}</p>
               </div>
 
               {/* Channel Selector Tabs */}
@@ -373,7 +410,7 @@ export default function OrderNotificationsPage() {
                           : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
-                      <span>{NOTIFICATION_CHANNEL_LABEL[ch]}</span>
+                      <span>{notificationChannelLabel(ch, locale)}</span>
                       {isConfiguredInPriority && (
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                       )}
@@ -387,11 +424,9 @@ export default function OrderNotificationsPage() {
             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3.5 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-700">
-                  ডেলিভারি চেষ্টা করার ক্রম (Fallback Priority):
-                </span>
+                  {dict.orders.deliveryFallbackOrderFallbackPriority}</span>
                 <span className="text-[11px] text-slate-500">
-                  প্রথমটি ব্যর্থ হলে পরেরটি চেষ্টা করা হবে
-                </span>
+                  {dict.orders.ifTheFirstFailsThe}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {NOTIFICATION_CHANNELS.map((ch) => {
@@ -408,7 +443,7 @@ export default function OrderNotificationsPage() {
                       }`}
                     >
                       <span>{on ? "✓" : "+"}</span>
-                      <span>{NOTIFICATION_CHANNEL_LABEL[ch]}</span>
+                      <span>{notificationChannelLabel(ch, locale)}</span>
                     </button>
                   );
                 })}
@@ -419,15 +454,13 @@ export default function OrderNotificationsPage() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-slate-700">
-                  ডায়নামিক ভ্যারিয়েবল (ক্লিক করে টেমপ্লেটে যোগ করুন):
-                </label>
+                  {dict.orders.dynamicVariablesClickToAdd}</label>
                 <button
                   type="button"
                   onClick={handleResetToDefault}
                   className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline"
                 >
-                  ডিফল্ট টেমপ্লেটে ফিরুন
-                </button>
+                  {dict.orders.backToDefaultTemplate}</button>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
@@ -450,7 +483,7 @@ export default function OrderNotificationsPage() {
                 rows={5}
                 value={currentTemplate}
                 onChange={(e) => handleTemplateChange(e.target.value)}
-                placeholder="মেসেজ টেমপ্লেট লিখুন..."
+                placeholder={dict.orders.writeTheMessageTemplate}
                 className="w-full rounded-2xl border border-slate-300 p-3.5 text-xs text-slate-900 leading-relaxed focus:border-indigo-500 focus:outline-hidden"
               />
             </div>
@@ -459,18 +492,16 @@ export default function OrderNotificationsPage() {
             {activeChannel === "sms" && (
               <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3.5 space-y-1 text-xs">
                 <div className="flex items-center justify-between font-bold text-indigo-950">
-                  <span>📊 SMS সেগমেন্ট ও ক্রেডিট হিসাব:</span>
+                  <span>{dict.orders.sMSSegmentCreditCalculation}</span>
                   <span className="font-mono text-indigo-700">
-                    {smsStats.segments} টি SMS ({smsStats.chars} অক্ষর)
-                  </span>
+                    {smsStats.segments} {dict.orders.sMS}{smsStats.chars} {dict.orders.characters}</span>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600">
                   <span>
-                    ধরন: <strong>{smsStats.isUnicode ? "বাংলা (Unicode 70 char/part)" : "ইংরেজি (GSM-7 160 char/part)"}</strong>
+                    {dict.orders.type2}<strong>{smsStats.isUnicode ? dict.orders.bengaliUnicode70CharPart : dict.orders.englishGSM7160Char}</strong>
                   </span>
                   <span>
-                    আনুমানিক খরচ: ~৳{(smsStats.segments * 0.35).toFixed(2)} / বার্তা
-                  </span>
+                    {dict.orders.estimatedCost}{(smsStats.segments * 0.35).toFixed(2)} {dict.orders.message}</span>
                 </div>
               </div>
             )}
@@ -483,7 +514,7 @@ export default function OrderNotificationsPage() {
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                <span>📱 লাইভ কাস্টমার মেসেজ প্রিভিউ</span>
+                <span>{dict.orders.liveCustomerMessagePreview}</span>
               </h3>
               <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
                 <button
@@ -521,7 +552,7 @@ export default function OrderNotificationsPage() {
                     </span>
                     <span>{sampleData.shopName}</span>
                   </div>
-                  <span className="text-emerald-700 font-normal">এখনই</span>
+                  <span className="text-emerald-700 font-normal">{dict.orders.now}</span>
                 </div>
 
                 <div className="rounded-2xl rounded-tl-xs bg-white p-3 text-xs leading-relaxed text-slate-900 shadow-xs whitespace-pre-line">
@@ -534,7 +565,7 @@ export default function OrderNotificationsPage() {
             ) : (
               <div className="rounded-2xl bg-slate-100 p-4 border border-slate-200 space-y-2">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2 text-[11px] text-slate-700 font-semibold">
-                  <span>💬 SMS বার্তা</span>
+                  <span>{dict.orders.sMSMessage}</span>
                   <span className="text-slate-500 font-mono text-[10px]">{sampleData.phone}</span>
                 </div>
 
@@ -552,7 +583,7 @@ export default function OrderNotificationsPage() {
                 rel="noopener noreferrer"
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-[#25D366] p-2.5 text-xs font-extrabold text-white shadow-md hover:bg-[#20ba5a] transition text-center"
               >
-                <span>WhatsApp-এ টেস্ট ↗</span>
+                <span>{dict.orders.testOnWhatsApp}</span>
               </a>
 
               <button
@@ -560,7 +591,7 @@ export default function OrderNotificationsPage() {
                 onClick={handleCopyMessage}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
               >
-                <span>{copied ? "✓ কপি হয়েছে!" : "📋 টেক্সট কপি"}</span>
+                <span>{copied ? dict.orders.copied2 : dict.orders.copyText}</span>
               </button>
             </div>
           </div>
@@ -568,14 +599,12 @@ export default function OrderNotificationsPage() {
           {/* Test Receiver Phone & Sample Variables Customizer */}
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
             <h4 className="text-xs font-bold text-slate-900">
-              🛠️ টেস্ট ডাটা কাস্টমাইজার (প্রিভিউয়ের জন্য):
-            </h4>
+              {dict.orders.testDataCustomizerForPreview}</h4>
 
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  গ্রাহকের নাম:
-                </label>
+                  {dict.orders.customerName}</label>
                 <input
                   type="text"
                   value={sampleData.customerName}
@@ -586,8 +615,7 @@ export default function OrderNotificationsPage() {
 
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  অর্ডার নম্বর:
-                </label>
+                  {dict.orders.orderNumber}</label>
                 <input
                   type="text"
                   value={sampleData.orderNumber}
@@ -598,8 +626,7 @@ export default function OrderNotificationsPage() {
 
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  কুরিয়ারের নাম:
-                </label>
+                  {dict.orders.courierName}</label>
                 <input
                   type="text"
                   value={sampleData.courierName}
@@ -610,8 +637,7 @@ export default function OrderNotificationsPage() {
 
               <div>
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  ট্র্যাকিং কোড:
-                </label>
+                  {dict.orders.trackingCode2}</label>
                 <input
                   type="text"
                   value={sampleData.trackingCode}
@@ -622,8 +648,7 @@ export default function OrderNotificationsPage() {
 
               <div className="col-span-2">
                 <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                  টেস্ট ফোন নম্বর (১১ ডিজিট):
-                </label>
+                  {dict.orders.testPhoneNumber11Digits}</label>
                 <input
                   type="text"
                   value={sampleData.phone}

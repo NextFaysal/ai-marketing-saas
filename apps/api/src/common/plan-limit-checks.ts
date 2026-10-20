@@ -17,6 +17,7 @@ import { billingGraceDays, planResourceLimits } from "./platform-settings";
 import { storageUsageForOrg } from "./storage-usage";
 import { createAgentNotification } from "./agent-notify";
 import { dhakaDayKey, dhakaDayStartUtc } from "../crm/lead-followups";
+import { forbidden } from "../i18n";
 
 export const PAUSED_MESSAGE = "সাবস্ক্রিপশন সাময়িকভাবে বন্ধ (pause) করা আছে — আবার চালু করতে Billing পেজ থেকে Resume করুন।";
 export const PAST_DUE_GRACE_MESSAGE = "সাবস্ক্রিপশনের বকেয়া পরিশোধ করুন — গ্রেস পিরিয়ড শেষ হয়ে গেছে";
@@ -87,9 +88,19 @@ export class OrderLimitBlockedError extends ForbiddenException {
   readonly code = "ORDER_LIMIT_BLOCKED";
   readonly shopperMessage = SHOPPER_ORDER_BLOCK_MESSAGE;
   readonly blockReason: CommerceBlockReason | "order_limit";
-  constructor(message: string, blockReason: CommerceBlockReason | "order_limit") {
+  /** ML10: catalog pointer for the staff-facing message — the
+   * global filter renders it in the request locale. */
+  readonly catalogCode?: string;
+  readonly catalogParams?: Record<string, unknown>;
+  constructor(
+    message: string,
+    blockReason: CommerceBlockReason | "order_limit",
+    catalog?: { code: string; params?: Record<string, unknown> },
+  ) {
     super(message);
     this.blockReason = blockReason;
+    this.catalogCode = catalog?.code;
+    this.catalogParams = catalog?.params;
   }
 }
 
@@ -102,7 +113,7 @@ export function isOrderLimitBlocked(e: unknown): e is OrderLimitBlockedError {
  * plan's productLimit against live (non-ARCHIVED) products. */
 export async function checkProductCreate(prisma: any, organizationId: string): Promise<void> {
   const block = await commerceBlocked(prisma, organizationId);
-  if (block.blocked) throw new ForbiddenException(block.message);
+  if (block.blocked) throw forbidden(block.reason === "paused" ? "common.subscriptionPausedBlock" : "common.subscriptionPastDueGraceBlock");
   const limits = await planResourceLimits(prisma, organizationId).catch(() => null);
   if (!limits || limits.productLimit == null) return;
   let used: number | null = null;
@@ -115,9 +126,7 @@ export async function checkProductCreate(prisma: any, organizationId: string): P
     used = typeof n === "number" ? n : null;
   } catch { used = null; }
   if (used != null && used >= limits.productLimit) {
-    throw new ForbiddenException(
-      `প্ল্যানের পণ্য সীমা পূর্ণ হয়ে গেছে — সীমা ${limits.productLimit}টি, বর্তমানে ${used}টি পণ্য আছে। প্ল্যান আপগ্রেড করুন অথবা কিছু পণ্য Archive করুন।`,
-    );
+    throw forbidden("common.planProductLimitReached", { limit: limits.productLimit, used: used });
   }
 }
 
@@ -174,7 +183,10 @@ async function recordOrderLimitBlock(prisma: any, organizationId: string, detail
  * this on the create branch of the one order door). */
 export async function checkOrderCreate(prisma: any, organizationId: string, now: Date = new Date()): Promise<void> {
   const block = await commerceBlocked(prisma, organizationId, now);
-  if (block.blocked) throw new OrderLimitBlockedError(block.message ?? SHOPPER_ORDER_BLOCK_MESSAGE, block.reason);
+  if (block.blocked) throw new OrderLimitBlockedError(
+    block.message ?? SHOPPER_ORDER_BLOCK_MESSAGE, block.reason,
+    { code: block.reason === "paused" ? "common.subscriptionPausedBlock" : "common.subscriptionPastDueGraceBlock" },
+  );
   const limits = await planResourceLimits(prisma, organizationId).catch(() => null);
   if (!limits || limits.orderLimit == null) return;
   const used = await ordersThisMonthCount(prisma, organizationId, now);
@@ -183,6 +195,7 @@ export async function checkOrderCreate(prisma: any, organizationId: string, now:
     throw new OrderLimitBlockedError(
       `এই মাসের অর্ডার সীমা পূর্ণ হয়ে গেছে — সীমা ${limits.orderLimit}টি, এই মাসে ${used}টি অর্ডার তৈরি হয়েছে। প্ল্যান আপগ্রেড করলে আবার অর্ডার নেওয়া যাবে।`,
       "order_limit",
+      { code: "common.monthlyOrderLimitReached", params: { limit: limits.orderLimit, used } },
     );
   }
 }
@@ -192,7 +205,7 @@ export async function checkOrderCreate(prisma: any, organizationId: string, now:
  * Exactly-at-the-limit is allowed; one byte over refuses. */
 export async function checkMediaUpload(prisma: any, organizationId: string, incomingBytes: number): Promise<void> {
   const block = await commerceBlocked(prisma, organizationId);
-  if (block.blocked) throw new ForbiddenException(block.message);
+  if (block.blocked) throw forbidden(block.reason === "paused" ? "common.subscriptionPausedBlock" : "common.subscriptionPastDueGraceBlock");
   const limits = await planResourceLimits(prisma, organizationId).catch(() => null);
   if (!limits || limits.storageLimitMb == null) return;
   const usage = await storageUsageForOrg(prisma, organizationId);
@@ -201,8 +214,6 @@ export async function checkMediaUpload(prisma: any, organizationId: string, inco
   const incoming = BigInt(Math.max(0, Math.trunc(Number(incomingBytes) || 0)));
   if (usedBytes + incoming > limitBytes) {
     const usedMb = (Number(usedBytes) / (1024 * 1024)).toFixed(1);
-    throw new ForbiddenException(
-      `প্ল্যানের স্টোরেজ সীমা পূর্ণ হয়ে যাবে — সীমা ${limits.storageLimitMb} MB, বর্তমানে ${usedMb} MB ব্যবহৃত হচ্ছে। প্ল্যান আপগ্রেড করুন অথবা অপ্রয়োজনীয় মিডিয়া মুছে ফেলুন।`,
-    );
+    throw forbidden("common.planStorageLimitReached", { limit: limits.storageLimitMb, used: usedMb });
   }
 }

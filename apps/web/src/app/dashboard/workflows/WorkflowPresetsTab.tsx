@@ -1,44 +1,67 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import { EmptyState } from "@repo/ui";
-import { WORKFLOW_BLUEPRINTS_CATALOG, type WorkflowBlueprint } from "@/lib/workflow-blueprints";
+import { WORKFLOW_BLUEPRINTS_CATALOG, bpText, type WorkflowBlueprint } from "@/lib/workflow-blueprints";
+import { useLocale } from "@/lib/i18n/provider";
+import { sharedBn, sharedEn } from "@/lib/i18n/shared";
+import { fmtNumber, type UiLocale } from "@repo/contracts";
 
 const BUSINESS_BLUEPRINTS = WORKFLOW_BLUEPRINTS_CATALOG;
 
-function getStepMeta(type: string): { label: string; icon: string; badgeCls: string } {
+// Step-meta labels via the shared dictionary, exactly as
+// workflows/page.tsx's getStepMeta does (STEP_LABEL_KEY pattern):
+// the label is localized, icon + badge classes stay fixed.
+const STEP_LABEL_KEY: Record<string, keyof typeof sharedBn> = {
+  send_email: "stepSendEmail", send_sms: "stepSendSms", send_inbox_message: "stepSendInboxMessage", wait: "stepWait",
+  condition: "stepCondition", branch: "stepBranch", change_lead_stage: "stepChangeLeadStage", add_tag: "stepAddTag",
+  notify_team: "stepNotifyTeam", notify_channel: "stepNotifyChannel", ai_generate: "stepAiGenerate",
+  add_lead_activity: "stepAddLeadActivity", add_conversation_note: "stepAddConversationNote",
+  assign_conversation: "stepAssignConversation", create_follow_up: "stepCreateFollowUp", http_webhook: "stepHttpWebhook",
+};
+
+function getStepMeta(type: string, locale: UiLocale = "bn"): { label: string; icon: string; badgeCls: string } {
+  const key = STEP_LABEL_KEY[type];
+  if (key) {
+    const base = getStepMetaBase(type);
+    return { ...base, label: (locale === "en" ? sharedEn : sharedBn)[key] };
+  }
+  return getStepMetaBase(type);
+}
+
+function getStepMetaBase(type: string): { label: string; icon: string; badgeCls: string } {
   switch (type) {
     case "send_email":
-      return { label: "Email পাঠান", icon: "✉️", badgeCls: "bg-sky-50 text-sky-700 border-sky-200" };
+      return { label: sharedBn.stepSendEmail, icon: "✉️", badgeCls: "bg-sky-50 text-sky-700 border-sky-200" };
     case "send_sms":
-      return { label: "SMS পাঠান", icon: "📱", badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+      return { label: sharedBn.stepSendSms, icon: "📱", badgeCls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
     case "add_lead_activity":
-      return { label: "Lead Note", icon: "📝", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepAddLeadActivity, icon: "📝", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "add_conversation_note":
-      return { label: "Internal Note", icon: "🔒", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
+      return { label: sharedBn.stepAddConversationNote, icon: "🔒", badgeCls: "bg-violet-50 text-violet-700 border-violet-200" };
     case "send_inbox_message":
-      return { label: "Inbox বার্তা", icon: "💬", badgeCls: "bg-teal-50 text-teal-700 border-teal-200" };
+      return { label: sharedBn.stepSendInboxMessage, icon: "💬", badgeCls: "bg-teal-50 text-teal-700 border-teal-200" };
     case "wait":
-      return { label: "অপেক্ষা (Wait)", icon: "⏱️", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
+      return { label: sharedBn.stepWait, icon: "⏱️", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
     case "condition":
-      return { label: "শর্ত যাচাই", icon: "🔍", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
+      return { label: sharedBn.stepCondition, icon: "🔍", badgeCls: "bg-amber-50 text-amber-700 border-amber-200" };
     case "branch":
-      return { label: "শাখা (Branch)", icon: "🔀", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
+      return { label: sharedBn.stepBranch, icon: "🔀", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
     case "assign_conversation":
-      return { label: "Assign", icon: "👤", badgeCls: "bg-blue-50 text-blue-700 border-blue-200" };
+      return { label: sharedBn.stepAssignConversation, icon: "👤", badgeCls: "bg-blue-50 text-blue-700 border-blue-200" };
     case "change_lead_stage":
-      return { label: "Stage বদলান", icon: "🏷️", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepChangeLeadStage, icon: "🏷️", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "add_tag":
-      return { label: "Tag যোগ", icon: "🏷️", badgeCls: "bg-slate-100 text-slate-700 border-slate-300" };
+      return { label: sharedBn.stepAddTag, icon: "🏷️", badgeCls: "bg-slate-100 text-slate-700 border-slate-300" };
     case "notify_team":
-      return { label: "টিমকে জানান", icon: "👥", badgeCls: "bg-orange-50 text-orange-700 border-orange-200" };
+      return { label: sharedBn.stepNotifyTeam, icon: "👥", badgeCls: "bg-orange-50 text-orange-700 border-orange-200" };
     case "create_follow_up":
-      return { label: "Follow-up", icon: "📅", badgeCls: "bg-rose-50 text-rose-700 border-rose-200" };
+      return { label: sharedBn.stepCreateFollowUp, icon: "📅", badgeCls: "bg-rose-50 text-rose-700 border-rose-200" };
     case "http_webhook":
-      return { label: "Webhook", icon: "🌐", badgeCls: "bg-cyan-50 text-cyan-700 border-cyan-200" };
+      return { label: sharedBn.stepHttpWebhook, icon: "🌐", badgeCls: "bg-cyan-50 text-cyan-700 border-cyan-200" };
     case "notify_channel":
-      return { label: "চ্যানেল অ্যালার্ট", icon: "📢", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
+      return { label: sharedBn.stepNotifyChannel, icon: "📢", badgeCls: "bg-indigo-50 text-indigo-700 border-indigo-200" };
     case "ai_generate":
-      return { label: "AI অ্যাকশন", icon: "🤖", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
+      return { label: sharedBn.stepAiGenerate, icon: "🤖", badgeCls: "bg-purple-50 text-purple-700 border-purple-200" };
     default:
       return { label: type, icon: "⚡", badgeCls: "bg-slate-100 text-slate-700 border-slate-200" };
   }
@@ -59,6 +82,7 @@ export default function WorkflowPresetsTab({
   openBlueprintInCanvas,
   installPreset,
 }: WorkflowPresetsTabProps) {
+  const { t, locale } = useLocale();
   const [blueprintCategory, setBlueprintCategory] = useState<string>("all");
   const [blueprintSearch, setBlueprintSearch] = useState("");
 
@@ -97,11 +121,11 @@ export default function WorkflowPresetsTab({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-slate-900">📚 রেডিমেড বিজনেস সল্যুশন গ্যালারি</h2>
-              <span className="badge badge-brand font-bold">১০৫+ ব্লুপ্রিন্ট</span>
+              <h2 className="text-xl font-bold text-slate-900">{t("workflows.galleryTitle")}</h2>
+              <span className="badge badge-brand font-bold">{t("workflows.galleryCount")}</span>
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
-              আপনার ব্যবসার সমস্যা নির্বাচন করুন — রেডিমেড ওয়ার্কফ্লো ১-ক্লিকে লোড করুন বা ভিজ্যুয়াল ক্যানভাসে কাস্টমাইজ করুন।
+              {t("workflows.galleryIntro")}
             </p>
           </div>
 
@@ -114,7 +138,7 @@ export default function WorkflowPresetsTab({
               }}
               className="btn-secondary btn-xs self-start sm:self-center"
             >
-              ✕ ফিল্টার রিসেট
+              {t("workflows.resetFilter")}
             </button>
           )}
         </div>
@@ -129,7 +153,7 @@ export default function WorkflowPresetsTab({
           <input
             type="text"
             className="input !pl-10 !pr-10 !py-2.5 w-full text-sm rounded-xl border-slate-200 focus:border-brand-500 focus:ring-brand-500"
-            placeholder="সমস্যা বা প্রয়োজন দিয়ে খুঁজুন (যেমন: কার্ট, কুরিয়ার, রিটার্ন, লিড, পেমেন্ট, AI, শিডিউল, ইনবক্স)..."
+            placeholder={t("workflows.gallerySearchPlaceholder")}
             value={blueprintSearch}
             onChange={(e) => setBlueprintSearch(e.target.value)}
           />
@@ -138,7 +162,7 @@ export default function WorkflowPresetsTab({
               type="button"
               onClick={() => setBlueprintSearch("")}
               className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
-              title="অনুসন্ধান মুছুন"
+              title={t("workflows.clearSearch")}
             >
               ✕
             </button>
@@ -147,16 +171,16 @@ export default function WorkflowPresetsTab({
 
         {/* Categorized Filter Chips */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs pt-1 border-t border-slate-100">
-          <span className="text-xs font-semibold text-slate-400 mr-1">ক্যাটাগরি:</span>
+          <span className="text-xs font-semibold text-slate-400 mr-1">{t("workflows.categoryLabel")}</span>
           {[
-            { id: "all", label: "সব সমাধান", icon: "✨", count: categoryCounts.all || BUSINESS_BLUEPRINTS.length },
-            { id: "ecommerce", label: "ই-কমার্স ও সেলস", icon: "🛍️", count: categoryCounts.ecommerce || 0 },
-            { id: "courier", label: "কুরিয়ার ও রিটার্ন", icon: "🚚", count: categoryCounts.courier || 0 },
-            { id: "leads", label: "লিড ও সিআরএম", icon: "👥", count: categoryCounts.leads || 0 },
-            { id: "inbox", label: "ইনবক্স ও কেয়ার", icon: "💬", count: categoryCounts.inbox || 0 },
-            { id: "ai", label: "AI অটোমেশন", icon: "🤖", count: categoryCounts.ai || 0 },
-            { id: "ops", label: "টিম ও অপস", icon: "📢", count: categoryCounts.ops || 0 },
-            { id: "schedule", label: "শিডিউল ও রুটিন", icon: "⏰", count: categoryCounts.schedule || 0 },
+            { id: "all", label: t("workflows.catAll"), icon: "✨", count: categoryCounts.all || BUSINESS_BLUEPRINTS.length },
+            { id: "ecommerce", label: t("workflows.catEcomSales"), icon: "🛍️", count: categoryCounts.ecommerce || 0 },
+            { id: "courier", label: t("workflows.catCourierReturn"), icon: "🚚", count: categoryCounts.courier || 0 },
+            { id: "leads", label: t("workflows.catLeadCrm"), icon: "👥", count: categoryCounts.leads || 0 },
+            { id: "inbox", label: t("workflows.catInboxCare"), icon: "💬", count: categoryCounts.inbox || 0 },
+            { id: "ai", label: t("workflows.catAiAuto"), icon: "🤖", count: categoryCounts.ai || 0 },
+            { id: "ops", label: t("workflows.catTeamOps"), icon: "📢", count: categoryCounts.ops || 0 },
+            { id: "schedule", label: t("workflows.catScheduleRoutine"), icon: "⏰", count: categoryCounts.schedule || 0 },
           ].map((cat) => {
             const isActive = blueprintCategory === cat.id;
             return (
@@ -177,7 +201,7 @@ export default function WorkflowPresetsTab({
                     isActive ? "bg-white/25 text-white" : "bg-slate-200 text-slate-600"
                   }`}
                 >
-                  {cat.count}
+                  {fmtNumber(locale, cat.count)}
                 </span>
               </button>
             );
@@ -187,8 +211,8 @@ export default function WorkflowPresetsTab({
         {/* Result Stats Line */}
         <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
           <div>
-            প্রদর্শিত হচ্ছে: <strong className="text-slate-800">{filteredBlueprints.length}</strong> টি সমস্যা-ভিত্তিক ব্লুপ্রিন্ট
-            {blueprintSearch && ` ("${blueprintSearch}" এর জন্য)`}
+            {t("workflows.showingLine")} <strong className="text-slate-800">{fmtNumber(locale, filteredBlueprints.length)}</strong> {t("workflows.showingSuffix")}
+            {blueprintSearch && ` ${t("workflows.forSearchSuffix", { q: blueprintSearch })}`}
           </div>
         </div>
       </div>
@@ -197,9 +221,9 @@ export default function WorkflowPresetsTab({
       {filteredBlueprints.length === 0 ? (
         <div className="card p-10">
           <EmptyState
-            title="কোনো ব্লুপ্রিন্ট পাওয়া যায়নি"
-            description={`"${blueprintSearch}" অথবা নির্বাচিত ক্যাটাগরিতে কোনো সমাধান পাওয়া যায়নি। অনুসন্ধান পরিবর্তন করে পুনরায় চেষ্টা করুন।`}
-            actionLabel="সব ব্লুপ্রিন্ট দেখুন"
+            title={t("workflows.noBlueprints")}
+            description={t("workflows.noBlueprintsHint", { q: blueprintSearch })}
+            actionLabel={t("workflows.showAllBlueprints")}
             onAction={() => {
               setBlueprintCategory("all");
               setBlueprintSearch("");
@@ -218,7 +242,7 @@ export default function WorkflowPresetsTab({
                 <div className="space-y-3">
                   {/* Top Badges */}
                   <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <span className="badge badge-brand text-[11px] font-medium">{bp.catLabel}</span>
+                    <span className="badge badge-brand text-[11px] font-medium">{bpText(bp, "catLabel", locale)}</span>
                     <div className="flex items-center gap-1.5">
                       {bp.badge && (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
@@ -232,38 +256,38 @@ export default function WorkflowPresetsTab({
                   </div>
 
                   {/* Workflow Name */}
-                  <h3 className="text-base font-bold text-slate-900 leading-snug">{bp.name}</h3>
+                  <h3 className="text-base font-bold text-slate-900 leading-snug">{bpText(bp, "name", locale)}</h3>
 
                   {/* Problem Block */}
                   <div className="rounded-xl bg-rose-50/70 p-3 text-xs border border-rose-100/80 text-rose-950 space-y-1">
                     <div className="font-bold text-rose-700 flex items-center gap-1.5 text-[11px]">
                       <span>🔴</span>
-                      <span>ব্যবসায়িক সমস্যা:</span>
+                      <span>{t("workflows.bpProblemLabel")}</span>
                     </div>
-                    <p className="text-slate-700 leading-relaxed text-[11.5px]">{bp.problemBn}</p>
+                    <p className="text-slate-700 leading-relaxed text-[11.5px]">{bpText(bp, "problem", locale)}</p>
                   </div>
 
                   {/* Solution Block */}
                   <div className="rounded-xl bg-emerald-50/70 p-3 text-xs border border-emerald-100/80 text-emerald-950 space-y-1">
                     <div className="font-bold text-emerald-700 flex items-center gap-1.5 text-[11px]">
                       <span>🟢</span>
-                      <span>অটোমেশন সমাধান:</span>
+                      <span>{t("workflows.bpSolutionLabel")}</span>
                     </div>
-                    <p className="text-slate-700 leading-relaxed text-[11.5px]">{bp.solutionBn}</p>
+                    <p className="text-slate-700 leading-relaxed text-[11.5px]">{bpText(bp, "solution", locale)}</p>
                   </div>
 
                   {/* Impact / ROI Box */}
                   <div className="rounded-xl bg-indigo-50/70 p-2.5 text-xs border border-indigo-100/80 text-indigo-950 flex items-start gap-1.5">
-                    <span className="font-bold text-indigo-700 shrink-0 text-[11px]">📈 প্রভাব:</span>
-                    <span className="text-indigo-900 font-medium text-[11.5px] leading-snug">{bp.impactBn}</span>
+                    <span className="font-bold text-indigo-700 shrink-0 text-[11px]">{t("workflows.bpImpactLabel")}</span>
+                    <span className="text-indigo-900 font-medium text-[11.5px] leading-snug">{bpText(bp, "impact", locale)}</span>
                   </div>
 
                   {/* Conditions (if any) */}
                   {bp.conditions && bp.conditions.length > 0 && (
                     <div className="rounded-lg bg-amber-50/50 px-2.5 py-1.5 text-[11px] text-amber-900 border border-amber-100 flex items-center gap-1.5">
-                      <span className="font-semibold text-amber-700 shrink-0">🔍 শর্ত:</span>
+                      <span className="font-semibold text-amber-700 shrink-0">{t("workflows.bpCondLabel")}</span>
                       <span className="font-mono text-[10.5px] truncate">
-                        {bp.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join(" এবং ")}
+                        {bp.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join(t("workflows.bpAnd"))}
                       </span>
                     </div>
                   )}
@@ -271,12 +295,12 @@ export default function WorkflowPresetsTab({
                   {/* Steps Pipeline Preview */}
                   <div className="rounded-xl bg-slate-50 p-2.5 text-xs text-slate-700 border border-slate-100 space-y-1">
                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                      <span>পাইপলাইন ধাপসমূহ:</span>
-                      <span className="text-slate-500 font-mono">{bp.steps.length} টি ধাপ</span>
+                      <span>{t("workflows.bpStepsLabel")}</span>
+                      <span className="text-slate-500 font-mono">{t("workflows.bpStepsSuffix", { count: fmtNumber(locale, bp.steps.length) })}</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1 pt-0.5">
                       {bp.steps.map((st, sIdx) => {
-                        const meta = getStepMeta(st.type);
+                        const meta = getStepMeta(st.type, locale);
                         return (
                           <React.Fragment key={sIdx}>
                             <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium border ${meta.badgeCls}`}>
@@ -297,17 +321,17 @@ export default function WorkflowPresetsTab({
                     type="button"
                     className="btn-primary btn-sm flex-1 font-semibold"
                     onClick={() => loadBlueprint(bp)}
-                    title="এই ব্লুপ্রিন্টটি বিল্ডার ফর্মে লোড করুন"
+                    title={t("workflows.bpLoadBuilderTitle")}
                   >
-                    🛠️ বিল্ডারে লোড করুন
+                    {t("workflows.bpLoadBuilder")}
                   </button>
                   <button
                     type="button"
                     className="btn-secondary btn-sm font-semibold"
                     onClick={() => openBlueprintInCanvas(bp)}
-                    title="ভিজ্যুয়াল ক্যানভাস ফ্লোচার্টে দেখুন ও কাস্টমাইজ করুন"
+                    title={t("workflows.bpCanvasTitle")}
                   >
-                    🎨 ক্যানভাস
+                    {t("workflows.canvasBtn")}
                   </button>
                 </div>
               </div>
@@ -319,13 +343,13 @@ export default function WorkflowPresetsTab({
       {/* Server-Provided Presets (if any configured on server) */}
       {presets.length > 0 && (
         <div className="card p-5 space-y-4 mt-8">
-          <h3 className="font-bold text-slate-900 text-sm">⚡ সার্ভার-প্রদত্ত কুইক প্রিসেট</h3>
+          <h3 className="font-bold text-slate-900 text-sm">{t("workflows.presetTitle")}</h3>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {presets.map((p) => (
               <div key={p.key} className="card card-hover p-4 border border-slate-200 flex flex-col justify-between">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="badge badge-green text-[10px]">সার্ভার প্রিসেট</span>
+                    <span className="badge badge-green text-[10px]">{t("workflows.presetBadge")}</span>
                     <span className="text-base">⚡</span>
                   </div>
                   <h4 className="text-sm font-bold text-slate-900">{p.name}</h4>
@@ -338,7 +362,7 @@ export default function WorkflowPresetsTab({
                     className="btn-secondary btn-sm flex-1 text-xs"
                     onClick={() => installPreset(p.key, p.name)}
                   >
-                    ১-ক্লিকে ইনস্টল
+                    {t("workflows.presetInstall")}
                   </button>
                 </div>
               </div>

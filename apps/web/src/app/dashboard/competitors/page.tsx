@@ -3,8 +3,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
 import { EmptyState } from "@repo/ui";
+import { useLocale } from "@/lib/i18n/provider";
 
 const CompetitorDossierModal = dynamic(() => import("./CompetitorDossierModal"), { ssr: false });
 
@@ -270,6 +271,7 @@ interface DynamicPricingRuleItem {
 }
 
 export default function CompetitorsPage() {
+  const { t, locale } = useLocale();
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [active, setActive] = useState<Competitor | null>(null);
   const [ads, setAds] = useState<Ad[]>([]);
@@ -372,10 +374,10 @@ export default function CompetitorsPage() {
     let next: string[];
     if (savedSwipeIds.includes(adId)) {
       next = savedSwipeIds.filter((id) => id !== adId);
-      setNotice("ক্রিয়েটিভ সোয়াইপ ফাইল থেকে রিমুভ করা হয়েছে।");
+      setNotice(t("social.cmSwipeRemoved"));
     } else {
       next = [...savedSwipeIds, adId];
-      setNotice("ক্রিয়েটিভ সোয়াইপ ফাইলে সফলভাবে সংরক্ষিত হয়েছে! 💾");
+      setNotice(t("social.cmSwipeSaved"));
     }
     setSavedSwipeIds(next);
     localStorage.setItem("competitor_swipe_file", JSON.stringify(next));
@@ -437,7 +439,7 @@ export default function CompetitorsPage() {
         method: "POST",
         body: JSON.stringify({ rules: updated }),
       });
-      setNotice("স্বয়ংক্রিয় রুল আপডেট হয়েছে! 🤖");
+      setNotice(t("social.cmRuleUpdated"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update rule");
     } finally {
@@ -457,17 +459,17 @@ export default function CompetitorsPage() {
           method: "POST",
           body: JSON.stringify({
             triggerType: rule.triggerType,
-            competitorName: active?.name || "দারাজ বাংলাদেশ",
-            productName: "প্রিমিয়াম গ্যাজেট কম্বো",
+            competitorName: active?.name || t("misc.zzCompSimCompetitorFallback"),
+            productName: t("misc.zzCompSimProductSample"),
             percentageChange: rule.conditions.priceDropThresholdPercent || 15,
           }),
         }
       );
       if (res.triggeredCount > 0) {
-        setNotice(`⚡ রুল সফলভাবে ট্রিগার হয়েছে: ${res.results[0]?.actionTaken || "Action executed!"}`);
+        setNotice(t("social.cmRuleTriggered", { action: res.results[0]?.actionTaken || "Action executed!" }));
         await loadDynamicRules();
       } else {
-        setNotice("কোনো রুল ম্যাচ করেনি বা রুলটি বন্ধ রয়েছে।");
+        setNotice(t("social.cmRuleNoMatch"));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to trigger simulation");
@@ -498,7 +500,7 @@ export default function CompetitorsPage() {
         method: "POST",
         body: JSON.stringify(alertConfig),
       });
-      setNotice("Telegram ও WhatsApp অ্যালার্ট বট সেটিংস সফলভাবে সংরক্ষিত হয়েছে! 📲");
+      setNotice(t("social.cmAlertSettingsSaved"));
       setIsAlertSettingsOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save alert settings");
@@ -526,9 +528,9 @@ export default function CompetitorsPage() {
         }
       );
       if (res.success) {
-        setNotice(`টেস্ট নোটিফিকেশন সফলভাবে পাঠানো হয়েছে! 🔔 আপনার ${channel === "telegram" ? "Telegram" : "WhatsApp"}-এ চেক করুন।`);
+        setNotice(t("social.cmTestSent", { channel: channel === "telegram" ? "Telegram" : "WhatsApp" }));
       } else {
-        setError(`নোটিফিকেশন পাঠানো যায়নি: ${res.error || "Unknown error"}`);
+        setError(t("social.cmTestFailed", { error: res.error || "Unknown error" }));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send test alert");
@@ -564,7 +566,7 @@ export default function CompetitorsPage() {
         body: JSON.stringify({ ownProductId: selectedProductIdForSeo || undefined }),
       });
       setSeoStrategy(res);
-      setNotice("AI SEO Gap ও কিওয়ার্ড হাইজ্যাক স্ট্র্যাটেজি সফলভাবে তৈরি হয়েছে! 🚀");
+      setNotice(t("social.cmSeoGapDone"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate SEO gap strategy");
     } finally {
@@ -591,7 +593,7 @@ export default function CompetitorsPage() {
         }
       );
       setVideoScriptResult(res);
-      setNotice("ভিডিও স্ক্রিপ্ট ডিকনস্ট্রাকশন ও UGC স্টোরিবোর্ড সফলভাবে তৈরি হয়েছে! 🎬");
+      setNotice(t("social.cmVideoDone"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to deconstruct video script");
     } finally {
@@ -695,7 +697,7 @@ export default function CompetitorsPage() {
         }),
       });
       setForm({ name: "", facebookPageId: "", websiteUrl: "", notes: "" });
-      setNotice("প্রতিযোগী সফলভাবে যোগ করা হয়েছে!");
+      setNotice(t("social.cmCompetitorAdded"));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
@@ -719,7 +721,7 @@ export default function CompetitorsPage() {
         }),
       });
       setEditCompetitor(null);
-      setNotice("প্রতিযোগীর তথ্য আপডেট হয়েছে!");
+      setNotice(t("social.cmCompetitorUpdated"));
       await load();
       if (active?.id === editCompetitor.id) {
         await openCompetitor({ ...active, ...editCompetitor });
@@ -730,13 +732,13 @@ export default function CompetitorsPage() {
   }
 
   async function deleteCompetitor(id: string, name: string) {
-    if (!confirm(`আপনি কি সত্যিই "${name}" প্রতিযোগীকে মুছে ফেলতে চান? এর সকল অ্যাড ও প্রাইস রেকর্ড মুছে যাবে।`)) return;
+    if (!confirm(t("social.cmDeleteConfirm", { name }))) return;
     const orgId = getOrganizationId();
     if (!orgId) return;
     setError("");
     try {
       await apiFetch(`/organizations/${orgId}/competitors/${id}`, { method: "DELETE" });
-      setNotice(`"${name}" ডিলিট করা হয়েছে।`);
+      setNotice(t("social.cmDeleted", { name }));
       if (active?.id === id) setActive(null);
       await load();
     } catch (e) {
@@ -779,7 +781,7 @@ export default function CompetitorsPage() {
     } catch {
       // ignore
     }
-    setNotice("ক্যাম্পেইন ড্রাফট সেভ হয়েছে! Campaign Builder-এ রিডাইরেক্ট হচ্ছে...");
+    setNotice(t("social.cmDraftSaved"));
     setTimeout(() => {
       window.location.href = "/dashboard/campaign-builder";
     }, 800);
@@ -806,11 +808,14 @@ export default function CompetitorsPage() {
         .map(([platform, note]) => `${platform}: ${note}`)
         .join("; ");
       setNotice(
-        `${c.name}: মাল্টি-প্ল্যাটফর্ম থেকে মোট ${res.fetched}টি রেকর্ড পাওয়া গেছে (Facebook: ${
-          res.breakdown?.facebook ?? 0
-        }, Google সার্চ ফলাফল: ${res.breakdown?.google ?? 0}, TikTok: ${res.breakdown?.tiktok ?? 0}, Bing: ${
-          res.breakdown?.bing ?? 0
-        })${unavailableNotes ? ` — পাওয়া যায়নি: ${unavailableNotes}` : ""}`
+        t("social.cmSyncResult", {
+          name: c.name,
+          fetched: fmtNumber(locale, res.fetched),
+          fb: fmtNumber(locale, res.breakdown?.facebook ?? 0),
+          g: fmtNumber(locale, res.breakdown?.google ?? 0),
+          tt: fmtNumber(locale, res.breakdown?.tiktok ?? 0),
+          bing: fmtNumber(locale, res.breakdown?.bing ?? 0),
+        }) + (unavailableNotes ? t("social.cmSyncUnavailable", { notes: unavailableNotes }) : "")
       );
       await load();
       if (active?.id === c.id) await openCompetitor(c);
@@ -831,8 +836,8 @@ export default function CompetitorsPage() {
         `/organizations/${orgId}/competitors/${c.id}/scan-website`,
         { method: "POST" }
       );
-      const alertMsg = res.alerts?.length ? ` 🚨 নতুন ${res.alerts.length}টি লাইভ অপরচুনিটি অ্যালার্ট পাওয়া গেছে!` : "";
-      setNotice(`${c.name}: ${res.scannedUrls}টি পেজ স্ক্যান, ${res.stored}টি দাম সংরক্ষিত।${alertMsg}`);
+      const alertMsg = res.alerts?.length ? t("social.cmScanAlerts", { count: fmtNumber(locale, res.alerts.length) }) : "";
+      setNotice(t("social.cmScanResult", { name: c.name, pages: fmtNumber(locale, res.scannedUrls), stored: fmtNumber(locale, res.stored), alerts: alertMsg }));
       await load();
       if (active?.id === c.id) await openCompetitor(c);
     } catch (e) {
@@ -871,9 +876,10 @@ export default function CompetitorsPage() {
         { method: "POST", body: JSON.stringify({ competitorId: active?.id }) }
       );
       setNotice(
-        `${res.generated}টি Insight তৈরি হয়েছে${
-          res.droppedWithoutEvidence ? `, প্রমাণহীন ${res.droppedWithoutEvidence}টি বাদ দেওয়া হয়েছে` : ""
-        }`
+        t("social.cmInsightsResult", {
+          count: fmtNumber(locale, res.generated),
+          suffix: res.droppedWithoutEvidence ? t("social.cmInsightsDropped", { count: fmtNumber(locale, res.droppedWithoutEvidence) }) : "",
+        })
       );
       await load();
     } catch (e) {
@@ -977,7 +983,7 @@ export default function CompetitorsPage() {
                 </span>
               </div>
               <p className="page-sub mt-0.5">
-                রিয়েল-টাইম অ্যাড স্পাই, প্রাইস ড্রপ অ্যালার্ট, স্টক-আউট অপরচুনিটি ও এআই কাউন্টার স্ট্র্যাটেজি ইঞ্জিন
+                {t("social.cmSubtitle")}
               </p>
             </div>
           </div>
@@ -1001,19 +1007,19 @@ export default function CompetitorsPage() {
         {/* Live stat chips — only numbers already fetched on this page */}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="stat-chip">
-            🏢 প্রতিযোগী <span className="stat-chip-count">{competitors.length}</span>
+            {t("social.cmChipCompetitors")} <span className="stat-chip-count">{fmtNumber(locale, competitors.length)}</span>
           </span>
           <span className="stat-chip">
-            📣 মোট বিজ্ঞাপন <span className="stat-chip-count">{totalAds}</span>
+            {t("social.cmChipTotalAds")} <span className="stat-chip-count">{fmtNumber(locale, totalAds)}</span>
           </span>
           <span className="stat-chip">
-            🟢 সক্রিয় বিজ্ঞাপন <span className="stat-chip-count">{totalActiveAds}</span>
+            {t("social.cmChipActiveAds")} <span className="stat-chip-count">{fmtNumber(locale, totalActiveAds)}</span>
           </span>
           <span className="stat-chip">
-            🏷️ দাম রেকর্ড <span className="stat-chip-count">{totalObservations}</span>
+            {t("social.cmChipPriceRecords")} <span className="stat-chip-count">{fmtNumber(locale, totalObservations)}</span>
           </span>
           <span className={`stat-chip ${alerts.length > 0 ? "stat-chip-danger" : ""}`}>
-            🚨 লাইভ অ্যালার্ট <span className="stat-chip-count">{alerts.length}</span>
+            {t("social.cmChipLiveAlerts")} <span className="stat-chip-count">{fmtNumber(locale, alerts.length)}</span>
           </span>
         </div>
       </div>
@@ -1052,7 +1058,7 @@ export default function CompetitorsPage() {
           }}
           className={`comp-tab-btn ${activeTab === "seo" ? "comp-tab-btn-active" : ""}`}
         >
-          <span>🔍 SEO On-Page অডিট</span>
+          <span>{t("social.cmSeoTab")}</span>
           <span className="comp-tab-note bg-emerald-500/20 text-emerald-700">New</span>
         </button>
         <button
@@ -1089,18 +1095,18 @@ export default function CompetitorsPage() {
             <div className="flex items-center gap-2">
               <span className="flex h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 animate-ping" />
               <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900">
-                🚨 Live Opportunity & Threat Alerts ({alerts.length})
+                {t("social.cmAlertsTitle", { count: fmtNumber(locale, alerts.length) })}
               </h3>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setIsAlertSettingsOpen(true)}
                 className="rounded-lg bg-amber-200/70 hover:bg-amber-200 px-2.5 py-1.5 min-h-[32px] text-[11px] font-bold text-amber-900 flex items-center gap-1 transition-colors"
-                title="টেলিগ্রাম ও হোয়াটসঅ্যাপে ইনস্ট্যান্ট নোটিফিকেশন চালু করুন"
+                title={t("social.cmAlertBotTitle")}
               >
-                📲 Telegram / WhatsApp বট
+                {t("social.cmAlertBotBtn")}
               </button>
-              <span className="text-[11px] text-amber-800 font-medium">ইনস্ট্যান্ট অ্যাকশনেবল অপরচুনিটি</span>
+              <span className="text-[11px] text-amber-800 font-medium">{t("social.cmInstantOpp")}</span>
             </div>
           </div>
 
@@ -1145,14 +1151,14 @@ export default function CompetitorsPage() {
                 <button
                   onClick={() => setEditCompetitor(c)}
                   className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 text-sm"
-                  title="এডিট"
+                  title={t("social.cmEdit")}
                 >
                   ✏️
                 </button>
                 <button
                   onClick={() => deleteCompetitor(c.id, c.name)}
                   className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 text-sm"
-                  title="ডিলিট"
+                  title={t("social.cmDelete")}
                 >
                   🗑️
                 </button>
@@ -1161,16 +1167,16 @@ export default function CompetitorsPage() {
 
             <div className="mt-3 grid grid-cols-3 gap-2">
               <div className="ctx-tile">
-                <div className="ctx-tile-label">বিজ্ঞাপন</div>
-                <div className="ctx-tile-value">{c.stats.ads}</div>
+                <div className="ctx-tile-label">{t("social.cmTileAds")}</div>
+                <div className="ctx-tile-value">{fmtNumber(locale, c.stats.ads)}</div>
               </div>
               <div className="ctx-tile">
-                <div className="ctx-tile-label">সক্রিয়</div>
-                <div className="ctx-tile-value">{c.stats.activeAds}</div>
+                <div className="ctx-tile-label">{t("social.cmTileActive")}</div>
+                <div className="ctx-tile-value">{fmtNumber(locale, c.stats.activeAds)}</div>
               </div>
               <div className="ctx-tile">
-                <div className="ctx-tile-label">দাম রেকর্ড</div>
-                <div className="ctx-tile-value">{c.stats.priceObservations}</div>
+                <div className="ctx-tile-label">{t("social.cmTilePriceRecords")}</div>
+                <div className="ctx-tile-value">{fmtNumber(locale, c.stats.priceObservations)}</div>
               </div>
             </div>
 
@@ -1187,15 +1193,15 @@ export default function CompetitorsPage() {
                 disabled={busy !== "" || !c.websiteUrl}
                 onClick={() => scanWebsite(c)}
               >
-                {busy === `scan-${c.id}` ? "Scanning..." : "🌐 ওয়েবসাইট ও স্টক স্ক্যান"}
+                {busy === `scan-${c.id}` ? "Scanning..." : t("social.cmScanBtn")}
               </button>
               <button
                 className="comp-soft-btn min-h-[40px]"
                 disabled={busy !== ""}
                 onClick={() => scheduleAutoSyncHandler(c)}
-                title="প্রতি রাতে স্বয়ংক্রিয় ব্যাকগ্রাউন্ড সিঙ্ক চালু/বন্ধ করুন"
+                title={t("social.cmAutoSyncTitle")}
               >
-                {busy === `auto-${c.id}` ? "Updating..." : "⏰ 24/7 অটো-সিঙ্ক"}
+                {busy === `auto-${c.id}` ? "Updating..." : t("social.cmAutoSyncBtn")}
               </button>
             </div>
           </div>
@@ -1204,8 +1210,8 @@ export default function CompetitorsPage() {
 
       {competitors.length === 0 ? (
         <EmptyState
-          title="কোনো Competitor যোগ করা হয়নি"
-          description="নিচের ফর্মে প্রতিদ্বন্দীর নাম, Facebook Page ID এবং ওয়েবসাইট দিয়ে শুরু করুন।"
+          title={t("social.cmEmptyTitle")}
+          description={t("social.cmEmptyDesc")}
         />
       ) : null}
 
@@ -1213,9 +1219,9 @@ export default function CompetitorsPage() {
       {editCompetitor ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center modal-backdrop sm:items-center sm:p-4">
           <form onSubmit={updateCompetitorHandler} className="comp-sheet space-y-4 sm:max-w-md">
-            <h3 className="modal-head -mx-5 -mt-5 px-5 sm:-mx-6 sm:-mt-6 sm:px-6 sm:rounded-t-3xl text-base font-bold text-slate-900">প্রতিযোগীর তথ্য সম্পাদনা করুন</h3>
+            <h3 className="modal-head -mx-5 -mt-5 px-5 sm:-mx-6 sm:-mt-6 sm:px-6 sm:rounded-t-3xl text-base font-bold text-slate-900">{t("social.cmEditTitle")}</h3>
             <div>
-              <label className="text-xs font-semibold text-slate-600">নাম</label>
+              <label className="text-xs font-semibold text-slate-600">{t("social.cmNameLabel")}</label>
               <input
                 className={inputCls}
                 value={editCompetitor.name}
@@ -1232,7 +1238,7 @@ export default function CompetitorsPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-semibold text-slate-600">ওয়েবসাইট URL</label>
+              <label className="text-xs font-semibold text-slate-600">{t("social.cmWebsiteUrlLabel")}</label>
               <input
                 className={inputCls}
                 value={editCompetitor.websiteUrl || ""}
@@ -1245,10 +1251,10 @@ export default function CompetitorsPage() {
                 className="btn-secondary min-h-[40px]"
                 onClick={() => setEditCompetitor(null)}
               >
-                বাতিল
+                {t("common.cancel")}
               </button>
               <button type="submit" className="btn-primary min-h-[40px]">
-                সংরক্ষণ করুন
+                {t("common.save")}
               </button>
             </div>
           </form>
@@ -1257,13 +1263,13 @@ export default function CompetitorsPage() {
 
       {/* Add New Competitor Form */}
       <form onSubmit={create} className="card p-4 space-y-3 bg-white sm:p-5">
-        <div className="section-title">+ নতুন প্রতিযোগী যোগ করুন</div>
+        <div className="section-title">{t("social.cmAddTitle")}</div>
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block text-xs font-medium text-slate-700">
-            নাম *
+            {t("social.cmNameStar")}
             <input
               className={inputCls}
-              placeholder="যেমন: Daraz / XYZ Shop"
+              placeholder={t("social.cmNamePlaceholder")}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
@@ -1275,11 +1281,11 @@ export default function CompetitorsPage() {
               className={inputCls}
               value={form.facebookPageId}
               onChange={(e) => setForm({ ...form, facebookPageId: e.target.value })}
-              placeholder="যেমন: 104238592984"
+              placeholder={t("social.cmPageIdPlaceholder")}
             />
           </label>
           <label className="block text-xs font-medium text-slate-700">
-            ওয়েবসাইট
+            {t("social.cmWebsiteLabel")}
             <input
               className={inputCls}
               value={form.websiteUrl}
@@ -1288,7 +1294,7 @@ export default function CompetitorsPage() {
             />
           </label>
         </div>
-        <button className="btn-primary min-h-[40px] w-full text-xs py-2 px-4 sm:w-auto">প্রতিযোগী যুক্ত করুন</button>
+        <button className="btn-primary min-h-[40px] w-full text-xs py-2 px-4 sm:w-auto">{t("social.cmAddBtn")}</button>
       </form>
 
       {/* TAB 1 & 2: SPY & SWIPE FILE VIEW */}
@@ -1301,8 +1307,8 @@ export default function CompetitorsPage() {
                 <div>
                   <h3 className="font-bold text-slate-900">
                     {activeTab === "swipefile"
-                      ? `💾 My Saved Swipe File (${filteredAds.length})`
-                      : `${active.name} এর বিজ্ঞাপনসমূহ (${ads.length})`}
+                      ? `💾 My Saved Swipe File (${fmtNumber(locale, filteredAds.length)})`
+                      : t("social.cmAdsOf", { name: active.name, count: fmtNumber(locale, ads.length) })}
                   </h3>
                   <p className="text-xs text-slate-400">Facebook • Google • TikTok • Bing</p>
                 </div>
@@ -1313,7 +1319,7 @@ export default function CompetitorsPage() {
                       adFilter === "all" ? "comp-chip-active" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
-                    সব
+                    {t("social.cmFilterAll")}
                   </button>
                   <button
                     onClick={() => setAdFilter("active")}
@@ -1321,7 +1327,7 @@ export default function CompetitorsPage() {
                       adFilter === "active" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                   >
-                    সক্রিয়
+                    {t("social.cmFilterActive")}
                   </button>
                   <button
                     onClick={() => setAdFilter("winning")}
@@ -1336,14 +1342,14 @@ export default function CompetitorsPage() {
 
               {/* Platform Selector Tabs */}
               <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
-                <span className="text-[11px] font-semibold text-slate-400 self-center mr-1">ফিল্টার:</span>
+                <span className="text-[11px] font-semibold text-slate-400 self-center mr-1">{t("social.cmFilterLabel")}</span>
                 <button
                   onClick={() => setPlatformFilter("all")}
                   className={`min-h-[32px] rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-[0.97] ${
                     platformFilter === "all" ? "comp-chip-active" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
-                  সব প্ল্যাটফর্ম
+                  {t("social.cmAllPlatforms")}
                 </button>
                 <button
                   onClick={() => setPlatformFilter("facebook")}
@@ -1395,18 +1401,18 @@ export default function CompetitorsPage() {
                       {getPlatformBadge(a.platforms)}
                       {a.isWinning ? (
                         <span className="badge bg-amber-500 text-white shadow-sm ring-1 ring-inset ring-amber-600/30">
-                          🔥 WINNING ({a.daysRunning || 14}+ দিন)
+                          {t("social.cmWinningBadge", { days: fmtNumber(locale, a.daysRunning || 14) })}
                         </span>
                       ) : a.isFresh ? (
                         <span className="badge-brand">
-                          ⚡ নতুন ({a.daysRunning || 1} দিন)
+                          {t("social.cmFreshBadge", { days: fmtNumber(locale, a.daysRunning || 1) })}
                         </span>
                       ) : (
                         <span className="font-semibold text-slate-700">
-                          {a.daysRunning ? `${a.daysRunning} দিন` : ""}
+                          {a.daysRunning ? t("social.cmDaysRunning", { days: fmtNumber(locale, a.daysRunning) }) : ""}
                         </span>
                       )}
-                      <span>· {a.isActive ? "সক্রিয়" : "বন্ধ"}</span>
+                      <span>· {a.isActive ? t("social.cmActiveWord") : t("social.cmInactiveWord")}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -1416,7 +1422,7 @@ export default function CompetitorsPage() {
                             ? "bg-amber-100 border-amber-300 text-amber-900"
                             : "bg-white text-slate-600 hover:bg-slate-100"
                         }`}
-                        title="সোয়াইপ ফাইলে সেভ করুন"
+                        title={t("social.cmSaveSwipeTitle")}
                       >
                         {savedSwipeIds.includes(a.id) ? "★ Saved" : "☆ Save"}
                       </button>
@@ -1427,14 +1433,14 @@ export default function CompetitorsPage() {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          লাইভ ↗
+                          {t("social.cmLiveLink")}
                         </a>
                       ) : null}
                     </div>
                   </div>
 
                   <p className="mt-2 whitespace-pre-wrap text-slate-800 text-xs leading-relaxed font-sans line-clamp-6">
-                    {a.creativeText ?? "(বিজ্ঞাপনের কোনো টেক্সট পাওয়া যায়নি)"}
+                    {a.creativeText ?? t("social.cmNoAdText")}
                   </p>
 
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5">
@@ -1456,9 +1462,9 @@ export default function CompetitorsPage() {
                           setVideoScriptResult(null);
                         }}
                         className="min-h-[36px] rounded-lg border border-pink-200 bg-pink-50/70 px-2.5 py-1.5 text-xs font-semibold text-pink-700 hover:bg-pink-100 flex items-center gap-1 transition-colors"
-                        title="রিলস ও টিকটক ভিডিও স্ক্রিপ্ট ফ্রেম-বাই-ফ্রেম বিশ্লেষণ"
+                        title={t("social.cmDeconstructTitle")}
                       >
-                        🎬 স্ক্রিপ্ট ডিকনস্ট্রাক্ট
+                        {t("social.cmDeconstructBtn")}
                       </button>
                       <button
                         onClick={() => {
@@ -1478,8 +1484,8 @@ export default function CompetitorsPage() {
               {filteredAds.length === 0 ? (
                 <p className="p-4 text-center text-sm text-slate-400">
                   {activeTab === "swipefile"
-                    ? "আপনার সোয়াইপ ফাইলে কোনো বিজ্ঞাপন সেভ করা নেই। বিজ্ঞাপনের পাশে '☆ Save' বাটনে চাপ দিন।"
-                    : "কোনো বিজ্ঞাপন পাওয়া যায়নি। ফিল্টার পরিবর্তন করুন বা All-Platform Spy বাটনে ক্লিক করুন।"}
+                    ? t("social.cmSwipeEmpty")
+                    : t("social.cmSpyEmpty")}
                 </p>
               ) : null}
             </div>
@@ -1489,8 +1495,8 @@ export default function CompetitorsPage() {
           <div className="space-y-4">
             <div className="card p-4 bg-white sm:p-5">
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <div className="font-bold text-slate-900">দামের রেকর্ড ও স্টক ট্র্যাকিং</div>
-                <span className="stat-chip-count">মোট: {observations.length}</span>
+                <div className="font-bold text-slate-900">{t("social.cmObsTitle")}</div>
+                <span className="stat-chip-count">{t("social.cmObsTotal", { count: fmtNumber(locale, observations.length) })}</span>
               </div>
               <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
                 {observations.map((o) => (
@@ -1501,12 +1507,12 @@ export default function CompetitorsPage() {
                     <div>
                       <span className="font-medium text-slate-900">{o.productName}</span>
                       <span className="ml-2 text-slate-400">
-                        ({o.sourceType}, {new Date(o.observedAt).toLocaleDateString()})
+                        ({o.sourceType}, {fmtDate(locale, o.observedAt)})
                       </span>
                     </div>
                     <div className="text-right">
                       <span className="font-bold text-slate-900">
-                        {formatMinor(BigInt(o.priceMinor), o.currency)}
+                        {fmtMoneyMinor(locale, BigInt(o.priceMinor), { currency: o.currency })}
                       </span>
                       <a
                         className="ml-2 text-blue-600 hover:underline"
@@ -1514,14 +1520,14 @@ export default function CompetitorsPage() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        প্রমাণ ↗
+                        {t("social.cmEvidence")}
                       </a>
                     </div>
                   </div>
                 ))}
                 {observations.length === 0 ? (
                   <p className="text-xs text-slate-400 py-3 text-center">
-                    কোনো রেকর্ড নেই। ওয়েবসাইট স্ক্যান করুন বা নিচে ম্যানুয়ালি যোগ করুন।
+                    {t("social.cmObsEmpty")}
                   </p>
                 ) : null}
               </div>
@@ -1530,27 +1536,27 @@ export default function CompetitorsPage() {
               <form onSubmit={addObservation} className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 border-t border-slate-100 pt-3">
                 <input
                   className="input w-full text-xs"
-                  placeholder="প্রোডাক্টের নাম"
+                  placeholder={t("social.cmObsProductPlaceholder")}
                   value={obsForm.productName}
                   onChange={(e) => setObsForm({ ...obsForm, productName: e.target.value })}
                   required
                 />
                 <input
                   className="input w-full text-xs"
-                  placeholder="দাম (যেমন: 1250)"
+                  placeholder={t("social.cmObsPricePlaceholder")}
                   value={obsForm.price}
                   onChange={(e) => setObsForm({ ...obsForm, price: e.target.value })}
                   required
                 />
                 <input
                   className="input w-full text-xs"
-                  placeholder="প্রমাণ URL"
+                  placeholder={t("social.cmObsUrlPlaceholder")}
                   value={obsForm.sourceUrl}
                   onChange={(e) => setObsForm({ ...obsForm, sourceUrl: e.target.value })}
                   required
                 />
                 <button className="btn-dark btn-sm min-h-[40px] sm:col-span-3 w-full">
-                  + দামের প্রমাণ সংরক্ষণ করুন
+                  {t("social.cmObsSaveBtn")}
                 </button>
               </form>
             </div>
@@ -1561,7 +1567,7 @@ export default function CompetitorsPage() {
                 Omnichannel Advantage
               </h4>
               <p className="mt-1 text-xs leading-relaxed text-white/85">
-                {active.name} এর জন্য Facebook, Google, TikTok ও Bing থেকে সর্বমোট {ads.length}টি বিজ্ঞাপন সংরক্ষিত। প্রতিদ্বন্দীর সেরা ক্রিয়েটিভগুলোকে <b>Swipe File</b>-এ সেভ রাখুন যাতে যেকোনো সময় রেফারেন্স নেওয়া যায়।
+                {t("social.cmQuickSummaryA", { name: active.name, count: fmtNumber(locale, ads.length) })}<b>Swipe File</b>{t("social.cmQuickSummaryB")}
               </p>
             </div>
           </div>
@@ -1571,19 +1577,19 @@ export default function CompetitorsPage() {
       {/* TAB 3: PRICE COMPARISON TABLE */}
       {activeTab === "pricing" ? (
         <div className="card fade-rise p-4 bg-white sm:p-5">
-          <div className="font-bold text-slate-900">আপনার প্রোডাক্টের দাম বনাম প্রতিযোগী (Direct Matrix)</div>
+          <div className="font-bold text-slate-900">{t("social.cmMatrixTitle")}</div>
           <p className="text-xs text-slate-400">
-            রিয়েল-টাইম তথ্য: যেখানে প্রমাণের সরাসরি লাইভ লিংক ও তারিখ সংরক্ষিত থাকে।
+            {t("social.cmMatrixSub")}
           </p>
           <div className="table-wrap mt-3">
             <table className="w-full text-left">
               <thead>
                 <tr>
-                  <th className="comp-sticky-col">আপনার প্রোডাক্ট</th>
-                  <th>আপনার দাম</th>
-                  <th>প্রতিযোগীর দাম</th>
-                  <th>পার্থক্য</th>
-                  <th>প্রমাণ (Source)</th>
+                  <th className="comp-sticky-col">{t("social.cmThYourProduct")}</th>
+                  <th>{t("social.cmThYourPrice")}</th>
+                  <th>{t("social.cmThCompPrice")}</th>
+                  <th>{t("social.cmThDiff")}</th>
+                  <th>{t("social.cmThEvidence")}</th>
                 </tr>
               </thead>
               <tbody className="text-xs">
@@ -1595,11 +1601,11 @@ export default function CompetitorsPage() {
                           {i === 0 ? row.productName : ""}
                         </td>
                         <td className="font-semibold text-slate-700">
-                          {i === 0 ? formatMinor(BigInt(row.ownPriceMinor), row.currency) : ""}
+                          {i === 0 ? fmtMoneyMinor(locale, BigInt(row.ownPriceMinor), { currency: row.currency }) : ""}
                         </td>
                         <td>
                           <span className="font-semibold text-slate-900">{cp.competitorName}:</span>{" "}
-                          {formatMinor(BigInt(cp.priceMinor), cp.currency)}
+                          {fmtMoneyMinor(locale, BigInt(cp.priceMinor), { currency: cp.currency })}
                         </td>
                         <td
                           className={`font-bold ${
@@ -1613,8 +1619,8 @@ export default function CompetitorsPage() {
                           {cp.diffPercent === null
                             ? "—"
                             : cp.diffPercent < 0
-                            ? `প্রতিযোগী ${Math.abs(cp.diffPercent)}% কম`
-                            : `আপনি ${cp.diffPercent}% কমে দিচ্ছেন`}
+                            ? t("social.cmCompCheaper", { pct: fmtNumber(locale, Math.abs(cp.diffPercent)) })
+                            : t("social.cmYouCheaper", { pct: fmtNumber(locale, cp.diffPercent) })}
                         </td>
                         <td>
                           <a
@@ -1623,7 +1629,7 @@ export default function CompetitorsPage() {
                             target="_blank"
                             rel="noreferrer"
                           >
-                            লাইভ সোর্স ↗
+                            {t("social.cmLiveSource")}
                           </a>
                         </td>
                       </tr>
@@ -1632,10 +1638,10 @@ export default function CompetitorsPage() {
                     <tr key={row.productId}>
                       <td className="comp-sticky-col font-medium text-slate-900">{row.productName}</td>
                       <td className="font-semibold text-slate-700">
-                        {formatMinor(BigInt(row.ownPriceMinor), row.currency)}
+                        {fmtMoneyMinor(locale, BigInt(row.ownPriceMinor), { currency: row.currency })}
                       </td>
                       <td className="text-slate-400" colSpan={3}>
-                        কোনো প্রতিযোগীর দামের রেকর্ড পাওয়া যায়নি
+                        {t("social.cmNoCompPrice")}
                       </td>
                     </tr>
                   )
@@ -1655,7 +1661,7 @@ export default function CompetitorsPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  প্রতিযোগী স্টক-আউট হলে স্বয়ংক্রিয়ভাবে নিজের ক্যাম্পেইন বাজেট বুস্ট (+২৫%) বা দাম কমালে বান্ডেল অফার ট্রিগার করুন।
+                  {t("social.cmRulesSub")}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1665,7 +1671,7 @@ export default function CompetitorsPage() {
                   disabled={loadingRules}
                   className="btn-secondary btn-sm min-h-[40px]"
                 >
-                  {loadingRules ? "লোড হচ্ছে..." : "🔄 রিফ্রেশ"}
+                  {loadingRules ? t("common.loading") : t("social.cmRefresh")}
                 </button>
               </div>
             </div>
@@ -1708,22 +1714,22 @@ export default function CompetitorsPage() {
                         )}
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
-                        <b>ট্রিগার শর্ত:</b>{" "}
+                        <b>{t("social.cmTriggerLabel")}</b>{" "}
                         {rule.triggerType === "COMPETITOR_STOCK_OUT"
-                          ? "প্রতিযোগী সাইটে পণ্য স্টক শেষ (Out-of-Stock) হলে"
+                          ? t("social.cmTriggerStockOut")
                           : rule.triggerType === "COMPETITOR_PRICE_DROP"
-                          ? `প্রতিযোগী দাম ${rule.conditions.priceDropThresholdPercent || 10}% এর বেশি কমালে`
+                          ? t("social.cmTriggerPriceDrop", { pct: fmtNumber(locale, rule.conditions.priceDropThresholdPercent || 10) })
                           : rule.triggerType === "COMPETITOR_PRICE_INCREASE"
-                          ? `প্রতিযোগী দাম ${rule.conditions.priceIncreaseThresholdPercent || 10}% বৃদ্ধি করলে`
-                          : "প্রতিযোগীর বিজ্ঞাপন ৩+ দিন টানা চললে ও উইনিং ঘোষণা হলে"}
+                          ? t("social.cmTriggerPriceUp", { pct: fmtNumber(locale, rule.conditions.priceIncreaseThresholdPercent || 10) })
+                          : t("social.cmTriggerWinning")}
                       </div>
                       <div className="text-xs text-brand-700 font-medium mt-1">
-                        <b>অ্যাকশন:</b>{" "}
+                        <b>{t("social.cmActionLabel")}</b>{" "}
                         {rule.actionType === "BOOST_AD_BUDGET"
-                          ? `ক্যাম্পেইন বাজেট +${rule.actions.budgetBoostPercent || 20}% অটো-স্কেল / বুস্ট`
+                          ? t("social.cmActionBoost", { pct: fmtNumber(locale, rule.actions.budgetBoostPercent || 20) })
                           : rule.actionType === "TRIGGER_FLASH_SALE_BUNDLE"
-                          ? "অটো-ফ্ল্যাশ সেল বান্ডেল ও কাউন্টার অফার নোটিফিকেশন"
-                          : "প্রাইস অ্যাডজাস্টমেন্ট সুপারিশ"}
+                          ? t("social.cmActionFlash")
+                          : t("social.cmActionAdjust")}
                       </div>
                     </div>
 
@@ -1745,15 +1751,15 @@ export default function CompetitorsPage() {
 
                   {rule.actions.suggestedHeadline ? (
                     <div className="mt-3 rounded-lg bg-amber-50/80 border border-amber-200/70 p-2 text-xs text-amber-900">
-                      💡 <b>অটো-মেসেজ / প্ল্যান:</b> {rule.actions.suggestedHeadline}
+                      💡 <b>{t("social.cmAutoMsgLabel")}</b> {rule.actions.suggestedHeadline}
                     </div>
                   ) : null}
 
                   {/* Executions & Simulator */}
                   <div className="mt-3 border-t pt-2 flex items-center justify-between text-xs text-slate-500">
                     <span>
-                      মোট কার্যকর: <b>{rule.triggerCount} বার</b>
-                      {rule.lastTriggeredAt ? ` • শেষ: ${new Date(rule.lastTriggeredAt).toLocaleDateString()}` : ""}
+                      {t("social.cmTotalFired")} <b>{t("social.cmTimesCount", { count: fmtNumber(locale, rule.triggerCount) })}</b>
+                      {rule.lastTriggeredAt ? t("social.cmLastTriggered", { date: fmtDate(locale, rule.lastTriggeredAt) }) : ""}
                     </span>
 
                     <button
@@ -1762,13 +1768,13 @@ export default function CompetitorsPage() {
                       onClick={() => simulateRuleTriggerHandler(rule)}
                       className="comp-soft-btn min-h-[32px] px-2.5 py-1 text-[11px]"
                     >
-                      {simulatingRuleId === rule.id ? "টেস্ট হচ্ছে..." : "⚡ টেস্ট ট্রিগার (Simulate)"}
+                      {simulatingRuleId === rule.id ? t("social.cmTesting") : t("social.cmTestTrigger")}
                     </button>
                   </div>
 
                   {rule.recentExecutions && rule.recentExecutions.length > 0 ? (
                     <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded border border-slate-100">
-                      <div className="font-semibold text-slate-700 mb-0.5">সর্বশেষ ইভেন্ট লগ:</div>
+                      <div className="font-semibold text-slate-700 mb-0.5">{t("social.cmLatestLog")}</div>
                       <div>• {rule.recentExecutions[0].description}</div>
                     </div>
                   ) : null}
@@ -1786,7 +1792,7 @@ export default function CompetitorsPage() {
             <div>
               <h3 className="font-bold text-slate-900">Competitor Strategy & Tactics Playbook</h3>
               <p className="text-xs text-slate-500">
-                প্রতিযোগীদের অফার, ডিসকাউন্ট কৌশল ও উইনিং প্যাটার্ন অ্যানালাইসিস
+                {t("social.cmPlaybookSub")}
               </p>
             </div>
             <button
@@ -1794,27 +1800,27 @@ export default function CompetitorsPage() {
               disabled={busy !== ""}
               onClick={generateInsights}
             >
-              {busy === "insights" ? "অ্যানালাইসিস হচ্ছে..." : "✨ AI প্লেবুক জেনারেট করুন"}
+              {busy === "insights" ? t("social.cmAnalyzing") : t("social.cmGenPlaybook")}
             </button>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="rounded-2xl bg-blue-50/50 p-4 ring-1 ring-inset ring-blue-100">
-              <span className="text-xs font-bold text-blue-900 uppercase">১. অফার প্যাটার্ন</span>
+              <span className="text-xs font-bold text-blue-900 uppercase">{t("social.cmPattern1Title")}</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
-                প্রতিযোগীরা সাধারণত ক্যাশ অন ডেলিভারি (COD) এবং ফ্রি ডেলিভারির অফার বেশি ব্যবহার করছে। তাদের সবচেয়ে বেশি সক্রিয় বিজ্ঞাপনগুলোতে জরুরি অফারের ওপর জোর দেওয়া হয়েছে।
+                {t("social.cmPattern1Text")}
               </p>
             </div>
             <div className="rounded-2xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-100">
-              <span className="text-xs font-bold text-emerald-900 uppercase">২. উইনিং হুক স্ট্র্যাটেজি</span>
+              <span className="text-xs font-bold text-emerald-900 uppercase">{t("social.cmPattern2Title")}</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
-                টিকটক ও ফেসবুকে তারা সমস্যার সমাধানমূলক (Problem-Agitation) ভিডিও কন্টেন্ট দিয়ে সর্বোচ্চ ভিউ ও এনগেজমেন্ট আদায় করছে।
+                {t("social.cmPattern2Text")}
               </p>
             </div>
             <div className="rounded-2xl bg-purple-50/50 p-4 ring-1 ring-inset ring-purple-100">
-              <span className="text-xs font-bold text-purple-900 uppercase">৩. প্রাইসিং ট্যাকটিক্স</span>
+              <span className="text-xs font-bold text-purple-900 uppercase">{t("social.cmPattern3Title")}</span>
               <p className="mt-2 text-xs text-slate-700 leading-relaxed">
-                তারা বান্ডেল প্রাইসিং ও কম্বো সেলে বেশি জোর দিচ্ছে যাতে গড় অর্ডার ভ্যালু (AOV) বাড়ানো যায়।
+                {t("social.cmPattern3Text")}
               </p>
             </div>
           </div>
@@ -1830,9 +1836,9 @@ export default function CompetitorsPage() {
                 🔍
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <h3 className="text-base font-bold text-slate-900">{t("social.cmSelectCompetitor")}</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  প্রতিযোগীর ওয়েবসাইটের আসল on-page SEO অডিট (title, meta, হেডিং, প্রোডাক্ট স্কিমা, ইন্টারনাল লিংক) দেখতে নিচে ক্লিক করুন।
+                  {t("social.cmSeoSelectSub")}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
@@ -1856,13 +1862,13 @@ export default function CompetitorsPage() {
               <div className="card p-4 bg-white flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:p-5">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-lg font-bold text-slate-900">{active.name} — SEO On-Page অডিট</h3>
+                    <h3 className="text-lg font-bold text-slate-900">{t("social.cmSeoAuditTitle", { name: active.name })}</h3>
                     <span className="badge-brand">
-                      আসল ফেচ করা ডেটা
+                      {t("social.cmRealFetchedBadge")}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    প্রতিযোগীর হোমপেজ সরাসরি ফেচ করে পাওয়া তথ্য — কোনো অনুমানভিত্তিক ট্রাফিক, র‍্যাংকিং বা Domain Authority সংখ্যা দেখানো হয় না
+                    {t("social.cmSeoHeaderSub")}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1871,7 +1877,7 @@ export default function CompetitorsPage() {
                     disabled={loadingSeo}
                     onClick={() => fetchSeoReport(active)}
                   >
-                    {loadingSeo ? "অডিট হচ্ছে..." : "🔄 রি-স্ক্যান SEO"}
+                    {loadingSeo ? t("social.cmAuditing") : t("social.cmRescanSeo")}
                   </button>
                 </div>
               </div>
@@ -1893,17 +1899,17 @@ export default function CompetitorsPage() {
                     <div className="skeleton h-10 w-full" />
                     <div className="skeleton h-10 w-full" />
                   </div>
-                  <p className="text-center text-sm text-slate-500">প্রতিযোগীর ওয়েবসাইট ফেচ করে on-page SEO যাচাই করা হচ্ছে...</p>
+                  <p className="text-center text-sm text-slate-500">{t("social.cmSeoFetching")}</p>
                 </div>
               ) : seoReport && !seoReport.available ? (
                 <div className="card p-8 bg-white text-center space-y-3">
                   <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">🚫</div>
-                  <h4 className="font-bold text-slate-900 text-sm">SEO অডিট পাওয়া যায়নি</h4>
+                  <h4 className="font-bold text-slate-900 text-sm">{t("social.cmSeoNotFound")}</h4>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    {seoReport.reason ?? "প্রতিযোগীর ওয়েবসাইট থেকে আসল ডেটা পাওয়া যায়নি।"}
+                    {seoReport.reason ?? t("social.cmSeoNotFoundDefault")}
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    ডেটা ছাড়া কোনো রিপোর্ট তৈরি করা হয় না — ওয়েবসাইট URL ঠিক আছে কিনা যাচাই করে আবার চেষ্টা করুন।
+                    {t("social.cmSeoNotFoundHint")}
                   </p>
                 </div>
               ) : seoReport ? (
@@ -1912,12 +1918,12 @@ export default function CompetitorsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="comp-metric">
                       <span className="stat-label">
-                        প্রোডাক্ট স্কিমা (JSON-LD)
+                        {t("social.cmSchemaLabel")}
                       </span>
                       <p className="stat-value text-brand-700">
-                        {seoReport.productSchemaPresent ? "পাওয়া গেছে" : "পাওয়া যায়নি"}
+                        {seoReport.productSchemaPresent ? t("social.cmFound") : t("social.cmNotFound")}
                       </p>
-                      <span className="stat-hint block">হোমপেজের আসল মার্কআপ থেকে</span>
+                      <span className="stat-hint block">{t("social.cmSchemaHint")}</span>
                     </div>
 
                     <div className="comp-metric">
@@ -1925,9 +1931,9 @@ export default function CompetitorsPage() {
                         Sitemap.xml
                       </span>
                       <p className="stat-value text-emerald-700">
-                        {seoReport.sitemapPresent ? "আছে" : "পাওয়া যায়নি"}
+                        {seoReport.sitemapPresent ? t("social.cmPresent") : t("social.cmNotFound")}
                       </p>
-                      <span className="stat-hint block">/sitemap.xml ফেচ করে যাচাই করা</span>
+                      <span className="stat-hint block">{t("social.cmSitemapHint")}</span>
                     </div>
 
                     <div className="comp-metric">
@@ -1935,19 +1941,19 @@ export default function CompetitorsPage() {
                         Meta Description
                       </span>
                       <p className="stat-value text-blue-700">
-                        {seoReport.metaDescription ? "আছে" : "নেই"}
+                        {seoReport.metaDescription ? t("social.cmPresent") : t("social.cmAbsent")}
                       </p>
-                      <span className="stat-hint block">{seoReport.metaDescription ? `${seoReport.metaDescription.length} অক্ষর` : "পেজে meta description পাওয়া যায়নি"}</span>
+                      <span className="stat-hint block">{seoReport.metaDescription ? t("social.cmMetaChars", { count: fmtNumber(locale, seoReport.metaDescription.length) }) : t("social.cmMetaMissingHint")}</span>
                     </div>
 
                     <div className="comp-metric">
                       <span className="stat-label">
-                        ইন্টারনাল লিংক (নমুনা)
+                        {t("social.cmInternalLinksLabel")}
                       </span>
                       <p className="stat-value text-purple-700">
-                        {seoReport.internalLinks.length}টি
+                        {t("social.cmCountSuffix", { count: fmtNumber(locale, seoReport.internalLinks.length) })}
                       </p>
-                      <span className="stat-hint block">হোমপেজে পাওয়া shop/product/offer লিংক</span>
+                      <span className="stat-hint block">{t("social.cmInternalLinksHint")}</span>
                     </div>
                   </div>
 
@@ -1955,24 +1961,24 @@ export default function CompetitorsPage() {
                   <div className="card p-4 bg-white space-y-3 sm:p-5">
                     <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        পেজের আসল Title ও Meta
+                        {t("social.cmTitleMetaTitle")}
                       </h4>
                       <p className="text-xs text-slate-500">
-                        {seoReport.fetchedUrl} থেকে সরাসরি ফেচ করা
+                        {t("social.cmFetchedFrom", { url: seoReport.fetchedUrl ?? "" })}
                       </p>
                     </div>
                     <div className="space-y-2 text-xs">
                       <div className="rounded-lg bg-slate-50 px-3 py-2 border">
                         <span className="font-bold text-slate-500 block text-[10px] uppercase">Title</span>
-                        <span className="font-semibold text-slate-900">{seoReport.title ?? "শনাক্ত হয়নি"}</span>
+                        <span className="font-semibold text-slate-900">{seoReport.title ?? t("social.cmNotDetected")}</span>
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 border">
                         <span className="font-bold text-slate-500 block text-[10px] uppercase">Meta Description</span>
-                        <span className="text-slate-700">{seoReport.metaDescription ?? "শনাক্ত হয়নি"}</span>
+                        <span className="text-slate-700">{seoReport.metaDescription ?? t("social.cmNotDetected")}</span>
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 border">
                         <span className="font-bold text-slate-500 block text-[10px] uppercase">OpenGraph (og:title)</span>
-                        <span className="text-slate-700">{seoReport.og.title ?? "শনাক্ত হয়নি"}</span>
+                        <span className="text-slate-700">{seoReport.og.title ?? t("social.cmNotDetected")}</span>
                       </div>
                     </div>
                   </div>
@@ -1981,10 +1987,10 @@ export default function CompetitorsPage() {
                   <div className="card p-4 bg-white space-y-4 sm:p-5">
                     <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        সাইটের নিজের শিরোনামে ব্যবহৃত ফ্রেজ
+                        {t("social.cmPhrasesTitle")}
                       </h4>
                       <p className="text-xs text-slate-500">
-                        Title, H1 ও H2 থেকে হুবহু নেওয়া — এগুলোই তাদের on-page কিওয়ার্ড ফোকাসের আসল প্রমাণ
+                        {t("social.cmPhrasesSub")}
                       </p>
                     </div>
                     {seoReport.observedPhrases.length ? (
@@ -1997,7 +2003,7 @@ export default function CompetitorsPage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-500">কোনো শিরোনাম ফ্রেজ শনাক্ত হয়নি।</p>
+                      <p className="text-xs text-slate-500">{t("social.cmNoPhrases")}</p>
                     )}
                   </div>
 
@@ -2005,10 +2011,10 @@ export default function CompetitorsPage() {
                   <div className="card p-4 bg-white space-y-4 sm:p-5">
                     <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        হোমপেজে পাওয়া ইন্টারনাল লিংক
+                        {t("social.cmLinksTitle")}
                       </h4>
                       <p className="text-xs text-slate-500">
-                        কোন ধরনের পেজে তারা হোমপেজ থেকে ট্রাফিক পাঠায়
+                        {t("social.cmLinksSub")}
                       </p>
                     </div>
                     {seoReport.internalLinks.length ? (
@@ -2029,7 +2035,7 @@ export default function CompetitorsPage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-500">কোনো ইন্টারনাল লিংক শনাক্ত হয়নি।</p>
+                      <p className="text-xs text-slate-500">{t("social.cmNoLinks")}</p>
                     )}
                   </div>
 
@@ -2040,11 +2046,11 @@ export default function CompetitorsPage() {
                         <div className="flex items-center gap-2">
                           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/15 text-sm">⚡</span>
                           <h4 className="font-bold text-base text-white">
-                            AI SEO Gap স্ট্র্যাটেজি
+                            {t("social.cmSeoGapTitle")}
                           </h4>
                         </div>
                         <p className="text-xs text-white/70 mt-1">
-                          উপরের আসল অডিটের ভিত্তিতে আপনার প্রোডাক্টের মেটা টাইটেল ও ডিসক্রিপশনের খসড়া পরামর্শ — কোনো CTR শতাংশের প্রতিশ্রুতি নয়
+                          {t("social.cmSeoGapSub")}
                         </p>
                       </div>
 
@@ -2054,7 +2060,7 @@ export default function CompetitorsPage() {
                           value={selectedProductIdForSeo}
                           onChange={(e) => setSelectedProductIdForSeo(e.target.value)}
                         >
-                          <option value="">জেনারেল স্টোর / সকল প্রোডাক্ট</option>
+                          <option value="">{t("social.cmGeneralStoreOption")}</option>
                           {products.map((p) => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
@@ -2064,7 +2070,7 @@ export default function CompetitorsPage() {
                           disabled={generatingSeoGap}
                           className="btn-ai min-h-[40px] shrink-0 px-4 py-2 text-xs"
                         >
-                          {generatingSeoGap ? "স্ট্র্যাটেজি তৈরি হচ্ছে..." : "🚀 মেটা টাইটেল ও কিওয়ার্ড খসড়া বানান"}
+                          {generatingSeoGap ? t("social.cmGeneratingStrategy") : t("social.cmGenSeoDraft")}
                         </button>
                       </div>
                     </div>
@@ -2073,15 +2079,15 @@ export default function CompetitorsPage() {
                       <div className="space-y-4 pt-2">
                         <div className="flex items-center gap-2">
                           <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${seoStrategy.origin === "ai" ? "bg-emerald-500/20 text-emerald-300" : "bg-white/15 text-white/80"}`}>
-                            {seoStrategy.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                            {seoStrategy.origin === "ai" ? t("social.cmAiDraft") : t("social.cmTemplateDraft")}
                           </span>
-                          <span className="text-[11px] text-white/60">পরামর্শমূলক খসড়া — প্রকাশের আগে নিজে যাচাই করুন</span>
+                          <span className="text-[11px] text-white/60">{t("social.cmDraftNote")}</span>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
                           <div className="comp-dark-panel space-y-2">
                             <div className="flex items-center justify-between gap-2">
                               <span className="comp-dark-label">
-                                🏷️ প্রস্তাবিত Google Meta Title (SERP Hook)
+                                {t("social.cmMetaTitleLabel")}
                               </span>
                               <button
                                 onClick={() => {
@@ -2091,13 +2097,13 @@ export default function CompetitorsPage() {
                                 }}
                                 className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25"
                               >
-                                {copiedText === "metaTitle" ? "কপি হয়েছে!" : "📋 কপি"}
+                                {copiedText === "metaTitle" ? t("social.cmCopiedBang") : t("social.cmCopy")}
                               </button>
                             </div>
                             <p className="font-bold text-sm text-emerald-300">
                               {seoStrategy.strategy.recommendedMetaTitle}
                             </p>
-                            <span className="text-[10px] text-white/50">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaTitle.length} অক্ষর (গুগল অপটিমাল &lt; 60)</span>
+                            <span className="text-[10px] text-white/50">{t("social.cmLengthLine", { count: fmtNumber(locale, seoStrategy.strategy.recommendedMetaTitle.length), max: 60 })}</span>
                           </div>
 
                           <div className="comp-dark-panel space-y-2">
@@ -2113,20 +2119,20 @@ export default function CompetitorsPage() {
                                 }}
                                 className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25"
                               >
-                                {copiedText === "metaDesc" ? "কপি হয়েছে!" : "📋 কপি"}
+                                {copiedText === "metaDesc" ? t("social.cmCopiedBang") : t("social.cmCopy")}
                               </button>
                             </div>
                             <p className="text-xs text-white/85 leading-relaxed">
                               {seoStrategy.strategy.recommendedMetaDescription}
                             </p>
-                            <span className="text-[10px] text-white/50">দৈর্ঘ্য: {seoStrategy.strategy.recommendedMetaDescription.length} অক্ষর (গুগল অপটিমাল &lt; 155)</span>
+                            <span className="text-[10px] text-white/50">{t("social.cmLengthLine", { count: fmtNumber(locale, seoStrategy.strategy.recommendedMetaDescription.length), max: 155 })}</span>
                           </div>
                         </div>
 
                         <div className="comp-dark-panel space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="comp-dark-label">
-                              🎯 প্রোডাক্ট পেজে ট্যাগ করার জন্য ফোকাস কিওয়ার্ড ফ্রেজ
+                              {t("social.cmKeywordsLabel")}
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-2 pt-1">
@@ -2148,7 +2154,7 @@ export default function CompetitorsPage() {
 
                         <div className="flex items-center gap-2 rounded-xl bg-white/10 p-3 text-xs text-white/85 ring-1 ring-inset ring-white/15">
                           <span>💡</span>
-                          <span><strong>কেন এটি সাহায্য করতে পারে:</strong> {seoStrategy.strategy.outrankTactics}</span>
+                          <span><strong>{t("social.cmWhyHelps")}</strong> {seoStrategy.strategy.outrankTactics}</span>
                         </div>
                       </div>
                     ) : null}
@@ -2156,7 +2162,7 @@ export default function CompetitorsPage() {
                 </div>
               ) : (
                 <div className="card p-8 bg-white text-center text-xs text-slate-500">
-                  <p>SEO অডিট লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান SEO&rdquo; বাটনে ক্লিক করুন।</p>
+                  <p>{t("social.cmSeoLoadHint")}</p>
                 </div>
               )}
             </div>
@@ -2172,9 +2178,9 @@ export default function CompetitorsPage() {
                 💬
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <h3 className="text-base font-bold text-slate-900">{t("social.cmSelectCompetitor")}</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  প্রতিযোগীর পেজ থেকে কপি করা আসল কাস্টমার রিভিউ পেস্ট করে অভিযোগ বিশ্লেষণ করতে সিলেক্ট করুন — পেস্ট করা টেক্সট ছাড়া কোনো রিপোর্ট তৈরি হয় না।
+                  {t("social.cmReviewSelectSub")}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
@@ -2199,11 +2205,11 @@ export default function CompetitorsPage() {
                       {active.name} — Customer Sentiment & Complaint Mining
                     </h3>
                     <span className="badge bg-rose-100 text-rose-700 ring-1 ring-inset ring-rose-200">
-                      আপনার পেস্ট করা আসল রিভিউ থেকে
+                      {t("social.cmReviewBadge")}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    প্রতিযোগীর ফেসবুক পেজ/পোস্ট থেকে কপি করা আসল রিভিউ নিচে পেস্ট করুন — শুধু সেই টেক্সটই বিশ্লেষণ হবে, কোনো সংখ্যা বা উক্তি বানানো হয় না
+                    {t("social.cmReviewHeaderSub")}
                   </p>
                 </div>
               </div>
@@ -2211,12 +2217,12 @@ export default function CompetitorsPage() {
               {/* Paste real reviews */}
               <div className="card p-4 bg-white space-y-3 sm:p-5">
                 <label className="text-xs font-bold text-slate-900 uppercase tracking-wider" htmlFor="review-paste-box">
-                  📋 আসল রিভিউ পেস্ট করুন (প্রতিটি রিভিউ আলাদা লাইনে বা ফাঁকা লাইন দিয়ে আলাদা করে)
+                  {t("social.cmPasteLabel")}
                 </label>
                 <textarea
                   id="review-paste-box"
                   className="w-full min-h-[140px] rounded-xl border border-slate-200 p-3 text-sm text-slate-800 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
-                  placeholder={"যেমন:\nDelivery পেতে ১০ দিন লেগেছে, খুব দেরি হয়েছে। Rating 1/5\n\nকাপড়ের রঙ এক ধোয়াতেই ফেডে গেছে..."}
+                  placeholder={t("social.cmPastePlaceholder")}
                   value={reviewText}
                   onChange={(e) => setReviewText(e.target.value)}
                 />
@@ -2226,10 +2232,10 @@ export default function CompetitorsPage() {
                     disabled={loadingReviewMine || !reviewText.trim()}
                     onClick={() => analyzeReviews(active)}
                   >
-                    {loadingReviewMine ? "বিশ্লেষণ হচ্ছে..." : "🔍 পেস্ট করা রিভিউ বিশ্লেষণ করুন"}
+                    {loadingReviewMine ? t("social.cmAnalyzing") : t("social.cmAnalyzeBtn")}
                   </button>
                   <span className="text-[11px] text-slate-400">
-                    সংখ্যা, রেটিং ও উক্তি — সবই শুধু এই টেক্সট থেকেই আসবে
+                    {t("social.cmReviewNote")}
                   </span>
                 </div>
               </div>
@@ -2253,12 +2259,12 @@ export default function CompetitorsPage() {
                       <div key={i} className="skeleton h-28 w-full" />
                     ))}
                   </div>
-                  <p className="text-center text-sm text-slate-500">পেস্ট করা রিভিউগুলো বিশ্লেষণ করা হচ্ছে...</p>
+                  <p className="text-center text-sm text-slate-500">{t("social.cmReviewAnalyzing")}</p>
                 </div>
               ) : reviewMineReport && !reviewMineReport.available ? (
                 <div className="card p-8 bg-white text-center space-y-3">
                   <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">📋</div>
-                  <h4 className="font-bold text-slate-900 text-sm">রিপোর্ট তৈরি হয়নি</h4>
+                  <h4 className="font-bold text-slate-900 text-sm">{t("social.cmReportNotCreated")}</h4>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
                     {reviewMineReport.reason}
                   </p>
@@ -2269,40 +2275,40 @@ export default function CompetitorsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="comp-metric">
                       <span className="stat-label">
-                        গড় রেটিং (পেস্ট করা টেক্সট থেকে)
+                        {t("social.cmAvgRatingLabel")}
                       </span>
                       <div className="mt-1 flex items-baseline gap-2">
                         <span className="text-3xl font-black text-rose-700">
                           {reviewMineReport.overallRatingScore !== null ? reviewMineReport.overallRatingScore : "—"}
                         </span>
                         {reviewMineReport.overallRatingScore !== null ? (
-                          <span className="text-xs text-slate-400 font-semibold">/ ৫.০</span>
+                          <span className="text-xs text-slate-400 font-semibold">{t("social.cmRatingOutOf")}</span>
                         ) : null}
                       </div>
                       <span className="stat-hint block">
                         {reviewMineReport.overallRatingScore !== null
-                          ? `মোট বিশ্লেষিত রিভিউ: ${reviewMineReport.totalAnalyzedFeedback}টি`
-                          : "পেস্ট করা টেক্সটে কোনো রেটিং পাওয়া যায়নি — তাই গড় দেখানো হচ্ছে না"}
+                          ? t("social.cmTotalAnalyzed", { count: fmtNumber(locale, reviewMineReport.totalAnalyzedFeedback) })
+                          : t("social.cmNoRatingNote")}
                       </span>
                     </div>
 
                     <div className="card p-4 bg-white md:col-span-2 space-y-2">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        📊 সেন্টিমেন্ট বন্টন (পেস্ট করা রিভিউয়ের কীওয়ার্ড-শ্রেণিবিভাগ)
+                        {t("social.cmSentimentTitle")}
                       </span>
                       <div className="space-y-2 pt-1">
                         <div>
                           <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1">
-                            <span>অসন্তুষ্ট ক্রেতা (Dissatisfied)</span>
-                            <span className="text-rose-600 font-bold">{reviewMineReport.sentimentDistribution.dissatisfied}%</span>
+                            <span>{t("social.cmDissatisfied")}</span>
+                            <span className="text-rose-600 font-bold">{fmtNumber(locale, reviewMineReport.sentimentDistribution.dissatisfied)}%</span>
                           </div>
                           <div className="meter">
                             <div className="h-full rounded-full bg-rose-500 transition-[width] duration-500" style={{ width: `${reviewMineReport.sentimentDistribution.dissatisfied}%` }} />
                           </div>
                         </div>
                         <div className="flex justify-between text-xs text-slate-500 pt-1">
-                          <span>সন্তুষ্ট: {reviewMineReport.sentimentDistribution.satisfied}%</span>
-                          <span>নিরপেক্ষ: {reviewMineReport.sentimentDistribution.neutral}%</span>
+                          <span>{t("social.cmSatisfiedLine", { pct: fmtNumber(locale, reviewMineReport.sentimentDistribution.satisfied) })}</span>
+                          <span>{t("social.cmNeutralLine", { pct: fmtNumber(locale, reviewMineReport.sentimentDistribution.neutral) })}</span>
                         </div>
                       </div>
                     </div>
@@ -2313,7 +2319,7 @@ export default function CompetitorsPage() {
                     <span className="text-xl">🚨</span>
                     <div>
                       <h4 className="font-bold text-rose-950 text-sm">
-                        পেস্ট করা রিভিউতে সবচেয়ে বড় দুর্বলতা
+                        {t("social.cmBiggestVuln")}
                       </h4>
                       <p className="mt-1 text-xs text-rose-800 leading-relaxed font-medium">
                         {reviewMineReport.biggestVulnerability}
@@ -2325,10 +2331,10 @@ export default function CompetitorsPage() {
                   <div className="card p-4 bg-white space-y-4 sm:p-5">
                     <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        গ্রাহক অসন্তোষের বিষয়সমূহ (পেস্ট করা রিভিউ থেকে গণনা করা)
+                        {t("social.cmComplaintsTitle")}
                       </h4>
                       <p className="text-xs text-slate-500">
-                        শতাংশ = পেস্ট করা মোট রিভিউর মধ্যে ওই বিষয়ে অভিযোগের অংশ
+                        {t("social.cmComplaintsSub")}
                       </p>
                     </div>
 
@@ -2340,7 +2346,7 @@ export default function CompetitorsPage() {
                               <span className="font-bold text-slate-900 text-xs">{item.category}</span>
                               <div className="flex items-center gap-1.5">
                                 <span className="rounded bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5">
-                                  {item.frequencyPercent}% ({item.itemCount}টি)
+                                  {t("social.cmFreqLine", { pct: fmtNumber(locale, item.frequencyPercent), count: fmtNumber(locale, item.itemCount) })}
                                 </span>
                                 <span className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
                                   item.severity === "Critical" ? "bg-red-500 text-white" : "bg-amber-100 text-amber-800"
@@ -2352,7 +2358,7 @@ export default function CompetitorsPage() {
                             <p className="text-xs text-slate-700 leading-relaxed">{item.complaintSummary}</p>
                             {item.sampleCustomerQuotes.length ? (
                               <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200/70">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">পেস্ট করা রিভিউ থেকে হুবহু:</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">{t("social.cmVerbatimLabel")}</span>
                                 {item.sampleCustomerQuotes.map((q, qi) => (
                                   <p key={qi} className="text-[11px] text-slate-600 italic">
                                     &ldquo;{q}&rdquo;
@@ -2364,7 +2370,7 @@ export default function CompetitorsPage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-500">পেস্ট করা রিভিউতে শ্রেণিবদ্ধ করা যায় এমন নেতিবাচক অভিযোগ পাওয়া যায়নি।</p>
+                      <p className="text-xs text-slate-500">{t("social.cmNoComplaints")}</p>
                     )}
                   </div>
 
@@ -2375,11 +2381,11 @@ export default function CompetitorsPage() {
                         <div className="flex items-center gap-2">
                           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500 text-sm">🎯</span>
                           <h4 className="font-bold text-base text-white">
-                            AI Reassurance Angles (&ldquo;ক্রেতা ছিনতাই&rdquo; কপি ও ট্রাস্ট অফার)
+                            {t("social.cmAnglesTitle")}
                           </h4>
                         </div>
                         <p className="text-xs text-white/70 mt-1">
-                          উপরের আসল (পেস্ট করা) অভিযোগগুলোর ভিত্তিতে সাজানো খসড়া পরামর্শ — প্রতিযোগী সম্পর্কে নতুন কোনো দাবি নয়
+                          {t("social.cmAnglesSub")}
                         </p>
                       </div>
 
@@ -2398,23 +2404,23 @@ export default function CompetitorsPage() {
                                 }}
                                 className="min-h-[28px] rounded bg-white/15 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/25 shrink-0"
                               >
-                                {copiedText === `angle-${i}` ? "কপি হয়েছে!" : "📋 কপি"}
+                                {copiedText === `angle-${i}` ? t("social.cmCopiedBang") : t("social.cmCopy")}
                               </button>
                             </div>
 
                             <div className="space-y-2 text-xs">
                               <div className="rounded-lg bg-white/5 p-2.5 ring-1 ring-inset ring-white/10">
-                                <span className="font-semibold text-white/70 text-[11px] block">🛡️ বিশ্বাস অর্জনের মেকানিজম:</span>
+                                <span className="font-semibold text-white/70 text-[11px] block">{t("social.cmTrustMechanism")}</span>
                                 <p className="text-white/85 mt-0.5">{angle.trustMechanism}</p>
                               </div>
                               <div className="rounded-lg bg-white/5 p-2.5 ring-1 ring-inset ring-white/10">
-                                <span className="font-semibold text-amber-300 text-[11px] block">⚡ গ্যারান্টি অফার:</span>
+                                <span className="font-semibold text-amber-300 text-[11px] block">{t("social.cmGuaranteeOffer")}</span>
                                 <p className="text-white/85 mt-0.5">{angle.guaranteeOffer}</p>
                               </div>
                             </div>
 
                             <div className="text-[11px] text-white/60 italic pt-1 border-t border-white/10">
-                              💡 ক্রেতা কেন সুইচ করবে: {angle.whyBuyersSwitch}
+                              {t("social.cmWhySwitch", { text: angle.whyBuyersSwitch })}
                             </div>
                           </div>
                         ))}
@@ -2424,7 +2430,7 @@ export default function CompetitorsPage() {
                 </div>
               ) : (
                 <div className="card p-8 bg-white text-center text-xs text-slate-500">
-                  <p>উপরে আসল রিভিউ পেস্ট করে &ldquo;বিশ্লেষণ করুন&rdquo; বাটনে ক্লিক করুন — ডেটা ছাড়া রিপোর্ট তৈরি হয় না।</p>
+                  <p>{t("social.cmReviewLoadHint")}</p>
                 </div>
               )}
             </div>
@@ -2440,9 +2446,9 @@ export default function CompetitorsPage() {
                 🛒
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">প্রতিযোগী নির্বাচন করুন</h3>
+                <h3 className="text-base font-bold text-slate-900">{t("social.cmSelectCompetitor")}</h3>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                  প্রতিযোগীর আসল ওয়েবসাইট ফেচ করে চেকআউট ফর্ম, ট্রাস্ট সিগন্যাল ও পেমেন্ট মেথড শনাক্তকরণ দেখতে নিচে ক্লিক করুন।
+                  {t("social.cmFunnelSelectSub")}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
@@ -2467,14 +2473,14 @@ export default function CompetitorsPage() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-bold text-slate-900">
-                      {active.name} — Checkout Funnel অডিট
+                      {t("social.cmFunnelAuditTitle", { name: active.name })}
                     </h3>
                     <span className="badge bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200">
-                      আসল পেজ থেকে শনাক্ত
+                      {t("social.cmDetectedBadge")}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
-                    শুধু যা আসল পেজে পাওয়া গেছে তাই দেখানো হয় — যা পাওয়া যায়নি তা &ldquo;শনাক্ত হয়নি&rdquo; হিসেবে থাকে, অনুমান করা হয় না
+                    {t("social.cmFunnelHeaderSub")}
                   </p>
                 </div>
                 <button
@@ -2482,7 +2488,7 @@ export default function CompetitorsPage() {
                   disabled={loadingFunnel}
                   onClick={() => fetchFunnelAudit(active)}
                 >
-                  {loadingFunnel ? "অডিট হচ্ছে..." : "🔄 রি-স্ক্যান ফানেল"}
+                  {loadingFunnel ? t("social.cmAuditing") : t("social.cmRescanFunnel")}
                 </button>
               </div>
 
@@ -2502,17 +2508,17 @@ export default function CompetitorsPage() {
                       <div key={i} className="skeleton h-24 w-full" />
                     ))}
                   </div>
-                  <p className="text-center text-sm text-slate-500">আসল পেজ ফেচ করে চেকআউট ফ্লো যাচাই করা হচ্ছে...</p>
+                  <p className="text-center text-sm text-slate-500">{t("social.cmFunnelFetching")}</p>
                 </div>
               ) : funnelReport && !funnelReport.scanned ? (
                 <div className="card p-8 bg-white text-center space-y-3">
                   <div className="comp-icon-tile mx-auto h-14 w-14 text-2xl">🚫</div>
-                  <h4 className="font-bold text-slate-900 text-sm">ফানেল অডিট করা যায়নি</h4>
+                  <h4 className="font-bold text-slate-900 text-sm">{t("social.cmFunnelNotScanned")}</h4>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    {funnelReport.reason ?? "প্রতিযোগীর ওয়েবসাইট স্ক্যান করা যায়নি।"}
+                    {funnelReport.reason ?? t("social.cmFunnelNotScannedDefault")}
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    স্ক্যান ছাড়া কোনো রিপোর্ট তৈরি করা হয় না।
+                    {t("social.cmFunnelNotScannedHint")}
                   </p>
                 </div>
               ) : funnelReport ? (
@@ -2521,42 +2527,42 @@ export default function CompetitorsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="comp-metric">
                       <span className="stat-label">
-                        চেকআউট পেজ/লিংক
+                        {t("social.cmCheckoutLabel")}
                       </span>
                       <p className="mt-2 text-base font-black text-slate-900">
-                        {funnelReport.checkoutDetected ? "শনাক্ত হয়েছে" : "শনাক্ত হয়নি"}
+                        {funnelReport.checkoutDetected ? t("social.cmDetectedYes") : t("social.cmNotDetected")}
                       </p>
-                      <span className="stat-hint block">{funnelReport.pagesScanned.length}টি পেজ স্ক্যান করা হয়েছে</span>
+                      <span className="stat-hint block">{t("social.cmPagesScannedLine", { count: fmtNumber(locale, funnelReport.pagesScanned.length) })}</span>
                     </div>
 
                     <div className="comp-metric">
                       <span className="stat-label">
-                        ফর্ম ফিল্ড সংখ্যা
+                        {t("social.cmFieldCountLabel")}
                       </span>
                       <p className="stat-value text-brand-700">
-                        {funnelReport.checkoutFieldCount !== null ? `${funnelReport.checkoutFieldCount}টি` : "শনাক্ত হয়নি"}
+                        {funnelReport.checkoutFieldCount !== null ? t("social.cmCountSuffix", { count: fmtNumber(locale, funnelReport.checkoutFieldCount) }) : t("social.cmNotDetected")}
                       </p>
-                      <span className="stat-hint block">আসল ফর্ম থেকে গণনা করা</span>
+                      <span className="stat-hint block">{t("social.cmFieldCountHint")}</span>
                     </div>
 
                     <div className="comp-metric">
                       <span className="stat-label">
-                        পেমেন্ট গেটওয়ে
+                        {t("social.cmGatewayLabel")}
                       </span>
                       <p className="stat-value text-blue-700">
-                        {funnelReport.paymentGatewaysDetected.length}টি
+                        {t("social.cmCountSuffix", { count: fmtNumber(locale, funnelReport.paymentGatewaysDetected.length) })}
                       </p>
-                      <span className="stat-hint block">পেজের টেক্সটে উল্লেখ পাওয়া গেছে</span>
+                      <span className="stat-hint block">{t("social.cmGatewayHint")}</span>
                     </div>
 
                     <div className="comp-metric">
                       <span className="stat-label">
-                        ট্রাস্ট সিগন্যাল
+                        {t("social.cmTrustLabel")}
                       </span>
                       <p className="stat-value text-purple-700">
-                        {funnelReport.trustSignalsDetected.length}টি
+                        {t("social.cmCountSuffix", { count: fmtNumber(locale, funnelReport.trustSignalsDetected.length) })}
                       </p>
-                      <span className="stat-hint block">পেজে ছাপানো প্রতিশ্রুতি থেকে</span>
+                      <span className="stat-hint block">{t("social.cmTrustHint")}</span>
                     </div>
                   </div>
 
@@ -2564,7 +2570,7 @@ export default function CompetitorsPage() {
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="card p-4 bg-white space-y-3">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        📝 শনাক্ত করা ফর্ম ফিল্ডসমূহ
+                        {t("social.cmFieldsTitle")}
                       </span>
                       {funnelReport.checkoutFields.length ? (
                         <div className="space-y-1.5 pt-1">
@@ -2576,13 +2582,13 @@ export default function CompetitorsPage() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-500 pt-1">শনাক্ত হয়নি — স্ক্যান করা পেজগুলোতে কোনো ফর্ম পাওয়া যায়নি।</p>
+                        <p className="text-xs text-slate-500 pt-1">{t("social.cmNoFields")}</p>
                       )}
                     </div>
 
                     <div className="card p-4 bg-white space-y-3">
                       <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        🛡️ শনাক্ত করা ট্রাস্ট সিগন্যাল
+                        {t("social.cmTrustTitle")}
                       </span>
                       {funnelReport.trustSignalsDetected.length ? (
                         <div className="flex flex-wrap gap-2 pt-1">
@@ -2593,10 +2599,10 @@ export default function CompetitorsPage() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-500 pt-1">শনাক্ত হয়নি।</p>
+                        <p className="text-xs text-slate-500 pt-1">{t("social.cmNotDetectedDot")}</p>
                       )}
                       <div className="pt-2 border-t">
-                        <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">পেমেন্ট গেটওয়ে:</span>
+                        <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">{t("social.cmGatewayColon")}</span>
                         {funnelReport.paymentGatewaysDetected.length ? (
                           <div className="flex flex-wrap gap-1.5">
                             {funnelReport.paymentGatewaysDetected.map((pg, i) => (
@@ -2606,7 +2612,7 @@ export default function CompetitorsPage() {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-xs text-slate-500">শনাক্ত হয়নি।</p>
+                          <p className="text-xs text-slate-500">{t("social.cmNotDetectedDot")}</p>
                         )}
                       </div>
                     </div>
@@ -2616,10 +2622,10 @@ export default function CompetitorsPage() {
                   <div className="card p-4 bg-white space-y-4 sm:p-5">
                     <div className="border-b border-slate-100 pb-3">
                       <h4 className="font-bold text-slate-900 text-sm">
-                        পেজে পাওয়া বান্ডেল/কম্বো অফারের চিহ্ন
+                        {t("social.cmBundleTitle")}
                       </h4>
                       <p className="text-xs text-slate-500">
-                        হুবহু পেজের টেক্সট থেকে নেওয়া অংশ — কোনো জনপ্রিয়তার শতাংশ অনুমান করা হয় না
+                        {t("social.cmBundleSub")}
                       </p>
                     </div>
                     {funnelReport.bundleHints.length ? (
@@ -2631,10 +2637,10 @@ export default function CompetitorsPage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-500">শনাক্ত হয়নি — স্ক্যান করা পেজগুলোতে বান্ডেল/কম্বো অফারের কোনো উল্লেখ পাওয়া যায়নি।</p>
+                      <p className="text-xs text-slate-500">{t("social.cmNoBundle")}</p>
                     )}
                     <div className="pt-2 border-t">
-                      <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">স্ক্যান করা পেজ:</span>
+                      <span className="text-[11px] font-bold text-slate-500 uppercase block mb-1">{t("social.cmScannedPagesLabel")}</span>
                       <div className="flex flex-wrap gap-1.5">
                         {funnelReport.pagesScanned.map((u, i) => (
                           <a key={i} href={u} target="_blank" rel="noreferrer" className="rounded bg-slate-100 text-blue-600 text-[11px] px-2 py-0.5 font-mono hover:underline truncate max-w-full">
@@ -2651,14 +2657,14 @@ export default function CompetitorsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500 text-sm">⚡</span>
                         <h4 className="font-bold text-base text-white">
-                          ফানেল অপ্টিমাইজেশন কৌশল
+                          {t("social.cmFunnelTipsTitle")}
                         </h4>
                         <span className="rounded bg-white/15 text-white/85 text-[10px] font-bold px-2 py-0.5">
-                          সাধারণ পরামর্শ — প্রতিযোগীর ডেটা নয়
+                          {t("social.cmGeneralAdviceBadge")}
                         </span>
                       </div>
                       <p className="text-xs text-white/70 mt-1">
-                        নিজের স্টোরের চেকআউটে প্রয়োগযোগ্য সাধারণ পরামর্শ; প্রতিযোগীর আসল ডেটা উপরের সেকশনগুলোতে
+                        {t("social.cmFunnelTipsSub")}
                       </p>
                     </div>
 
@@ -2683,7 +2689,7 @@ export default function CompetitorsPage() {
                 </div>
               ) : (
                 <div className="card p-8 bg-white text-center text-xs text-slate-500">
-                  <p>ফানেল ডেটা লোড করতে উপরের &ldquo;🔄 রি-স্ক্যান ফানেল&rdquo; বাটনে ক্লিক করুন।</p>
+                  <p>{t("social.cmFunnelLoadHint")}</p>
                 </div>
               )}
             </div>
@@ -2708,7 +2714,7 @@ export default function CompetitorsPage() {
                   ⚡ AI Counter-Ad & Strategy Generator
                 </h3>
                 <p className="text-xs text-slate-500">
-                  প্রতিযোগীর বিজ্ঞাপনের হুক এবং দুর্বলতা বিশ্লেষণ করে আপনার ব্র্যান্ডের জন্য শক্তিশালী কপি তৈরি
+                  {t("social.cmCounterSub")}
                 </p>
               </div>
               <button
@@ -2722,27 +2728,27 @@ export default function CompetitorsPage() {
             {/* Competitor Ad Snippet */}
             <div className="rounded-2xl bg-slate-50 p-3.5 text-xs ring-1 ring-inset ring-slate-200/60">
               <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
-                প্রতিযোগীর অরিজিনাল অ্যাড ({counterModalAd.platforms.join(", ")}):
+                {t("social.cmOriginalAdLabel", { platforms: counterModalAd.platforms.join(", ") })}
               </span>
               <p className="mt-1 text-slate-700 line-clamp-3">
-                {counterModalAd.creativeText || "(নো টেক্সট)"}
+                {counterModalAd.creativeText || t("social.cmNoText")}
               </p>
             </div>
 
             {/* Select Our Product */}
             <div>
               <label className="text-xs font-semibold text-slate-700">
-                আপনার কোন প্রোডাক্টের জন্য কাউন্টার-অ্যাড বানাতে চান?
+                {t("social.cmCounterProductQ")}
               </label>
               <select
                 className={inputCls}
                 value={selectedProductId}
                 onChange={(e) => setSelectedProductId(e.target.value)}
               >
-                <option value="">ডিফল্ট স্টোর কনটেক্সট (যেকোনো প্রোডাক্ট)</option>
+                <option value="">{t("social.cmDefaultStoreOption")}</option>
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({formatMinor(BigInt(p.priceMinor), p.currency)})
+                    {p.name} ({fmtMoneyMinor(locale, BigInt(p.priceMinor), { currency: p.currency })})
                   </option>
                 ))}
               </select>
@@ -2754,7 +2760,7 @@ export default function CompetitorsPage() {
               className="btn-primary min-h-[44px] w-full py-2.5 text-sm flex items-center justify-center gap-2"
             >
               {isGeneratingCounterAd ? (
-                <span>এআই অ্যানালাইসিস ও কপি তৈরি হচ্ছে...</span>
+                <span>{t("social.cmGeneratingCounter")}</span>
               ) : (
                 <span>🚀 Generate Unstoppable Counter-Campaign</span>
               )}
@@ -2765,14 +2771,14 @@ export default function CompetitorsPage() {
               <div className="space-y-4 border-t border-slate-100 pt-4">
                 <div>
                   <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${counterAdResult.origin === "ai" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
-                    {counterAdResult.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                    {counterAdResult.origin === "ai" ? t("social.cmAiDraft") : t("social.cmTemplateDraft")}
                   </span>
-                  <span className="ml-2 text-[11px] text-slate-400">খসড়া কপি — প্রকাশের আগে নিজে যাচাই করুন</span>
+                  <span className="ml-2 text-[11px] text-slate-400">{t("social.cmCounterDraftNote")}</span>
                 </div>
                 {/* Hook & Weakness Breakdown */}
                 <div className="comp-soft-panel">
                   <h4 className="font-bold text-xs uppercase tracking-wider text-slate-900">
-                    🎯 প্রতিযোগীর Hook & Weakness Analysis:
+                    {t("social.cmHookAnalysisTitle")}
                   </h4>
                   <p className="mt-1 text-xs text-slate-700">
                     <span className="font-semibold">Hook Type:</span>{" "}
@@ -2783,7 +2789,7 @@ export default function CompetitorsPage() {
                     {counterAdResult.hookBreakdown.competitorAngle}
                   </p>
                   <div className="mt-2">
-                    <span className="font-semibold text-xs text-red-700">প্রতিযোগীর দুর্বলতাসমূহ:</span>
+                    <span className="font-semibold text-xs text-red-700">{t("social.cmWeaknessesLabel")}</span>
                     <ul className="list-disc pl-4 text-xs text-slate-600 mt-1 space-y-0.5">
                       {counterAdResult.hookBreakdown.weaknesses.map((w, idx) => (
                         <li key={idx}>{w}</li>
@@ -2796,7 +2802,7 @@ export default function CompetitorsPage() {
                 <div className="rounded-2xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-100 space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-bold text-xs uppercase tracking-wider text-emerald-900">
-                      🔥 আপনার জন্য প্রস্তুতকৃত কাউন্টার কপি:
+                      {t("social.cmCounterCopyTitle")}
                     </h4>
                     {copiedText ? (
                       <span className="text-xs font-semibold text-emerald-600">✓ {copiedText}</span>
@@ -2811,11 +2817,11 @@ export default function CompetitorsPage() {
                       </span>
                       <button
                         onClick={() =>
-                          copyToClipboard(counterAdResult.counterCampaign.headline, "Headline কপি হয়েছে!")
+                          copyToClipboard(counterAdResult.counterCampaign.headline, t("social.cmHeadlineCopied"))
                         }
                         className="text-xs text-blue-600 hover:underline"
                       >
-                        কপি
+                        {t("social.cmCopyWord")}
                       </button>
                     </div>
                   </div>
@@ -2827,11 +2833,11 @@ export default function CompetitorsPage() {
                       <div className="text-right mt-2 border-t pt-1">
                         <button
                           onClick={() =>
-                            copyToClipboard(counterAdResult.counterCampaign.primaryText, "Primary Text কপি হয়েছে!")
+                            copyToClipboard(counterAdResult.counterCampaign.primaryText, t("social.cmPrimaryCopied"))
                           }
                           className="text-xs font-semibold text-blue-600 hover:underline"
                         >
-                          সম্পূর্ণ টেকস্ট কপি করুন
+                          {t("social.cmCopyFullText")}
                         </button>
                       </div>
                     </div>
@@ -2839,13 +2845,13 @@ export default function CompetitorsPage() {
 
                   <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                     <div className="bg-white p-2 rounded border">
-                      <span className="font-semibold text-slate-500">অফার পরামর্শ:</span>
+                      <span className="font-semibold text-slate-500">{t("social.cmOfferAdvice")}</span>
                       <p className="font-medium text-emerald-700">
                         {counterAdResult.counterCampaign.suggestedOffer}
                       </p>
                     </div>
                     <div className="bg-white p-2 rounded border">
-                      <span className="font-semibold text-slate-500">কল-টু-অ্যাকশন:</span>
+                      <span className="font-semibold text-slate-500">{t("social.cmCtaLabel")}</span>
                       <p className="font-medium text-slate-900">
                         {counterAdResult.counterCampaign.callToAction}
                       </p>
@@ -2853,7 +2859,7 @@ export default function CompetitorsPage() {
                   </div>
 
                   <p className="text-xs text-slate-500 italic">
-                    💡 কেন এই কপি প্রতিযোগীকে হারাবে: {counterAdResult.counterCampaign.whyThisBeatsCompetitor}
+                    {t("social.cmWhyBeats", { text: counterAdResult.counterCampaign.whyThisBeatsCompetitor })}
                   </p>
 
                   <div className="pt-2 border-t border-emerald-200/80">
@@ -2861,7 +2867,7 @@ export default function CompetitorsPage() {
                       onClick={pushToCampaignBuilder}
                       className="w-full min-h-[44px] rounded-lg bg-gradient-to-r from-emerald-600 to-teal-700 py-2.5 text-xs font-bold text-white shadow hover:from-emerald-700 hover:to-teal-800 flex items-center justify-center gap-2"
                     >
-                      <span>🚀 ১-ক্লিকে Campaign Builder-এ পাঠান (Create Ad)</span>
+                      <span>{t("social.cmPushBuilder")}</span>
                       <span>➔</span>
                     </button>
                   </div>
@@ -2886,7 +2892,7 @@ export default function CompetitorsPage() {
                     Viral UGC & Video Script Deconstructor
                   </h3>
                   <p className="text-xs text-slate-500">
-                    রিলস ও টিকটক ভিডিওর হুক বিশ্লেষণ এবং আপনার স্টোরের জন্য ফ্রেম-বাই-ফ্রেম শুটিং স্ক্রিপ্ট
+                    {t("social.cmVideoSub")}
                   </p>
                 </div>
               </div>
@@ -2901,10 +2907,10 @@ export default function CompetitorsPage() {
             {/* Competitor Ad Snippet */}
             <div className="rounded-2xl bg-slate-50 p-3.5 text-xs ring-1 ring-inset ring-slate-200/60">
               <span className="font-semibold text-slate-500 uppercase tracking-wider text-[10px]">
-                অরিজিনাল ভিডিও অ্যাড টেক্সট ({videoModalAd.platforms.join(", ")}):
+                {t("social.cmOriginalVideoLabel", { platforms: videoModalAd.platforms.join(", ") })}
               </span>
               <p className="mt-1 text-slate-800 line-clamp-3 leading-relaxed">
-                {videoModalAd.creativeText || "(ভিডিওর টেক্সট অনুপস্থিত)"}
+                {videoModalAd.creativeText || t("social.cmNoVideoText")}
               </p>
             </div>
 
@@ -2912,17 +2918,17 @@ export default function CompetitorsPage() {
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  আপনার কোন প্রোডাক্টের জন্য ভিডিও বানাবেন?
+                  {t("social.cmVideoProductQ")}
                 </label>
                 <select
                   className={inputCls}
                   value={selectedProductIdForVideo}
                   onChange={(e) => setSelectedProductIdForVideo(e.target.value)}
                 >
-                  <option value="">ডিফল্ট স্টোর প্রোডাক্ট (অটো কনটেক্সট)</option>
+                  <option value="">{t("social.cmDefaultProductOption")}</option>
                   {products.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({formatMinor(BigInt(p.priceMinor), p.currency)})
+                      {p.name} ({fmtMoneyMinor(locale, BigInt(p.priceMinor), { currency: p.currency })})
                     </option>
                   ))}
                 </select>
@@ -2930,17 +2936,17 @@ export default function CompetitorsPage() {
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  ভিডিও কনটেন্টের স্টাইল
+                  {t("social.cmVideoStyleLabel")}
                 </label>
                 <select
                   className={inputCls}
                   value={videoScriptStyle}
                   onChange={(e) => setVideoScriptStyle(e.target.value)}
                 >
-                  <option value="ugc">📱 UGC Creator / কাস্টমার সেলফি স্টাইল</option>
-                  <option value="unboxing">📦 Dramatic Unboxing & ASMR ফিনিশ</option>
-                  <option value="problem_solution">⚡ Problem-Agitation-Solution (সমস্যা ও সমাধান)</option>
-                  <option value="skit">🎭 Relatable Story / কমেডি সিচুয়েশনাল ড্রামা</option>
+                  <option value="ugc">{t("social.cmStyleUgc")}</option>
+                  <option value="unboxing">{t("social.cmStyleUnboxing")}</option>
+                  <option value="problem_solution">{t("social.cmStyleProblem")}</option>
+                  <option value="skit">{t("social.cmStyleSkit")}</option>
                 </select>
               </div>
             </div>
@@ -2953,11 +2959,11 @@ export default function CompetitorsPage() {
               {isVideoDeconstructing ? (
                 <>
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-r-transparent" />
-                  <span>ভিডিওর ফ্রেম ও হুক বিশ্লেষণ হচ্ছে...</span>
+                  <span>{t("social.cmVideoAnalyzing")}</span>
                 </>
               ) : (
                 <>
-                  <span>⚡ ফ্রেম-বাই-ফ্রেম স্ক্রিপ্ট ও ভয়েসওভার ডিকনস্ট্রাক্ট করুন</span>
+                  <span>{t("social.cmDeconstructRun")}</span>
                   <span>➔</span>
                 </>
               )}
@@ -2968,34 +2974,34 @@ export default function CompetitorsPage() {
               <div className="space-y-5 pt-3 border-t">
                 <div>
                   <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${videoScriptResult.origin === "ai" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>
-                    {videoScriptResult.origin === "ai" ? "AI খসড়া" : "টেমপ্লেট খসড়া"}
+                    {videoScriptResult.origin === "ai" ? t("social.cmAiDraft") : t("social.cmTemplateDraft")}
                   </span>
-                  <span className="ml-2 text-[11px] text-slate-400">খসড়া স্ক্রিপ্ট — প্রতিযোগীর আসল ভিডিও বিশ্লেষণ নয়, তাদের বিজ্ঞাপনের টেক্সট থেকে সাজানো</span>
+                  <span className="ml-2 text-[11px] text-slate-400">{t("social.cmScriptDraftNote")}</span>
                 </div>
                 {/* Hook & Retention Breakdown Card */}
                 <div className="comp-soft-panel space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>🎯 ০-৩ সেকেন্ড হুক অ্যানালাইসিস</span>
+                      <span>{t("social.cmHookAnalysis")}</span>
                       <span className="badge-brand">
                         {videoScriptResult.hookCategory}
                       </span>
                     </span>
                     <span className="text-xs font-semibold text-slate-600">
-                      মোট ডিউরেশন: ~{videoScriptResult.totalDurationSeconds}s ({videoScriptResult.format})
+                      {t("social.cmTotalDuration", { sec: fmtNumber(locale, videoScriptResult.totalDurationSeconds), format: videoScriptResult.format })}
                     </span>
                   </div>
                   <div className="grid sm:grid-cols-3 gap-3 text-xs">
                     <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
-                      <span className="font-semibold text-slate-500 text-[11px]">স্ক্রোল থামানোর হুক:</span>
+                      <span className="font-semibold text-slate-500 text-[11px]">{t("social.cmScrollHook")}</span>
                       <p className="mt-1 font-bold text-slate-800">{videoScriptResult.competitorHookBreakdown.firstThreeSecondsHook}</p>
                     </div>
                     <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
-                      <span className="font-semibold text-slate-500 text-[11px]">ভিউয়ার ধরে রাখার কারণ (Retention):</span>
+                      <span className="font-semibold text-slate-500 text-[11px]">{t("social.cmRetention")}</span>
                       <p className="mt-1 text-slate-700">{videoScriptResult.competitorHookBreakdown.whyItRetainsViewers}</p>
                     </div>
                     <div className="rounded-xl bg-white p-3 ring-1 ring-inset ring-slate-200/60">
-                      <span className="font-semibold text-slate-500 text-[11px]">মানসিক ট্রিগার (Trigger):</span>
+                      <span className="font-semibold text-slate-500 text-[11px]">{t("social.cmTrigger")}</span>
                       <p className="mt-1 font-semibold text-brand-700">{videoScriptResult.competitorHookBreakdown.coreEmotionalTrigger}</p>
                     </div>
                   </div>
@@ -3005,20 +3011,20 @@ export default function CompetitorsPage() {
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h4 className="font-bold text-slate-900 text-sm">
-                      🎬 সিন-বাই-সিন স্টোরিবোর্ড ও শুটিং গাইড ({videoScriptResult.adaptedScript.conceptTitle})
+                      {t("social.cmStoryboardTitle", { title: videoScriptResult.adaptedScript.conceptTitle })}
                     </h4>
-                    <span className="text-xs text-slate-400">রিলস / টিকটক (৯:১৬) ফরম্যাট</span>
+                    <span className="text-xs text-slate-400">{t("social.cmFormatNote")}</span>
                   </div>
 
                   <div className="table-wrap">
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr>
-                          <th className="w-24">টাইমস্ট্যাম্প</th>
-                          <th className="w-36">ফেজ / পর্ব</th>
-                          <th>ক্যামেরা ও বি-রোল নির্দেশিকা (Visual Shot)</th>
-                          <th>স্পোকেন ডায়লগ / ভয়েসওভার (Audio)</th>
-                          <th>স্ক্রিন টেক্সট / ক্যাপশন</th>
+                          <th className="w-24">{t("social.cmThTimestamp")}</th>
+                          <th className="w-36">{t("social.cmThPhase")}</th>
+                          <th>{t("social.cmThVisual")}</th>
+                          <th>{t("social.cmThAudio")}</th>
+                          <th>{t("social.cmThScreenText")}</th>
                         </tr>
                       </thead>
                       <tbody className="text-slate-800">
@@ -3034,7 +3040,7 @@ export default function CompetitorsPage() {
                             </td>
                             <td className="text-slate-600">
                               <span className="font-medium text-slate-900">{scene.visualCue}</span>
-                              <p className="text-[10px] text-slate-400 mt-0.5">নোট: {scene.directorNotes}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{t("social.cmNotePrefix", { text: scene.directorNotes })}</p>
                             </td>
                             <td className="font-semibold text-slate-900 leading-relaxed">
                               &ldquo;{scene.audioVoiceover}&rdquo;
@@ -3053,7 +3059,7 @@ export default function CompetitorsPage() {
                 <div className="comp-dark p-4 space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="comp-dark-label">
-                      🎙️ টেলিপ্রম্পটার ভয়েসওভার কপি (Full Voiceover Script)
+                      {t("social.cmTeleprompterLabel")}
                     </span>
                     <button
                       onClick={() => {
@@ -3063,7 +3069,7 @@ export default function CompetitorsPage() {
                       }}
                       className="flex min-h-[32px] items-center gap-1 rounded-lg bg-white/15 px-2.5 py-1 text-xs font-semibold text-white ring-1 ring-inset ring-white/20 hover:bg-white/25"
                     >
-                      {copiedText === "voiceover" ? "কপি হয়েছে!" : "📋 কপি টেলিপ্রম্পটার"}
+                      {copiedText === "voiceover" ? t("social.cmCopiedBang") : t("social.cmCopyTeleprompter")}
                     </button>
                   </div>
                   <p className="text-xs text-white/85 leading-relaxed font-sans">
@@ -3074,7 +3080,7 @@ export default function CompetitorsPage() {
                 {/* Creator Shooting Checklist */}
                 <div className="grid sm:grid-cols-2 gap-3 text-xs">
                   <div className="rounded-xl border p-3.5 bg-slate-50 space-y-2">
-                    <span className="font-bold text-slate-900 block">🎥 ক্রিয়েটর শুটিং চেকলিস্ট:</span>
+                    <span className="font-bold text-slate-900 block">{t("social.cmChecklistTitle")}</span>
                     <ul className="space-y-1 text-slate-600 list-disc list-inside text-[11px]">
                       {videoScriptResult.adaptedScript.creatorShootingChecklist.map((item, ix) => (
                         <li key={ix}>{item}</li>
@@ -3082,12 +3088,12 @@ export default function CompetitorsPage() {
                     </ul>
                   </div>
                   <div className="rounded-xl border p-3.5 bg-slate-50 space-y-2">
-                    <span className="font-bold text-slate-900 block">🎵 সাজেস্টেড ব্যাকগ্রাউন্ড মিউজিক:</span>
+                    <span className="font-bold text-slate-900 block">{t("social.cmMusicTitle")}</span>
                     <p className="text-slate-700 text-[11px] leading-relaxed">
                       {videoScriptResult.adaptedScript.suggestedAudioTrack}
                     </p>
                     <div className="pt-2 border-t text-[11px] text-slate-500">
-                      টিপস: টিকটক ও ইনস্টাগ্রামে ট্রেন্ডিং সাউন্ড ব্যবহার করলে রিচ ২ গুণ বৃদ্ধি পায়।
+                      {t("social.cmMusicTip")}
                     </div>
                   </div>
                 </div>
@@ -3111,7 +3117,7 @@ export default function CompetitorsPage() {
                     Telegram & WhatsApp Real-Time Alert Bot
                   </h3>
                   <p className="text-xs text-slate-500">
-                    প্রতিযোগী দাম কমালে বা স্টক-আউট হলে ফোনে ইনস্ট্যান্ট নোটিফিকেশন পান
+                    {t("social.cmAlertBotSub")}
                   </p>
                 </div>
               </div>
@@ -3134,7 +3140,7 @@ export default function CompetitorsPage() {
                     onChange={(e) => setAlertConfig({ ...alertConfig, telegramEnabled: e.target.checked })}
                     className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <span>✈️ Telegram নোটিফিকেশন সক্রিয় করুন</span>
+                  <span>{t("social.cmTelegramEnable")}</span>
                 </label>
                 <button
                   type="button"
@@ -3142,7 +3148,7 @@ export default function CompetitorsPage() {
                   onClick={() => testAlertChannelHandler("telegram")}
                   className="comp-soft-btn min-h-[32px] px-2.5 py-1 text-[11px]"
                 >
-                  {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট মেসেজ পাঠান"}
+                  {isTestingAlert ? t("social.cmSending") : t("social.cmTestMsgBtn")}
                 </button>
               </div>
 
@@ -3150,7 +3156,7 @@ export default function CompetitorsPage() {
                 <div className="space-y-2 pt-1 text-xs">
                   <div>
                     <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                      Telegram Bot Token (@BotFather থেকে প্রাপ্ত)
+                      {t("social.cmBotTokenLabel")}
                     </label>
                     <input
                       className={inputCls}
@@ -3165,7 +3171,7 @@ export default function CompetitorsPage() {
                     </label>
                     <input
                       className={inputCls}
-                      placeholder="e.g. 123456789 বা -100123456789"
+                      placeholder={t("social.cmChatIdPlaceholder")}
                       value={alertConfig.telegramChatId || ""}
                       onChange={(e) => setAlertConfig({ ...alertConfig, telegramChatId: e.target.value })}
                     />
@@ -3184,7 +3190,7 @@ export default function CompetitorsPage() {
                     onChange={(e) => setAlertConfig({ ...alertConfig, whatsappEnabled: e.target.checked })}
                     className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                   />
-                  <span>💬 WhatsApp Webhook নোটিফিকেশন</span>
+                  <span>{t("social.cmWaWebhookLabel2")}</span>
                 </label>
                 <button
                   type="button"
@@ -3192,7 +3198,7 @@ export default function CompetitorsPage() {
                   onClick={() => testAlertChannelHandler("whatsapp")}
                   className="min-h-[32px] rounded-lg border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                 >
-                  {isTestingAlert ? "পাঠানো হচ্ছে..." : "🔔 টেস্ট Webhook"}
+                  {isTestingAlert ? t("social.cmSending") : t("social.cmTestWebhookBtn")}
                 </button>
               </div>
 
@@ -3213,7 +3219,7 @@ export default function CompetitorsPage() {
 
             {/* Trigger Checkboxes */}
             <div className="space-y-2 border-t pt-3 text-xs">
-              <span className="font-bold text-slate-800 block">কোন কোন ক্ষেত্রে অ্যালার্ট পাঠাবে:</span>
+              <span className="font-bold text-slate-800 block">{t("social.cmAlertCasesTitle")}</span>
               <div className="space-y-1.5">
                 <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
                   <input
@@ -3221,7 +3227,7 @@ export default function CompetitorsPage() {
                     checked={alertConfig.notifyOnStockOut}
                     onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnStockOut: e.target.checked })}
                   />
-                  <span>🚨 প্রতিদ্বন্দীর প্রোডাক্ট Stock-Out হলে (ক্যাম্পেইন বুস্ট সুযোগ)</span>
+                  <span>{t("social.cmAlertStockOut")}</span>
                 </label>
                 <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
                   <input
@@ -3229,7 +3235,7 @@ export default function CompetitorsPage() {
                     checked={alertConfig.notifyOnPriceDrop}
                     onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnPriceDrop: e.target.checked })}
                   />
-                  <span>📉 প্রতিযোগী প্রোডাক্টের দাম ১০%+ কমালে</span>
+                  <span>{t("social.cmAlertPriceDrop")}</span>
                 </label>
                 <label className="flex items-center gap-2 text-slate-700 cursor-pointer">
                   <input
@@ -3237,7 +3243,7 @@ export default function CompetitorsPage() {
                     checked={alertConfig.notifyOnWinningAd}
                     onChange={(e) => setAlertConfig({ ...alertConfig, notifyOnWinningAd: e.target.checked })}
                   />
-                  <span>🔥 প্রতিদ্বন্দীর নতুন Winning Ad (১৪+ দিন স্থায়ী) শনাক্ত হলে</span>
+                  <span>{t("social.cmAlertWinning")}</span>
                 </label>
               </div>
             </div>
@@ -3249,14 +3255,14 @@ export default function CompetitorsPage() {
                 onClick={() => setIsAlertSettingsOpen(false)}
                 className="btn-secondary min-h-[40px] text-xs"
               >
-                বাতিল
+                {t("common.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={isSavingAlertConfig}
                 className="btn-primary min-h-[40px] text-xs py-2 px-4 disabled:opacity-50"
               >
-                {isSavingAlertConfig ? "সংরক্ষণ হচ্ছে..." : "সেটিংস সংরক্ষণ করুন"}
+                {isSavingAlertConfig ? t("social.cmSavingSettings") : t("social.cmSaveSettings")}
               </button>
             </div>
           </form>
@@ -3270,10 +3276,10 @@ export default function CompetitorsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h3 className="font-bold text-slate-900">
-              AI Market Intelligence {active ? `(${active.name})` : "(সব প্রতিযোগী)"}
+              AI Market Intelligence {active ? `(${active.name})` : t("social.cmIntelAllSuffix")}
             </h3>
             <p className="text-xs text-slate-400">
-              প্রমাণ যাচাইকৃত স্ট্র্যাটেজিক ইনসাইট
+              {t("social.cmIntelSub")}
             </p>
           </div>
           <button
@@ -3281,7 +3287,7 @@ export default function CompetitorsPage() {
             disabled={busy !== ""}
             onClick={generateInsights}
           >
-            {busy === "insights" ? "ইনসাইট তৈরি হচ্ছে..." : "✨ নতুন Insight তৈরি করুন"}
+            {busy === "insights" ? t("social.cmGeneratingInsights") : t("social.cmGenInsights")}
           </button>
         </div>
         <div className="mt-3 space-y-2">
@@ -3295,7 +3301,7 @@ export default function CompetitorsPage() {
               </div>
               {ins.detail ? <p className="mt-1 text-slate-600 leading-relaxed">{ins.detail}</p> : null}
               <div className="mt-2 text-[11px] text-slate-400">
-                প্রমাণ:{" "}
+                {t("social.cmEvidenceLabel")}{" "}
                 {ins.evidence.map((e, i) => (
                   <span key={i}>
                     {i > 0 ? " · " : ""}
@@ -3313,7 +3319,7 @@ export default function CompetitorsPage() {
           ))}
           {insights.length === 0 ? (
             <p className="text-xs text-slate-400 py-4 text-center">
-              এখনো কোনো Insight নেই। আগে বিজ্ঞাপণ বা দামের তথ্য সিঙ্ক করুন, তারপর ইনসাইট জেনারেট করুন।
+              {t("social.cmNoInsights")}
             </p>
           ) : null}
         </div>

@@ -4,11 +4,11 @@ import { apiFetch, API_URL, getToken } from "@/lib/api";
 import { mediaSrc } from "@/lib/media-src";
 import { getOrganizationId } from "@/lib/org";
 import {
-  MERCHANT_API_SCOPES, canDownloadExport, dataExportKindLabel, dataExportStatusLabel,
+  canDownloadExport, dataExportKindLabel, dataExportStatusLabel,
   dataExportsFromPayload, dataImportErrorLabel, dataImportJobStatusLabel,
   dataImportSkipReasonLabel, dataImportTableLabel, exportDownloadFilename,
   formatExportSize, formatMerchantKeyPrefix, merchantApiKeyStatusLabel, merchantApiScopeLabel,
-  merchantKeysFromPayload,
+  merchantApiScopesFor, merchantKeysFromPayload,
   validateMerchantKeyDraft, type CreatedMerchantApiKey, type DataExportRow,
   type DataImportJob, type DataImportReport, type MerchantApiKeyRecord,
 } from "@/lib/ab8";
@@ -21,6 +21,10 @@ import dynamic from "next/dynamic";
 const BusinessKnowledgeSection = dynamic(() => import("./knowledge-section").then((m) => m.BusinessKnowledgeSection), { ssr: false });
 const AiLearningSection = dynamic(() => import("./ai-learning-section").then((m) => m.AiLearningSection), { ssr: false });
 const AiControlCenterSection = dynamic(() => import("./ai-control-section").then((m) => m.AiControlCenterSection), { ssr: false });
+import { LanguageSection } from "./language-section";
+import { useLocale } from "@/lib/i18n/provider";
+import { fmtDateTime, fmtNumber, type UiLocale } from "@repo/contracts";
+import { settingsBn, settingsEn } from "@/lib/i18n/settings";
 
 interface TotpStatus { totpEnabled: boolean; enrolmentInProgress: boolean }
 
@@ -34,12 +38,12 @@ interface OrgBranding {
   googleReviewUrl: string | null;
 }
 
-const BRAND_FONT_OPTIONS: { key: string; labelBn: string }[] = [
-  { key: "hind-siliguri", labelBn: "Hind Siliguri (বাংলা)" },
-  { key: "noto-sans-bengali", labelBn: "Noto Sans Bengali (বাংলা)" },
-  { key: "arial", labelBn: "Arial" },
-  { key: "georgia", labelBn: "Georgia" },
-  { key: "verdana", labelBn: "Verdana" },
+const BRAND_FONT_OPTIONS: { key: string; labelKey?: string; labelEn?: string }[] = [
+  { key: "hind-siliguri", labelKey: "brandFontHindSiliguri" },
+  { key: "noto-sans-bengali", labelKey: "brandFontNotoSans" },
+  { key: "arial", labelEn: "Arial" },
+  { key: "georgia", labelEn: "Georgia" },
+  { key: "verdana", labelEn: "Verdana" },
 ];
 
 /**
@@ -49,6 +53,8 @@ const BRAND_FONT_OPTIONS: { key: string; labelBn: string }[] = [
  * label PDFs, and the public client report.
  */
 function BrandingCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [org, setOrg] = useState<OrgBranding | null>(null);
   const [brandName, setBrandName] = useState("");
   const [googleReviewUrl, setGoogleReviewUrl] = useState("");
@@ -71,7 +77,7 @@ function BrandingCard() {
       setFont(o.brandFont ?? "");
       setColor2(o.brandSecondaryColor ?? "#B45309");
       setDomain(o.customDomain ?? "");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -83,9 +89,9 @@ function BrandingCard() {
         method: "PATCH",
         body: JSON.stringify({ brandName, primaryColor: color, brandFont: font, brandSecondaryColor: color2, customDomain: domain, googleReviewUrl: googleReviewUrl.trim() }),
       });
-      setMsg("✅ ব্র্যান্ডিং সংরক্ষিত হয়েছে। সাইডবার, ইনভয়েস/লেবেল PDF আর ক্লায়েন্ট রিপোর্টে এখন থেকে এই ব্র্যান্ডিং দেখাবে।");
+      setMsg(D.brandSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(false); }
   }
 
@@ -96,7 +102,7 @@ function BrandingCard() {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(String(r.result));
-        r.onerror = () => reject(new Error("ফাইল পড়া যায়নি"));
+        r.onerror = () => reject(new Error(D.brandFileReadFailed));
         r.readAsDataURL(file);
       });
       const dataBase64 = dataUrl.split(",")[1] ?? "";
@@ -104,9 +110,9 @@ function BrandingCard() {
         method: "POST",
         body: JSON.stringify({ dataBase64, contentType: file.type }),
       });
-      setMsg("✅ লোগো আপলোড হয়েছে।");
+      setMsg(D.brandLogoUploaded);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "লোগো আপলোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.brandLogoUploadFailed); }
     finally { setBusy(false); }
   }
 
@@ -115,9 +121,9 @@ function BrandingCard() {
     setBusy(true); setMsg(""); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/branding/logo`, { method: "DELETE" });
-      setMsg("লোগো সরিয়ে দেওয়া হয়েছে — এখন ডিফল্ট চিহ্ন দেখাবে।");
+      setMsg(D.brandLogoRemoved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সরানো যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.removeFailed); }
     finally { setBusy(false); }
   }
 
@@ -126,59 +132,55 @@ function BrandingCard() {
       <div className="mb-4 flex items-start gap-3">
         <span className="stat-icon stat-icon-brand !h-10 !w-10 text-lg">🎨</span>
         <div className="min-w-0">
-          <h2 className="font-semibold leading-tight text-slate-900">ব্র্যান্ডিং — White-Label</h2>
+          <h2 className="font-semibold leading-tight text-slate-900">{D.brandTitle}</h2>
         </div>
       </div>
-      <p className="mb-4 max-w-2xl text-sm text-slate-500">
-        এজেন্সি হিসেবে ক্লায়েন্টের সামনে নিজের ব্র্যান্ড দেখান। ব্র্যান্ডিং থাকলে সাইডবার/হেডারে আপনার লোগো ও নাম,
-        ইনভয়েস ও শিপিং লেবেল PDF-এ আপনার ব্র্যান্ডের নাম ও রঙের অ্যাকসেন্ট, আর পাবলিক ক্লায়েন্ট রিপোর্টে আপনার ব্র্যান্ডিং দেখাবে।
-        কিছু না দিলে প্ল্যাটফর্মের ডিফল্ট রূপই থাকে।
-      </p>
+      <p className="mb-4 max-w-2xl text-sm text-slate-500">{D.brandIntro}</p>
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
-      {!org ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      {!org ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-start gap-5">
             <div>
-              <div className="mb-1 text-xs font-medium text-slate-500">লোগো (PNG/JPEG/WebP, সর্বোচ্চ ১.৫ MB)</div>
+              <div className="mb-1 text-xs font-medium text-slate-500">{D.brandLogoLabel}</div>
               <div className="flex items-center gap-3">
                 {org.logoUrl
-                  ? <img src={mediaSrc(API_URL, org.logoUrl) ?? ""} alt="লোগো" className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
+                  ? <img src={mediaSrc(API_URL, org.logoUrl) ?? ""} alt={D.brandLogoAlt} className="h-14 w-14 rounded-2xl border bg-white object-contain p-1" />
                   : <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl font-black text-white">Q</span>}
                 <div className="space-y-2">
                   <label className="btn-secondary btn-sm cursor-pointer">
-                    {org.logoUrl ? "লোগো বদলান" : "লোগো আপলোড করুন"}
+                    {org.logoUrl ? D.brandLogoChange : D.brandLogoUpload}
                     <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={busy}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLogo(f); e.target.value = ""; }} />
                   </label>
-                  {org.logoUrl ? <button className="btn-secondary btn-sm block text-red-600" disabled={busy} onClick={removeLogo}>লোগো সরান</button> : null}
+                  {org.logoUrl ? <button className="btn-secondary btn-sm block text-red-600" disabled={busy} onClick={removeLogo}>{D.brandLogoRemove}</button> : null}
                 </div>
               </div>
             </div>
-            <label className="block min-w-56 flex-1 text-sm text-slate-600">ব্র্যান্ড / প্রদর্শন নাম
+            <label className="block min-w-56 flex-1 text-sm text-slate-600">{D.brandNameLabel}
               <input className="input mt-1" value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder={org.name} maxLength={120} />
-              <span className="mt-1 block text-xs text-slate-400">খালি রাখলে প্রতিষ্ঠানের আসল নাম ({org.name}) দেখাবে।</span>
+              <span className="mt-1 block text-xs text-slate-400">{D.brandNameHintBefore}{org.name}{D.brandNameHintAfter}</span>
             </label>
-            <label className="block text-sm text-slate-600">প্রাইমারি রঙ
+            <label className="block text-sm text-slate-600">{D.brandPrimaryColor}
               <span className="mt-1 flex items-center gap-2">
                 <input type="color" className="h-10 w-14 cursor-pointer rounded-lg border bg-white p-1" value={color} onChange={(e) => setColor(e.target.value)} />
                 <input className="input w-28" value={color} onChange={(e) => setColor(e.target.value)} placeholder="#4F46E5" maxLength={20} />
               </span>
-              <span className="mt-1 block text-xs text-slate-400">ড্যাশবোর্ডের প্রধান বাটন ও PDF অ্যাকসেন্টে ব্যবহার হয়।</span>
+              <span className="mt-1 block text-xs text-slate-400">{D.brandPrimaryColorHint}</span>
             </label>
-            <label className="block text-sm text-slate-600">সেকেন্ডারি রঙ (MX7 — ইমেইল বিল্ডার)
+            <label className="block text-sm text-slate-600">{D.brandSecondaryColor}
               <span className="mt-1 flex items-center gap-2">
                 <input type="color" className="h-10 w-14 cursor-pointer rounded-lg border bg-white p-1" value={color2} onChange={(e) => setColor2(e.target.value)} />
                 <input className="input w-28" value={color2} onChange={(e) => setColor2(e.target.value)} placeholder="#B45309" maxLength={20} />
               </span>
-              <span className="mt-1 block text-xs text-slate-400">Messaging-এর Email Builder-এ কুপন ব্লক ও পণ্যের লিংকে ব্যবহার হয়।</span>
+              <span className="mt-1 block text-xs text-slate-400">{D.brandSecondaryColorHint}</span>
             </label>
-            <label className="block text-sm text-slate-600">ব্র্যান্ড ফন্ট (MX7 — ইমেইল বিল্ডার)
+            <label className="block text-sm text-slate-600">{D.brandFontLabel}
               <select className="input mt-1" value={font} onChange={(e) => setFont(e.target.value)}>
-                <option value="">— ডিফল্ট —</option>
-                {BRAND_FONT_OPTIONS.map((f) => <option key={f.key} value={f.key}>{f.labelBn}</option>)}
+                <option value="">{D.brandFontDefault}</option>
+                {BRAND_FONT_OPTIONS.map((f) => <option key={f.key} value={f.key}>{f.labelKey ? D[f.labelKey as keyof typeof D] : f.labelEn}</option>)}
               </select>
-              <span className="mt-1 block text-xs text-slate-400">Builder-এ বানানো ইমেইলের লেখায় এই ফন্ট ব্যবহার হয়।</span>
+              <span className="mt-1 block text-xs text-slate-400">{D.brandFontHint}</span>
             </label>
           </div>
 
@@ -186,37 +188,28 @@ function BrandingCard() {
               actually chosen — stated exactly as shop-pwa.ts
               buildShopManifest does it, nothing more claimed. */}
           <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-            <p className="font-medium text-slate-700">দোকানের অ্যাপ আইকন যেভাবে ঠিক হয়</p>
-            <p className="mt-1 text-xs leading-relaxed">
-              আপনার দোকানটি ক্রেতারা নিজের নাম ও রঙে মোবাইলে ইনস্টল করতে পারেন — দোকানের পেজে থাকা ইনস্টল বার থেকে।
-              নিজের লোগো থাকলে সেই লোগোটিই অ্যাপের আইকন হবে। লোগো না থাকলে white-label দোকানের জন্য দোকানের নামের
-              প্রথম অক্ষর দিয়ে একটি আইকন স্বয়ংক্রিয়ভাবে তৈরি হয়, আর অন্য দোকানের ক্ষেত্রে প্ল্যাটফর্মের ডিফল্ট
-              আইকন ব্যবহৃত হয় — আলাদা করে কোনো অ্যাপ আইকন আপলোডের ব্যবস্থা নেই।
-            </p>
+            <p className="font-medium text-slate-700">{D.brandAppIconTitle}</p>
+            <p className="mt-1 text-xs leading-relaxed">{D.brandAppIconText}</p>
           </div>
 
           {/* NF8: the org's own Google review link. Offered (never
               auto-redirected, no reward attached) on the review
               thank-you screen only after a 4–5 star review. */}
-          <label className="block text-sm text-slate-600">Google রিভিউ লিংক
+          <label className="block text-sm text-slate-600">{D.brandGoogleReviewLabel}
             <input className="input mt-1" value={googleReviewUrl} onChange={(e) => setGoogleReviewUrl(e.target.value)} placeholder="https://g.page/r/…/review" maxLength={2048} inputMode="url" />
-            <span className="mt-1 block text-xs leading-relaxed text-slate-400">
-              আপনার ব্যবসার Google রিভিউ পেজের লিংকটি এখানে বসান (Google Business Profile থেকে “Ask for reviews” লিংক)।
-              ক্রেতা ৪–৫ তারার রিভিউ জমা দিলে ধন্যবাদ-পেজে এই লিংকটি <b>প্রস্তাব</b> হিসেবে দেখানো হবে — কখনোই নিজে থেকে Google-এ পাঠিয়ে দেওয়া হবে না,
-              আর রেটিংয়ের বিনিময়ে কোনো পুরস্কার/ছাড়ের প্রলোভন দেওয়া হয় না। খালি রাখলে কিছুই দেখানো হবে না।
-            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-400">{D.brandGoogleReviewHintA}<b>{D.brandGoogleReviewHintBold}</b>{D.brandGoogleReviewHintB}</span>
           </label>
 
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm">
-            <span className="font-medium text-slate-700">কাস্টম ডোমেইন:</span>
+            <span className="font-medium text-slate-700">{D.brandCustomDomain}</span>
             {org.customDomain
               ? <span className="font-mono font-bold text-slate-900">{org.customDomain}</span>
-              : <span className="text-slate-500">সেট করা নেই</span>}
-            <a href="/dashboard/commerce/storefront" className="font-semibold text-indigo-700 underline">দোকানের ডোমেইন সেটিংসে পরিচালনা করুন →</a>
+              : <span className="text-slate-500">{D.brandNotSet}</span>}
+            <a href="/dashboard/commerce/storefront" className="font-semibold text-indigo-700 underline">{D.brandManageDomain}</a>
           </div>
 
-          <button className="btn-primary" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "ব্র্যান্ডিং সংরক্ষণ করুন"}</button>
-          <p className="text-xs text-slate-400">ক্লায়েন্ট রিপোর্ট লিংক তৈরি ও বাতিল করা যায় Analytics পেজের “ক্লায়েন্ট রিপোর্ট লিংক” কার্ড থেকে — লিংক খুললে ক্লায়েন্ট আপনার ব্র্যান্ডিংয়েই রিপোর্ট দেখবে।</p>
+          <button className="btn-primary" disabled={busy} onClick={save}>{busy ? D.waitPlease : D.brandSaveBtn}</button>
+          <p className="text-xs text-slate-400">{D.brandReportNoteBefore}</p>
         </div>
       )}
     </section>
@@ -230,6 +223,8 @@ function BrandingCard() {
  * warning, and never re-fetched (the list carries prefixes only).
  */
 function DeveloperApiCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [keys, setKeys] = useState<MerchantApiKeyRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [name, setName] = useState("");
@@ -247,7 +242,7 @@ function DeveloperApiCard() {
       // the bare array — the lib normalizer accepts both.
       const out = await apiFetch<unknown>(`/organizations/${orgId}/merchant-api-keys`);
       setKeys(merchantKeysFromPayload(out));
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -258,7 +253,7 @@ function DeveloperApiCard() {
 
   async function createKey() {
     const orgId = getOrganizationId(); if (!orgId) return;
-    const err = validateMerchantKeyDraft(name, scopes);
+    const err = validateMerchantKeyDraft(name, scopes, locale);
     if (err) { setError(err); return; }
     setBusy("create"); setMsg(""); setError(""); setCreatedKey(""); setCopied(false);
     try {
@@ -267,9 +262,9 @@ function DeveloperApiCard() {
       });
       setCreatedKey(out.key);
       setName("");
-      setMsg("✅ নতুন API কী তৈরি হয়েছে।");
+      setMsg(D.apiKeyCreated);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "কী তৈরি করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.apiKeyCreateFailed); }
     finally { setBusy(""); }
   }
 
@@ -277,59 +272,59 @@ function DeveloperApiCard() {
     try {
       await navigator.clipboard.writeText(createdKey);
       setCopied(true);
-    } catch { setError("কপি করা যায়নি — কীটি হাতে কপি করুন।"); }
+    } catch { setError(D.apiCopyFailed); }
   }
 
   async function revokeKey(k: MerchantApiKeyRecord) {
     const orgId = getOrganizationId(); if (!orgId) return;
-    if (!window.confirm(`"${k.name}" কীটি বাতিল করবেন? এই কী দিয়ে চলা সব সংযোগ সঙ্গে সঙ্গে বন্ধ হয়ে যাবে — এটি আর ফিরিয়ে আনা যাবে না।`)) return;
+    if (!window.confirm(t("settings.apiRevokeConfirm", { name: k.name }))) return;
     setBusy(`revoke-${k.id}`); setMsg(""); setError("");
     try {
       await apiFetch(`/organizations/${orgId}/merchant-api-keys/${k.id}`, { method: "DELETE" });
-      setMsg("কীটি বাতিল করা হয়েছে।");
+      setMsg(D.apiKeyRevoked);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "কী বাতিল করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.apiKeyRevokeFailed); }
     finally { setBusy(""); }
   }
 
   return (
     <section id="hub-developer-api" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🔑" title="ডেভেলপার API" hint="নিজের অ্যাপ/স্ক্রিপ্ট থেকে এই প্রতিষ্ঠানের পণ্য, অর্ডার ও গ্রাহকের তথ্যে প্রোগ্রাম দিয়ে অ্যাক্সেসের জন্য API কী। প্রতিটি কী শুধু বেছে দেওয়া স্কোপগুলোতেই কাজ করে।" />
+      <SectionHead icon="🔑" title={D.apiTitle} hint={D.apiHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
       {createdKey ? (
         <div className="mb-4 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
-          <p className="text-sm font-semibold text-amber-900">⚠️ এই কীটি আর দেখানো হবে না — এখনই সংরক্ষণ করুন</p>
+          <p className="text-sm font-semibold text-amber-900">{D.apiKeyOneTimeWarn}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <code className="min-w-0 flex-1 break-all rounded bg-white p-2 font-mono text-sm ring-1 ring-amber-200">{createdKey}</code>
-            <button type="button" className="btn-secondary btn-sm" onClick={copyCreatedKey}>{copied ? "✓ কপি হয়েছে" : "কপি করুন"}</button>
-            <button type="button" className="btn-ghost btn-sm" onClick={() => { setCreatedKey(""); setCopied(false); }}>আমি সংরক্ষণ করেছি, লুকিয়ে দিন</button>
+            <button type="button" className="btn-secondary btn-sm" onClick={copyCreatedKey}>{copied ? D.apiCopied : D.apiCopy}</button>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => { setCreatedKey(""); setCopied(false); }}>{D.apiSavedHide}</button>
           </div>
         </div>
       ) : null}
-      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      {!loaded ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-5">
           <div>
-            {keys.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো API কী তৈরি করা হয়নি।</p> : (
+            {keys.length === 0 ? <p className="text-sm text-slate-400">{D.apiNoKeys}</p> : (
               <ul className="space-y-1.5">
                 {keys.map((k) => (
                   <li key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
                     <span className="min-w-0">
                       <span className="font-medium text-slate-800">{k.name}</span>
-                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${k.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{merchantApiKeyStatusLabel(k.status)}</span>
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${k.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{merchantApiKeyStatusLabel(k.status, locale)}</span>
                       <span className="block font-mono text-xs text-slate-500">{formatMerchantKeyPrefix(k.keyPrefix)}</span>
                       <span className="mt-1 flex flex-wrap gap-1">
                         {(k.scopes ?? []).map((s) => (
-                          <span key={s} className="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">{merchantApiScopeLabel(s)}</span>
+                          <span key={s} className="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200">{merchantApiScopeLabel(s, locale)}</span>
                         ))}
                       </span>
                       <span className="block text-[11px] text-slate-400">
-                        তৈরি: {new Date(k.createdAt).toLocaleString("bn-BD")} · শেষ ব্যবহার: {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString("bn-BD") : "কখনো নয়"}
+                        {D.apiCreatedLabel}{fmtDateTime(locale, k.createdAt)}{D.apiLastUsedLabel}{k.lastUsedAt ? fmtDateTime(locale, k.lastUsedAt) : D.apiNever}
                       </span>
                     </span>
                     {k.status === "active" ? (
                       <button type="button" className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => revokeKey(k)}>
-                        {busy === `revoke-${k.id}` ? "বাতিল হচ্ছে…" : "বাতিল করুন"}
+                        {busy === `revoke-${k.id}` ? D.apiRevoking : D.apiRevoke}
                       </button>
                     ) : null}
                   </li>
@@ -338,16 +333,16 @@ function DeveloperApiCard() {
             )}
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">নতুন কী তৈরি করুন</h3>
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">{D.apiNewKeyTitle}</h3>
             <div className="flex flex-wrap items-end gap-3">
-              <label className="block min-w-52 flex-1 text-sm text-slate-600">কী-এর নাম
-                <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="যেমন: ওয়েবসাইট সিঙ্ক" maxLength={80} />
+              <label className="block min-w-52 flex-1 text-sm text-slate-600">{D.apiKeyNameLabel}
+                <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder={D.apiKeyNamePlaceholder} maxLength={80} />
               </label>
             </div>
             <div className="mt-3">
-              <div className="mb-1.5 text-[13px] font-medium text-slate-600">স্কোপ (অনুমতি)</div>
+              <div className="mb-1.5 text-[13px] font-medium text-slate-600">{D.apiScopeLabel}</div>
               <div className="grid gap-1.5 sm:grid-cols-2">
-                {MERCHANT_API_SCOPES.map((s) => (
+                {merchantApiScopesFor(locale).map((s) => (
                   <label key={s.key} className="flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-xl bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
                     <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={scopes.includes(s.key)}
                       onChange={() => toggleScope(s.key)} aria-label={s.label} />
@@ -357,7 +352,7 @@ function DeveloperApiCard() {
               </div>
             </div>
             <button type="button" className="btn-primary mt-4 min-h-[44px]" disabled={busy !== ""} onClick={createKey}>
-              {busy === "create" ? "তৈরি হচ্ছে…" : "API কী তৈরি করুন"}
+              {busy === "create" ? D.apiCreating : D.apiCreateBtn}
             </button>
           </div>
         </div>
@@ -373,6 +368,8 @@ function DeveloperApiCard() {
  * export is ready (the API enforces org ownership + expiry).
  */
 function DataToolsCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [items, setItems] = useState<DataExportRow[]>([]);
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
@@ -408,13 +405,13 @@ function DataToolsCard() {
       const text = await file.text();
       if (text.length > 2_800_000) {
         setImportText("");
-        setError("ফাইলটি এই আপলোড পদ্ধতির সীমার (প্রায় ২.৮ MB) চেয়ে বড় — এই পদ্ধতিতে ইমপোর্ট করা যাবে না।");
+        setError(D.dataImportTooBig);
         return;
       }
       setImportText(text);
     } catch {
       setImportText("");
-      setError("ফাইলটি পড়া যায়নি।");
+      setError(D.dataFileReadFailed);
     }
   }
 
@@ -427,8 +424,8 @@ function DataToolsCard() {
         body: JSON.stringify({ fileName: importFileName || undefined, bundleJson: importText }),
       });
       setImportReport(report);
-      if (!report.valid && report.errors.length === 0) setError("Bundle-টি যাচাইয়ে উত্তীর্ণ হয়নি।");
-    } catch (e) { setError(e instanceof Error ? e.message : "যাচাই করা যায়নি"); }
+      if (!report.valid && report.errors.length === 0) setError(D.dataBundleInvalid);
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataValidateFailed); }
     finally { setBusy(""); }
   }
 
@@ -443,11 +440,11 @@ function DataToolsCard() {
       setImportJob(job);
       setImportReport(null);
       if (job.status === "completed") {
-        setMsg(`✅ ইমপোর্ট সম্পন্ন — মোট ${(job.report?.totalImportRows ?? 0).toLocaleString("bn-BD")}টি রেকর্ড ফিরিয়ে আনা হয়েছে।`);
+        setMsg(t("settings.dataImportDone", { count: fmtNumber(locale, job.report?.totalImportRows ?? 0) }));
       } else if (job.status === "failed") {
-        setError(`ইমপোর্ট ব্যর্থ হয়েছে — কোনো ডেটাই লেখা হয়নি। কারণ: ${job.error ?? "অজানা ত্রুটি"}`);
+        setError(t("settings.dataImportFailed", { reason: job.error ?? D.dataUnknownError }));
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "ইমপোর্ট শুরু করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataImportStartFailed); }
     finally { setBusy(""); }
   }
 
@@ -464,7 +461,7 @@ function DataToolsCard() {
       // OU12: the slug is the verification confirm text.
       const org = await apiFetch<{ slug?: string }>(`/organizations/${orgId}`).catch(() => null);
       if (org?.slug) setOrgSlug(org.slug);
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -479,8 +476,8 @@ function DataToolsCard() {
       );
       setBackupEnabled(Boolean(out.enabled));
       setLastBackupAt(out.lastBackupAt ?? null);
-      setMsg(enabled ? "সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ চালু হয়েছে।" : "সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ বন্ধ করা হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "পছন্দ সংরক্ষণ করা যায়নি"); }
+      setMsg(enabled ? D.dataBackupOn : D.dataBackupOff);
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataPrefSaveFailed); }
     finally { setBusy(""); }
   }
 
@@ -489,9 +486,9 @@ function DataToolsCard() {
     setBusy("export"); setMsg(""); setError("");
     try {
       await apiFetch<DataExportRow>(`/organizations/${orgId}/data-exports`, { method: "POST" });
-      setMsg("✅ এক্সপোর্টের অনুরোধ তৈরি হয়েছে — প্রস্তুত হলে নিচের তালিকা থেকে ডাউনলোড করা যাবে।");
+      setMsg(D.dataExportRequested);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "এক্সপোর্ট শুরু করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataExportStartFailed); }
     finally { setBusy(""); }
   }
 
@@ -507,12 +504,10 @@ function DataToolsCard() {
         { method: "POST", body: JSON.stringify({ confirmSlug: verifySlug.trim() }) },
       );
       setVerifyResult(out.verification);
-      setMsg(out.verification.ok
-        ? "✅ ব্যাকআপ ফাইল যাচাই সম্পন্ন — ফাইলটি অক্ষত ও পাঠযোগ্য। (এটি restore নয়।)"
-        : "⚠️ ব্যাকআপ যাচাইয়ে সমস্যা পাওয়া গেছে — বিস্তারিত নিচে। ফলাফলটি রেকর্ড করা হয়েছে।");
+      setMsg(out.verification.ok ? D.dataVerifyOk : D.dataVerifyProblems);
       setVerifyRowId(""); setVerifySlug("");
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "যাচাই করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataValidateFailed); }
     finally { setBusy(""); }
   }
 
@@ -524,93 +519,93 @@ function DataToolsCard() {
       const res = await fetch(`${API_URL}/organizations/${orgId}/data-exports/${row.id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error("ডাউনলোড করা যায়নি — এক্সপোর্টটির মেয়াদ শেষ হয়ে থাকতে পারে।");
+      if (!res.ok) throw new Error(D.dataDownloadExpired);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = exportDownloadFilename(row.id);
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-    } catch (e) { setError(e instanceof Error ? e.message : "ডাউনলোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.dataDownloadFailed); }
     finally { setBusy(""); }
   }
 
   return (
     <section id="hub-data-tools" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="💾" title="ডেটা ও ব্যাকআপ" hint="প্রতিষ্ঠানের পুরো ডেটা এক্সপোর্ট করুন, সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ চালু করুন, আর কে কখন কী বদলেছে তা কার্যকলাপ লগে দেখুন।" />
+      <SectionHead icon="💾" title={D.dataTitle} hint={D.dataHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
-      <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">⚠️ এক্সপোর্টে এই প্রতিষ্ঠানের সম্পূর্ণ রেকর্ড থাকে — ফাইলটি যত্নে নিরাপদ জায়গায় সংরক্ষণ করুন এবং অপরিচিত কারও সঙ্গে শেয়ার করবেন না।</p>
-      <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">ℹ️ <strong>ব্যাকআপ যাচাই মানে restore নয়:</strong> এক্সপোর্ট ফাইল থেকে সরাসরি restore করার সুবিধা নেই — ফাইলটি ডেটা বহনযোগ্যতা ও নিরীক্ষার জন্য তৈরি (সংযোগের ক্রেডেনশিয়াল এতে থাকে না, মিডিয়ার শুধু তথ্য থাকে)। যাচাই শুধু নিশ্চিত করে ফাইলটি অক্ষত ও পাঠযোগ্য আছে কিনা।</p>
-      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{D.dataExportWarn}</p>
+      <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">ℹ️ <strong>{D.dataVerifyNoteBold}</strong>{D.dataVerifyNoteAfter}</p>
+      {!loaded ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-5">
           <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
             <span>
-              সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ
+              {D.dataWeeklyBackup}
               <span className="block text-xs font-normal text-slate-400">
-                {lastBackupAt ? `সর্বশেষ ব্যাকআপ: ${new Date(lastBackupAt).toLocaleString("bn-BD")}` : "এখনো কোনো ব্যাকআপ হয়নি"}
+                {lastBackupAt ? t("settings.dataLastBackup", { date: fmtDateTime(locale, lastBackupAt) }) : D.dataNoBackupYet}
               </span>
             </span>
             <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={backupEnabled} disabled={busy !== ""}
-              onChange={(e) => toggleBackup(e.target.checked)} aria-label="সাপ্তাহিক স্বয়ংক্রিয় ব্যাকআপ" />
+              onChange={(e) => toggleBackup(e.target.checked)} aria-label={D.dataWeeklyBackup} />
           </label>
 
           <div>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-slate-700">এক্সপোর্টসমূহ</h3>
+              <h3 className="text-sm font-semibold text-slate-700">{D.dataExportsTitle}</h3>
               <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={createExport}>
-                {busy === "export" ? "অনুরোধ হচ্ছে…" : "এখনই এক্সপোর্ট করুন"}
+                {busy === "export" ? D.dataRequesting : D.dataExportNow}
               </button>
             </div>
-            {items.length === 0 ? <p className="text-sm text-slate-400">এখনো কোনো এক্সপোর্ট করা হয়নি।</p> : (
+            {items.length === 0 ? <p className="text-sm text-slate-400">{D.dataNoExports}</p> : (
               <ul className="space-y-1.5">
                 {items.map((row) => (
                   <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
                     <span className="min-w-0">
-                      <span className="font-medium text-slate-800">{dataExportKindLabel(row.kind)}</span>
-                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${row.status === "ready" ? "bg-emerald-100 text-emerald-700" : row.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-200 text-slate-600"}`}>{dataExportStatusLabel(row.status)}</span>
+                      <span className="font-medium text-slate-800">{dataExportKindLabel(row.kind, locale)}</span>
+                      <span className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold ${row.status === "ready" ? "bg-emerald-100 text-emerald-700" : row.status === "failed" ? "bg-red-100 text-red-600" : "bg-slate-200 text-slate-600"}`}>{dataExportStatusLabel(row.status, locale)}</span>
                       <span className="block text-xs text-slate-500">
-                        আকার: {formatExportSize(row.sizeBytes)} · তৈরি: {new Date(row.createdAt).toLocaleString("bn-BD")}
-                        {row.completedAt ? ` · সম্পন্ন: ${new Date(row.completedAt).toLocaleString("bn-BD")}` : ""}
-                        {row.expiresAt ? ` · মেয়াদ: ${new Date(row.expiresAt).toLocaleString("bn-BD")}` : ""}
+                        {D.dataSizeLabel}{formatExportSize(row.sizeBytes, locale)}{D.dataCreatedLabel}{fmtDateTime(locale, row.createdAt)}
+                        {row.completedAt ? `${D.dataCompletedLabel}${fmtDateTime(locale, row.completedAt)}` : ""}
+                        {row.expiresAt ? `${D.dataExpiresLabel}${fmtDateTime(locale, row.expiresAt)}` : ""}
                       </span>
                       {row.status === "failed" && row.error ? <span className="block text-xs text-red-600">{row.error}</span> : null}
                       {row.backupVerifiedAt ? (
                         <span className={`block text-xs ${row.backupVerification?.ok ? "text-emerald-600" : "text-red-600"}`}>
-                          সর্বশেষ ব্যাকআপ যাচাই: {new Date(row.backupVerifiedAt).toLocaleString("bn-BD")} — {row.backupVerification?.ok ? "✅ ফাইল অক্ষত" : `❌ সমস্যা: ${(row.backupVerification?.problems ?? []).join(", ") || "অজানা"}`}
-                          {row.backupVerification?.truncatedTables?.length ? ` · ছাঁটা টেবিল: ${row.backupVerification.truncatedTables.join(", ")}` : ""}
+                          {D.dataLastVerifyLabel}{fmtDateTime(locale, row.backupVerifiedAt)} — {row.backupVerification?.ok ? D.dataFileIntact : `${D.dataProblemsPrefix}${(row.backupVerification?.problems ?? []).join(", ") || D.dataUnknown}`}
+                          {row.backupVerification?.truncatedTables?.length ? `${D.dataTruncatedTables}${row.backupVerification.truncatedTables.join(", ")}` : ""}
                         </span>
                       ) : null}
                     </span>
                     <span className="flex flex-wrap gap-1.5">
                       {canDownloadExport(row) ? (
                         <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""} onClick={() => downloadExport(row)}>
-                          {busy === `download-${row.id}` ? "ডাউনলোড হচ্ছে…" : "ডাউনলোড"}
+                          {busy === `download-${row.id}` ? D.dataDownloading : dict.common.download}
                         </button>
                       ) : null}
                       {row.status === "ready" ? (
                         <button type="button" className="btn-secondary btn-sm" disabled={busy !== ""}
                           onClick={() => { setVerifyRowId(verifyRowId === row.id ? "" : row.id); setVerifySlug(""); setVerifyResult(null); }}>
-                          ব্যাকআপ যাচাই
+                          {D.dataVerifyBackup}
                         </button>
                       ) : null}
                     </span>
                     {verifyRowId === row.id ? (
                       <span className="block w-full rounded-lg bg-white px-3 py-2.5 ring-1 ring-inset ring-slate-200">
                         <span className="block text-xs text-slate-600">
-                          যাচাইটি শুধুমাত্র পড়া-ভিত্তিক (read-only) — কোনো ডেটা বদলাবে না। নিশ্চিত করতে প্রতিষ্ঠানের slug
-                          {orgSlug ? <> (<strong>{orgSlug}</strong>)</> : null} হুবহু লিখুন:
+                          {D.dataVerifyReadonlyA}
+                          {orgSlug ? <> (<strong>{orgSlug}</strong>)</> : null}{D.dataVerifyReadonlyB}
                         </span>
                         <span className="mt-2 flex flex-wrap gap-2">
-                          <input value={verifySlug} onChange={(e) => setVerifySlug(e.target.value)} className="min-h-[40px] flex-1 rounded-lg border border-slate-300 px-2.5 text-sm" placeholder="org slug" aria-label="নিশ্চিত করতে org slug লিখুন" />
+                          <input value={verifySlug} onChange={(e) => setVerifySlug(e.target.value)} className="min-h-[40px] flex-1 rounded-lg border border-slate-300 px-2.5 text-sm" placeholder="org slug" aria-label={D.dataVerifySlugAria} />
                           <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== "" || !verifySlug.trim()} onClick={() => verifyBackup(row)}>
-                            {busy === `verify-${row.id}` ? "যাচাই হচ্ছে…" : "যাচাই করুন"}
+                            {busy === `verify-${row.id}` ? D.dataVerifying : D.dataVerifyBtn}
                           </button>
                         </span>
                         {verifyResult ? (
                           <span className={`mt-2 block text-xs ${verifyResult.ok ? "text-emerald-600" : "text-red-600"}`}>
-                            {verifyResult.ok ? "✅ ফাইল অক্ষত ও পাঠযোগ্য।" : `❌ সমস্যা: ${verifyResult.problems.join(", ")}`}
-                            {verifyResult.truncatedTables.length ? ` · ছাঁটা টেবিল: ${verifyResult.truncatedTables.join(", ")}` : ""}
+                            {verifyResult.ok ? D.dataFileIntactReadable : `${D.dataProblemsPrefix}${verifyResult.problems.join(", ")}`}
+                            {verifyResult.truncatedTables.length ? `${D.dataTruncatedTables}${verifyResult.truncatedTables.join(", ")}` : ""}
                           </span>
                         ) : null}
                       </span>
@@ -622,28 +617,22 @@ function DataToolsCard() {
           </div>
 
           <div className="border-t border-slate-100 pt-4">
-            <h3 className="mb-1 text-sm font-semibold text-slate-700">ডেটা ইমপোর্ট (Restore)</h3>
-            <p className="mb-3 text-sm text-slate-500">
-              আগে এক্সপোর্ট করা bundle ফাইল থেকে এই প্রতিষ্ঠানের ডেটা ফিরিয়ে আনুন। ইমপোর্ট শুধু <b>একদম নতুন, খালি</b> প্রতিষ্ঠানে
-              করা যায় — যেসব টেবিল bundle থেকে ফিরিয়ে আনা যায় না (সদস্য, বিলিং, সংযোগ, বার্তা, মিডিয়া ফাইল) তা যাচাই প্রতিবেদনে
-              কারণসহ দেখানো হয়, চুপচাপ বাদ যায় না।
-            </p>
+            <h3 className="mb-1 text-sm font-semibold text-slate-700">{D.dataImportTitle}</h3>
+            <p className="mb-3 text-sm text-slate-500">{D.dataImportIntro}</p>
             {myRole !== "OWNER" ? (
-              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
-                ডেটা ইমপোর্ট শুধু প্রতিষ্ঠানের মালিক (OWNER) করতে পারেন।
-              </p>
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">{D.dataImportOwnerOnly}</p>
             ) : (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="file"
                     accept=".json,application/json"
-                    aria-label="Bundle ফাইল বাছুন"
+                    aria-label={D.dataImportPickFile}
                     className="text-sm text-slate-600 file:mr-2 file:min-h-[40px] file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700"
                     onChange={(e) => pickImportFile(e.target.files?.[0] ?? null)}
                   />
                   <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== "" || !importText} onClick={validateImport}>
-                    {busy === "import-validate" ? "যাচাই হচ্ছে…" : "যাচাই করুন"}
+                    {busy === "import-validate" ? D.dataVerifying : D.dataVerifyBtn}
                   </button>
                 </div>
 
@@ -651,24 +640,24 @@ function DataToolsCard() {
                   <div className="rounded-xl bg-slate-50 px-3.5 py-3 text-sm">
                     {importReport.source?.organizationName ? (
                       <p className="mb-2 text-slate-600">
-                        উৎস প্রতিষ্ঠান: <b>{importReport.source.organizationName}</b>
-                        {importReport.source.exportedAt ? ` · এক্সপোর্ট: ${new Date(importReport.source.exportedAt).toLocaleString("bn-BD")}` : ""}
+                        {D.dataSourceOrg}<b>{importReport.source.organizationName}</b>
+                        {importReport.source.exportedAt ? `${D.dataExportedAtLabel}${fmtDateTime(locale, importReport.source.exportedAt)}` : ""}
                       </p>
                     ) : null}
                     {importReport.errors.length > 0 ? (
                       <ul className="mb-2 list-inside list-disc space-y-1 text-red-600">
-                        {importReport.errors.map((e) => <li key={e}>{dataImportErrorLabel(e)}</li>)}
+                        {importReport.errors.map((e) => <li key={e}>{dataImportErrorLabel(e, locale)}</li>)}
                       </ul>
                     ) : null}
                     {importReport.tables.length > 0 ? (
                       <ul className="space-y-1">
-                        {importReport.tables.map((t) => (
-                          <li key={t.table} className="flex flex-wrap items-baseline justify-between gap-2">
-                            <span className="text-slate-700">{dataImportTableLabel(t.table)}</span>
-                            {t.action === "import" ? (
-                              <span className="text-emerald-700">ফিরিয়ে আনা হবে · {t.rows.toLocaleString("bn-BD")}টি</span>
+                        {importReport.tables.map((tb) => (
+                          <li key={tb.table} className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="text-slate-700">{dataImportTableLabel(tb.table, locale)}</span>
+                            {tb.action === "import" ? (
+                              <span className="text-emerald-700">{t("settings.dataWillRestore", { count: fmtNumber(locale, tb.rows) })}</span>
                             ) : (
-                              <span className="text-slate-400">বাদ · {dataImportSkipReasonLabel(t.reason)}</span>
+                              <span className="text-slate-400">{D.dataSkippedPrefix}{dataImportSkipReasonLabel(tb.reason, locale)}</span>
                             )}
                           </li>
                         ))}
@@ -676,17 +665,17 @@ function DataToolsCard() {
                     ) : null}
                     {importReport.strippedSensitiveFields.length > 0 ? (
                       <p className="mt-2 text-xs text-amber-700">
-                        নিরাপত্তা: bundle-এর {importReport.strippedSensitiveFields.join(", ")} ফিরিয়ে আনা হবে না — ওগুলো নতুন প্রতিষ্ঠানে আলাদাভাবে সেট করতে হবে।
+                        {t("settings.dataStrippedNote", { fields: importReport.strippedSensitiveFields.join(", ") })}
                       </p>
                     ) : null}
                     {importReport.warnings.includes("duplicate_product_slugs") ? (
-                      <p className="mt-2 text-xs text-amber-700">সতর্কতা: কিছু পণ্যের slug একই — উৎসেও এমনই ছিল, ইমপোর্ট তবু চলবে।</p>
+                      <p className="mt-2 text-xs text-amber-700">{D.dataDupSlugWarn}</p>
                     ) : null}
                     {importReport.valid ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="text-slate-600">মোট {(importReport.totalImportRows).toLocaleString("bn-BD")}টি রেকর্ড ফিরিয়ে আনা হবে।</span>
+                        <span className="text-slate-600">{t("settings.dataTotalRestore", { count: fmtNumber(locale, importReport.totalImportRows) })}</span>
                         <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={runImport}>
-                          {busy === "import-run" ? "ইমপোর্ট হচ্ছে…" : "নিশ্চিত করে ইমপোর্ট করুন"}
+                          {busy === "import-run" ? D.dataImporting : D.dataImportConfirmBtn}
                         </button>
                       </div>
                     ) : null}
@@ -695,9 +684,9 @@ function DataToolsCard() {
 
                 {importJob ? (
                   <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    সর্বশেষ ইমপোর্ট: <b>{dataImportJobStatusLabel(importJob.status)}</b>
-                    {importJob.sourceOrgName ? ` · উৎস: ${importJob.sourceOrgName}` : ""}
-                    {importJob.completedAt ? ` · ${new Date(importJob.completedAt).toLocaleString("bn-BD")}` : ""}
+                    {D.dataLastImport}<b>{dataImportJobStatusLabel(importJob.status, locale)}</b>
+                    {importJob.sourceOrgName ? `${D.dataSourceLabel}${importJob.sourceOrgName}` : ""}
+                    {importJob.completedAt ? ` · ${fmtDateTime(locale, importJob.completedAt)}` : ""}
                   </p>
                 ) : null}
               </div>
@@ -705,8 +694,8 @@ function DataToolsCard() {
           </div>
 
           <p className="text-sm text-slate-600">
-            কে কখন কোন রেকর্ডে কী করেছেন —{" "}
-            <a href="/dashboard/settings/audit-logs" className="font-semibold text-indigo-700 hover:underline">কার্যকলাপ লগ দেখুন →</a>
+            {D.dataAuditNote}
+            <a href="/dashboard/settings/audit-logs" className="font-semibold text-indigo-700 hover:underline">{D.dataAuditLink}</a>
           </p>
         </div>
       )}
@@ -746,6 +735,8 @@ interface OrgIdentity {
  * moves only the default going forward.
  */
 function OrgIdentityCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [org, setOrg] = useState<OrgIdentity | null>(null);
   const [myRole, setMyRole] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -770,7 +761,7 @@ function OrgIdentityCard() {
       setTimezone(o.timezone ?? "Asia/Dhaka");
       setCountry(o.country ?? "BD");
       setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -784,12 +775,12 @@ function OrgIdentityCard() {
         body: JSON.stringify({ name: name.trim(), currency, timezone, country: country.trim().toUpperCase() }),
       });
       if (out.unchanged || !out.changedFields?.length) {
-        setMsg("কোনো বদল হয়নি — সব মান আগের মতোই আছে।");
+        setMsg(D.orgIdNoChange);
       } else {
-        setMsg("✅ Organization-এর তথ্য সংরক্ষিত হয়েছে।");
+        setMsg(D.orgIdSaved);
       }
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(false); }
   }
 
@@ -800,22 +791,22 @@ function OrgIdentityCard() {
 
   return (
     <section id="hub-org-identity" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🏢" title="Organization তথ্য" hint="প্রতিষ্ঠানের আইনি নাম ও আঞ্চলিক ডিফল্ট — এগুলো তৈরি করার সময় বসে, এখন এখান থেকে বদলানো যায়।" />
+      <SectionHead icon="🏢" title={D.orgIdTitle} hint={D.orgIdHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
       <div className="space-y-4">
         <div className="flex flex-wrap gap-4">
-          <label className="block min-w-56 flex-1 text-sm text-slate-600">প্রতিষ্ঠানের নাম (আইনি নাম)
-            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="যেমন: Acme Trading Ltd" />
-            <span className="mt-1 block text-xs text-slate-400">এটা প্রতিষ্ঠানের আসল নাম — ব্র্যান্ড/প্রদর্শন নাম উপরের ব্র্যান্ডিং অংশে আলাদা করে বদলানো যায়।</span>
+          <label className="block min-w-56 flex-1 text-sm text-slate-600">{D.orgIdNameLabel}
+            <input className="input mt-1" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder={D.orgIdNamePlaceholder} />
+            <span className="mt-1 block text-xs text-slate-400">{D.orgIdNameHint}</span>
           </label>
-          <label className="block text-sm text-slate-600">দোকানের ঠিকানা (Slug)
+          <label className="block text-sm text-slate-600">{D.orgIdSlugLabel}
             <input className="input mt-1 bg-slate-50 font-mono" value={org.slug} readOnly disabled />
-            <span className="mt-1 block text-xs text-slate-400">{org.slug}.qosprey.com — slug তৈরি হওয়ার পর বদলানো যায় না।</span>
+            <span className="mt-1 block text-xs text-slate-400">{t("settings.orgIdSlugHint", { slug: org.slug })}</span>
           </label>
         </div>
         <div className="flex flex-wrap gap-4">
-          <label className="block text-sm text-slate-600">Currency (ডিফল্ট মুদ্রা)
+          <label className="block text-sm text-slate-600">{D.orgIdCurrencyLabel}
             <select className="input mt-1" value={currency} onChange={(e) => setCurrency(e.target.value)}>
               {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -825,14 +816,14 @@ function OrgIdentityCard() {
               {orgTimezones(timezone).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
             </select>
           </label>
-          <label className="block text-sm text-slate-600">দেশ (কোড)
+          <label className="block text-sm text-slate-600">{D.orgIdCountryLabel}
             <input className="input mt-1 w-24 uppercase" value={country} onChange={(e) => setCountry(e.target.value)} maxLength={2} placeholder="BD" />
           </label>
         </div>
         <div className="rounded-xl bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">
-          ⚠️ <b>Currency বদলালে</b> শুধু এখন থেকে তৈরি হওয়া হিসাবের ডিফল্ট বদলাবে — আগের অর্ডার, পেমেন্ট ও সাবস্ক্রিপশনের হিসাব <b>আগের currency-তেই</b> থাকবে, কিছুই নিজে থেকে রূপান্তর হবে না।
+          ⚠️ <b>{D.orgIdCurrencyWarnA}</b>{D.orgIdCurrencyWarnB}<b>{D.orgIdCurrencyWarnC}</b>{D.orgIdCurrencyWarnD}
         </div>
-        <button className="btn-primary" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "তথ্য সংরক্ষণ করুন"}</button>
+        <button className="btn-primary" disabled={busy} onClick={save}>{busy ? D.waitPlease : D.orgIdSaveBtn}</button>
       </div>
     </section>
   );
@@ -866,6 +857,8 @@ interface OrgSecurityPolicy {
  * before the requirement can be switched on.
  */
 function OrgSecurityPolicyCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [policy, setPolicy] = useState<OrgSecurityPolicy | null>(null);
   const [myRole, setMyRole] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -886,7 +879,7 @@ function OrgSecurityPolicyCard() {
       setRequireMfa(pol.requireMfa);
       setCapText(pol.sessionMaxAgeHours === null ? "" : String(pol.sessionMaxAgeHours));
       setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -898,7 +891,7 @@ function OrgSecurityPolicyCard() {
     if (capTrim !== "") {
       cap = Number(capTrim);
       if (!Number.isInteger(cap) || cap < 1 || cap > 720) {
-        setError("Session-এর সর্বোচ্চ বয়স ১–৭২০ ঘণ্টার মধ্যে হতে হবে (বা সীমা তুলতে ঘর খালি রাখুন)।");
+        setError(D.secPolCapError);
         return;
       }
     }
@@ -908,9 +901,9 @@ function OrgSecurityPolicyCard() {
         method: "PATCH",
         body: JSON.stringify({ requireMfa, sessionMaxAgeHours: cap }),
       });
-      setMsg(out.unchanged || !out.changedFields?.length ? "কোনো বদল হয়নি — নীতি আগের মতোই আছে।" : "✅ নিরাপত্তা নীতি সংরক্ষিত হয়েছে।");
+      setMsg(out.unchanged || !out.changedFields?.length ? D.secPolNoChange : D.secPolSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(false); }
   }
 
@@ -918,34 +911,29 @@ function OrgSecurityPolicyCard() {
   const isOwner = myRole === "OWNER";
   return (
     <section id="hub-org-security-policy" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🛡️" title="Organization-এর নিরাপত্তা নীতি" hint="এই Organization-এর সব সদস্যের জন্য প্রযোজ্য নিয়ম — শুধু মালিক (OWNER) বদলাতে পারেন।" />
+      <SectionHead icon="🛡️" title={D.secPolTitle} hint={D.secPolHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
       <div className="space-y-4">
         <label className="flex items-start justify-between gap-4 text-sm text-slate-600">
           <span>
-            <b className="text-slate-800">সব সদস্যের MFA (2FA) বাধ্যতামূলক</b>
+            <b className="text-slate-800">{D.secPolMfaLabel}</b>
             <span className="mt-1 block text-xs leading-relaxed text-slate-400">
-              চালু থাকলে যার অ্যাকাউন্টে দ্বি-স্তর যাচাই (2FA) চালু নেই, সে এই Organization-এ ঢুকতেই পারবে না —
-              আগে তাকে ওপরের <a className="font-medium underline" href="#hub-my-security">নিরাপত্তা (2FA)</a> অংশ থেকে চালু করতে হবে।
-              {isOwner && !policy.myTotpEnabled ? <span className="mt-1 block font-medium text-amber-600">আপনার নিজের 2FA এখন বন্ধ — এই নীতি চালু করার আগে নিজের 2FA চালু করুন, নইলে সার্ভার সক্রিয় করতে দেবে না (আপনি নিজেই আটকে যাবেন বলে)।</span> : null}
+              {D.secPolMfaDescA}<a className="font-medium underline" href="#hub-my-security">{D.secPolMfaDescLink}</a>{D.secPolMfaDescB}
+              {isOwner && !policy.myTotpEnabled ? <span className="mt-1 block font-medium text-amber-600">{D.secPolMfaOwnerWarn}</span> : null}
             </span>
           </span>
           <input type="checkbox" className="mt-1 h-5 w-5 shrink-0" checked={requireMfa} disabled={!isOwner || busy} onChange={(e) => setRequireMfa(e.target.checked)} />
         </label>
-        <label className="block text-sm text-slate-600">Session-এর সর্বোচ্চ বয়স (ঘণ্টা) — এই Organization-এর জন্য
-          <input className="input mt-1 w-44" inputMode="numeric" placeholder="খালি = কোনো সীমা নেই" value={capText} disabled={!isOwner || busy} onChange={(e) => setCapText(e.target.value)} />
-          <span className="mt-1 block text-xs leading-relaxed text-slate-400">
-            সীমা দিলে তার চেয়ে পুরনো লগইন-সেশন দিয়ে এই Organization-এ কাজ করা যাবে না — সদস্যকে আবার লগইন করতে হবে।
-            অন্য Organization-এ এর কোনো প্রভাব নেই। সর্বোচ্চ ৭২০ ঘণ্টা (৩০ দিন)।
-          </span>
+        <label className="block text-sm text-slate-600">{D.secPolSessionLabel}
+          <input className="input mt-1 w-44" inputMode="numeric" placeholder={D.secPolSessionPlaceholder} value={capText} disabled={!isOwner || busy} onChange={(e) => setCapText(e.target.value)} />
+          <span className="mt-1 block text-xs leading-relaxed text-slate-400">{D.secPolSessionHint}</span>
         </label>
         {isOwner ? (
-          <button type="button" className="btn-primary min-h-[44px] px-5" disabled={busy} onClick={save}>{busy ? "সংরক্ষণ হচ্ছে…" : "নীতি সংরক্ষণ করুন"}</button>
+          <button type="button" className="btn-primary min-h-[44px] px-5" disabled={busy} onClick={save}>{busy ? D.savingEllipsis : D.secPolSaveBtn}</button>
         ) : (
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
-            বর্তমান অবস্থা: MFA বাধ্যতামূলক — <b>{policy.requireMfa ? "চালু" : "বন্ধ"}</b> · Session সীমা — <b>{policy.sessionMaxAgeHours === null ? "নেই" : `${policy.sessionMaxAgeHours} ঘণ্টা`}</b>।
-            বদলাতে হলে Organization-এর মালিককে বলুন।
+            {D.secPolStatePrefix}<b>{policy.requireMfa ? D.stateOn : D.stateOff}</b>{D.secPolStateMid}<b>{policy.sessionMaxAgeHours === null ? D.secPolStateNone : t("settings.secPolStateHours", { hours: fmtNumber(locale, policy.sessionMaxAgeHours) })}</b>{D.secPolStateSuffix}
           </p>
         )}
       </div>
@@ -954,6 +942,8 @@ function OrgSecurityPolicyCard() {
 }
 
 function OrgLifecycleCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [org, setOrg] = useState<{ name: string; status: string; archivedAt: string | null } | null>(null);
   const [myRole, setMyRole] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -971,7 +961,7 @@ function OrgLifecycleCard() {
       ]);
       setOrg(o);
       setMyRole((mine as { id: string; myRole: string }[]).find((x) => x.id === orgId)?.myRole ?? "");
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -983,7 +973,7 @@ function OrgLifecycleCard() {
       await apiFetch(`/organizations/${orgId}/archive`, { method: "POST" });
       // The dashboard gate takes over from here (archived screen).
       window.location.reload();
-    } catch (e) { setError(e instanceof Error ? e.message : "আর্কাইভ করা যায়নি"); setBusy(""); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.lifeArchiveFailed); setBusy(""); }
   }
 
   async function restore() {
@@ -992,9 +982,9 @@ function OrgLifecycleCard() {
     try {
       await apiFetch(`/organizations/${orgId}/restore`, { method: "POST" });
       setConfirming(false);
-      setMsg("✅ Organization Restore হয়েছে — টিম আবার কাজ করতে পারবে।");
+      setMsg(D.lifeRestored);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Restore করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.lifeRestoreFailed); }
     finally { setBusy(""); }
   }
 
@@ -1004,63 +994,59 @@ function OrgLifecycleCard() {
 
   return (
     <section id="hub-org-lifecycle" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🗄️" title="Organization আর্কাইভ ও বন্ধ করা" hint="কাজ সাময়িকভাবে থামাতে আর্কাইভ করুন — সব তথ্য অক্ষত থাকবে। স্থায়ীভাবে বন্ধ করার আগে এক্সপোর্ট করে রাখুন।" />
+      <SectionHead icon="🗄️" title={D.lifeTitle} hint={D.lifeHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
 
       <div className="space-y-5">
         <div>
-          <h3 className="mb-1 text-sm font-semibold text-slate-700">আর্কাইভ (সাময়িক বন্ধ)</h3>
+          <h3 className="mb-1 text-sm font-semibold text-slate-700">{D.lifeArchiveTitle}</h3>
           {archived ? (
             <>
               <p className="mb-3 text-sm text-slate-600">
-                এই Organization টি এখন <b>আর্কাইভ করা</b> আছে ({org?.archivedAt ? new Date(org.archivedAt).toLocaleString("bn-BD") : ""}) — টিমের কেউ কাজ করতে পারছে না, তবে সব তথ্য অক্ষত আছে।
+                {D.lifeArchivedA}<b>{D.lifeArchivedBold}</b>{t("settings.lifeArchivedB", { date: org?.archivedAt ? fmtDateTime(locale, org.archivedAt) : "" })}
               </p>
               {myRole === "OWNER" ? (
                 <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={restore}>
-                  {busy === "restore" ? "অপেক্ষা করুন…" : "♻️ Restore করুন"}
+                  {busy === "restore" ? D.waitPlease : D.lifeRestoreBtn}
                 </button>
-              ) : <p className="text-sm text-slate-500">Restore শুধু মালিক (OWNER) করতে পারবেন।</p>}
+              ) : <p className="text-sm text-slate-500">{D.lifeRestoreOwnerOnly}</p>}
             </>
           ) : (
             <>
               <p className="mb-3 text-sm leading-relaxed text-slate-600">
-                আর্কাইভ করলে এই ওয়ার্কস্পেসে <b>সব কাজ সঙ্গে সঙ্গে বন্ধ</b> হয়ে যাবে — টিমের কেউ কোনো পেজ বা API ব্যবহার করতে পারবে না।
-                কোনো তথ্য <b>মুছবে না</b>; মালিক যেকোনো সময় Restore করে আবার চালু করতে পারবেন। শুধু মালিক (OWNER) আর্কাইভ করতে পারেন।
+                {D.lifeArchiveWarnA}<b>{D.lifeArchiveWarnBold1}</b>{D.lifeArchiveWarnB}<b>{D.lifeArchiveWarnBold2}</b>{D.lifeArchiveWarnC}
               </p>
               {myRole === "OWNER" ? (
                 !confirming ? (
                   <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={() => setConfirming(true)}>
-                    Organization আর্কাইভ করুন
+                    {D.lifeArchiveBtn}
                   </button>
                 ) : (
                   <div className="space-y-3 rounded-xl bg-amber-50 p-4">
                     <p className="text-sm text-amber-900">
-                      নিশ্চিত তো? <b>{org?.name}</b> আর্কাইভ হলে টিমের সবার কাজ এখনই বন্ধ হয়ে যাবে। Restore না করা পর্যন্ত কেউ ঢুকতে পারবে না (ডেটা এক্সপোর্ট ও Restore মালিকের জন্য খোলা থাকবে)।
+                      {D.lifeConfirmA}<b>{org?.name}</b>{D.lifeConfirmB}
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={archive}>
-                        {busy === "archive" ? "আর্কাইভ হচ্ছে…" : "হ্যাঁ, আর্কাইভ করুন"}
+                        {busy === "archive" ? D.lifeArchiving : D.lifeArchiveYes}
                       </button>
-                      <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={() => setConfirming(false)}>থাক, বাতিল</button>
+                      <button type="button" className="btn-secondary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={() => setConfirming(false)}>{D.lifeNeverMind}</button>
                     </div>
                   </div>
                 )
-              ) : <p className="text-sm text-slate-500">আপনি ADMIN — আর্কাইভ করার অধিকার শুধু মালিকের (OWNER)।</p>}
+              ) : <p className="text-sm text-slate-500">{D.lifeAdminNote}</p>}
             </>
           )}
         </div>
 
         <div className="border-t border-slate-100 pt-4">
-          <h3 className="mb-1 text-sm font-semibold text-slate-700">স্থায়ীভাবে বন্ধ করা (Close)</h3>
-          <p className="text-sm leading-relaxed text-slate-600">
-            Organization স্থায়ীভাবে মোছা এই পেজ থেকে করা যায় না — ভুল করে মুছে ফেলার ঝুঁকি এড়াতেই এই সিদ্ধান্ত।
-            বন্ধ করতে চাইলে ধাপগুলো এমন:
-          </p>
+          <h3 className="mb-1 text-sm font-semibold text-slate-700">{D.lifeCloseTitle}</h3>
+          <p className="text-sm leading-relaxed text-slate-600">{D.lifeCloseIntro}</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-slate-600">
-            <li>আগে <a href="#hub-data-tools" className="font-semibold text-indigo-700 hover:underline">ডেটা ও ব্যাকআপ</a> অংশ থেকে পুরো ডেটা এক্সপোর্ট করে নিজের কাছে সংরক্ষণ করুন — মোছার পর আর ফেরত পাওয়া যাবে না।</li>
-            <li>তারপর প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করে স্থায়ীভাবে বন্ধের অনুরোধ জানান — টিম যাচাই করে মুছে দেবে।</li>
-            <li>মোছার পর এই Organization এর নাম (slug) <b>১৮০ দিন</b> সংরক্ষিত থাকে — ওই সময়ে অন্য কেউ একই নামে নতুন দোকান খুলতে পারবে না।</li>
+            <li>{D.lifeCloseStep1A}<a href="#hub-data-tools" className="font-semibold text-indigo-700 hover:underline">{D.lifeCloseStep1Link}</a>{D.lifeCloseStep1B}</li>
+            <li>{D.lifeCloseStep2}</li>
+            <li>{D.lifeCloseStep3A}<b>{D.lifeCloseStep3Bold}</b>{D.lifeCloseStep3B}</li>
           </ol>
         </div>
       </div>
@@ -1075,24 +1061,25 @@ function OrgLifecycleCard() {
  * save bar. ALL form logic, endpoints and handlers are the
  * Milestone 75/77 ones, unchanged — presentation only. */
 const HUB_NAV = [
-  { id: "hub-brain", icon: "🧠", label: "ব্যবসার ব্রেইন" },
-  { id: "hub-identity", icon: "🏪", label: "পরিচিতি" },
-  { id: "hub-contact", icon: "📍", label: "যোগাযোগ ও সময়" },
-  { id: "hub-delivery", icon: "🚚", label: "ডেলিভারি ও রিটার্ন" },
-  { id: "hub-payment", icon: "💳", label: "পেমেন্ট" },
-  { id: "hub-ai", icon: "🤖", label: "AI এর আচরণ" },
-  { id: "hub-knowledge", icon: "📚", label: "Business Knowledge" },
-  { id: "hub-ai-learning", icon: "🧠", label: "AI শিখন" },
-  { id: "hub-ai-control", icon: "🎛️", label: "AI নিয়ন্ত্রণ" },
-  { id: "hub-org-identity", icon: "🏢", label: "Organization তথ্য" },
-  { id: "hub-branding", icon: "🎨", label: "ব্র্যান্ডিং" },
-  { id: "hub-org-verification", icon: "🏅", label: "প্রতিষ্ঠান যাচাইকরণ" },
-  { id: "hub-verification", icon: "✅", label: "যাচাইকরণ (ইমেইল/ফোন)" },
-  { id: "hub-security", icon: "🔐", label: "নিরাপত্তা (2FA)" },
-  { id: "hub-my-security", icon: "🖥️", label: "আমার সেশন ও নোটিফিকেশন" },
-  { id: "hub-developer-api", icon: "🔑", label: "ডেভেলপার API" },
-  { id: "hub-data-tools", icon: "💾", label: "ডেটা ও ব্যাকআপ" },
-  { id: "hub-org-lifecycle", icon: "🗄️", label: "আর্কাইভ ও বন্ধ করা" },
+  { id: "hub-brain", icon: "🧠", labelKey: "hubBrain" },
+  { id: "hub-identity", icon: "🏪", labelKey: "hubIdentity" },
+  { id: "hub-contact", icon: "📍", labelKey: "hubContact" },
+  { id: "hub-delivery", icon: "🚚", labelKey: "hubDelivery" },
+  { id: "hub-payment", icon: "💳", labelKey: "hubPayment" },
+  { id: "hub-ai", icon: "🤖", labelKey: "hubAi" },
+  { id: "hub-knowledge", icon: "📚", labelKey: "hubKnowledge" },
+  { id: "hub-ai-learning", icon: "🧠", labelKey: "hubAiLearning" },
+  { id: "hub-ai-control", icon: "🎛️", labelKey: "hubAiControl" },
+  { id: "hub-org-identity", icon: "🏢", labelKey: "hubOrgIdentity" },
+  { id: "hub-language", icon: "🌐", labelKey: "hubLanguage" },
+  { id: "hub-branding", icon: "🎨", labelKey: "hubBranding" },
+  { id: "hub-org-verification", icon: "🏅", labelKey: "hubOrgVerification" },
+  { id: "hub-verification", icon: "✅", labelKey: "hubVerification" },
+  { id: "hub-security", icon: "🔐", labelKey: "hubSecurity" },
+  { id: "hub-my-security", icon: "🖥️", labelKey: "hubMySecurity" },
+  { id: "hub-developer-api", icon: "🔑", labelKey: "hubDeveloperApi" },
+  { id: "hub-data-tools", icon: "💾", labelKey: "hubDataTools" },
+  { id: "hub-org-lifecycle", icon: "🗄️", labelKey: "hubLifecycle" },
 ] as const;
 
 /**
@@ -1107,6 +1094,8 @@ const HUB_NAV = [
  * an explanatory note instead of offering a one-click logout.
  */
 function MySecurityCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [sessions, setSessions] = useState<OwnSession[]>([]);
   const [history, setHistory] = useState<LoginHistoryRow[]>([]);
   const [muted, setMuted] = useState<string[]>([]);
@@ -1127,7 +1116,7 @@ function MySecurityCard() {
         const prefs = await apiFetch<{ mutedCategories: string[] }>(`/organizations/${orgId}/my-notification-preferences`);
         setMuted(prefs.mutedCategories ?? []);
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
     finally { setLoaded(true); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -1136,9 +1125,9 @@ function MySecurityCard() {
     setBusy(`session-${s.id}`); setMsg(""); setError("");
     try {
       await apiFetch(`/auth/sessions/${s.id}`, { method: "DELETE" });
-      setMsg("সেশনটি বাতিল হয়েছে — ওই ডিভাইস/ব্রাউজার থেকে লগআউট হয়ে যাবে।");
+      setMsg(D.mySecRevoked);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সেশন বাতিল করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.mySecRevokeFailed); }
     finally { setBusy(""); }
   }
 
@@ -1151,65 +1140,65 @@ function MySecurityCard() {
         method: "PATCH", body: JSON.stringify({ mutedCategories: next }),
       });
       setMuted(out.mutedCategories ?? next);
-      setMsg("নোটিফিকেশন পছন্দ সংরক্ষিত হয়েছে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+      setMsg(D.mySecPrefsSaved);
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(""); }
   }
 
   return (
     <section id="hub-my-security" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🖥️" title="আমার সেশন, লগইন ইতিহাস ও নোটিফিকেশন" hint="আপনি যেসব ডিভাইস/ব্রাউজার থেকে লগইন করেছেন, সাম্প্রতিক লগইন চেষ্টা, আর এই Organization-এ কোন ধরনের ইন-অ্যাপ নোটিফিকেশন পাবেন।" />
+      <SectionHead icon="🖥️" title={D.mySecTitle} hint={D.mySecHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
-      {!loaded ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      {!loaded ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-6">
           <div>
-            <h3 className="mb-2 text-sm font-semibold">সক্রিয় সেশন ({sessions.length})</h3>
-            {sessions.length === 0 ? <p className="text-sm text-slate-400">কোনো সক্রিয় সেশন পাওয়া যায়নি।</p> : sessions.map((s) => (
+            <h3 className="mb-2 text-sm font-semibold">{t("settings.mySecActiveSessions", { count: fmtNumber(locale, sessions.length) })}</h3>
+            {sessions.length === 0 ? <p className="text-sm text-slate-400">{D.mySecNoSessions}</p> : sessions.map((s) => (
               <div key={s.id} className="mb-1.5 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm">
                 <span>
-                  <span className="font-medium">{s.ip ?? "IP অজানা"}</span>
-                  {s.current ? <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">বর্তমান সেশন</span> : null}
-                  <span className="block max-w-lg truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? "ডিভাইস অজানা"}</span>
-                  <span className="block text-[11px] text-slate-400">শুরু: {new Date(s.createdAt).toLocaleString("bn-BD")} · শেষ দেখা: {new Date(s.lastSeenAt).toLocaleString("bn-BD")}</span>
+                  <span className="font-medium">{s.ip ?? D.mySecIpUnknown}</span>
+                  {s.current ? <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">{D.mySecCurrent}</span> : null}
+                  <span className="block max-w-lg truncate text-[11px] text-slate-400" title={s.userAgent ?? ""}>{s.userAgent ?? D.mySecDeviceUnknown}</span>
+                  <span className="block text-[11px] text-slate-400">{D.mySecStartedLabel}{fmtDateTime(locale, s.createdAt)}{D.mySecLastSeenLabel}{fmtDateTime(locale, s.lastSeenAt)}</span>
                 </span>
                 {canRevokeOwnSession(s) ? (
-                  <button className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => revokeSession(s)}>সেশন বাতিল করুন</button>
+                  <button className="btn-secondary btn-sm text-red-600" disabled={busy !== ""} onClick={() => revokeSession(s)}>{D.mySecRevokeBtn}</button>
                 ) : (
-                  <span className="max-w-56 text-right text-[11px] text-slate-400">এটি আপনার বর্তমান সেশন — এটি বাতিল করলে আপনি সঙ্গে সঙ্গে লগআউট হয়ে যাবেন, তাই এখান থেকে বাতিল করা যাবে না। লগআউট করতে চাইলে স্বাভাবিক লগআউট করুন।</span>
+                  <span className="max-w-56 text-right text-[11px] text-slate-400">{D.mySecCurrentNote}</span>
                 )}
               </div>
             ))}
           </div>
 
           <div>
-            <h3 className="mb-2 text-sm font-semibold">আমার লগইন ইতিহাস (শেষ ৫০টি)</h3>
-            {history.length === 0 ? <p className="text-sm text-slate-400">কোনো লগইন ইতিহাস নেই।</p> : (
+            <h3 className="mb-2 text-sm font-semibold">{D.mySecHistoryTitle}</h3>
+            {history.length === 0 ? <p className="text-sm text-slate-400">{D.mySecNoHistory}</p> : (
               <ul className="max-h-72 space-y-1 overflow-y-auto text-sm">
                 {history.map((h, i) => (
                   <li key={h.id ?? i} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5">
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? "সফল" : "ব্যর্থ"}</span>
-                    <span className="text-slate-600">{h.ip ?? "IP অজানা"}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${h.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>{h.success ? D.mySecSuccess : D.mySecFailed}</span>
+                    <span className="text-slate-600">{h.ip ?? D.mySecIpUnknown}</span>
                     <span className="max-w-52 truncate text-[11px] text-slate-400" title={h.userAgent ?? ""}>{h.userAgent ?? ""}</span>
-                    <span className="text-[11px] text-slate-400">{new Date(h.createdAt).toLocaleString("bn-BD")}</span>
+                    <span className="text-[11px] text-slate-400">{fmtDateTime(locale, h.createdAt)}</span>
                   </li>
                 ))}
               </ul>
             )}
-            <p className="mt-1 text-xs text-slate-400">অচেনা IP/ডিভাইস থেকে সফল লগইন দেখলে ওই সেশনটি ওপরে বাতিল করুন এবং পাসওয়ার্ড বদলে ফেলুন।</p>
+            <p className="mt-1 text-xs text-slate-400">{D.mySecHistoryNote}</p>
           </div>
 
           <div>
-            <h3 className="mb-1 text-sm font-semibold">নোটিফিকেশন পছন্দ — এই Organization-এর জন্য</h3>
-            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">এটি শুধু অ্যাপের ভিতরের নোটিফিকেশন বন্ধ করে — এটি কোনো নিরাপত্তা সেটিং নয়। বন্ধ করা ধরনের নোটিফিকেশন তৈরি হবে না; ইমেইল বা অন্য চ্যানেলে এর কোনো প্রভাব নেই। পছন্দটি শুধু এই Organization-এর জন্য প্রযোজ্য।</p>
+            <h3 className="mb-1 text-sm font-semibold">{D.mySecNotifTitle}</h3>
+            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{D.mySecNotifNote}</p>
             <div className="grid gap-1.5 sm:grid-cols-2">
               {NOTIFICATION_CATEGORIES.map((c) => {
                 const enabled = isCategoryEnabled(muted, c.key);
                 return (
                   <label key={c.key} className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
-                    <span>{c.labelBn} <span className="text-xs font-normal text-slate-400">({c.label})</span></span>
+                    <span>{locale === "en" ? c.label : c.labelBn}</span>
                     <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={enabled} disabled={busy !== ""}
-                      onChange={() => toggleCategory(c.key)} aria-label={`${c.labelBn} নোটিফিকেশন`} />
+                      onChange={() => toggleCategory(c.key)} aria-label={t("settings.mySecNotifAria", { label: locale === "en" ? c.label : c.labelBn })} />
                   </label>
                 );
               })}
@@ -1232,6 +1221,8 @@ interface MeVerification {
  * that state plainly instead of pretending a code was sent.
  */
 function AccountVerificationCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [me, setMe] = useState<MeVerification | null>(null);
   const [phone, setPhone] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -1246,7 +1237,7 @@ function AccountVerificationCard() {
       const m = await apiFetch<MeVerification>("/auth/me");
       setMe(m);
       setPhone((prev) => prev || (m.phone ?? ""));
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -1254,10 +1245,10 @@ function AccountVerificationCard() {
     setBusy("email"); setMsg(""); setError("");
     try {
       const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/email", { method: "POST" });
-      if (out.sent) setMsg("✅ যাচাইকরণ ইমেইল আবার পাঠানো হয়েছে — ইনবক্স (ও Spam) দেখুন। লিংকটি ২৪ ঘণ্টা বৈধ।");
-      else if (out.reason === "already_verified") setMsg("আপনার ইমেইল ইতিমধ্যে যাচাই করা হয়েছে।");
-      else setError("ইমেইল পাঠানো যায়নি — প্ল্যাটফর্মের ইমেইল সেটআপে সমস্যা থাকতে পারে। পরে আবার চেষ্টা করুন।");
-    } catch (e) { setError(e instanceof Error ? e.message : "পাঠানো যায়নি"); }
+      if (out.sent) setMsg(D.acctVerEmailResent);
+      else if (out.reason === "already_verified") setMsg(D.acctVerEmailAlready);
+      else setError(D.acctVerEmailFailed);
+    } catch (e) { setError(e instanceof Error ? e.message : D.sendFailed); }
     finally { setBusy(""); }
   }
 
@@ -1268,9 +1259,9 @@ function AccountVerificationCard() {
         method: "POST", body: JSON.stringify({ phone }),
       });
       setPhone(out.phone);
-      setMsg("মোবাইল নম্বর সংরক্ষিত হয়েছে। এবার OTP পাঠিয়ে যাচাই করুন।");
+      setMsg(D.acctVerPhoneSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(""); }
   }
 
@@ -1278,11 +1269,11 @@ function AccountVerificationCard() {
     setBusy("otp"); setMsg(""); setError(""); setSmsUnavailable(false);
     try {
       const out = await apiFetch<{ sent: boolean; reason?: string }>("/auth/verification/phone/otp", { method: "POST" });
-      if (out.sent) { setOtpSent(true); setMsg("✅ OTP পাঠানো হয়েছে — ৫ মিনিটের মধ্যে কোডটি দিন।"); }
+      if (out.sent) { setOtpSent(true); setMsg(D.acctVerOtpSent); }
       else if (out.reason === "sms_not_configured") setSmsUnavailable(true);
-      else if (out.reason === "already_verified") setMsg("আপনার ফোন নম্বর ইতিমধ্যে যাচাই করা হয়েছে।");
-      else setError("SMS পাঠানো যায়নি — কিছুক্ষণ পরে আবার চেষ্টা করুন।");
-    } catch (e) { setError(e instanceof Error ? e.message : "OTP পাঠানো যায়নি"); }
+      else if (out.reason === "already_verified") setMsg(D.acctVerPhoneAlready);
+      else setError(D.acctVerSmsFailed);
+    } catch (e) { setError(e instanceof Error ? e.message : D.acctVerOtpFailed); }
     finally { setBusy(""); }
   }
 
@@ -1291,58 +1282,58 @@ function AccountVerificationCard() {
     try {
       await apiFetch("/auth/verification/phone/verify", { method: "POST", body: JSON.stringify({ code }) });
       setOtpSent(false); setCode("");
-      setMsg("✅ ফোন নম্বর যাচাই সম্পন্ন হয়েছে।");
+      setMsg(D.acctVerPhoneVerified);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "কোড মেলেনি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.acctVerCodeMismatch); }
     finally { setBusy(""); }
   }
 
   return (
     <section id="hub-verification" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="✅" title="যাচাইকরণ — ইমেইল ও ফোন" hint="যাচাই করা অ্যাকাউন্ট মার্চেন্ট হিসেবে আস্থা বাড়ায়; প্ল্যাটফর্ম যাচাইকরণ চালু করলে নতুন অ্যাকাউন্টের জন্য ইমেইল যাচাই বাধ্যতামূলক হতে পারে।" />
+      <SectionHead icon="✅" title={D.acctVerTitle} hint={D.acctVerHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
-      {!me ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      {!me ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-slate-700">ইমেইল: <span className="font-semibold">{me.email}</span></div>
-              <div className="text-xs text-slate-500">{me.emailVerifiedAt ? `যাচাই করা হয়েছে · ${new Date(me.emailVerifiedAt).toLocaleString("bn-BD")}` : "এখনো যাচাই করা হয়নি"}</div>
+              <div className="text-sm font-medium text-slate-700">{D.acctVerEmailLabel}<span className="font-semibold">{me.email}</span></div>
+              <div className="text-xs text-slate-500">{me.emailVerifiedAt ? t("settings.acctVerVerifiedAt", { date: fmtDateTime(locale, me.emailVerifiedAt) }) : D.acctVerNotVerifiedYet}</div>
             </div>
             {me.emailVerifiedAt
-              ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত</span>
-              : <button className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={resendEmail}>{busy === "email" ? "পাঠানো হচ্ছে…" : "যাচাইকরণ লিংক আবার পাঠান"}</button>}
+              ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{D.acctVerVerifiedBadge}</span>
+              : <button className="btn-primary btn-sm min-h-[40px]" disabled={busy !== ""} onClick={resendEmail}>{busy === "email" ? D.acctVerSending : D.acctVerResendBtn}</button>}
           </div>
 
           <div className="rounded-xl bg-slate-50 px-4 py-3">
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium text-slate-700">মোবাইল নম্বর</span>
+              <span className="text-sm font-medium text-slate-700">{D.acctVerPhoneLabel}</span>
               {me.phoneVerifiedAt
-                ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত</span>
-                : <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">যাচাই বাকি</span>}
+                ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{D.acctVerVerifiedBadge}</span>
+                : <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">{D.acctVerPendingBadge}</span>}
             </div>
             <div className="flex flex-wrap items-end gap-2">
-              <label className="block text-sm text-slate-600">নম্বর (01 দিয়ে শুরু)
+              <label className="block text-sm text-slate-600">{D.acctVerNumberLabel}
                 <input className="input mt-1 w-56" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXXXXXXXX" inputMode="tel" />
               </label>
-              <button className="btn-secondary min-h-[44px]" disabled={busy !== "" || !phone.trim()} onClick={savePhone}>{busy === "phone" ? "অপেক্ষা করুন…" : "নম্বর সংরক্ষণ করুন"}</button>
+              <button className="btn-secondary min-h-[44px]" disabled={busy !== "" || !phone.trim()} onClick={savePhone}>{busy === "phone" ? D.waitPlease : D.acctVerSaveNumberBtn}</button>
               {!me.phoneVerifiedAt ? (
-                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || !me.phone} onClick={requestOtp}>{busy === "otp" ? "পাঠানো হচ্ছে…" : "OTP পাঠান"}</button>
+                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || !me.phone} onClick={requestOtp}>{busy === "otp" ? D.acctVerSending : D.acctVerSendOtpBtn}</button>
               ) : null}
             </div>
             {smsUnavailable ? (
-              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">📵 এসএমএস যাচাই এখন উপলব্ধ নয় — প্ল্যাটফর্মে SMS গেটওয়ে সেটআপ করা নেই। ইমেইল যাচাই দিয়েই আপাতত চলবে।</p>
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{D.acctVerSmsUnavailable}</p>
             ) : null}
             {otpSent && !me.phoneVerifiedAt ? (
               <div className="mt-3 flex flex-wrap items-end gap-2">
-                <label className="block text-sm text-slate-600">৬ সংখ্যার OTP কোড
+                <label className="block text-sm text-slate-600">{D.acctVerOtpLabel}
                   <input className="input mt-1 w-44 tracking-[0.3em]" value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" maxLength={6} inputMode="numeric" />
                 </label>
-                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || code.trim().length < 6} onClick={verifyOtp}>{busy === "verify" ? "যাচাই হচ্ছে…" : "কোড যাচাই করুন"}</button>
-                <span className="text-xs text-slate-400">কোডের মেয়াদ ৫ মিনিট · ৫ বার ভুল চেষ্টা করলে কোডটি বাতিল হয়ে যাবে।</span>
+                <button className="btn-primary min-h-[44px]" disabled={busy !== "" || code.trim().length < 6} onClick={verifyOtp}>{busy === "verify" ? D.dataVerifying : D.acctVerVerifyCodeBtn}</button>
+                <span className="text-xs text-slate-400">{D.acctVerOtpNote}</span>
               </div>
             ) : null}
-            {!me.phone ? <p className="mt-2 text-xs text-slate-400">আগে নম্বর সংরক্ষণ করুন, তারপর OTP পাঠানো যাবে।</p> : null}
+            {!me.phone ? <p className="mt-2 text-xs text-slate-400">{D.acctVerNoPhoneNote}</p> : null}
           </div>
         </div>
       )}
@@ -1354,13 +1345,14 @@ interface OrgVerificationState {
   verificationStatus: string; verificationNote: string | null; verificationSubmittedAt: string | null;
 }
 
-function formatBytesBn(bytesStr: string): string {
+function formatBytesLoc(locale: UiLocale, bytesStr: string): string {
+  const D = locale === "en" ? settingsEn : settingsBn;
   const n = Number(bytesStr);
-  if (!Number.isFinite(n) || n <= 0) return "০ বাইট";
-  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  if (!Number.isFinite(n) || n <= 0) return D.zeroBytes;
+  const units = [D.orgVerUnitByte, "KB", "MB", "GB", "TB"];
   let v = n; let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
+  return `${fmtNumber(locale, v, { maximumFractionDigits: 2 })} ${units[i]}`;
 }
 
 /**
@@ -1371,6 +1363,8 @@ function formatBytesBn(bytesStr: string): string {
  * merchant knows exactly what to fix.
  */
 function OrgVerificationCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [org, setOrg] = useState<OrgVerificationState | null>(null);
   const [storage, setStorage] = useState<{ storageBytes: string; assetCount: number; meteredFrom: string } | null>(null);
   const [msg, setMsg] = useState("");
@@ -1385,7 +1379,7 @@ function OrgVerificationCard() {
         apiFetch<{ storageBytes: string; assetCount: number; meteredFrom: string }>(`/organizations/${orgId}/storage-usage`).catch(() => null),
       ]);
       setOrg(o); setStorage(s);
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -1395,52 +1389,52 @@ function OrgVerificationCard() {
     try {
       const out = await apiFetch<OrgVerificationState>(`/organizations/${orgId}/verification/submit`, { method: "POST" });
       setOrg(out);
-      setMsg("✅ যাচাইয়ের আবেদন জমা পড়েছে — প্ল্যাটফর্ম টিম রিভিউ করে সিদ্ধান্ত জানাবে।");
-    } catch (e) { setError(e instanceof Error ? e.message : "জমা দেওয়া যায়নি"); }
+      setMsg(D.orgVerSubmitted);
+    } catch (e) { setError(e instanceof Error ? e.message : D.orgVerSubmitFailed); }
     finally { setBusy(false); }
   }
 
   const badge = (status: string) => {
     switch (status) {
-      case "verified": return <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ যাচাইকৃত প্রতিষ্ঠান</span>;
-      case "pending": return <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">⏳ রিভিউ চলছে</span>;
-      case "rejected": return <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">✗ আবেদন ফিরিয়ে দেওয়া হয়েছে</span>;
-      default: return <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">যাচাই করা হয়নি</span>;
+      case "verified": return <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{D.orgVerBadgeVerified}</span>;
+      case "pending": return <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">{D.orgVerBadgePending}</span>;
+      case "rejected": return <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">{D.orgVerBadgeRejected}</span>;
+      default: return <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">{D.orgVerBadgeNone}</span>;
     }
   };
 
   return (
     <section id="hub-org-verification" className="card scroll-mt-24 p-5 sm:p-6">
-      <SectionHead icon="🏅" title="প্রতিষ্ঠান যাচাইকরণ ও স্টোরেজ" hint="ট্রেড লাইসেন্সসহ ব্যবসার তথ্য জমা দিলে প্ল্যাটফর্ম টিম যাচাই করে যাচাইকৃত ব্যাজ দেয়। জমা দেওয়ার আগে ওপরের ফর্মে প্রতিষ্ঠানের নাম, ঠিকানা, যোগাযোগের ফোন/ইমেইল ও ট্রেড লাইসেন্স নম্বর পূরণ করে সংরক্ষণ করুন।" />
+      <SectionHead icon="🏅" title={D.orgVerTitle} hint={D.orgVerHint} />
       {error ? <div className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
-      {!org ? <p className="text-sm text-slate-400">লোড হচ্ছে…</p> : (
+      {!org ? <p className="text-sm text-slate-400">{dict.common.loading}</p> : (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-slate-700">বর্তমান অবস্থা:</span>
+            <span className="text-sm font-medium text-slate-700">{D.orgVerCurrentStatus}</span>
             {badge(org.verificationStatus)}
-            {org.verificationSubmittedAt ? <span className="text-xs text-slate-400">সর্বশেষ জমা: {new Date(org.verificationSubmittedAt).toLocaleString("bn-BD")}</span> : null}
+            {org.verificationSubmittedAt ? <span className="text-xs text-slate-400">{t("settings.orgVerLastSubmit", { date: fmtDateTime(locale, org.verificationSubmittedAt) })}</span> : null}
           </div>
           {org.verificationStatus === "rejected" && org.verificationNote ? (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">প্ল্যাটফর্ম টিমের নোট: “{org.verificationNote}” — তথ্য ঠিক করে আবার জমা দিন।</p>
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{t("settings.orgVerNoteRejected", { note: org.verificationNote })}</p>
           ) : null}
           {org.verificationStatus === "verified" && org.verificationNote ? (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">প্ল্যাটফর্ম টিমের নোট: “{org.verificationNote}”</p>
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{t("settings.orgVerNote", { note: org.verificationNote })}</p>
           ) : null}
           {org.verificationStatus !== "verified" ? (
             <button className="btn-primary min-h-[44px]" disabled={busy} onClick={submit}>
-              {busy ? "অপেক্ষা করুন…" : org.verificationStatus === "pending" ? "আবার জমা দিন" : org.verificationStatus === "rejected" ? "ঠিক করে আবার জমা দিন" : "যাচাইয়ের জন্য জমা দিন"}
+              {busy ? D.waitPlease : org.verificationStatus === "pending" ? D.orgVerResubmit : org.verificationStatus === "rejected" ? D.orgVerFixResubmit : D.orgVerSubmitBtn}
             </button>
           ) : null}
 
           <div className="rounded-xl bg-slate-50 px-4 py-3">
-            <div className="text-sm font-medium text-slate-700">📦 স্টোরেজ ব্যবহার</div>
+            <div className="text-sm font-medium text-slate-700">{D.orgVerStorageTitle}</div>
             {storage ? (
               <p className="mt-1 text-sm text-slate-600">
-                মিডিয়া লাইব্রেরিতে <b>{formatBytesBn(storage.storageBytes)}</b> · {storage.assetCount.toLocaleString("bn-BD")}টি ফাইল
-                <span className="block text-xs text-slate-400">{storage.meteredFrom} — ব্যান্ডউইডথ হিসাব করা হয় না।</span>
+                {D.orgVerStorageInLibrary}<b>{formatBytesLoc(locale, storage.storageBytes)}</b>{t("settings.orgVerStorageFiles", { count: fmtNumber(locale, storage.assetCount) })}
+                <span className="block text-xs text-slate-400">{storage.meteredFrom}{D.orgVerBandwidthNote}</span>
               </p>
-            ) : <p className="mt-1 text-sm text-slate-400">স্টোরেজ তথ্য লোড করা যায়নি।</p>}
+            ) : <p className="mt-1 text-sm text-slate-400">{D.orgVerStorageLoadFailed}</p>}
           </div>
         </div>
       )}
@@ -1461,11 +1455,13 @@ function SectionHead({ icon, title, hint }: { icon: string; title: string; hint?
 }
 
 const HUB_DAYS = [
-  { key: "sat", label: "শনিবার" }, { key: "sun", label: "রবিবার" }, { key: "mon", label: "সোমবার" },
-  { key: "tue", label: "মঙ্গলবার" }, { key: "wed", label: "বুধবার" }, { key: "thu", label: "বৃহস্পতিবার" }, { key: "fri", label: "শুক্রবার" },
+  { key: "sat", labelKey: "daySat" }, { key: "sun", labelKey: "daySun" }, { key: "mon", labelKey: "dayMon" },
+  { key: "tue", labelKey: "dayTue" }, { key: "wed", labelKey: "dayWed" }, { key: "thu", labelKey: "dayThu" }, { key: "fri", labelKey: "dayFri" },
 ] as const;
 
 function BusinessHub() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [form, setForm] = useState<Record<string, string>>({});
   const [cod, setCod] = useState(false);
   const [hours, setHours] = useState<Record<string, { on: boolean; start: string; end: string }>>({});
@@ -1523,7 +1519,7 @@ function BusinessHub() {
           setHoursTz(p.businessHours.timezone ?? "Asia/Dhaka");
         }
       }
-    } catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -1571,9 +1567,9 @@ function BusinessHub() {
     }
     try {
       await apiFetch(`/organizations/${orgId}/business-profile`, { method: "PATCH", body: JSON.stringify(body) });
-      setMsg("✅ ব্যবসার তথ্য সংরক্ষিত হয়েছে — AI এখন থেকে এই তথ্য থেকেই উত্তর দেবে।");
+      setMsg(D.hubSaved);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.saveFailed); }
     finally { setBusy(false); }
   }
 
@@ -1595,15 +1591,14 @@ function BusinessHub() {
               <div className="absolute inset-0 flex items-center justify-center text-xl font-black">{comp.percent}%</div>
             </div>
             <div className="min-w-0 flex-1 text-center sm:text-left">
-              <h2 className="text-lg font-bold leading-tight">🧠 ব্যবসার ব্রেইন — AI এর জ্ঞানের উৎস</h2>
+              <h2 className="text-lg font-bold leading-tight">{D.hubBrainTitle}</h2>
               <p className="mx-auto mt-1 max-w-xl text-[13px] leading-relaxed text-white/85 sm:mx-0">
-                এই তথ্যগুলোই AI এর জ্ঞানের উৎস। যত পূর্ণ হবে, AI তত নির্ভুল উত্তর দেবে — তথ্য না থাকলে AI অনুমান করে না, "জানি না" বলে।
-                এখন {comp.doneCount}/{comp.totalSections}টি অংশ পূর্ণ।
+                {D.hubBrainTextA}{t("settings.hubBrainProgress", { done: fmtNumber(locale, comp.doneCount), total: fmtNumber(locale, comp.totalSections) })}
               </p>
               <div className="mt-3 flex flex-wrap justify-center gap-1.5 sm:justify-start">
-                <span className="mr-1 self-center text-xs font-semibold text-white/80">AI যা উত্তর দিতে পারবে:</span>
-                {([["priceStock", "দাম ও স্টক"], ["delivery", "ডেলিভারি"], ["payment", "পেমেন্ট"], ["contactHours", "যোগাযোগ ও সময়"], ["faq", "FAQ"]] as const).map(([k, l]) => (
-                  <span key={k} className="hero-chip !px-2.5 !py-0.5">{comp.aiCanAnswer[k] ? "✓" : "✗"} {l}</span>
+                <span className="mr-1 self-center text-xs font-semibold text-white/80">{D.hubCanAnswerLabel}</span>
+                {([["priceStock", "hubCapPriceStock"], ["delivery", "hubCapDelivery"], ["payment", "hubPayment"], ["contactHours", "hubContact"], ["faq", ""]] as const).map(([k, lk]) => (
+                  <span key={k} className="hero-chip !px-2.5 !py-0.5">{comp.aiCanAnswer[k] ? "✓" : "✗"} {lk ? D[lk as keyof typeof D] : "FAQ"}</span>
                 ))}
               </div>
             </div>
@@ -1618,39 +1613,39 @@ function BusinessHub() {
           </div>
         </section>
       ) : (
-        <div className="skeleton h-40 w-full" aria-label="লোড হচ্ছে" />
+        <div className="skeleton h-40 w-full" aria-label={D.hubLoadingAria} />
       )}
 
       {error ? <div className="alert alert-red">{error}</div> : null}
       {msg ? <div className="alert alert-green">{msg}</div> : null}
 
       <section id="hub-identity" className="card scroll-mt-24 p-5 sm:p-6">
-        <SectionHead icon="🏪" title="ব্যবসার পরিচিতি" hint="AI এই ভাষাতেই ব্যবসাটাকে বুঝবে — নিজের কথায়, সহজভাবে লিখুন।" />
+        <SectionHead icon="🏪" title={D.hubIdentityTitle} hint={D.hubIdentityHint} />
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className={`${label} sm:col-span-2`}>ব্যবসা সম্পর্কে (AI এর ভাষায়)<textarea className={input} rows={3} value={form.description ?? ""} onChange={set("description")} placeholder="আমরা খুলনাভিত্তিক একটি অনলাইন ফ্যাশন স্টোর…" /></label>
-          <label className={label}>ইন্ডাস্ট্রি<input className={input} value={form.industry ?? ""} onChange={set("industry")} placeholder="ফ্যাশন / ইলেকট্রনিক্স / খাবার…" /></label>
-          <label className={label}>ব্যবসার ধরন<input className={input} value={form.businessModel ?? ""} onChange={set("businessModel")} placeholder="অনলাইন রিটেইল / পাইকারি…" /></label>
-          <label className={label}>ব্র্যান্ডের সুর (Brand Voice)<input className={input} value={form.brandVoice ?? ""} onChange={set("brandVoice")} placeholder="বন্ধুসুলভ, সহজ বাংলায়, সম্মানজনক" /></label>
-          <label className={label}>বিশেষত্ব (USP)<input className={input} value={form.uniqueSellingPoints ?? ""} onChange={set("uniqueSellingPoints")} placeholder="অরিজিনাল পণ্য, ৭ দিনের রিপ্লেসমেন্ট…" /></label>
-          <label className={label}>ওয়েবসাইট<input className={input} value={form.websiteUrl ?? ""} onChange={set("websiteUrl")} placeholder="https://…" /></label>
-          <label className={label}>ব্যবসার লক্ষ্য<input className={input} value={form.goals ?? ""} onChange={set("goals")} placeholder="মাসে ৫০০ অর্ডার…" /></label>
-          <label className={label}>ট্রেড লাইসেন্স নম্বর<input className={input} value={form.tradeLicenseNo ?? ""} onChange={set("tradeLicenseNo")} placeholder="ট্রেড লাইসেন্স অনুযায়ী হুবহু" /></label>
-          <label className={label}>ব্যবসার ঠিকানা (লাইসেন্স অনুযায়ী)<input className={input} value={form.businessAddress ?? ""} onChange={set("businessAddress")} placeholder="দোকান/অফিসের পূর্ণ ঠিকানা" /></label>
+          <label className={`${label} sm:col-span-2`}>{D.hubDescLabel}<textarea className={input} rows={3} value={form.description ?? ""} onChange={set("description")} placeholder={D.hubDescPlaceholder} /></label>
+          <label className={label}>{D.hubIndustryLabel}<input className={input} value={form.industry ?? ""} onChange={set("industry")} placeholder={D.hubIndustryPlaceholder} /></label>
+          <label className={label}>{D.hubModelLabel}<input className={input} value={form.businessModel ?? ""} onChange={set("businessModel")} placeholder={D.hubModelPlaceholder} /></label>
+          <label className={label}>{D.hubVoiceLabel}<input className={input} value={form.brandVoice ?? ""} onChange={set("brandVoice")} placeholder={D.hubVoicePlaceholder} /></label>
+          <label className={label}>{D.hubUspLabel}<input className={input} value={form.uniqueSellingPoints ?? ""} onChange={set("uniqueSellingPoints")} placeholder={D.hubUspPlaceholder} /></label>
+          <label className={label}>{D.hubWebsiteLabel}<input className={input} value={form.websiteUrl ?? ""} onChange={set("websiteUrl")} placeholder="https://…" /></label>
+          <label className={label}>{D.hubGoalsLabel}<input className={input} value={form.goals ?? ""} onChange={set("goals")} placeholder={D.hubGoalsPlaceholder} /></label>
+          <label className={label}>{D.hubTradeLabel}<input className={input} value={form.tradeLicenseNo ?? ""} onChange={set("tradeLicenseNo")} placeholder={D.hubTradePlaceholder} /></label>
+          <label className={label}>{D.hubBizAddressLabel}<input className={input} value={form.businessAddress ?? ""} onChange={set("businessAddress")} placeholder={D.hubBizAddressPlaceholder} /></label>
         </div>
-        <p className="mt-3 text-xs text-slate-400">ট্রেড লাইসেন্স নম্বর ও ব্যবসার ঠিকানা প্রতিষ্ঠান যাচাইকরণে (নিচের “প্রতিষ্ঠান যাচাইকরণ” কার্ড) জমা দেওয়ার জন্য লাগে।</p>
+        <p className="mt-3 text-xs text-slate-400">{D.hubTradeNote}</p>
       </section>
 
       <section id="hub-contact" className="card scroll-mt-24 p-5 sm:p-6">
-        <SectionHead icon="📍" title="যোগাযোগ, ঠিকানা ও সময়" hint="গ্রাহক ফোন/ঠিকানা/খোলার সময় জিজ্ঞেস করলে AI এখান থেকেই উত্তর দেয়।" />
+        <SectionHead icon="📍" title={D.hubContactTitle} hint={D.hubContactHint} />
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className={label}>যোগাযোগের ফোন<input className={input} value={form.contactPhone ?? ""} onChange={set("contactPhone")} placeholder="01XXXXXXXXX" /></label>
-          <label className={label}>যোগাযোগের ইমেইল<input className={input} value={form.contactEmail ?? ""} onChange={set("contactEmail")} placeholder="hello@shop.com" /></label>
-          <label className={label}>ঠিকানা (দোকান/অফিস)<input className={input} value={form.address ?? ""} onChange={set("address")} placeholder="বাড়ি, রোড, এলাকা" /></label>
-          <label className={label}>শহর<input className={input} value={form.city ?? ""} onChange={set("city")} placeholder="ঢাকা / খুলনা / চট্টগ্রাম" /></label>
+          <label className={label}>{D.hubContactPhone}<input className={input} value={form.contactPhone ?? ""} onChange={set("contactPhone")} placeholder="01XXXXXXXXX" /></label>
+          <label className={label}>{D.hubContactEmail}<input className={input} value={form.contactEmail ?? ""} onChange={set("contactEmail")} placeholder="hello@shop.com" /></label>
+          <label className={label}>{D.hubAddressLabel}<input className={input} value={form.address ?? ""} onChange={set("address")} placeholder={D.hubAddressPlaceholder} /></label>
+          <label className={label}>{D.hubCityLabel}<input className={input} value={form.city ?? ""} onChange={set("city")} placeholder={D.hubCityPlaceholder} /></label>
         </div>
         <div className="mt-5">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[13px] font-medium text-slate-600">
-            ব্যবসার সময়
+            {D.hubHoursLabel}
             <span className="font-normal text-slate-400">Timezone:
               <input className="input ml-1.5 w-40" value={hoursTz} onChange={(e) => { setHoursTz(e.target.value); setHoursTouched(true); }} />
             </span>
@@ -1662,7 +1657,7 @@ function BusinessHub() {
                 <div key={d.key} className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl px-3 py-2 text-sm ring-1 ring-inset ${h.on ? "bg-indigo-50/60 ring-indigo-100" : "bg-slate-50 ring-slate-100"}`}>
                   <label className="flex min-w-24 items-center gap-2 font-medium text-slate-700">
                     <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={h.on} onChange={(e) => { setHours({ ...hours, [d.key]: { ...h, on: e.target.checked } }); setHoursTouched(true); }} />
-                    {d.label}
+                    {D[d.labelKey as keyof typeof D]}
                   </label>
                   <span className="flex items-center gap-1.5">
                     <input type="time" className="input w-[7.5rem]" value={h.start} disabled={!h.on} onChange={(e) => { setHours({ ...hours, [d.key]: { ...h, start: e.target.value } }); setHoursTouched(true); }} />
@@ -1673,93 +1668,90 @@ function BusinessHub() {
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-slate-400">যেদিন টিক নেই, সেদিন বন্ধ। রাতের ব্যবসায় শেষ সময় ছোট দিলে মধ্যরাত পার হয়।</p>
+          <p className="mt-2 text-xs text-slate-400">{D.hubHoursNote}</p>
         </div>
       </section>
 
       <section id="hub-delivery" className="card scroll-mt-24 p-5 sm:p-6">
-        <SectionHead icon="🚚" title="ডেলিভারি ও রিটার্ন" hint="সবচেয়ে বেশি জিজ্ঞেস করা প্রশ্নের উত্তর — টাকায় লিখুন, সিস্টেম পয়সায় রাখে।" />
+        <SectionHead icon="🚚" title={D.hubDelivery} hint={D.hubDeliveryHint} />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <label className={label}>ঢাকার ভিতরে চার্জ (৳)<input type="number" min={0} className={input} value={form.deliveryChargeInside ?? ""} onChange={set("deliveryChargeInside")} placeholder="৬০" /></label>
-          <label className={label}>ঢাকার বাইরে চার্জ (৳)<input type="number" min={0} className={input} value={form.deliveryChargeOutside ?? ""} onChange={set("deliveryChargeOutside")} placeholder="১২০" /></label>
-          <label className={label}>কত টাকার ওপরে ফ্রি ডেলিভারি (৳)<input type="number" min={0} className={input} value={form.freeDeliveryAbove ?? ""} onChange={set("freeDeliveryAbove")} placeholder="২০০০ (না থাকলে খালি)" /></label>
-          <label className={label}>ঢাকায় ডেলিভারি সময় (দিন)<input type="number" min={0} max={60} className={input} value={form.deliveryDaysInside ?? ""} onChange={set("deliveryDaysInside")} placeholder="১–২ হলে ২ লিখুন" /></label>
-          <label className={label}>ঢাকার বাইরে সময় (দিন)<input type="number" min={0} max={60} className={input} value={form.deliveryDaysOutside ?? ""} onChange={set("deliveryDaysOutside")} placeholder="৩–৫ হলে ৫ লিখুন" /></label>
-          <label className={label}>ন্যূনতম অর্ডার (৳)<input type="number" min={0} className={input} value={form.minOrder ?? ""} onChange={set("minOrder")} placeholder="না থাকলে খালি" /></label>
-          <label className={label}>রিটার্নের সময়সীমা (দিন)<input type="number" min={0} max={365} className={input} value={form.returnWindowDays ?? ""} onChange={set("returnWindowDays")} placeholder="৭" /></label>
+          <label className={label}>{D.hubDelInLabel}<input type="number" min={0} className={input} value={form.deliveryChargeInside ?? ""} onChange={set("deliveryChargeInside")} placeholder={fmtNumber(locale, 60)} /></label>
+          <label className={label}>{D.hubDelOutLabel}<input type="number" min={0} className={input} value={form.deliveryChargeOutside ?? ""} onChange={set("deliveryChargeOutside")} placeholder={fmtNumber(locale, 120)} /></label>
+          <label className={label}>{D.hubFreeDelLabel}<input type="number" min={0} className={input} value={form.freeDeliveryAbove ?? ""} onChange={set("freeDeliveryAbove")} placeholder={D.hubFreeDelPlaceholder} /></label>
+          <label className={label}>{D.hubDaysInLabel}<input type="number" min={0} max={60} className={input} value={form.deliveryDaysInside ?? ""} onChange={set("deliveryDaysInside")} placeholder={D.hubDaysInPlaceholder} /></label>
+          <label className={label}>{D.hubDaysOutLabel}<input type="number" min={0} max={60} className={input} value={form.deliveryDaysOutside ?? ""} onChange={set("deliveryDaysOutside")} placeholder={D.hubDaysOutPlaceholder} /></label>
+          <label className={label}>{D.hubMinOrderLabel}<input type="number" min={0} className={input} value={form.minOrder ?? ""} onChange={set("minOrder")} placeholder={D.hubEmptyPlaceholder} /></label>
+          <label className={label}>{D.hubReturnWindowLabel}<input type="number" min={0} max={365} className={input} value={form.returnWindowDays ?? ""} onChange={set("returnWindowDays")} placeholder={fmtNumber(locale, 7)} /></label>
         </div>
       </section>
 
       <section id="hub-payment" className="card scroll-mt-24 p-5 sm:p-6">
-        <SectionHead icon="💳" title="পেমেন্ট" hint="গ্রাহক পেমেন্ট জিজ্ঞেস করলে AI এই নম্বরগুলোই দেবে — সঠিক নম্বর দিন।" />
+        <SectionHead icon="💳" title={D.hubPayment} hint={D.hubPaymentHint} />
         <label className="mb-4 flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-700 ring-1 ring-inset ring-slate-100">
           <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={cod} onChange={(e) => setCod(e.target.checked)} />
-          ক্যাশ অন ডেলিভারি (COD) আছে
+          {D.hubCodLabel}
         </label>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <label className={label}>বিকাশ নম্বর<input className={input} value={form.bkashNumber ?? ""} onChange={set("bkashNumber")} placeholder="01XXXXXXXXX" /></label>
-          <label className={label}>নগদ নম্বর<input className={input} value={form.nagadNumber ?? ""} onChange={set("nagadNumber")} placeholder="01XXXXXXXXX" /></label>
-          <label className={label}>অগ্রিম পেমেন্ট (%)<input type="number" min={0} max={100} className={input} value={form.advancePaymentPercent ?? ""} onChange={set("advancePaymentPercent")} placeholder="না লাগলে খালি" /></label>
-          <label className={label}>COD সর্বোচ্চ অর্ডার (৳)<input type="number" min={0} className={input} value={form.codMaxOrder ?? ""} onChange={set("codMaxOrder")} placeholder="খালি = সীমা নেই" /></label>
-          <label className={label}>অগ্রিম আবশ্যকের সীমা (৳)<input type="number" min={0} className={input} value={form.codAdvanceAbove ?? ""} onChange={set("codAdvanceAbove")} placeholder="খালি = নেই" /></label>
-          <label className={label}>COD বন্ধ জেলা<input className={input} value={form.codBlockedDistricts ?? ""} onChange={set("codBlockedDistricts")} placeholder="খুলনা, বরিশাল" />
-            <span className="mt-1 block text-xs font-normal text-slate-400">কমা দিয়ে জেলার নাম লিখুন — যেমন: খুলনা, বরিশাল</span>
+          <label className={label}>{D.hubBkashLabel}<input className={input} value={form.bkashNumber ?? ""} onChange={set("bkashNumber")} placeholder="01XXXXXXXXX" /></label>
+          <label className={label}>{D.hubNagadLabel}<input className={input} value={form.nagadNumber ?? ""} onChange={set("nagadNumber")} placeholder="01XXXXXXXXX" /></label>
+          <label className={label}>{D.hubAdvancePctLabel}<input type="number" min={0} max={100} className={input} value={form.advancePaymentPercent ?? ""} onChange={set("advancePaymentPercent")} placeholder={D.hubAdvancePctPlaceholder} /></label>
+          <label className={label}>{D.hubCodMaxLabel}<input type="number" min={0} className={input} value={form.codMaxOrder ?? ""} onChange={set("codMaxOrder")} placeholder={D.hubCodMaxPlaceholder} /></label>
+          <label className={label}>{D.hubCodAdvanceLabel}<input type="number" min={0} className={input} value={form.codAdvanceAbove ?? ""} onChange={set("codAdvanceAbove")} placeholder={D.hubCodAdvancePlaceholder} /></label>
+          <label className={label}>{D.hubCodBlockedLabel}<input className={input} value={form.codBlockedDistricts ?? ""} onChange={set("codBlockedDistricts")} placeholder={D.hubCodBlockedPlaceholder} />
+            <span className="mt-1 block text-xs font-normal text-slate-400">{D.hubCodBlockedHint}</span>
           </label>
         </div>
-        <label className={`${label} mt-4`}>পেমেন্ট সম্পর্কে নোট<textarea className={input} rows={2} value={form.paymentNote ?? ""} onChange={set("paymentNote")} placeholder="যেমন: অর্ডারের পর বিকাশে অগ্রিম পাঠিয়ে শেষ ৪ ডিজিট জানাবেন…" /></label>
+        <label className={`${label} mt-4`}>{D.hubPaymentNoteLabel}<textarea className={input} rows={2} value={form.paymentNote ?? ""} onChange={set("paymentNote")} placeholder={D.hubPaymentNotePlaceholder} /></label>
 
         {/* AB4 (AX5): deposit / advance collection rules. */}
         <div className="mt-5 space-y-4 rounded-xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-100">
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">💰 ডিপোজিট / Advance collection</h3>
-            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-              চালু থাকলে চেকআউটে ক্রেতাকে মোটের একটি অংশ এখন পরিশোধ করতে বলা হবে — বাকি টাকা ডেলিভারির সময়।
-              অনলাইন গেটওয়ে থাকলে ডিপোজিটটি সরাসরি অনলাইনে নেওয়া যায়; না থাকলে ক্রেতা ম্যানুয়াল নম্বরে পাঠাবে।
-            </p>
+            <h3 className="text-sm font-semibold text-slate-800">{D.hubDepositTitle}</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{D.hubDepositText}</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <label className={label}>ডিপোজিটের ধরন
+            <label className={label}>{D.hubDepositModeLabel}
               <select className={input} value={form.depositMode ?? ""} onChange={(e) => setForm({ ...form, depositMode: e.target.value })}>
-                <option value="">বন্ধ</option>
-                <option value="percent">শতাংশ</option>
-                <option value="fixed">নির্দিষ্ট টাকা</option>
+                <option value="">{D.stateOff}</option>
+                <option value="percent">{D.hubDepositPercentOpt}</option>
+                <option value="fixed">{D.hubDepositFixedOpt}</option>
               </select>
             </label>
             {form.depositMode === "percent" ? (
-              <label className={label}>ডিপোজিটের হার (%) — ১ থেকে ৯০<input type="number" min={1} max={90} className={input} value={form.depositPercent ?? ""} onChange={set("depositPercent")} placeholder="যেমন: ২০" /></label>
+              <label className={label}>{D.hubDepositPctLabel}<input type="number" min={1} max={90} className={input} value={form.depositPercent ?? ""} onChange={set("depositPercent")} placeholder={D.hubExample20} /></label>
             ) : null}
             {form.depositMode === "fixed" ? (
-              <label className={label}>ডিপোজিটের পরিমাণ (৳)<input type="number" min={0} className={input} value={form.depositFixed ?? ""} onChange={set("depositFixed")} placeholder="যেমন: ২০০" /></label>
+              <label className={label}>{D.hubDepositAmtLabel}<input type="number" min={0} className={input} value={form.depositFixed ?? ""} onChange={set("depositFixed")} placeholder={D.hubExample200} /></label>
             ) : null}
-            <label className={label}>কোন পেমেন্টে প্রযোজ্য
+            <label className={label}>{D.hubDepositAppliesLabel}
               <select className={input} value={form.depositAppliesTo ?? "all"} onChange={(e) => setForm({ ...form, depositAppliesTo: e.target.value })}>
-                <option value="cod">শুধু COD</option>
-                <option value="online">শুধু অনলাইন</option>
-                <option value="all">সব</option>
+                <option value="cod">{D.hubDepositCodOnly}</option>
+                <option value="online">{D.hubDepositOnlineOnly}</option>
+                <option value="all">{dict.common.all}</option>
               </select>
             </label>
           </div>
-          <label className={label}>ক্রেতাকে দেখানোর নোট
-            <textarea className={input} rows={2} value={form.depositNote ?? ""} onChange={set("depositNote")} placeholder="ডিপোজিট পরিশোধের পর বাকি টাকা ডেলিভারির সময় দিতে হবে।" />
-            <span className="mt-1 block text-xs font-normal text-slate-400">খালি রাখলে ডিফল্ট বার্তা দেখাবে — নিজের কথা লিখলে সেটাই ক্রেতা দেখবে।</span>
+          <label className={label}>{D.hubDepositNoteLabel}
+            <textarea className={input} rows={2} value={form.depositNote ?? ""} onChange={set("depositNote")} placeholder={D.hubDepositNotePlaceholder} />
+            <span className="mt-1 block text-xs font-normal text-slate-400">{D.hubDepositNoteHint}</span>
           </label>
         </div>
       </section>
 
       <section id="hub-ai" className="card scroll-mt-24 p-5 sm:p-6">
-        <SectionHead icon="🤖" title="AI এর আচরণ — মালিকের নির্দেশনা" hint="AI Assistant ও Inbox Autopilot দুজনেই মানে — শুধু সুর ও আচরণের জন্য। তথ্য কখনো বদলায় না: দাম, চার্জ, নম্বর সবসময় এই পেজের সেট করা তথ্য থেকেই আসে।" />
+        <SectionHead icon="🤖" title={D.hubAiTitle} hint={D.hubAiHint} />
         <div className="grid gap-4">
           <div className="rounded-xl bg-indigo-50/70 px-4 py-3.5 ring-1 ring-inset ring-indigo-100">
             <p className="text-sm leading-relaxed text-slate-700">
-              AI নির্দেশনা এখন <b>AI Instructions Desk</b> থেকে Draft → Test → Publish করা হয় — যাতে যাচাই না করা নির্দেশনা সরাসরি customer-এর কাছে না যায়, আর প্রতিটি সংস্করণে ফিরে যাওয়া যায়।
+              {D.hubAiDeskA}<b>{D.hubAiDeskBold}</b>{D.hubAiDeskB}
             </p>
-            <a href="/dashboard/ai-instructions" className="btn-secondary mt-3 inline-flex min-h-[40px] items-center px-4 text-sm">🤖 AI Instructions Desk খুলুন</a>
+            <a href="/dashboard/ai-instructions" className="btn-secondary mt-3 inline-flex min-h-[40px] items-center px-4 text-sm">{D.hubAiDeskLink}</a>
           </div>
-          <label className={`${label} sm:max-w-xs`}>AI উত্তরের ভাষা
+          <label className={`${label} sm:max-w-xs`}>{D.hubAiLangLabel}
             <select className={input} value={form.aiReplyLanguage ?? "auto"} onChange={(e) => setForm({ ...form, aiReplyLanguage: e.target.value })}>
-              <option value="auto">স্বয়ংক্রিয় — গ্রাহক/ব্যবহারকারীর ভাষায়</option>
-              <option value="bn">সবসময় বাংলা</option>
-              <option value="en">সবসময় English</option>
+              <option value="auto">{D.hubAiLangAuto}</option>
+              <option value="bn">{D.hubAiLangBn}</option>
+              <option value="en">{D.hubAiLangEn}</option>
             </select>
           </label>
         </div>
@@ -1767,9 +1759,9 @@ function BusinessHub() {
 
       <div className="sticky bottom-3 z-20 sm:bottom-4">
         <div className="card flex flex-col gap-2.5 p-3.5 shadow-card-hover sm:flex-row sm:items-center sm:p-4">
-          <button className="btn-primary min-h-[44px] w-full sm:w-auto" disabled={busy} onClick={save}>{busy ? "অপেক্ষা করুন…" : "💾 ব্যবসার তথ্য সংরক্ষণ করুন"}</button>
-          <a href="#hub-knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">📚 নীতিমালা ও FAQ (Knowledge)</a>
-          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">নীতিমালা ও FAQ এই পেজের Business Knowledge সেকশনে সম্পাদনা হয় — Completeness এ সেগুলোও ধরা হয়।</span>
+          <button className="btn-primary min-h-[44px] w-full sm:w-auto" disabled={busy} onClick={save}>{busy ? D.waitPlease : D.hubSaveBtn}</button>
+          <a href="#hub-knowledge" className="btn-secondary min-h-[44px] w-full justify-center sm:w-auto">{D.hubKnowledgeLink}</a>
+          <span className="text-xs leading-snug text-slate-400 sm:ml-auto sm:max-w-56 sm:text-right">{D.hubKnowledgeNote}</span>
         </div>
       </div>
     </div>
@@ -1777,6 +1769,8 @@ function BusinessHub() {
 }
 
 function VoiceSettingsCard() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [enabled, setEnabled] = useState(false);
   const [autoCallNewCod, setAutoCallNewCod] = useState(false);
   const [delayMinutes, setDelayMinutes] = useState(2);
@@ -1808,7 +1802,7 @@ function VoiceSettingsCard() {
       }
       setLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ভয়েস সেটিংস লোড করা যায়নি");
+      setError(e instanceof Error ? e.message : D.voiceLoadFailed);
     }
   }, []);
 
@@ -1832,10 +1826,10 @@ function VoiceSettingsCard() {
           maxAttempts,
         }),
       });
-      setMsg("✅ AI ভয়েস কল সেটিংস সফলভাবে সংরক্ষিত হয়েছে।");
+      setMsg(D.voiceSaved);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "সংরক্ষণ করা যায়নি");
+      setError(e instanceof Error ? e.message : D.saveFailed);
     } finally {
       setBusy(false);
     }
@@ -1846,12 +1840,8 @@ function VoiceSettingsCard() {
       <div className="mb-4 flex items-start gap-3">
         <span className="stat-icon stat-icon-brand !h-10 !w-10 text-lg">📞</span>
         <div className="min-w-0">
-          <h2 className="font-semibold leading-tight text-slate-900">
-            AI ভয়েস কল কনফার্মেশন (Bangla IVR)
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            ক্যাশ অন ডেলিভারি (COD) অর্ডার কনফার্ম করতে গ্রাহককে স্বয়ংক্রিয় বাংলা ভয়েস কল এবং ১/২ বাটন ইনপুট
-          </p>
+          <h2 className="font-semibold leading-tight text-slate-900">{D.voiceTitle}</h2>
+          <p className="text-xs text-slate-500 mt-0.5">{D.voiceSubtitle}</p>
         </div>
       </div>
 
@@ -1859,7 +1849,7 @@ function VoiceSettingsCard() {
       {msg ? <div className="mb-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div> : null}
 
       {!loaded ? (
-        <p className="text-sm text-slate-400">লোড হচ্ছে…</p>
+        <p className="text-sm text-slate-400">{dict.common.loading}</p>
       ) : (
         <div className="space-y-4 text-sm">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1871,8 +1861,8 @@ function VoiceSettingsCard() {
                 onChange={(e) => setEnabled(e.target.checked)}
               />
               <div>
-                <span className="font-semibold text-slate-800 block">ভয়েস কল সার্ভিস সক্রিয় করুন</span>
-                <span className="text-xs text-slate-500">অর্ডার ড্যাশবোর্ড থেকে ১-ক্লিকে গ্রাহককে AI কল করার সুবিধা</span>
+                <span className="font-semibold text-slate-800 block">{D.voiceEnableLabel}</span>
+                <span className="text-xs text-slate-500">{D.voiceEnableSub}</span>
               </div>
             </label>
 
@@ -1884,27 +1874,27 @@ function VoiceSettingsCard() {
                 onChange={(e) => setAutoCallNewCod(e.target.checked)}
               />
               <div>
-                <span className="font-semibold text-slate-800 block">নতুন COD অর্ডারে অটোমেটিক কল দিন</span>
-                <span className="text-xs text-slate-500">অর্ডার প্লেস হওয়ার সাথে সাথে স্বয়ংক্রিয়ভাবে কল ট্রিগার হবে</span>
+                <span className="font-semibold text-slate-800 block">{D.voiceAutoLabel}</span>
+                <span className="text-xs text-slate-500">{D.voiceAutoSub}</span>
               </div>
             </label>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">প্রোভাইডার</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">{D.voiceProviderLabel}</label>
               <select
                 className="input"
                 value={provider}
                 onChange={(e) => setProvider(e.target.value as any)}
               >
-                <option value="mock">স্যান্ডবক্স / টেস্ট মোড (Mock)</option>
-                <option value="twilio">Twilio Voice API (লাইভ প্রোডাকশন)</option>
+                <option value="mock">{D.voiceProviderMock}</option>
+                <option value="twilio">{D.voiceProviderTwilio}</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">অটো-কল বিলম্ব (মিনিট)</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">{D.voiceDelayLabel}</label>
               <input
                 type="number"
                 min={0}
@@ -1916,7 +1906,7 @@ function VoiceSettingsCard() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">সর্বোচ্চ পুনঃপ্রচেষ্টা (বার)</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">{D.voiceAttemptsLabel}</label>
               <input
                 type="number"
                 min={1}
@@ -1931,7 +1921,7 @@ function VoiceSettingsCard() {
           {provider === "twilio" && (
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4 space-y-3">
               <h4 className="font-semibold text-indigo-950 text-xs uppercase tracking-wider">
-                Twilio ক্রেডেনশিয়াল
+                {D.voiceTwilioTitle}
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -1955,7 +1945,7 @@ function VoiceSettingsCard() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-600 mb-1">Twilio Caller ID (ফোন নম্বর)</label>
+                  <label className="block text-xs text-slate-600 mb-1">{D.voiceCallerIdLabel}</label>
                   <input
                     type="text"
                     className="input text-xs"
@@ -1969,13 +1959,11 @@ function VoiceSettingsCard() {
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">
-              কাস্টম বাংলা শুভেচ্ছা ভূমিকা (ঐচ্ছিক)
-            </label>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">{D.voiceGreetingLabel}</label>
             <input
               type="text"
               className="input"
-              placeholder="আসসালামু আলাইকুম। (খালি রাখলে সিস্টেমের স্ট্যান্ডার্ড বাংলা স্ক্রিপ্ট চলবে)"
+              placeholder={D.voiceGreetingPlaceholder}
               value={promptIntro}
               onChange={(e) => setPromptIntro(e.target.value)}
             />
@@ -1988,7 +1976,7 @@ function VoiceSettingsCard() {
               onClick={save}
               className="btn-primary min-h-[40px] px-5"
             >
-              {busy ? "সংরক্ষণ হচ্ছে..." : "ভয়েস সেটিংস সংরক্ষণ করুন"}
+              {busy ? D.voiceSaving : D.voiceSaveBtn}
             </button>
           </div>
         </div>
@@ -1998,6 +1986,8 @@ function VoiceSettingsCard() {
 }
 
 export default function SettingsPage() {
+  const { dict, t, locale } = useLocale();
+  const D = dict.settings;
   const [status, setStatus] = useState<TotpStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [otpauthUrl, setOtpauthUrl] = useState("");
@@ -2008,7 +1998,7 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try { setStatus(await apiFetch<TotpStatus>("/auth/totp/status")); }
-    catch (e) { setError(e instanceof Error ? e.message : "লোড করা যায়নি"); }
+    catch (e) { setError(e instanceof Error ? e.message : D.loadFailed); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -2020,9 +2010,9 @@ export default function SettingsPage() {
       setSecret(out.secret);
       setOtpauthUrl(out.otpauthUrl);
       setQrDataUrl(out.qrDataUrl ?? "");
-      setNotice("Secret তৈরি হয়েছে — Authenticator অ্যাপে যোগ করে নিচে কোড দিয়ে নিশ্চিত করুন। নিশ্চিত না করা পর্যন্ত 2FA চালু হবে না।");
+      setNotice(D.pageEnrollNotice);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "শুরু করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.pageStartFailed); }
     finally { setBusy(false); }
   }
 
@@ -2032,9 +2022,9 @@ export default function SettingsPage() {
     try {
       await apiFetch("/auth/totp/confirm", { method: "POST", body: JSON.stringify({ code }) });
       setSecret(""); setOtpauthUrl("");
-      setNotice("✅ দ্বি-স্তর নিরাপত্তা (2FA) চালু হয়েছে। এখন থেকে লগইনে পাসওয়ার্ডের পর Authenticator কোড লাগবে।");
+      setNotice(D.page2faOn);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "কোড মেলেনি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.acctVerCodeMismatch); }
     finally { setBusy(false); }
   }
 
@@ -2043,9 +2033,9 @@ export default function SettingsPage() {
     setBusy(true); setError(""); setNotice("");
     try {
       await apiFetch("/auth/totp/disable", { method: "POST", body: JSON.stringify({ code }) });
-      setNotice("2FA বন্ধ করা হয়েছে।");
+      setNotice(D.page2faOff);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "বন্ধ করা যায়নি"); }
+    } catch (e) { setError(e instanceof Error ? e.message : D.pageDisableFailed); }
     finally { setBusy(false); }
   }
 
@@ -2053,30 +2043,30 @@ export default function SettingsPage() {
     <div className="space-y-4 sm:space-y-5">
       <div>
         <h1 className="page-title">🏢 Business Command Center</h1>
-        <p className="mt-1 max-w-2xl text-sm text-slate-500">ব্যবসার সব সেটিং এক জায়গায় — মালিক এখানে যা সেট করবেন, AI সেখান থেকেই তথ্য নিয়ে কাজ করবে।</p>
+        <p className="mt-1 max-w-2xl text-sm text-slate-500">{D.pageIntro}</p>
       </div>
       {error ? <div className="alert alert-red">{error}</div> : null}
       {notice ? <div className="alert alert-green">{notice}</div> : null}
 
       {/* Mobile: horizontal chip rail (sticky). Desktop: the rail
           becomes the sidebar below. */}
-      <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:hidden" aria-label="সেকশন">
+      <nav className="sticky top-2 z-30 -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:hidden" aria-label={D.pageSectionAria}>
         {HUB_NAV.map((n) => (
           <a key={n.id} href={`#${n.id}`} className="flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 shadow-card ring-1 ring-slate-200/70">
-            <span>{n.icon}</span>{n.label}
+            <span>{n.icon}</span>{D[n.labelKey as keyof typeof D]}
           </a>
         ))}
       </nav>
 
       <div className="items-start gap-5 lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]">
         <aside className="sticky top-4 hidden lg:block">
-          <nav className="card space-y-0.5 p-2.5" aria-label="সেকশন">
+          <nav className="card space-y-0.5 p-2.5" aria-label={D.pageSectionAria}>
             {HUB_NAV.map((n) => (
               <a key={n.id} href={`#${n.id}`} className="flex min-h-[40px] items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-[var(--brand-soft)] hover:text-slate-900">
-                <span className="text-base">{n.icon}</span>{n.label}
+                <span className="text-base">{n.icon}</span>{D[n.labelKey as keyof typeof D]}
               </a>
             ))}
-            <p className="px-3 pb-1.5 pt-3 text-xs leading-relaxed text-slate-400">সব তথ্য একবার সেট করলেই AI Assistant, Inbox Autopilot ও Order Bot — সবাই এখান থেকে কাজ করবে।</p>
+            <p className="px-3 pb-1.5 pt-3 text-xs leading-relaxed text-slate-400">{D.pageAsideNote}</p>
           </nav>
         </aside>
 
@@ -2090,33 +2080,35 @@ export default function SettingsPage() {
 
           <AiControlCenterSection />
 
+          <LanguageSection />
+
           <section id="hub-security" className="card scroll-mt-24 p-5 sm:p-6">
-            <SectionHead icon="🔐" title="আমার অ্যাকাউন্টের নিরাপত্তা — দ্বি-স্তর যাচাই (2FA)" hint={`চালু করলে লগইনে পাসওয়ার্ডের পর ফোনের Authenticator অ্যাপের ৬ সংখ্যার কোড লাগবে। অবস্থা: ${status === null ? "লোড হচ্ছে…" : status.totpEnabled ? "চালু আছে" : `বন্ধ${status.enrolmentInProgress ? " (Enrol শুরু হয়েছে, নিশ্চিত করা বাকি)" : ""}`}`} />
+            <SectionHead icon="🔐" title={D.page2faTitle} hint={t("settings.page2faHint", { status: status === null ? dict.common.loading : status.totpEnabled ? D.page2faStatusOn : status.enrolmentInProgress ? D.page2faStatusOffPending : D.page2faStatusOff })} />
             {status && !status.totpEnabled ? (
               <div className="space-y-3">
                 {!secret ? (
-                  <button className="btn-primary min-h-[44px]" disabled={busy} onClick={enroll}>{busy ? "অপেক্ষা করুন…" : "2FA চালু করা শুরু করুন"}</button>
+                  <button className="btn-primary min-h-[44px]" disabled={busy} onClick={enroll}>{busy ? D.waitPlease : D.page2faStartBtn}</button>
                 ) : (
                   <div className="space-y-3 rounded-2xl bg-slate-50 p-4">
                     {qrDataUrl ? (
                       <div>
-                        <div className="text-xs font-medium text-slate-500">Authenticator অ্যাপ দিয়ে Scan করুন</div>
+                        <div className="text-xs font-medium text-slate-500">{D.page2faScanLabel}</div>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={qrDataUrl} alt="TOTP QR" className="mt-1 rounded bg-white p-1 ring-1 ring-slate-200" width={180} height={180} />
                       </div>
                     ) : null}
                     <div>
-                      <div className="text-xs font-medium text-slate-500">Secret Key (একবারই দেখানো হয় — নিরাপদে রাখুন)</div>
+                      <div className="text-xs font-medium text-slate-500">{D.page2faSecretLabel}</div>
                       <code className="mt-1 block break-all rounded bg-white p-2 text-sm ring-1 ring-slate-200">{secret}</code>
                     </div>
                     <div>
-                      <div className="text-xs font-medium text-slate-500">otpauth URL (কিছু অ্যাপে সরাসরি ব্যবহার করা যায়)</div>
+                      <div className="text-xs font-medium text-slate-500">{D.page2faOtpAuthLabel}</div>
                       <code className="mt-1 block break-all rounded bg-white p-2 text-xs ring-1 ring-slate-200">{otpauthUrl}</code>
                     </div>
-                    <p className="text-sm text-slate-600">Authenticator অ্যাপে <b>“Enter a setup key”</b> দিয়ে Secret টি যোগ করুন, তারপর অ্যাপের বর্তমান কোডটি দিন:</p>
+                    <p className="text-sm text-slate-600">{D.page2faSetupA}<b>{D.page2faSetupBold}</b>{D.page2faSetupB}</p>
                     <div className="flex flex-wrap gap-2">
                       <input id="totp-code" inputMode="numeric" className="input w-44 tracking-[0.3em]" placeholder="123456" maxLength={6} />
-                      <button className="btn-primary min-h-[44px]" disabled={busy} onClick={confirm}>কোড নিশ্চিত করুন</button>
+                      <button className="btn-primary min-h-[44px]" disabled={busy} onClick={confirm}>{D.page2faConfirmBtn}</button>
                     </div>
                   </div>
                 )}
@@ -2124,15 +2116,13 @@ export default function SettingsPage() {
             ) : null}
             {status?.totpEnabled ? (
               <div className="flex flex-wrap items-end gap-2">
-                <label className="text-sm text-slate-600">বন্ধ করতে বর্তমান কোড দিন
+                <label className="text-sm text-slate-600">{D.page2faDisableLabel}
                   <input id="totp-disable-code" inputMode="numeric" className="input mt-1.5 w-44 tracking-[0.3em]" placeholder="123456" maxLength={6} />
                 </label>
-                <button className="btn-secondary min-h-[44px]" disabled={busy} onClick={disable}>2FA বন্ধ করুন</button>
+                <button className="btn-secondary min-h-[44px]" disabled={busy} onClick={disable}>{D.page2faDisableBtn}</button>
               </div>
             ) : null}
-            <p className="mt-4 text-xs text-slate-400">
-              ফোন/Secret হারালে প্রতিষ্ঠানের OWNER Team পেজ থেকে আপনার 2FA রিসেট করে দিতে পারবেন — তারপর এখানে আবার চালু করুন।
-            </p>
+            <p className="mt-4 text-xs text-slate-400">{D.page2faFooterNote}</p>
           </section>
 
           <VoiceSettingsCard />

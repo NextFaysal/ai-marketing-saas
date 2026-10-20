@@ -1,5 +1,4 @@
-import {
-  BadRequestException, ConflictException, Injectable, NotFoundException, Optional,
+import { Injectable, Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -9,6 +8,7 @@ import { computeSlots, isValidYmd, localParts, zonedTimeToUtc } from "./slots";
 import type {
   AddStaffDto, CreateBookingDto, CreateServiceDto, PublicBookDto, SetAvailabilityDto, UpdateServiceDto,
 } from "./booking.dto";
+import { badRequest, conflict, notFound } from "../i18n/api-exception";
 
 /**
  * NF4 (FB2) — Service & Appointment bookings.
@@ -50,13 +50,13 @@ export const BOOKING_STATUS_LABELS: Record<string, string> = {
 
 function toBigIntOrThrow(value: string | number | undefined, label: string): bigint {
   if (value === undefined || value === null || value === "") {
-    throw new BadRequestException(`${label} আবশ্যক`);
+    throw badRequest("booking.isRequired", { label: label });
   }
   try {
     const n = typeof value === "number" ? BigInt(Math.trunc(value)) : BigInt(String(value).trim());
     return n;
   } catch {
-    throw new BadRequestException(`${label} সঠিক সংখ্যা হতে হবে`);
+    throw badRequest("booking.mustBeAValidNumber", { label: label });
   }
 }
 
@@ -161,26 +161,26 @@ export class BookingService {
     const out: Record<string, unknown> = {};
     if (!partial || dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("সার্ভিসের নাম আবশ্যক");
+      if (!name) throw badRequest("booking.theServiceNameIsRequired");
       out.name = name;
     }
     if (dto.description !== undefined) out.description = dto.description?.trim() || null;
     if (!partial || dto.durationMinutes !== undefined) {
       const d = Number(dto.durationMinutes);
       if (!Number.isInteger(d) || d < 5 || d > 1440) {
-        throw new BadRequestException("সার্ভিসের সময়কাল ৫ থেকে ১৪৪০ মিনিটের মধ্যে হতে হবে");
+        throw badRequest("booking.theServiceDurationMustBeBetween");
       }
       out.durationMinutes = d;
     }
     if (!partial || dto.priceMinor !== undefined) {
       const price = toBigIntOrThrow(dto.priceMinor, "সার্ভিসের মূল্য");
-      if (price < 0n) throw new BadRequestException("সার্ভিসের মূল্য ঋণাত্মক হতে পারে না");
+      if (price < 0n) throw badRequest("booking.theServicePriceCannotBeNegative");
       out.priceMinor = price;
     }
     if (dto.bufferMinutes !== undefined) {
       const b = Number(dto.bufferMinutes);
       if (!Number.isInteger(b) || b < 0 || b > 240) {
-        throw new BadRequestException("বাফার সময় ০ থেকে ২৪০ মিনিটের মধ্যে হতে হবে");
+        throw badRequest("booking.theBufferTimeMustBeBetween");
       }
       out.bufferMinutes = b;
     }
@@ -210,7 +210,7 @@ export class BookingService {
 
   private async getServiceOrThrow(organizationId: string, serviceId: string) {
     const row = await this.db().serviceOffering.findFirst({ where: { id: serviceId, organizationId } });
-    if (!row) throw new NotFoundException("সার্ভিসটি পাওয়া যায়নি");
+    if (!row) throw notFound("booking.theServiceWasNotFound");
     return row;
   }
 
@@ -229,14 +229,14 @@ export class BookingService {
 
   async addStaff(organizationId: string, actorId: string, dto: AddStaffDto) {
     const membershipId = String(dto?.membershipId ?? "").trim();
-    if (!membershipId) throw new BadRequestException("সদস্য (membershipId) আবশ্যক");
+    if (!membershipId) throw badRequest("booking.aMemberMembershipidIsRequired");
     const membership = await this.db().membership.findFirst({
       where: { id: membershipId, organizationId },
       include: { user: true },
     });
-    if (!membership) throw new BadRequestException("সদস্যটি এই দোকানের নয় বা পাওয়া যায়নি");
+    if (!membership) throw badRequest("booking.theMemberDoesNotBelongTo");
     if (membership.status !== "ACTIVE") {
-      throw new BadRequestException("শুধু সক্রিয় (ACTIVE) সদস্যকেই স্টাফ হিসেবে যোগ করা যাবে");
+      throw badRequest("booking.onlyAnActiveMemberCanBe");
     }
     const existing = await this.db().serviceStaff.findFirst({
       where: { organizationId, membershipId },
@@ -281,7 +281,7 @@ export class BookingService {
       where: { id: staffId, organizationId },
       include: { membership: { include: { user: true } } },
     });
-    if (!row) throw new NotFoundException("স্টাফ পাওয়া যায়নি");
+    if (!row) throw notFound("booking.staffWasNotFound");
     return row;
   }
 
@@ -326,18 +326,18 @@ export class BookingService {
       const startMinute = Number(r?.startMinute);
       const endMinute = Number(r?.endMinute);
       if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
-        throw new BadRequestException("সপ্তাহের দিন ০ (রবিবার) থেকে ৬ (শনিবার) হতে হবে");
+        throw badRequest("booking.theDayOfTheWeekMust");
       }
       if (!Number.isInteger(startMinute) || !Number.isInteger(endMinute)
         || startMinute < 0 || endMinute > 1440 || startMinute >= endMinute) {
-        throw new BadRequestException("সময়সীমা সঠিক হতে হবে: ০ ≤ শুরু < শেষ ≤ ১৪৪০ মিনিট");
+        throw badRequest("booking.theTimeRangeMustBeValid");
       }
       clean.push({ weekday, startMinute, endMinute });
     }
     const sorted = [...clean].sort((a, b) => a.weekday - b.weekday || a.startMinute - b.startMinute);
     for (let i = 1; i < sorted.length; i++) {
       if (sorted[i].weekday === sorted[i - 1].weekday && sorted[i].startMinute < sorted[i - 1].endMinute) {
-        throw new BadRequestException("একই দিনে দুটি সময়সীমা ওভারল্যাপ করতে পারবে না");
+        throw badRequest("booking.twoTimeRangesOnTheSame");
       }
     }
     const write = async (db: any) => {
@@ -370,10 +370,10 @@ export class BookingService {
 
   async getSlots(organizationId: string, input: { serviceId: string; staffId: string; date: string }) {
     const service = await this.getServiceOrThrow(organizationId, String(input.serviceId ?? ""));
-    if (service.active === false) throw new BadRequestException("সার্ভিসটি সক্রিয় নয়");
+    if (service.active === false) throw badRequest("booking.theServiceIsNotActive");
     const staff = await this.getStaffOrThrow(organizationId, String(input.staffId ?? ""));
-    if (staff.active === false) throw new BadRequestException("স্টাফ সক্রিয় নন");
-    if (!isValidYmd(input.date)) throw new BadRequestException("তারিখ YYYY-MM-DD ফরম্যাটে দিতে হবে");
+    if (staff.active === false) throw badRequest("booking.theStaffMemberIsNotActive");
+    if (!isValidYmd(input.date)) throw badRequest("booking.theDateMustBeGivenIn");
     const tz = await this.orgTimezone(organizationId);
     const availability = await this.db().staffAvailability.findMany({
       where: { organizationId, serviceStaffId: staff.id },
@@ -422,11 +422,11 @@ export class BookingService {
     note?: string | null; source: "storefront" | "dashboard"; actorId?: string | null;
   }) {
     const service = await this.getServiceOrThrow(organizationId, String(input.serviceId ?? ""));
-    if (service.active === false) throw new BadRequestException("সার্ভিসটি সক্রিয় নয়");
+    if (service.active === false) throw badRequest("booking.theServiceIsNotActive");
     const staff = await this.getStaffOrThrow(organizationId, String(input.staffId ?? ""));
-    if (staff.active === false) throw new BadRequestException("স্টাফ সক্রিয় নন");
+    if (staff.active === false) throw badRequest("booking.theStaffMemberIsNotActive");
     if (!(input.startAt instanceof Date) || Number.isNaN(input.startAt.getTime())) {
-      throw new BadRequestException("বুকিংয়ের শুরুর সময় সঠিক হতে হবে");
+      throw badRequest("booking.theBookingStartTimeMustBe");
     }
     const startAt = input.startAt;
     const endAt = new Date(startAt.getTime() + Number(service.durationMinutes) * 60_000);
@@ -438,17 +438,17 @@ export class BookingService {
       const customer = await this.db().customer.findFirst({
         where: { id: input.customerId, organizationId },
       });
-      if (!customer) throw new NotFoundException("ক্রেতা পাওয়া যায়নি");
+      if (!customer) throw notFound("booking.theCustomerWasNotFound");
       customerId = customer.id;
       if (!guestName) guestName = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
       if (!guestPhone) guestPhone = String(customer.phone ?? "").trim();
     } else if (guestPhone) {
-      if (!guestName) throw new BadRequestException("অতিথির নাম আবশ্যক");
+      if (!guestName) throw badRequest("booking.theGuestNameIsRequired");
       const customer = await this.linkOrCreateCustomer(organizationId, guestPhone, guestName);
       customerId = customer?.id ?? null;
     }
-    if (!guestName) throw new BadRequestException("অতিথির নাম আবশ্যক");
-    if (!guestPhone) throw new BadRequestException("অতিথির ফোন নম্বর আবশ্যক");
+    if (!guestName) throw badRequest("booking.theGuestNameIsRequired");
+    if (!guestPhone) throw badRequest("booking.theGuestPhoneNumberIsRequired");
 
     // Deposit: a manual-kind QUOTE from the org's deposit config.
     // Nothing is collected here and no payment row is created.
@@ -465,7 +465,7 @@ export class BookingService {
           startAt: { lt: endAt }, endAt: { gt: startAt },
         },
       });
-      if (clash) throw new ConflictException("এই সময়ে স্টাফের অন্য বুকিং আছে");
+      if (clash) throw conflict("booking.theStaffMemberHasAnotherBooking");
       return db.serviceBooking.create({
         data: {
           organizationId, serviceId: service.id, staffId: staff.id,
@@ -488,7 +488,7 @@ export class BookingService {
 
   async createBookingFromDashboard(organizationId: string, actorId: string, dto: CreateBookingDto) {
     const startAt = dto?.startAt ? new Date(dto.startAt) : new Date(NaN);
-    if (Number.isNaN(startAt.getTime())) throw new BadRequestException("বুকিংয়ের শুরুর সময় (startAt) সঠিক ISO সময় হতে হবে");
+    if (Number.isNaN(startAt.getTime())) throw badRequest("booking.theBookingStartTimeStartatMust");
     return this.createBooking(organizationId, {
       serviceId: String(dto?.serviceId ?? ""), staffId: String(dto?.staffId ?? ""),
       startAt, customerId: dto?.customerId ?? null,
@@ -504,19 +504,19 @@ export class BookingService {
     if (filters.staffId) where.staffId = filters.staffId;
     if (filters.status) {
       if (!(BOOKING_STATUSES as readonly string[]).includes(filters.status)) {
-        throw new BadRequestException("বুকিংয়ের অবস্থা সঠিক নয়");
+        throw badRequest("booking.theBookingStatusIsNotValid");
       }
       where.status = filters.status;
     }
     const range: Record<string, Date> = {};
     if (filters.from) {
       const d = new Date(filters.from);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শুরুর তারিখ সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("booking.theStartDateIsNotValid");
       range.gte = d;
     }
     if (filters.to) {
       const d = new Date(filters.to);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শেষের তারিখ সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("booking.theEndDateIsNotValid");
       range.lte = d;
     }
     if (Object.keys(range).length) where.startAt = range;
@@ -532,7 +532,7 @@ export class BookingService {
       where: { id: bookingId, organizationId },
       include: { service: true, staff: { include: { membership: { include: { user: true } } } } },
     });
-    if (!row) throw new NotFoundException("বুকিংটি পাওয়া যায়নি");
+    if (!row) throw notFound("booking.theBookingWasNotFound");
     return row;
   }
 
@@ -540,9 +540,7 @@ export class BookingService {
     const booking = await this.getBookingOrThrow(organizationId, bookingId);
     const allowed = TRANSITIONS[booking.status] ?? [];
     if (!allowed.includes(target)) {
-      throw new BadRequestException(
-        `বুকিংটি '${BOOKING_STATUS_LABELS[booking.status] ?? booking.status}' অবস্থা থেকে '${BOOKING_STATUS_LABELS[target] ?? target}' অবস্থায় নেওয়া যাবে না`,
-      );
+      throw badRequest("booking.theBookingCannotBeMovedFrom", { p1: BOOKING_STATUS_LABELS[booking.status] ?? booking.status, p2: BOOKING_STATUS_LABELS[target] ?? target });
     }
     const row = await this.db().serviceBooking.update({
       where: { id: booking.id }, data: { status: target },
@@ -565,7 +563,7 @@ export class BookingService {
   async markDepositPaid(organizationId: string, actorId: string, bookingId: string) {
     const booking = await this.getBookingOrThrow(organizationId, bookingId);
     if (booking.depositState !== "unpaid_manual") {
-      throw new BadRequestException("এই বুকিংয়ে কোনো বাকি ম্যানুয়াল ডিপোজিট নেই");
+      throw badRequest("booking.thisBookingHasNoRemainingManual");
     }
     const row = await this.db().serviceBooking.update({
       where: { id: booking.id }, data: { depositState: "paid_manual" },
@@ -583,21 +581,36 @@ export class BookingService {
 
   private async resolveOrgBySlug(orgSlug: string) {
     const org = await this.db().organization.findFirst({ where: { slug: String(orgSlug ?? "") } });
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("booking.theShopWasNotFound");
     return org;
+  }
+
+  /** MB4 (CD-3): the shop's storefront locale for public payloads
+   * (the booking page renders its chrome in this language). */
+  private async shopLocale(organizationId: string): Promise<string> {
+    try {
+      const s = await this.db().storefrontSetting.findFirst({
+        where: { organizationId }, select: { locale: true },
+      });
+      return s?.locale === "en" ? "en" : "bn";
+    } catch {
+      return "bn";
+    }
   }
 
   async publicServices(orgSlug: string) {
     const org = await this.resolveOrgBySlug(orgSlug);
     const services = await this.listServices(org.id, { activeOnly: true });
-    return { orgSlug: org.slug, orgName: org.name, services };
+    const locale = await this.shopLocale(org.id);
+    return { orgSlug: org.slug, orgName: org.name, locale, services };
   }
 
   async publicStaff(orgSlug: string) {
     const org = await this.resolveOrgBySlug(orgSlug);
     const staff = await this.listStaff(org.id, { activeOnly: true });
+    const locale = await this.shopLocale(org.id);
     return {
-      orgSlug: org.slug,
+      orgSlug: org.slug, locale,
       staff: staff.map((s) => ({ id: s.id, name: s.displayName ?? s.memberName ?? "স্টাফ" })),
     };
   }
@@ -605,26 +618,28 @@ export class BookingService {
   async publicSlots(orgSlug: string, query: { serviceId?: string; staffId?: string; date?: string }) {
     const org = await this.resolveOrgBySlug(orgSlug);
     // Slots only — never any booking details.
-    return this.getSlots(org.id, {
+    const result = await this.getSlots(org.id, {
       serviceId: String(query.serviceId ?? ""), staffId: String(query.staffId ?? ""),
       date: String(query.date ?? ""),
     });
+    const locale = await this.shopLocale(org.id);
+    return { ...result, locale };
   }
 
   async publicBook(orgSlug: string, dto: PublicBookDto) {
     const org = await this.resolveOrgBySlug(orgSlug);
     const guestName = String(dto?.guestName ?? "").trim();
-    if (!guestName) throw new BadRequestException("আপনার নাম আবশ্যক");
+    if (!guestName) throw badRequest("booking.yourNameIsRequired");
     const digits = String(dto?.guestPhone ?? "").replace(/\D/g, "");
     if (digits.length < 10 || digits.length > 15) {
-      throw new BadRequestException("সঠিক ফোন নম্বর দিন (১০–১৫ সংখ্যা)");
+      throw badRequest("booking.giveAValidPhoneNumber10");
     }
-    if (!isValidYmd(dto?.date)) throw new BadRequestException("তারিখ YYYY-MM-DD ফরম্যাটে দিতে হবে");
+    if (!isValidYmd(dto?.date)) throw badRequest("booking.theDateMustBeGivenIn");
     const timeMatch = /^(\d{2}):(\d{2})$/.exec(String(dto?.startTime ?? ""));
-    if (!timeMatch) throw new BadRequestException("সময় HH:mm ফরম্যাটে দিতে হবে");
+    if (!timeMatch) throw badRequest("booking.giveTheTimeInHhMm");
     const minutes = Number(timeMatch[1]) * 60 + Number(timeMatch[2]);
     if (Number(timeMatch[1]) > 23 || Number(timeMatch[2]) > 59) {
-      throw new BadRequestException("সময় সঠিক হতে হবে");
+      throw badRequest("booking.theTimeMustBeValid");
     }
     const tz = String(org.timezone ?? "").trim() || "Asia/Dhaka";
     const startAt = zonedTimeToUtc(tz, dto.date as string, minutes);

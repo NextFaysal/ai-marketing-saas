@@ -2,7 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
-import { formatMinor } from "@repo/contracts";
+import { fmtDate, fmtMoney, fmtMoneyMinor, fmtNumber } from "@repo/contracts";
+import { pubLocaleOf, pubT } from "@/lib/i18n/public";
 import { captchaSiteKeyFor, exceedsMinor, termsHrefFor, type CheckoutTrust } from "@/lib/orders-gb3";
 import { TurnstileWidget, useIdempotencyKey } from "@/components/TurnstileWidget";
 import {
@@ -65,6 +66,9 @@ interface CheckoutData {
   // carries one.
   checkoutFields?: unknown;
   deposit?: { amountMinor: string; note: string } | null;
+  // ML8: optional locale when the payload supplies one (org/shop
+  // locale); absent = platform default bn via pubLocaleOf.
+  locale?: string;
 }
 
 function slotDateString(offsetDays = 0): string {
@@ -78,6 +82,9 @@ function slotDateString(offsetDays = 0): string {
 export default function CheckoutPage() {
   const params = useParams();
   const slug = String(params.slug ?? "");
+  const [localeState, setLocaleState] = useState("bn");
+  const locale = pubLocaleOf(localeState);
+  const t = pubT(locale);
 
   const [data, setData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -127,12 +134,13 @@ export default function CheckoutPage() {
         const res = await fetch(`${API_URL}/public/checkout/${slug}`);
         if (!res.ok) {
           const errData = await res.json().catch(() => null);
-          throw new Error(errData?.message || "প্রোডাক্টটি পাওয়া যায়নি অথবা বর্তমানে স্টকে নেই।");
+          throw new Error(errData?.message || t.singleCheckout.productUnavailable);
         }
         const json = await res.json();
         setData(json);
+        setLocaleState(json?.organization?.locale ?? json?.locale ?? "bn");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "লোড করতে ব্যর্থ হয়েছে");
+        setError(e instanceof Error ? e.message : t.singleCheckout.loadFailed);
       } finally {
         setLoading(false);
       }
@@ -146,23 +154,23 @@ export default function CheckoutPage() {
     // Bangladeshi phone validation
     const cleanPhone = phone.replace(/\D/g, "");
     if (cleanPhone.length < 11) {
-      alert("অনুগ্রহ করে সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)");
+      alert(t.singleCheckout.phoneInvalid);
       return;
     }
     const trust = data.checkoutTrust;
     if (trust?.termsRequired && !termsAccepted) {
-      setError("অর্ডার করতে শর্তাবলিতে সম্মতি দিন।");
+      setError(t.singleCheckout.termsRequired);
       return;
     }
     if (captchaSiteKeyFor(trust, "checkout") && !captchaToken) {
-      setError("CAPTCHA যাচাই সম্পূর্ণ করুন।");
+      setError(t.singleCheckout.captchaRequired);
       return;
     }
     // AB4: required custom fields must be answered.
     const fieldDefs = normalizeCheckoutFields(data.checkoutFields);
     const missingFields = missingRequiredFields(fieldDefs, fieldAnswers);
     if (missingFields.length > 0) {
-      setError(`এই তথ্যগুলো আবশ্যক: ${missingFields.join(", ")}`);
+      setError(`${t.singleCheckout.requiredFieldsPrefix}${missingFields.join(", ")}`);
       return;
     }
 
@@ -208,14 +216,14 @@ export default function CheckoutPage() {
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.message || "অর্ডার সম্পন্ন করতে সমস্যা হয়েছে");
+        throw new Error(errJson?.message || t.singleCheckout.orderFailed);
       }
 
       const out = await res.json();
       idempotency.reset();
       setOrderCompleted(out);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "অর্ডার ব্যর্থ হয়েছে";
+      const msg = err instanceof Error ? err.message : t.singleCheckout.orderFailedShort;
       // A refused coupon keeps the form intact so the shopper can
       // fix or drop the code; other failures keep the old behavior.
       if (couponCode.trim()) setCouponError(msg);
@@ -230,7 +238,7 @@ export default function CheckoutPage() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="text-center space-y-3">
           <div className="h-10 w-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm font-semibold text-slate-600">অর্ডার পেজ লোড হচ্ছে...</p>
+          <p className="text-sm font-semibold text-slate-600">{t.singleCheckout.pageLoading}</p>
         </div>
       </div>
     );
@@ -241,13 +249,13 @@ export default function CheckoutPage() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl p-8 shadow-sm border text-center space-y-4">
           <div className="text-4xl">⚠️</div>
-          <h2 className="text-lg font-bold text-slate-800">দুঃখিত!</h2>
-          <p className="text-xs text-rose-600 font-medium">{error || "পণ্যটি পাওয়া যায়নি"}</p>
+          <h2 className="text-lg font-bold text-slate-800">{t.singleCheckout.sorryTitle}</h2>
+          <p className="text-xs text-rose-600 font-medium">{error || t.singleCheckout.productNotFound}</p>
           <a
             href="/"
             className="inline-block rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white"
           >
-            হোমে ফিরে যান
+            {t.singleCheckout.backHome}
           </a>
         </div>
       </div>
@@ -273,57 +281,57 @@ export default function CheckoutPage() {
             ✓
           </div>
           <div>
-            <h1 className="text-2xl font-black text-slate-900">অর্ডার সফলভাবে গ্রহণ করা হয়েছে!</h1>
+            <h1 className="text-2xl font-black text-slate-900">{t.singleCheckout.successTitle}</h1>
             <p className="text-xs text-slate-500 mt-1">
-              ধন্যবাদ <b>{orderCompleted.customerName}</b>! আমাদের প্রতিনিধি শীঘ্রই আপনাকে কল করে কনফার্ম করবেন।
+              {t.singleCheckout.thanksPrefix}<b>{orderCompleted.customerName}</b>{t.singleCheckout.thanksSuffix}
             </p>
           </div>
 
           <div className="bg-slate-50 rounded-2xl p-4 border text-left space-y-2 text-xs">
             <div className="flex justify-between border-b pb-2">
-              <span className="text-slate-500">পণ্য:</span>
-              <span className="font-bold text-slate-800">{orderCompleted.productName} (x{orderCompleted.quantity})</span>
+              <span className="text-slate-500">{t.singleCheckout.productLabel}</span>
+              <span className="font-bold text-slate-800">{orderCompleted.productName} (x{fmtNumber(locale, Number(orderCompleted.quantity) || 0)})</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-slate-500">ডেলিভারি ঠিকানা:</span>
+              <span className="text-slate-500">{t.singleCheckout.addressLabel}</span>
               <span className="font-medium text-slate-800 text-right max-w-[200px]">{orderCompleted.deliveryAddress}</span>
             </div>
             <div className="flex justify-between border-b pb-2">
-              <span className="text-slate-500">পেমেন্ট মেথড:</span>
-              <span className="font-bold text-indigo-700">ক্যাশ অন ডেলিভারি (পণ্য পেয়ে টাকা দিন)</span>
+              <span className="text-slate-500">{t.singleCheckout.paymentMethodLabel}</span>
+              <span className="font-bold text-indigo-700">{t.singleCheckout.codText}</span>
             </div>
             {orderCompleted.couponApplied ? (
               <div className="flex justify-between border-b pb-2">
-                <span className="text-slate-500">কুপন ছাড়:</span>
-                <span className="font-bold text-emerald-700">− ৳{(Number(orderCompleted.discountMinor ?? 0) / 100).toLocaleString("en-IN")}{orderCompleted.freeShippingApplied ? " + ফ্রি ডেলিভারি" : ""}</span>
+                <span className="text-slate-500">{t.singleCheckout.couponDiscountLabel}</span>
+                <span className="font-bold text-emerald-700">− {fmtMoneyMinor(locale, Number(orderCompleted.discountMinor ?? 0))}{orderCompleted.freeShippingApplied ? t.singleCheckout.freeShippingSuffix : ""}</span>
               </div>
             ) : null}
             {(orderCompleted.promotionsApplied ?? []).map((p: { promotionId: string; name: string; amountMinor: string }) => (
               <div key={p.promotionId} className="flex justify-between border-b pb-2">
-                <span className="text-slate-500">প্রমোশন ছাড় — {p.name}:</span>
-                <span className="font-bold text-emerald-700">− ৳{(Number(p.amountMinor ?? 0) / 100).toLocaleString("en-IN")}</span>
+                <span className="text-slate-500">{t.singleCheckout.promotionDiscountPrefix}{p.name}:</span>
+                <span className="font-bold text-emerald-700">− {fmtMoneyMinor(locale, Number(p.amountMinor ?? 0))}</span>
               </div>
             ))}
             {orderCompleted.referralDiscountMinor && Number(orderCompleted.referralDiscountMinor) > 0 ? (
               <div className="flex justify-between border-b pb-2">
-                <span className="text-slate-500">রেফারেল ছাড়{orderCompleted.referral?.code ? ` (${orderCompleted.referral.code})` : ""}:</span>
-                <span className="font-bold text-emerald-700">− ৳{(Number(orderCompleted.referralDiscountMinor) / 100).toLocaleString("en-IN")}</span>
+                <span className="text-slate-500">{t.singleCheckout.referralDiscountLabel}{orderCompleted.referral?.code ? ` (${orderCompleted.referral.code})` : ""}:</span>
+                <span className="font-bold text-emerald-700">− {fmtMoneyMinor(locale, Number(orderCompleted.referralDiscountMinor))}</span>
               </div>
             ) : null}
             <div className="flex justify-between pt-1 text-sm font-bold">
-              <span className="text-slate-900">সর্বমোট প্রদেয় টাকা:</span>
+              <span className="text-slate-900">{t.singleCheckout.grandTotalLabel}</span>
               <span className="text-emerald-700 text-base">{orderCompleted.totalFormatted}</span>
             </div>
           </div>
           {orderCompleted.hasDigitalItems ? (
             <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900">
-              ডিজিটাল পণ্য: ডেলিভারির পর ট্র্যাকিং পেজে ডাউনলোড লিংক পাওয়া যাবে
+              {t.singleCheckout.digitalNote}
             </div>
           ) : null}
 
           {orderCompleted.yourReferralCode ? (
             <div className="rounded-xl bg-indigo-50 border border-indigo-200 p-3 text-xs font-bold text-indigo-900">
-              🎁 আপনার রেফারেল কোড: <span className="font-mono">{orderCompleted.yourReferralCode}</span> — বন্ধুদের দিলে তারা ছাড় পাবেন
+              {t.singleCheckout.yourReferralPrefix}<span className="font-mono">{orderCompleted.yourReferralCode}</span>{t.singleCheckout.yourReferralSuffix}
             </div>
           ) : null}
 
@@ -332,12 +340,12 @@ export default function CheckoutPage() {
               the shop arranges collection. */}
           {orderCompleted.deposit ? (
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs font-semibold text-amber-900">
-              এই অর্ডারে ৳{(Number(orderCompleted.deposit.amountMinor ?? 0) / 100).toLocaleString("en-IN")} advance প্রয়োজন — {orderCompleted.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করতে আপনার সাথে যোগাযোগ করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয়নি।
+              {t.singleCheckout.depositPrefix}{fmtMoneyMinor(locale, Number(orderCompleted.deposit.amountMinor ?? 0))}{t.singleCheckout.depositMid}{orderCompleted.deposit.note}{t.singleCheckout.depositSuffix}
             </div>
           ) : null}
 
           <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
-            🔒 আপনার পার্সেলটি ঢাকা বা ঢাকার বাইরে ২-৩ কার্যদিবসের মধ্যে কুরিয়ারের মাধ্যমে পৌঁছে দেওয়া হবে।
+            {t.singleCheckout.deliveryPromiseBanner}
           </div>
 
           {organization.slug ? (
@@ -345,7 +353,7 @@ export default function CheckoutPage() {
               href={`/track/${organization.slug}`}
               className="block w-full rounded-xl bg-indigo-600 text-white font-semibold py-3 text-xs hover:bg-indigo-700 transition-colors"
             >
-              📦 অর্ডার ট্র্যাক করুন
+              {t.singleCheckout.trackOrder}
             </a>
           ) : null}
 
@@ -353,7 +361,7 @@ export default function CheckoutPage() {
             onClick={() => window.location.reload()}
             className="w-full rounded-xl bg-slate-900 text-white font-semibold py-3 text-xs hover:bg-black transition-colors"
           >
-            আরেকটি অর্ডার করুন
+            {t.singleCheckout.orderAgain}
           </button>
         </div>
       </div>
@@ -394,10 +402,10 @@ export default function CheckoutPage() {
             {organization.name}
           </span>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            অর্ডার করতে নিচের ফর্মটি পূরণ করুন
+            {t.singleCheckout.formTitle}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            ক্যাশ অন ডেলিভারি সুবিধা · পণ্য হাতে পেয়ে চেক করে পেমেন্ট করার নিশ্চয়তা
+            {t.singleCheckout.formSubtitle}
           </p>
         </div>
 
@@ -405,26 +413,26 @@ export default function CheckoutPage() {
           {/* Left Column: Customer Form */}
           <div className="md:col-span-7 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
             <h2 className="text-base font-bold text-slate-900 border-b pb-2 flex items-center gap-2">
-              <span>📍 আপনার ডেলিভারি তথ্য দিন</span>
+              <span>{t.singleCheckout.deliveryInfoHeading}</span>
             </h2>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                আপনার নাম (Full Name) *
+                {t.singleCheckout.nameLabel}
               </label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="যেমন: মোঃ সাব্বির আহমেদ"
+                placeholder={t.singleCheckout.namePlaceholder}
                 className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
               />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                মোবাইল নম্বর (Phone Number) *
+                {t.singleCheckout.phoneLabel}
               </label>
               <input
                 type="tel"
@@ -438,14 +446,14 @@ export default function CheckoutPage() {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                পূর্ণ ঠিকানা (Full Delivery Address) *
+                {t.singleCheckout.addressFieldLabel}
               </label>
               <textarea
                 required
                 rows={2}
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="বাড়ি নং, রোড নং, এলাকা, থানা ও জেলার নাম লিখুন..."
+                placeholder={t.singleCheckout.addressPlaceholder}
                 className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
               />
             </div>
@@ -453,7 +461,7 @@ export default function CheckoutPage() {
             {/* Delivery Area Selection */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                ডেলিভারি এরিয়া বেছে নিন *
+                {t.singleCheckout.zoneLabel}
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
@@ -465,9 +473,9 @@ export default function CheckoutPage() {
                       : "border-slate-200 bg-white"
                   }`}
                 >
-                  <div className="font-bold text-xs text-slate-900">ঢাকা সিটির ভেতরে</div>
+                  <div className="font-bold text-xs text-slate-900">{t.singleCheckout.insideDhaka}</div>
                   <div className="text-[11px] text-indigo-700 font-semibold mt-0.5">
-                    চার্জ: ৳{organization.insideDhakaFee}
+                    {t.singleCheckout.chargePrefix}{fmtMoney(locale, Number(organization.insideDhakaFee) || 0)}
                   </div>
                 </button>
 
@@ -480,9 +488,9 @@ export default function CheckoutPage() {
                       : "border-slate-200 bg-white"
                   }`}
                 >
-                  <div className="font-bold text-xs text-slate-900">ঢাকার বাইরে (সারা দেশ)</div>
+                  <div className="font-bold text-xs text-slate-900">{t.singleCheckout.outsideDhaka}</div>
                   <div className="text-[11px] text-indigo-700 font-semibold mt-0.5">
-                    চার্জ: ৳{organization.outsideDhakaFee}
+                    {t.singleCheckout.chargePrefix}{fmtMoney(locale, Number(organization.outsideDhakaFee) || 0)}
                   </div>
                 </button>
               </div>
@@ -492,7 +500,7 @@ export default function CheckoutPage() {
             {(organization.deliverySlots ?? []).length > 0 ? (
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  ডেলিভারি স্লট বেছে নিন (ঐচ্ছিক)
+                  {t.singleCheckout.slotLabel}
                 </label>
                 <select
                   value={slotId}
@@ -504,14 +512,14 @@ export default function CheckoutPage() {
                   }}
                   className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
                 >
-                  <option value="">স্লট বেছে নিইনি</option>
+                  <option value="">{t.singleCheckout.slotNone}</option>
                   {(organization.deliverySlots ?? []).map((s) => (
                     <option key={s.id} value={s.id}>{s.label} ({s.startTime} – {s.endTime})</option>
                   ))}
                 </select>
                 {slotId ? (
                   <div className="mt-2">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">ডেলিভারির তারিখ *</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">{t.singleCheckout.slotDateLabel}</label>
                     <input
                       type="date"
                       required
@@ -521,7 +529,7 @@ export default function CheckoutPage() {
                       onChange={(e) => setSlotDate(e.target.value)}
                       className="w-full rounded-xl border border-slate-300 p-2.5 text-xs focus:border-indigo-600 focus:outline-none"
                     />
-                    <p className="mt-1 text-[11px] text-slate-400">স্লট বেছে নিলে তারিখ দেওয়া বাধ্যতামূলক।</p>
+                    <p className="mt-1 text-[11px] text-slate-400">{t.singleCheckout.slotHelp}</p>
                   </div>
                 ) : null}
               </div>
@@ -529,7 +537,7 @@ export default function CheckoutPage() {
 
             {/* Payment Method Option */}
             <div className="border-t pt-3">
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">পেমেন্ট মেথড:</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">{t.singleCheckout.paymentMethodFieldLabel}</label>
               <div className="rounded-xl border border-emerald-300 bg-emerald-50/60 p-3 flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-950">
                   <input
@@ -539,23 +547,23 @@ export default function CheckoutPage() {
                     onChange={() => setPaymentMethod("cod")}
                     className="text-emerald-600"
                   />
-                  <span>💵 ক্যাশ অন ডেলিভারি (Cash on Delivery)</span>
+                  <span>{t.singleCheckout.codLabel}</span>
                 </label>
                 <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
-                  জনপ্রিয়
+                  {t.singleCheckout.popularBadge}
                 </span>
               </div>
             </div>
 
             <div>
               <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                বিশেষ কোনো নির্দেশনা (ঐচ্ছিক):
+                {t.singleCheckout.noteLabel}
               </label>
               <input
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="যেমন: বিকেলে ডেলিভারি দিলে ভালো হয়"
+                placeholder={t.singleCheckout.notePlaceholder}
                 className="w-full rounded-lg border border-slate-200 p-2 text-xs"
               />
             </div>
@@ -571,20 +579,20 @@ export default function CheckoutPage() {
             {/* EC29: gift wrap — hidden unless the payload offers it */}
             {giftWrapCfg?.enabled && giftWrapCfg.feeMinor ? (
               <div className="space-y-2 rounded-xl border border-pink-200 bg-pink-50/50 p-3">
-                <p className="text-xs font-bold text-pink-900">🎁 উপহার</p>
+                <p className="text-xs font-bold text-pink-900">{t.singleCheckout.giftHeading}</p>
                 <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-800">
                   <input type="checkbox" checked={giftWrap} onChange={(e) => setGiftWrap(e.target.checked)} />
-                  গিফট র‍্যাপ করুন (+৳{giftWrapFeeTaka.toLocaleString("en-IN")} যোগ হবে)
+                  {t.singleCheckout.wrapPrefix}{fmtMoney(locale, giftWrapFeeTaka)}{t.singleCheckout.wrapSuffix}
                 </label>
                 {giftWrap ? (
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">গিফট বার্তা (ঐচ্ছিক)</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">{t.singleCheckout.giftMessageLabel}</label>
                     <textarea
                       rows={2}
                       maxLength={200}
                       value={giftMessage}
                       onChange={(e) => setGiftMessage(e.target.value)}
-                      placeholder="যেমন: শুভ জন্মদিন! 🎉"
+                      placeholder={t.singleCheckout.giftMessagePlaceholder}
                       className="w-full rounded-lg border border-pink-200 bg-white p-2 text-xs focus:outline-none"
                     />
                   </div>
@@ -597,7 +605,7 @@ export default function CheckoutPage() {
           <div className="md:col-span-5 space-y-4">
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
               <h2 className="text-base font-bold text-slate-900 border-b pb-2">
-                🛍️ অর্ডার বিবরণ
+                {t.singleCheckout.summaryHeading}
               </h2>
 
               <div className="flex gap-3">
@@ -617,18 +625,18 @@ export default function CheckoutPage() {
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-slate-900 line-clamp-2">{product.name}</h3>
                   {product.preorder ? (
-                    <span className="inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">প্রি-অর্ডার{product.preorder.releaseDate ? ` · ${new Date(product.preorder.releaseDate).toLocaleDateString("bn-BD")}` : ""}</span>
+                    <span className="inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{t.singleCheckout.preorderBadge}{product.preorder.releaseDate ? ` · ${fmtDate(locale, product.preorder.releaseDate)}` : ""}</span>
                   ) : null}
                   {product.digital ? (
-                    <span className="ml-1 inline-block rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">ডিজিটাল পণ্য</span>
+                    <span className="ml-1 inline-block rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{t.singleCheckout.digitalBadge}</span>
                   ) : null}
                   <div className="flex items-center gap-2">
                     <span className="text-base font-extrabold text-indigo-700">
-                      {formatMinor(BigInt(product.priceMinor))}
+                      {fmtMoneyMinor(locale, BigInt(product.priceMinor))}
                     </span>
                     {product.compareAtMinor ? (
                       <span className="text-xs text-slate-400 line-through">
-                        {formatMinor(BigInt(product.compareAtMinor))}
+                        {fmtMoneyMinor(locale, BigInt(product.compareAtMinor))}
                       </span>
                     ) : null}
                   </div>
@@ -642,7 +650,7 @@ export default function CheckoutPage() {
 
               {/* Quantity Selector */}
               <div className="flex items-center justify-between border-y py-3">
-                <span className="text-xs font-bold text-slate-700">পরিমাণ (Quantity):</span>
+                <span className="text-xs font-bold text-slate-700">{t.singleCheckout.quantityLabel}</span>
                 <div className="flex items-center border rounded-lg overflow-hidden">
                   <button
                     type="button"
@@ -651,7 +659,7 @@ export default function CheckoutPage() {
                   >
                     -
                   </button>
-                  <span className="px-4 py-1 text-xs font-bold text-slate-900">{quantity}</span>
+                  <span className="px-4 py-1 text-xs font-bold text-slate-900">{fmtNumber(locale, quantity)}</span>
                   <button
                     type="button"
                     onClick={() => setQuantity(quantity + 1)}
@@ -682,14 +690,14 @@ export default function CheckoutPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-[10px] font-bold bg-amber-500 text-white px-1.5 py-0.2 rounded">
-                          🔥 বিশেষ অ্যাড-অন অফার
+                          {t.singleCheckout.bumpBadge}
                         </span>
                         <span className="text-xs font-bold text-slate-900">
                           {product.bumpTitle}
                         </span>
                       </div>
                       <p className="text-[11px] text-amber-900 font-bold">
-                        মাত্র ৳{(Number(product.bumpPriceMinor) / 100).toLocaleString("en-IN")} অতিরিক্ত যোগ হবে
+                        {t.singleCheckout.bumpExtraPrefix}{fmtMoneyMinor(locale, Number(product.bumpPriceMinor))}{t.singleCheckout.bumpExtraSuffix}
                       </p>
                     </div>
                   </div>
@@ -698,27 +706,27 @@ export default function CheckoutPage() {
 
               {/* EC7: coupon code (validated by the server) */}
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">কুপন কোড (যদি থাকে)
+                <label className="block text-xs font-semibold text-slate-700">{t.singleCheckout.couponLabel}
                   <input
                     type="text"
                     value={couponCode}
                     onChange={(e) => { setCouponCode(e.target.value.toUpperCase()); setCouponError(""); }}
-                    placeholder="যেমন: EID10"
+                    placeholder={t.singleCheckout.couponPlaceholder}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono uppercase focus:border-indigo-500 focus:outline-none"
                   />
                 </label>
                 {couponError ? <p className="rounded-lg bg-rose-50 px-2 py-1.5 text-[11px] font-medium text-rose-600">{couponError}</p> : null}
-                {couponCode.trim() ? <p className="text-[11px] text-slate-400">কুপনের ছাড় অর্ডার নিশ্চিত করার সময় সার্ভার থেকে যাচাই হয়ে মোটে যোগ হবে।</p> : null}
+                {couponCode.trim() ? <p className="text-[11px] text-slate-400">{t.singleCheckout.couponNote}</p> : null}
               </div>
 
               {/* EC16: referral code (a friend's code, optional) */}
               <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">রেফারেল কোড (বন্ধুর কোড, যদি থাকে)
+                <label className="block text-xs font-semibold text-slate-700">{t.singleCheckout.referralLabel}
                   <input
                     type="text"
                     value={referralCode}
                     onChange={(e) => setReferralCode(e.target.value)}
-                    placeholder="বন্ধুর রেফারেল কোড"
+                    placeholder={t.singleCheckout.referralPlaceholder}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"
                   />
                 </label>
@@ -727,28 +735,28 @@ export default function CheckoutPage() {
               {/* Price Calculation Breakdown */}
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between text-slate-600">
-                  <span>সাবটোটাল ({quantity} টি পণ্য):</span>
-                  <span className="font-semibold text-slate-900">৳{(unitPrice * quantity).toLocaleString("en-IN")}</span>
+                  <span>{t.singleCheckout.subtotalPrefix}{fmtNumber(locale, quantity)}{t.singleCheckout.subtotalSuffix}</span>
+                  <span className="font-semibold text-slate-900">{fmtMoney(locale, unitPrice * quantity)}</span>
                 </div>
                 {includeBump && bumpPrice > 0 ? (
                   <div className="flex justify-between text-amber-800 font-semibold bg-amber-50 px-2 py-1 rounded">
-                    <span>⚡ স্পেশাল অ্যাড-অন:</span>
-                    <span>+ ৳{bumpPrice.toLocaleString("en-IN")}</span>
+                    <span>{t.singleCheckout.bumpLine}</span>
+                    <span>+ {fmtMoney(locale, bumpPrice)}</span>
                   </div>
                 ) : null}
                 {giftWrap && giftWrapCfg?.enabled ? (
                   <div className="flex justify-between text-slate-600">
-                    <span>🎁 গিফট র‍্যাপ:</span>
-                    <span className="font-semibold text-slate-900">+ ৳{giftWrapFeeTaka.toLocaleString("en-IN")}</span>
+                    <span>{t.singleCheckout.wrapLine}</span>
+                    <span className="font-semibold text-slate-900">+ {fmtMoney(locale, giftWrapFeeTaka)}</span>
                   </div>
                 ) : null}
                 <div className="flex justify-between text-slate-600">
-                  <span>ডেলিভারি চার্জ:</span>
-                  <span className="font-semibold text-slate-900">৳{deliveryCharge}</span>
+                  <span>{t.singleCheckout.deliveryChargeLabel}</span>
+                  <span className="font-semibold text-slate-900">{fmtMoney(locale, deliveryCharge)}</span>
                 </div>
                 <div className="flex justify-between text-sm font-black text-slate-900 border-t pt-2">
-                  <span>সর্বমোট প্রদেয় টাকা:</span>
-                  <span className="text-indigo-600 text-lg">৳{grandTotal.toLocaleString("en-IN")}</span>
+                  <span>{t.singleCheckout.grandTotalLabel}</span>
+                  <span className="text-indigo-600 text-lg">{fmtMoney(locale, grandTotal)}</span>
                 </div>
               </div>
 
@@ -759,7 +767,7 @@ export default function CheckoutPage() {
                     <p className="text-xs font-semibold text-slate-700">🚚 {organization.deliveryPromiseText.trim()}</p>
                   ) : null}
                   {organization.supportPhone?.trim() ? (
-                    <p className="text-xs text-slate-500">সাপোর্ট: <span className="font-mono font-semibold">{organization.supportPhone.trim()}</span></p>
+                    <p className="text-xs text-slate-500">{t.singleCheckout.supportLabel}<span className="font-mono font-semibold">{organization.supportPhone.trim()}</span></p>
                   ) : null}
                 </div>
               ) : null}
@@ -769,9 +777,9 @@ export default function CheckoutPage() {
                 <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-slate-800">
                   <input type="checkbox" className="mt-0.5" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />
                   <span>
-                    আমি শর্তাবলি পড়েছি এবং সম্মত আছি
+                    {t.singleCheckout.termsLabel}
                     {termsHrefFor(data.checkoutTrust, organization.slug) ? (
-                      <> — <a href={termsHrefFor(data.checkoutTrust, organization.slug) ?? undefined} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline" onClick={(e) => e.stopPropagation()}>শর্তাবলি দেখুন</a></>
+                      <> — <a href={termsHrefFor(data.checkoutTrust, organization.slug) ?? undefined} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline" onClick={(e) => e.stopPropagation()}>{t.singleCheckout.termsLink}</a></>
                     ) : null}
                   </span>
                 </label>
@@ -780,12 +788,12 @@ export default function CheckoutPage() {
                 <TurnstileWidget siteKey={captchaSiteKeyFor(data.checkoutTrust, "checkout") ?? ""} onToken={setCaptchaToken} />
               ) : null}
               {data.checkoutTrust?.cod.advanceAboveMinor && exceedsMinor(String(Math.round(grandTotal * 100)), data.checkoutTrust.cod.advanceAboveMinor) ? (
-                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">এই অর্ডারের জন্য অগ্রিম পেমেন্ট আবশ্যক — অর্ডারের পর দোকান অগ্রিমের বিষয়ে আপনার সাথে যোগাযোগ করবে। এই পেজে কোনো পেমেন্ট নেওয়া হয় না।</p>
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{t.singleCheckout.codAdvanceNotice}</p>
               ) : null}
               {/* AB4: payload-carried deposit notice (when present). */}
               {data.deposit ? (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                  এই অর্ডারে {formatMinor(BigInt(data.deposit.amountMinor))} advance প্রয়োজন — {data.deposit.note} দোকান advance সংগ্রহের ব্যবস্থা করবে — এই পেজে কোনো পেমেন্ট নেওয়া হয় না।
+                  {t.singleCheckout.depositNoticePrefix}{fmtMoneyMinor(locale, BigInt(data.deposit.amountMinor))}{t.singleCheckout.depositNoticeMid}{data.deposit.note}{t.singleCheckout.depositNoticeSuffix}
                 </p>
               ) : null}
 
@@ -795,12 +803,12 @@ export default function CheckoutPage() {
                 disabled={submitting}
                 className="w-full rounded-2xl bg-indigo-600 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 active:scale-[0.99] transition-all disabled:opacity-50"
               >
-                {submitting ? "অর্ডার প্রসেস হচ্ছে..." : "🚀 অর্ডার নিশ্চিত করুন (Cash on Delivery)"}
+                {submitting ? t.singleCheckout.submitting : t.singleCheckout.placeOrder}
               </button>
 
               <div className="text-center text-[10px] text-slate-400 space-y-1">
-                <p>🔒 ১০০% নিরাপদ চেকআউট · পণ্য হাতে পেয়ে পেমেন্ট</p>
-                <p>প্রয়োজনে কল করে সাপোর্ট দেওয়া হবে</p>
+                <p>{t.singleCheckout.secureNote}</p>
+                <p>{t.singleCheckout.supportNote}</p>
               </div>
             </div>
           </div>
@@ -809,7 +817,8 @@ export default function CheckoutPage() {
         {/* EC18: return policy in the page footer area — hidden when empty. */}
         {organization.returnPolicyText?.trim() ? (
           <footer className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="text-sm font-bold text-slate-800">রিটার্ন নীতি</h2>
+            <h2 className="text-sm font-bold text-slate-800">{t.singleCheckout.returnPolicyTitle}</h2>
+
             <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-slate-600">{organization.returnPolicyText.trim()}</p>
           </footer>
         ) : null}

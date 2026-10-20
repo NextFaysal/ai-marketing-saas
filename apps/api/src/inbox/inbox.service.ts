@@ -1,5 +1,5 @@
 import { ensurePlatformConfig, getPlatformConfigSync, resolveMessagingAppSecret } from "../common/platform-config";
-import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { isConnectionDenied, isMemberConnectionDenied } from "../common/permission-catalog";
 import { createHmac, timingSafeEqual } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -36,6 +36,7 @@ import { aiScheduleBlocks, isAiActive, parseAiSchedule } from "./ai-schedule";
 import { InventoryService } from "../inventory/inventory.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { buildCarouselComponent, CarouselValidationError, type CarouselCardInput } from "../messaging/whatsapp-rich";
+import { resolveDocumentLocale } from "../i18n/catalog/send-locale";
 import { resolveTenantAppConfig } from "../connections/tenant-app-config";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { OrgBrainService } from "../ai/org-brain.service";
@@ -48,6 +49,7 @@ const STATUS_RANK: Record<string, number> = { queued: 0, sent: 1, delivered: 2, 
 import { applyReaction, nextDeliveryPatch, reactionEmoji } from "./message-lifecycle";
 import { clampConversationPageLimit, conversationCursorWhere, decodeConversationCursor, encodeConversationCursor, oldestCursorRow } from "./conversation-cursor";
 import { HANDOVER_SUMMARY_LABEL, detectReplyLanguage, parseNextActionProposal, type NextActionProposal } from "./in7-ai";
+import { ApiException, badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /** Inbox Next-Gen P1: decoded-size cap for browser-uploaded media.
  * 2MB of bytes is ~2.7MB of base64, inside the 3MB JSON body limit. */
@@ -166,46 +168,46 @@ const MACRO_OUTCOMES = ["sale", "no_sale_price", "no_sale_stock", "no_sale_undec
  */
 export function sanitizeMacroSteps(input: unknown): MacroStep[] {
   if (!Array.isArray(input) || input.length === 0) {
-    throw new BadRequestException("ম্যাক্রোতে অন্তত একটি ধাপ থাকতে হবে।");
+    throw badRequest("inbox.aMacroMustHaveAtLeast");
   }
   if (input.length > 10) {
-    throw new BadRequestException("ম্যাক্রোতে সর্বোচ্চ ১০টি ধাপ থাকতে পারবে।");
+    throw badRequest("inbox.aMacroCanHaveAtMost");
   }
   const out: MacroStep[] = [];
   for (const raw of input as any[]) {
     const step = (raw && typeof raw === "object") ? raw : {};
     const type = step.type;
     if (!(MACRO_STEP_TYPES as readonly string[]).includes(type)) {
-      throw new BadRequestException(`অজানা ম্যাক্রো ধাপ: ${String(type ?? "")} — ধাপ হতে পারে reply | assign | tag | pipeline | close | snooze।`);
+      throw badRequest("inbox.unknownMacroStepStepsCanBe", { p1: String(type ?? "") });
     }
     if (type === "reply") {
       const quickReplyId = typeof step.quickReplyId === "string" ? step.quickReplyId.trim().slice(0, 120) : "";
-      if (!quickReplyId) throw new BadRequestException("Reply ধাপের জন্য একটি Quick Reply বেছে নিন।");
+      if (!quickReplyId) throw badRequest("inbox.forTheReplyStepChooseA");
       out.push({ type: "reply", quickReplyId });
     } else if (type === "assign") {
       const v = step.assignedUserId;
       if (v !== null && v !== "me" && (typeof v !== "string" || !v.trim())) {
-        throw new BadRequestException("Assign ধাপে কাকে অ্যাসাইন করা হবে তা দিন (সদস্যের id, \"me\" অথবা null = অ্যাসাইন তুলে নিন)।");
+        throw badRequest("inbox.inTheAssignStepSayWho");
       }
       out.push({ type: "assign", assignedUserId: v === null ? null : v === "me" ? "me" : (v as string).trim().slice(0, 120) });
     } else if (type === "tag") {
       const tag = typeof step.tag === "string" ? step.tag.trim().slice(0, 60) : "";
-      if (!tag) throw new BadRequestException("Tag ধাপে ট্যাগের লেখা দিন।");
+      if (!tag) throw badRequest("inbox.inTheTagStepGiveThe");
       out.push({ type: "tag", tag });
     } else if (type === "pipeline") {
       if (!MACRO_PIPELINE_STAGES.includes(step.stage)) {
-        throw new BadRequestException(`Pipeline ধাপের stage সঠিক নয় — হতে পারে ${MACRO_PIPELINE_STAGES.join(" | ")}।`);
+        throw badRequest("inbox.thePipelineStepSStageIs", { p1: MACRO_PIPELINE_STAGES.join(" | ") });
       }
       out.push({ type: "pipeline", stage: step.stage });
     } else if (type === "close") {
       if (step.outcome !== undefined && step.outcome !== null && !MACRO_OUTCOMES.includes(step.outcome)) {
-        throw new BadRequestException("Close ধাপের outcome সঠিক নয়।");
+        throw badRequest("inbox.theCloseStepSOutcomeIs");
       }
       out.push({ type: "close", ...(step.outcome !== undefined ? { outcome: step.outcome } : {}) });
     } else {
       const minutes = step.minutes;
       if (!Number.isInteger(minutes) || minutes < 5 || minutes > 10080) {
-        throw new BadRequestException("Snooze ধাপ ৫ থেকে ১০০৮০ মিনিটের মধ্যে হতে হবে।");
+        throw badRequest("inbox.theSnoozeStepMustBeBetween");
       }
       out.push({ type: "snooze", minutes });
     }
@@ -433,7 +435,7 @@ export class InboxService implements OnModuleInit {
    */
   async sendKeywordAutoReply(organizationId: string, conversationId: string, text: string): Promise<{ providerMessageId: string }> {
     const conv = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-    if (!conv) throw new BadRequestException("Conversation not found for keyword auto-reply");
+    if (!conv) throw badRequest("inbox.conversationNotFoundForKeywordAuto");
     const content = String(text ?? "");
     const message = await (this.prisma as any).channelMessage.create({
       data: {
@@ -521,13 +523,13 @@ export class InboxService implements OnModuleInit {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "inbox.aiFeaturesTemporarilyPausedPlatformWide" : "inbox.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
     const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
     const used = await (this.prisma as any).aIUsageRecord.count({ where: { organizationId, feature, createdAt: { gte: startOfDay } } });
-    if (used >= limit) throw new HttpException(`Daily AI limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`, 429);
+    if (used >= limit) throw new ApiException("inbox.dailyAiLimitReachedForThis", { limit: limit }, 429);
   }
 
   /** Defensive batch read for read-time projections: a partial
@@ -552,9 +554,9 @@ export class InboxService implements OnModuleInit {
     channel: string; accessToken: string; appSecret?: string; verifyToken: string;
     phoneNumberId?: string; pageId?: string; wabaId?: string; appSource?: string;
   }) {
-    if (!["whatsapp", "messenger", "instagram"].includes(dto.channel)) throw new BadRequestException("channel must be whatsapp, messenger or instagram");
+    if (!["whatsapp", "messenger", "instagram"].includes(dto.channel)) throw badRequest("inbox.channelMustBeWhatsappMessengerOr");
     if (dto.appSource != null && !["platform", "own"].includes(dto.appSource)) {
-      throw new BadRequestException("appSource must be platform or own");
+      throw badRequest("inbox.appsourceMustBePlatformOrOwn");
     }
     const appSource = dto.appSource === "own" ? "own" : "platform";
     // CC4 (Connect Center): appSource "own" connects under the
@@ -568,7 +570,7 @@ export class InboxService implements OnModuleInit {
     if (appSource === "own") {
       const own = await resolveTenantAppConfig(this.prisma, organizationId, "meta");
       if (!own) {
-        throw new BadRequestException("নিজের Meta অ্যাপ কনফিগার করা নেই — আগে কানেক্ট সেন্টারে (কানেক্ট সেন্টার → নিজের অ্যাপ) আপনার Meta অ্যাপটি যোগ করুন, অথবা প্ল্যাটফর্মের অ্যাপ দিয়ে কানেক্ট করুন।");
+        throw badRequest("inbox.yourOwnMetaAppIsNot");
       }
       tenantAppSecret = own.appSecret;
     }
@@ -580,11 +582,11 @@ export class InboxService implements OnModuleInit {
     if (!dto.appSecret && !tenantAppSecret) {
       await ensurePlatformConfig(this.prisma).catch(() => undefined);
       if (!getPlatformConfigSync().metaApp?.appSecret) {
-        throw new BadRequestException("An app secret is required: provide your Meta app secret, or ask the platform admin to configure the platform Meta app in the Admin Console");
+        throw badRequest("inbox.anAppSecretIsRequiredProvide");
       }
     }
-    if (dto.channel === "whatsapp" && !dto.phoneNumberId) throw new BadRequestException("phoneNumberId is required for WhatsApp");
-    if (dto.channel === "instagram" && !dto.pageId) throw new BadRequestException("pageId (the Facebook Page linked to the Instagram account) is required for Instagram");
+    if (dto.channel === "whatsapp" && !dto.phoneNumberId) throw badRequest("inbox.phonenumberidIsRequiredForWhatsapp");
+    if (dto.channel === "instagram" && !dto.pageId) throw badRequest("inbox.pageidTheFacebookPageLinkedTo");
     const secrets: MessagingSecrets = {
       accessToken: dto.accessToken, appSecret: dto.appSecret || tenantAppSecret || "", verifyToken: dto.verifyToken,
       phoneNumberId: dto.phoneNumberId, pageId: dto.pageId,
@@ -666,8 +668,8 @@ export class InboxService implements OnModuleInit {
       where: { organizationId, provider: "whatsapp", status: "CONNECTED" },
       orderBy: { createdAt: "desc" }, include: { credential: true },
     });
-    if (!integration) throw new NotFoundException("No connected WhatsApp integration for this organization");
-    if (!integration.credential) throw new BadRequestException("Messaging integration is not configured");
+    if (!integration) throw notFound("inbox.noConnectedWhatsappIntegrationForThis");
+    if (!integration.credential) throw badRequest("inbox.messagingIntegrationIsNotConfigured");
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
     const value = typeof wabaId === "string" ? wabaId.trim() : "";
     if (value) secrets.wabaId = value; else delete secrets.wabaId;
@@ -683,7 +685,7 @@ export class InboxService implements OnModuleInit {
 
   private async secretsFor(integrationId: string): Promise<MessagingSecrets> {
     const integration = await (this.prisma as any).integration.findUnique({ where: { id: integrationId }, include: { credential: true } });
-    if (!integration?.credential) throw new BadRequestException("Messaging integration is not configured");
+    if (!integration?.credential) throw badRequest("inbox.messagingIntegrationIsNotConfigured");
     return decryptJson<MessagingSecrets>(integration.credential.encryptedData);
   }
 
@@ -696,7 +698,7 @@ export class InboxService implements OnModuleInit {
       where: { organizationId: conversation.organizationId, provider: conversation.channel, status: "CONNECTED" },
       orderBy: { createdAt: "desc" },
     });
-    if (!latest) throw new BadRequestException(`No connected ${conversation.channel} integration for this organization`);
+    if (!latest) throw badRequest("inbox.noConnectedIntegrationForThisOrganization2", { conversationChannel: conversation.channel });
     return latest;
   }
 
@@ -711,7 +713,7 @@ export class InboxService implements OnModuleInit {
 
   async handleWebhook(integrationId: string, rawBody: string, signature: string | undefined): Promise<{ received: number; duplicates: number; statusesApplied: number; leadgenReceived: number; reactionsApplied: number }> {
     const integration = await (this.prisma as any).integration.findUnique({ where: { id: integrationId }, include: { credential: true } });
-    if (!integration?.credential) throw new NotFoundException("Integration not found");
+    if (!integration?.credential) throw notFound("inbox.integrationNotFound");
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
     // The integration's own app secret wins; tenants connected
     // under the platform Meta app verify against the platform
@@ -719,7 +721,7 @@ export class InboxService implements OnModuleInit {
     await ensurePlatformConfig(this.prisma).catch(() => undefined);
     const appSecret = resolveMessagingAppSecret(secrets.appSecret);
     if (!appSecret || !verifyMetaSignature(rawBody, appSecret, signature)) {
-      throw new BadRequestException("Invalid webhook signature");
+      throw badRequest("inbox.invalidWebhookSignature");
     }
     const payload = JSON.parse(rawBody);
     const parsed = parseMetaWebhook(payload);
@@ -1148,30 +1150,30 @@ export class InboxService implements OnModuleInit {
     slaEscalateAfterMinutes?: number; slaLeadAlertEnabled?: boolean; slaAutoReassignEnabled?: boolean;
   }) {
     const modes = ["off", "draft", "auto"];
-    if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw new BadRequestException("autoReplyMode must be off | draft | auto");
-    if (dto.smartAssign && !["off", "round_robin", "least_busy"].includes(dto.smartAssign)) throw new BadRequestException("smartAssign must be off | round_robin | least_busy");
-    if (dto.confidenceThreshold !== undefined && (dto.confidenceThreshold < 0 || dto.confidenceThreshold > 100)) throw new BadRequestException("confidenceThreshold must be 0..100");
+    if (dto.autoReplyMode && !modes.includes(dto.autoReplyMode)) throw badRequest("inbox.autoreplymodeMustBeOffDraftAuto");
+    if (dto.smartAssign && !["off", "round_robin", "least_busy"].includes(dto.smartAssign)) throw badRequest("inbox.smartassignMustBeOffRoundRobin");
+    if (dto.confidenceThreshold !== undefined && (dto.confidenceThreshold < 0 || dto.confidenceThreshold > 100)) throw badRequest("inbox.confidencethresholdMustBe0100");
     if (dto.perIntent) {
       for (const [intent, mode] of Object.entries(dto.perIntent)) {
-        if (!["price", "stock", "delivery", "order_status", "payment", "complaint", "greeting", "order_intent", "other"].includes(intent)) throw new BadRequestException(`Unknown intent: ${intent}`);
-        if (!modes.includes(mode)) throw new BadRequestException(`Invalid mode for ${intent}: ${mode}`);
+        if (!["price", "stock", "delivery", "order_status", "payment", "complaint", "greeting", "order_intent", "other"].includes(intent)) throw badRequest("inbox.unknownIntent", { intent: intent });
+        if (!modes.includes(mode)) throw badRequest("inbox.invalidModeFor", { intent: intent, mode: mode });
       }
     }
     if (dto.perChannelModes) {
       for (const [channel, m] of Object.entries(dto.perChannelModes)) {
-        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
-        if (!modes.includes(m)) throw new BadRequestException(`Invalid mode for channel ${channel}: ${m}`);
+        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw badRequest("inbox.unknownChannel", { channel: channel });
+        if (!modes.includes(m)) throw badRequest("inbox.invalidModeForChannel", { channel: channel, m: m });
       }
     }
     // CX3: reply delay is a bounded whole-second count (0..600);
     // anything else is a client error, never silently clamped at
     // the settings boundary (the fire path clamps defensively).
-    if (dto.aiReplyDelaySeconds !== undefined && (!Number.isInteger(dto.aiReplyDelaySeconds) || dto.aiReplyDelaySeconds < 0 || dto.aiReplyDelaySeconds > 600)) throw new BadRequestException("aiReplyDelaySeconds must be an integer 0..600");
+    if (dto.aiReplyDelaySeconds !== undefined && (!Number.isInteger(dto.aiReplyDelaySeconds) || dto.aiReplyDelaySeconds < 0 || dto.aiReplyDelaySeconds > 600)) throw badRequest("inbox.aireplydelaysecondsMustBeAnInteger0");
     if (dto.aiReplyDelayByChannel !== undefined) {
-      if (!dto.aiReplyDelayByChannel || typeof dto.aiReplyDelayByChannel !== "object" || Array.isArray(dto.aiReplyDelayByChannel)) throw new BadRequestException("aiReplyDelayByChannel must be an object mapping channel to seconds");
+      if (!dto.aiReplyDelayByChannel || typeof dto.aiReplyDelayByChannel !== "object" || Array.isArray(dto.aiReplyDelayByChannel)) throw badRequest("inbox.aireplydelaybychannelMustBeAnObjectMapping");
       for (const [channel, v] of Object.entries(dto.aiReplyDelayByChannel)) {
-        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
-        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 600) throw new BadRequestException(`Invalid aiReplyDelaySeconds for channel ${channel}: must be an integer 0..600`);
+        if (!["whatsapp", "messenger", "instagram", "webchat", "tiktok", "telegram", "email"].includes(channel)) throw badRequest("inbox.unknownChannel", { channel: channel });
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 600) throw badRequest("inbox.invalidAireplydelaysecondsForChannelMustBe", { channel: channel });
       }
     }
     // CX12d: the AI schedule is validated by the pure parser —
@@ -1180,32 +1182,32 @@ export class InboxService implements OnModuleInit {
     // CX12b: the review delay is a bounded whole-hour count
     // (0..168 = up to a week after delivery); anything else is a
     // client error at the settings boundary, never clamped silently.
-    if (dto.reviewRequestDelayHours !== undefined && (!Number.isInteger(dto.reviewRequestDelayHours) || dto.reviewRequestDelayHours < 0 || dto.reviewRequestDelayHours > 168)) throw new BadRequestException("reviewRequestDelayHours must be an integer 0..168");
+    if (dto.reviewRequestDelayHours !== undefined && (!Number.isInteger(dto.reviewRequestDelayHours) || dto.reviewRequestDelayHours < 0 || dto.reviewRequestDelayHours > 168)) throw badRequest("inbox.reviewrequestdelayhoursMustBeAnInteger0");
     let aiScheduleNormalized: Record<string, unknown> | undefined;
     if (dto.aiScheduleByChannel !== undefined) {
       try { aiScheduleNormalized = parseAiSchedule(dto.aiScheduleByChannel); }
-      catch { throw new BadRequestException("aiScheduleByChannel সঠিক নয় — প্রতিটি channel-এ enabled (true/false) ও সর্বোচ্চ ৮টি window (days 0–6, start/end HH:mm) থাকতে হবে"); }
+      catch { throw badRequest("inbox.aischedulebychannelIsInvalidEachChannelMust"); }
     }
     // CX7: "To Chase" bounds — bounded whole counts, validated
     // at the settings boundary like the review delay (a client
     // error, never silently clamped or persisted).
-    if (dto.chaseFirstDelayMinutes !== undefined && (!Number.isInteger(dto.chaseFirstDelayMinutes) || dto.chaseFirstDelayMinutes < 15 || dto.chaseFirstDelayMinutes > 1440)) throw new BadRequestException("chaseFirstDelayMinutes must be an integer 15..1440");
-    if (dto.chaseIntervalMinutes !== undefined && (!Number.isInteger(dto.chaseIntervalMinutes) || dto.chaseIntervalMinutes < 60 || dto.chaseIntervalMinutes > 2880)) throw new BadRequestException("chaseIntervalMinutes must be an integer 60..2880");
-    if (dto.chaseMaxAttempts !== undefined && (!Number.isInteger(dto.chaseMaxAttempts) || dto.chaseMaxAttempts < 1 || dto.chaseMaxAttempts > 5)) throw new BadRequestException("chaseMaxAttempts must be an integer 1..5");
-    if (dto.chaseQuietStartHour !== undefined && (!Number.isInteger(dto.chaseQuietStartHour) || dto.chaseQuietStartHour < 0 || dto.chaseQuietStartHour > 23)) throw new BadRequestException("chaseQuietStartHour must be an integer 0..23");
-    if (dto.chaseQuietEndHour !== undefined && (!Number.isInteger(dto.chaseQuietEndHour) || dto.chaseQuietEndHour < 0 || dto.chaseQuietEndHour > 23)) throw new BadRequestException("chaseQuietEndHour must be an integer 0..23");
+    if (dto.chaseFirstDelayMinutes !== undefined && (!Number.isInteger(dto.chaseFirstDelayMinutes) || dto.chaseFirstDelayMinutes < 15 || dto.chaseFirstDelayMinutes > 1440)) throw badRequest("inbox.chasefirstdelayminutesMustBeAnInteger15");
+    if (dto.chaseIntervalMinutes !== undefined && (!Number.isInteger(dto.chaseIntervalMinutes) || dto.chaseIntervalMinutes < 60 || dto.chaseIntervalMinutes > 2880)) throw badRequest("inbox.chaseintervalminutesMustBeAnInteger60");
+    if (dto.chaseMaxAttempts !== undefined && (!Number.isInteger(dto.chaseMaxAttempts) || dto.chaseMaxAttempts < 1 || dto.chaseMaxAttempts > 5)) throw badRequest("inbox.chasemaxattemptsMustBeAnInteger1");
+    if (dto.chaseQuietStartHour !== undefined && (!Number.isInteger(dto.chaseQuietStartHour) || dto.chaseQuietStartHour < 0 || dto.chaseQuietStartHour > 23)) throw badRequest("inbox.chasequietstarthourMustBeAnInteger0");
+    if (dto.chaseQuietEndHour !== undefined && (!Number.isInteger(dto.chaseQuietEndHour) || dto.chaseQuietEndHour < 0 || dto.chaseQuietEndHour > 23)) throw badRequest("inbox.chasequietendhourMustBeAnInteger0");
     // IN4: SLA layering + chain bounds — validated strictly at the
     // write boundary like the reply-delay map (a client error,
     // never silently clamped or persisted).
     if (dto.slaByChannel !== undefined) {
-      if (!dto.slaByChannel || typeof dto.slaByChannel !== "object" || Array.isArray(dto.slaByChannel)) throw new BadRequestException("slaByChannel must be an object mapping channel to minutes");
+      if (!dto.slaByChannel || typeof dto.slaByChannel !== "object" || Array.isArray(dto.slaByChannel)) throw badRequest("inbox.slabychannelMustBeAnObjectMapping");
       for (const [channel, v] of Object.entries(dto.slaByChannel)) {
-        if (!SLA_CHANNELS.includes(channel)) throw new BadRequestException(`Unknown channel: ${channel}`);
-        if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > 10080) throw new BadRequestException(`Invalid sla minutes for channel ${channel}: must be an integer 1..10080`);
+        if (!SLA_CHANNELS.includes(channel)) throw badRequest("inbox.unknownChannel", { channel: channel });
+        if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > 10080) throw badRequest("inbox.invalidSlaMinutesForChannelMust", { channel: channel });
       }
     }
-    if (dto.slaVipMinutes !== undefined && dto.slaVipMinutes !== null && (!Number.isInteger(dto.slaVipMinutes) || dto.slaVipMinutes < 1 || dto.slaVipMinutes > 10080)) throw new BadRequestException("slaVipMinutes must be null or an integer 1..10080");
-    if (dto.slaEscalateAfterMinutes !== undefined && (!Number.isInteger(dto.slaEscalateAfterMinutes) || dto.slaEscalateAfterMinutes < 1 || dto.slaEscalateAfterMinutes > 1440)) throw new BadRequestException("slaEscalateAfterMinutes must be an integer 1..1440");
+    if (dto.slaVipMinutes !== undefined && dto.slaVipMinutes !== null && (!Number.isInteger(dto.slaVipMinutes) || dto.slaVipMinutes < 1 || dto.slaVipMinutes > 10080)) throw badRequest("inbox.slavipminutesMustBeNullOrAn");
+    if (dto.slaEscalateAfterMinutes !== undefined && (!Number.isInteger(dto.slaEscalateAfterMinutes) || dto.slaEscalateAfterMinutes < 1 || dto.slaEscalateAfterMinutes > 1440)) throw badRequest("inbox.slaescalateafterminutesMustBeAnInteger1");
     const data = {
       ...(dto.autoReplyMode ? { autoReplyMode: dto.autoReplyMode } : {}),
       ...(dto.confidenceThreshold !== undefined ? { confidenceThreshold: Math.round(dto.confidenceThreshold) } : {}),
@@ -1273,13 +1275,13 @@ export class InboxService implements OnModuleInit {
   private async teamScope(organizationId: string, actorId: string, teamId: string) {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
-    if (!team) throw new NotFoundException("Team not found");
+    if (!team) throw notFound("inbox.teamNotFound");
     const actor = await p.membership.findUnique({
       where: { userId_organizationId: { userId: actorId, organizationId } },
     }).catch(() => null);
     const isManager = actor && ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
     if (!isManager && team.leadUserId !== actorId) {
-      throw new ForbiddenException("Only the team's lead or an organization manager can do this");
+      throw forbidden("inbox.onlyTheTeamSLeadOr");
     }
     const roster = await p.inboxTeamMember?.findMany({ where: { teamId } }).catch(() => []) ?? [];
     return { team, memberIds: (roster as any[]).map((r) => r.userId) };
@@ -1301,7 +1303,7 @@ export class InboxService implements OnModuleInit {
 
   async createTeam(organizationId: string, actorId: string, dto: { name: string; channels?: string[] }) {
     const name = dto.name?.trim();
-    if (!name) throw new BadRequestException("Team name is required");
+    if (!name) throw badRequest("inbox.teamNameIsRequired");
     const channels = (dto.channels ?? []).filter((c) => InboxService.TEAM_CHANNELS.includes(c));
     const row = await (this.prisma as any).inboxTeam.create({ data: { organizationId, name: name.slice(0, 80), channels } });
     await this.audit.log({ organizationId, userId: actorId, action: "inbox.team.created", entityType: "InboxTeam", entityId: row.id, metadata: { name, channels } });
@@ -1311,9 +1313,9 @@ export class InboxService implements OnModuleInit {
   async updateTeam(organizationId: string, actorId: string, teamId: string, dto: { name?: string; channels?: string[]; leadUserId?: string | null }) {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
-    if (!team) throw new NotFoundException("Team not found");
+    if (!team) throw notFound("inbox.teamNotFound");
     const data: any = {};
-    if (dto.name !== undefined) { if (!dto.name.trim()) throw new BadRequestException("Team name is required"); data.name = dto.name.trim().slice(0, 80); }
+    if (dto.name !== undefined) { if (!dto.name.trim()) throw badRequest("inbox.teamNameIsRequired"); data.name = dto.name.trim().slice(0, 80); }
     if (dto.channels !== undefined) data.channels = dto.channels.filter((c: string) => InboxService.TEAM_CHANNELS.includes(c));
     // Milestone 71: setting the lead. The lead must be an org
     // member (any role); null clears the lead.
@@ -1321,7 +1323,7 @@ export class InboxService implements OnModuleInit {
       if (dto.leadUserId === null) data.leadUserId = null;
       else {
         const member = await p.membership.findFirst({ where: { organizationId, userId: dto.leadUserId } });
-        if (!member) throw new BadRequestException("The lead must be a member of this organization");
+        if (!member) throw badRequest("inbox.theLeadMustBeAMember");
         data.leadUserId = dto.leadUserId;
       }
     }
@@ -1333,7 +1335,7 @@ export class InboxService implements OnModuleInit {
   async deleteTeam(organizationId: string, actorId: string, teamId: string) {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
-    if (!team) throw new NotFoundException("Team not found");
+    if (!team) throw notFound("inbox.teamNotFound");
     await p.inboxTeamMember?.deleteMany({ where: { teamId } }).catch(() => undefined);
     await p.channelConversation.updateMany({ where: { organizationId, teamId }, data: { teamId: null } }).catch(() => undefined);
     await p.inboxTeam.delete({ where: { id: teamId } });
@@ -1344,7 +1346,7 @@ export class InboxService implements OnModuleInit {
   async setTeamMembers(organizationId: string, actorId: string, teamId: string, members: { userId: string; capacity?: number }[]) {
     const p = this.prisma as any;
     const team = await p.inboxTeam.findFirst({ where: { id: teamId, organizationId } });
-    if (!team) throw new NotFoundException("Team not found");
+    if (!team) throw notFound("inbox.teamNotFound");
     // Milestone 71: org managers manage any roster; the team's
     // own lead manages theirs. (The controller's @Roles admits
     // agents so a lead can reach this; the right is enforced
@@ -1353,11 +1355,11 @@ export class InboxService implements OnModuleInit {
       where: { userId_organizationId: { userId: actorId, organizationId } },
     }).catch(() => null);
     const actorOk = actor && (["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role) || team.leadUserId === actorId);
-    if (!actorOk) throw new ForbiddenException("Only the team's lead or an organization manager can set the roster");
+    if (!actorOk) throw forbidden("inbox.onlyTheTeamSLeadOr2");
     const cleaned: { userId: string; capacity: number }[] = [];
     for (const m of members ?? []) {
       const membership = await p.membership.findFirst({ where: { organizationId, userId: m.userId } });
-      if (!membership) throw new BadRequestException(`User ${m.userId} is not a member of this organization`);
+      if (!membership) throw badRequest("inbox.userIsNotAMemberOf", { mUserId: m.userId });
       cleaned.push({ userId: m.userId, capacity: Math.min(200, Math.max(1, Math.round(Number(m.capacity ?? 20)) || 20)) });
     }
     await p.inboxTeamMember.deleteMany({ where: { teamId } });
@@ -1369,7 +1371,7 @@ export class InboxService implements OnModuleInit {
   }
 
   async setAgentState(organizationId: string, userId: string, status: string) {
-    if (!InboxService.AGENT_STATUSES.includes(status)) throw new BadRequestException("status must be online | busy | away");
+    if (!InboxService.AGENT_STATUSES.includes(status)) throw badRequest("inbox.statusMustBeOnlineBusyAway");
     const p = this.prisma as any;
     const row = await p.agentState.upsert({
       where: { organizationId_userId: { organizationId, userId } },
@@ -1413,18 +1415,18 @@ export class InboxService implements OnModuleInit {
     const actor = await p.membership.findUnique({
       where: { userId_organizationId: { userId: actorId, organizationId } },
     });
-    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    if (!actor || actor.status !== "ACTIVE") throw notFound("inbox.actorIsNotAnActiveMember");
     const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
-    if (!isManager && actorId !== targetUserId) throw new BadRequestException("Agents can only set their own schedule");
+    if (!isManager && actorId !== targetUserId) throw badRequest("inbox.agentsCanOnlySetTheirOwn");
     const target = await p.membership.findUnique({
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
     });
-    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    if (!target) throw notFound("inbox.thatUserIsNotAMember");
     if (!isValidWindows(dto.windows)) {
-      throw new BadRequestException("Invalid windows: use weekday keys (mon..sun) with [\"HH:MM\",\"HH:MM\"] pairs; start and end must differ");
+      throw badRequest("inbox.invalidWindowsUseWeekdayKeysMon");
     }
     const timezone = dto.timezone?.trim() || "Asia/Dhaka";
-    if (!isValidTimezone(timezone)) throw new BadRequestException(`Unknown timezone: ${timezone}`);
+    if (!isValidTimezone(timezone)) throw badRequest("inbox.unknownTimezone", { timezone: timezone });
     const row = await p.agentSchedule.upsert({
       where: { organizationId_userId: { organizationId, userId: targetUserId } },
       create: { organizationId, userId: targetUserId, timezone, windows: dto.windows as any },
@@ -1442,9 +1444,9 @@ export class InboxService implements OnModuleInit {
     const actor = await p.membership.findUnique({
       where: { userId_organizationId: { userId: actorId, organizationId } },
     });
-    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    if (!actor || actor.status !== "ACTIVE") throw notFound("inbox.actorIsNotAnActiveMember");
     const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
-    if (!isManager && actorId !== targetUserId) throw new BadRequestException("Agents can only manage their own schedule");
+    if (!isManager && actorId !== targetUserId) throw badRequest("inbox.agentsCanOnlyManageTheirOwn");
     await p.agentSchedule.deleteMany({ where: { organizationId, userId: targetUserId } });
     await this.audit.log({
       organizationId, userId: actorId, action: "inbox.agent_schedule_cleared", entityType: "AgentSchedule", entityId: targetUserId,
@@ -1643,7 +1645,7 @@ export class InboxService implements OnModuleInit {
     // only; medians/flags/ranking then describe that team.
     let scopedTeamName: string | null = null;
     if (opts?.teamId) {
-      if (!opts.actorId) throw new ForbiddenException("A scoped team scorecard requires an identified viewer");
+      if (!opts.actorId) throw forbidden("inbox.aScopedTeamScorecardRequiresAn");
       const scope = await this.teamScope(organizationId, opts.actorId, opts.teamId);
       scopedTeamName = scope.team.name;
       const roster = new Set(scope.memberIds);
@@ -3370,18 +3372,18 @@ export class InboxService implements OnModuleInit {
     const hasMinutes = dto?.minutes !== undefined && dto?.minutes !== null;
     const hasUntil = dto?.until !== undefined && dto?.until !== null && dto?.until !== "";
     if (hasMinutes === hasUntil) {
-      throw new BadRequestException("Snooze-এর জন্য minutes অথবা until — ঠিক একটি দিন।");
+      throw badRequest("inbox.forSnoozeGiveExactlyOneOf");
     }
     let snoozedUntil: Date;
     if (hasMinutes) {
       if (!Number.isInteger(dto.minutes) || (dto.minutes as number) < 5 || (dto.minutes as number) > 10080) {
-        throw new BadRequestException("Snooze ৫ থেকে ১০০৮০ মিনিটের মধ্যে হতে হবে।");
+        throw badRequest("inbox.snoozeMustBeBetween5And");
       }
       snoozedUntil = new Date(Date.now() + (dto.minutes as number) * 60000);
     } else {
       const parsed = new Date(dto.until as string);
       if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now() + 60000) {
-        throw new BadRequestException("Snooze-এর সময় ভবিষ্যতে হতে হবে (কমপক্ষে ১ মিনিট পরে)।");
+        throw badRequest("inbox.theSnoozeTimeMustBeIn");
       }
       snoozedUntil = parsed;
     }
@@ -3454,8 +3456,26 @@ export class InboxService implements OnModuleInit {
       if (!provider?.isRealLlm) return failNote("আসল AI provider যুক্ত নেই।");
       const profile = (await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
       const threadText = history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n");
+      // MB5 (ML13, coordinator finishing hunk): the summary
+      // language follows the conversation via the CUSTOMER chain
+      // (org aiReplyLanguage → detected from the customer's
+      // latest inbound message → bn) — the same rule as
+      // summarizeConversation; the memory rung is unavailable at
+      // this site (no conversation row/customerKey in scope).
+      // Before MB5 the prompt hardcoded "(Bengali, …)".
+      const lastInboundForNote = [...history].reverse().find((m: any) => m.direction === "in");
+      const noteLanguage = resolveReplyLanguage({
+        orgReplyLanguage: (profile as any)?.aiReplyLanguage ?? null,
+        detected: detectReplyLanguage(String(lastInboundForNote?.content ?? "")),
+      });
+      const noteLanguageName =
+        noteLanguage.language === "en"
+          ? "English"
+          : noteLanguage.language === "mixed"
+            ? "the same mix of Bengali and English (Banglish) as the customer's messages"
+            : "Bengali";
       const result = await provider.complete([
-        { role: "system", content: "You write a ONE-paragraph handover summary (Bengali, 2-4 sentences) for the support agent taking over this conversation. Use ONLY facts from the messages below: what the customer wants, key details already stated, and what is still pending. Never invent numbers, prices, dates or promises — restate only numbers that appear in the messages. Return ONLY the paragraph." },
+        { role: "system", content: `You write a ONE-paragraph handover summary (${noteLanguageName}, 2-4 sentences) for the support agent taking over this conversation. Use ONLY facts from the messages below: what the customer wants, key details already stated, and what is still pending. Never invent numbers, prices, dates or promises — restate only numbers that appear in the messages. Return ONLY the paragraph.` },
         { role: "user", content: threadText.slice(0, 6000) },
       ], { maxTokens: 300 });
       await (this.prisma as any).aIUsageRecord.create({
@@ -3954,12 +3974,12 @@ export class InboxService implements OnModuleInit {
   async requestCodConfirmation(organizationId: string, actorId: string, conversationId: string, orderId: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
-    if (!conv.customerId || order.customerId !== conv.customerId) throw new BadRequestException("This order is not linked to the conversation's customer");
-    if (!order.isCod) throw new BadRequestException("This is not a cash-on-delivery order");
-    if (!["pending", "on-hold", "processing"].includes(order.status)) throw new BadRequestException(`Order status "${order.status}" cannot be confirmed via chat`);
-    if (order.codConfirmationStatus === "awaiting") throw new BadRequestException("A confirmation request is already awaiting the customer's reply");
-    if (order.codConfirmationStatus === "confirmed") throw new BadRequestException("This order is already confirmed");
+    if (!order) throw notFound("inbox.orderNotFoundInThisOrganization");
+    if (!conv.customerId || order.customerId !== conv.customerId) throw badRequest("inbox.thisOrderIsNotLinkedTo");
+    if (!order.isCod) throw badRequest("inbox.thisIsNotACashOn");
+    if (!["pending", "on-hold", "processing"].includes(order.status)) throw badRequest("inbox.orderStatusCannotBeConfirmedVia", { orderStatus: order.status });
+    if (order.codConfirmationStatus === "awaiting") throw badRequest("inbox.aConfirmationRequestIsAlreadyAwaiting");
+    if (order.codConfirmationStatus === "confirmed") throw badRequest("inbox.thisOrderIsAlreadyConfirmed");
     const name = conv.contactName ?? "সম্মানিত গ্রাহক";
     const total = formatMinor(BigInt(order.totalMinor), order.currency);
     const text = `আসসালামু আলাইকুম ${name}! আপনার অর্ডার #${order.externalNumber ?? ""} (${total}) ক্যাশ অন ডেলিভারিতে রাখা আছে। অর্ডারটি কনফার্ম করতে "হ্যাঁ" লিখে রিপ্লাই দিন, আর বাতিল করতে "না" লিখুন।`;
@@ -4127,11 +4147,11 @@ export class InboxService implements OnModuleInit {
       }).catch(() => []);
       allOrderIds = [...new Set([...allOrderIds, ...customerOrders.map((o: any) => o.id)])];
     }
-    if (!allOrderIds.length) throw new BadRequestException("এই গ্রাহকের কোনো অর্ডার পাওয়া যায়নি");
+    if (!allOrderIds.length) throw badRequest("inbox.noOrdersWereFoundForThis");
     const shipment = await (this.prisma as any).courierShipment.findFirst({
       where: { organizationId, orderId: { in: allOrderIds } }, orderBy: { createdAt: "desc" },
     }).catch(() => null);
-    if (!shipment?.trackingCode) throw new BadRequestException("এই অর্ডারের কোনো কুরিয়ার বুকিং/ট্র্যাকিং এখনো নেই");
+    if (!shipment?.trackingCode) throw badRequest("inbox.thisOrderHasNoCourierBooking");
     const text = `আপনার পার্সেলটি ${shipment.provider} কুরিয়ারে পাঠানো হয়েছে। Tracking: ${shipment.trackingCode} (স্ট্যাটাস: ${shipment.status})। ধন্যবাদ!`;
     // CX6: the manual share also carries the public live-tracking
     // link (token minted lazily on the shipment row, shared with
@@ -4180,7 +4200,7 @@ export class InboxService implements OnModuleInit {
   async getMediaSignedUrl(organizationId: string, conversationId: string, messageId: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message) throw notFound("inbox.messageNotFoundInThisConversation");
     if (!message.mediaStorageKey) return { url: null, stored: false, mode: this.mediaStore().mode };
     const url = this.mediaStore().signedUrl(message.mediaStorageKey, 900);
     return { url, stored: true, mode: this.mediaStore().mode, expiresInSeconds: url ? 900 : null };
@@ -4421,7 +4441,7 @@ export class InboxService implements OnModuleInit {
     let scopeIds: string[] | null = null;
     let scopedTeam: any = null;
     if (teamId) {
-      if (!actorId) throw new ForbiddenException("A scoped team report requires an identified viewer");
+      if (!actorId) throw forbidden("inbox.aScopedTeamReportRequiresAn");
       const scope = await this.teamScope(organizationId, actorId, teamId);
       scopedTeam = scope.team;
       scopeIds = scope.memberIds;
@@ -4815,7 +4835,7 @@ export class InboxService implements OnModuleInit {
   async transcribeMessage(organizationId: string, conversationId: string, messageId: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message) throw notFound("inbox.messageNotFoundInThisConversation");
     if (message.transcription) return { transcription: message.transcription, provider: message.transcriptionProvider, intent: message.intent ?? null };
     const { text, provider, intent } = await this.ensureTranscription(organizationId, conv, message);
     return { transcription: text, provider, intent };
@@ -4847,7 +4867,7 @@ export class InboxService implements OnModuleInit {
           organizationId, userId: "system", action: "inbox.system_send.suppressed_denied", entityType: "ChannelConversation",
           entityId: conversationId, metadata: { source: sourceTag, actorId: gate.actorId, integrationId: conv.integrationId },
         }).catch(() => undefined);
-        throw new ForbiddenException("এই অ্যাকাউন্টে স্বয়ংক্রিয় বার্তা পাঠানো যাবে না — দায়িত্বপ্রাপ্ত সদস্যের এই কানেকশন ব্যবহারের অনুমতি Connect Center-এর অ্যাক্সেস সেটিংসে প্রত্যাহার করা হয়েছে।");
+        throw forbidden("inbox.automatedMessagesCannotBeSentOn");
       }
     }
     // Webchat delivery needs no Meta integration (deliverText
@@ -4912,7 +4932,7 @@ export class InboxService implements OnModuleInit {
     // order.created workflow event fires (a workflow could message
     // real customers off the back of one).
     const isPractice = Boolean((conv as any).isPractice);
-    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException("At least one item is required");
+    if (!Array.isArray(dto.items) || dto.items.length === 0) throw badRequest("inbox.atLeastOneItemIsRequired");
     const shippingMinor = BigInt(Math.max(0, Math.round(dto.shippingMinor ?? 0)));
     const products = await (this.prisma as any).product.findMany({
       where: { organizationId, id: { in: dto.items.map((i) => i.productId) } }, take: 100,
@@ -4922,12 +4942,12 @@ export class InboxService implements OnModuleInit {
     const lines: { product: any; variant: any; quantity: number; unitPrice: bigint }[] = [];
     for (const item of dto.items) {
       const product = byId.get(item.productId);
-      if (!product) throw new BadRequestException(`Product not found in this organization: ${item.productId}`);
+      if (!product) throw badRequest("inbox.productNotFoundInThisOrganization2", { itemProductId: item.productId });
       const quantity = Math.min(99, Math.max(1, Math.round(item.quantity || 1)));
       let variant: any = null;
       if (item.variantId) {
         variant = await (this.prisma as any).productVariant.findFirst({ where: { id: item.variantId, productId: product.id } });
-        if (!variant) throw new BadRequestException(`Variant not found for product ${product.name}`);
+        if (!variant) throw badRequest("inbox.variantNotFoundForProduct", { productName: product.name });
       }
       const unitPrice = BigInt(variant?.priceMinor ?? product.priceMinor);
       subtotal += unitPrice * BigInt(quantity);
@@ -5114,12 +5134,12 @@ export class InboxService implements OnModuleInit {
     await this.getConversationOrThrow(organizationId, conversationId);
     await this.checkAiAllowed(organizationId, "translate");
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message?.content) throw new NotFoundException("Message not found or has no text");
-    if (!["en", "bn"].includes(target)) throw new BadRequestException("target must be en or bn");
+    if (!message?.content) throw notFound("inbox.messageNotFoundOrHasNo");
+    if (!["en", "bn"].includes(target)) throw badRequest("inbox.targetMustBeEnOrBn");
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
       // Honest boundary: templates cannot translate. No fake output.
-      throw new BadRequestException("অনুবাদের জন্য একটি আসল LLM provider দরকার (LLM_PROVIDER ও API key সেট করুন)। Dev template দিয়ে অনুবাদ সম্ভব নয়।");
+      throw badRequest("inbox.aRealLlmProviderIsNeeded");
     }
     const result = await provider.complete([
       { role: "system", content: `You are a professional translator. Translate the user's text into ${target === "en" ? "English" : "Bengali"}. Return ONLY the translation, no explanations.` },
@@ -5137,13 +5157,50 @@ export class InboxService implements OnModuleInit {
     const messages = await (this.prisma as any).channelMessage.findMany({
       where: { conversationId }, orderBy: { createdAt: "desc" }, take: 50,
     });
-    if (messages.length === 0) throw new BadRequestException("এই কথোপকথনে কোনো বার্তা নেই");
+    if (messages.length === 0) throw badRequest("inbox.thereAreNoMessagesInThis");
     const history = [...messages].reverse();
     const provider = await providerForOrg(this.llm, organizationId);
+    // MB5 (ML13, CD-8 #17): the summary language is the
+    // conversation's own language via the CUSTOMER chain
+    // (resolveReplyLanguage — org aiReplyLanguage → detected
+    // from the customer's latest inbound message → remembered
+    // CustomerMemory.languagePref → bn), never a hardcoded
+    // "in Bengali" again. Every read is defensive: a missing
+    // rung degrades to no signal, exactly as the chain allows.
+    let summaryOrgLanguage: string | null = null;
+    try {
+      summaryOrgLanguage = (await (this.prisma as any).businessProfile?.findUnique({
+        where: { organizationId }, select: { aiReplyLanguage: true },
+      }))?.aiReplyLanguage ?? null;
+    } catch { /* org rung unavailable at this site */ }
+    let summaryMemoryLanguage: string | null = null;
+    const summaryCustomerKey =
+      conv && !(conv as any).isPractice && conv.externalContactId
+        ? `${String(conv.channel ?? "")}:${String(conv.externalContactId)}`
+        : null;
+    if (summaryCustomerKey) {
+      try {
+        summaryMemoryLanguage = (await (this.prisma as any).customerMemory?.findFirst({
+          where: { organizationId, customerKey: summaryCustomerKey }, select: { languagePref: true },
+        }))?.languagePref ?? null;
+      } catch { /* memory rung unavailable at this site */ }
+    }
+    const lastInboundForSummary = [...history].reverse().find((m: any) => m.direction === "in");
+    const summaryLanguage = resolveReplyLanguage({
+      orgReplyLanguage: summaryOrgLanguage,
+      detected: detectReplyLanguage(String(lastInboundForSummary?.content ?? "")),
+      memoryLanguagePref: summaryMemoryLanguage,
+    });
+    const summaryLanguageName =
+      summaryLanguage.language === "en"
+        ? "English"
+        : summaryLanguage.language === "mixed"
+          ? "the same mix of Bengali and English (Banglish) as the customer's messages"
+          : "Bengali";
     let summary: string;
     if (provider.isRealLlm) {
       const result = await provider.complete([
-        { role: "system", content: "Summarize this customer-support conversation in Bengali in 3-5 short bullet lines. Use ONLY facts from the messages: what the customer wants, key details (product, price, order), current status, and any pending action. Never invent facts." },
+        { role: "system", content: `Summarize this customer-support conversation in ${summaryLanguageName} in 3-5 short bullet lines. Use ONLY facts from the messages: what the customer wants, key details (product, price, order), current status, and any pending action. Never invent facts.` },
         { role: "user", content: history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n") },
       ], { maxTokens: 400 });
       summary = result.text.trim();
@@ -5151,11 +5208,18 @@ export class InboxService implements OnModuleInit {
         data: { organizationId, userId: actorId, feature: "summary", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
       }).catch(() => undefined);
     } else {
-      // Clearly labeled data digest (not an AI summary).
+      // Clearly labeled data digest (not an AI summary) — in the
+      // same resolved conversation language (mixed → bn digest).
       const inbound = history.filter((m: any) => m.direction === "in");
       const intents = [...new Set(inbound.map((m: any) => m.intent).filter(Boolean))];
       const first = inbound[0]?.content ?? "—";
-      summary = [
+      summary = summaryLanguage.language === "en" ? [
+        `Total messages: ${history.length} (customer ${inbound.length}, team ${history.length - inbound.length})`,
+        `Customer's first message: "${String(first).slice(0, 140)}"`,
+        intents.length ? `Detected topics: ${intents.join(", ")}` : "No intent detected",
+        `Conversation status: ${conv.status}${conv.csatRating ? ` · CSAT ${conv.csatRating}/5` : ""}`,
+        "(This is a data-based digest; a detailed summary will be available once a real LLM is connected.)",
+      ].join("\n") : [
         `মোট বার্তা: ${history.length} (গ্রাহক ${inbound.length}, টিম ${history.length - inbound.length})`,
         `গ্রাহকের প্রথম বার্তা: "${String(first).slice(0, 140)}"`,
         intents.length ? `শনাক্ত বিষয়: ${intents.join(", ")}` : "কোনো Intent শনাক্ত হয়নি",
@@ -5697,7 +5761,7 @@ export class InboxService implements OnModuleInit {
    */
   async searchMessages(organizationId: string, rawQuery: string, opts: { limit?: number } = {}) {
     const q = String(rawQuery ?? "").trim();
-    if (q.length < 2) throw new BadRequestException("খুঁজতে অন্তত ২টি অক্ষর লিখুন।");
+    if (q.length < 2) throw badRequest("inbox.typeAtLeast2CharactersTo");
     const limit = Math.min(50, Math.max(1, Math.round(opts.limit ?? 30) || 30));
     const found = await this.safeFindMany("channelMessage", {
       where: {
@@ -5750,9 +5814,9 @@ export class InboxService implements OnModuleInit {
 
   async createSavedView(organizationId: string, userId: string, dto: { name?: string; filters?: unknown; shared?: boolean }) {
     const name = String(dto?.name ?? "").trim().slice(0, 80);
-    if (!name) throw new BadRequestException("ভিউয়ের একটি নাম দিন।");
+    if (!name) throw badRequest("inbox.giveTheViewAName");
     const mine = await (this.prisma as any).inboxSavedView.count({ where: { organizationId, userId } }).catch(() => 0);
-    if (mine >= 50) throw new BadRequestException("আপনার সেভ করা ভিউয়ের সীমা (৫০টি) পূর্ণ হয়ে গেছে — পুরোনো কোনোটি মুছে আবার চেষ্টা করুন।");
+    if (mine >= 50) throw badRequest("inbox.yourSavedViewLimit50Is");
     const row = await (this.prisma as any).inboxSavedView.create({
       data: { organizationId, userId, name, filters: sanitizeSavedViewFilters(dto?.filters), shared: Boolean(dto?.shared) },
     });
@@ -5767,12 +5831,12 @@ export class InboxService implements OnModuleInit {
    * the team, not writable by them. */
   async updateSavedView(organizationId: string, userId: string, viewId: string, dto: { name?: string; filters?: unknown; shared?: boolean }) {
     const row = await (this.prisma as any).inboxSavedView.findFirst({ where: { id: viewId, organizationId } });
-    if (!row) throw new NotFoundException("Saved view not found in this organization");
-    if (row.userId !== userId) throw new ForbiddenException("শুধু ভিউয়ের মালিকই এটি বদলাতে পারবেন।");
+    if (!row) throw notFound("inbox.savedViewNotFoundInThis");
+    if (row.userId !== userId) throw forbidden("inbox.onlyTheViewSOwnerCan");
     const data: any = {};
     if (dto?.name !== undefined) {
       const name = String(dto.name ?? "").trim().slice(0, 80);
-      if (!name) throw new BadRequestException("ভিউয়ের একটি নাম দিন।");
+      if (!name) throw badRequest("inbox.giveTheViewAName");
       data.name = name;
     }
     if (dto?.filters !== undefined) data.filters = sanitizeSavedViewFilters(dto.filters);
@@ -5787,8 +5851,8 @@ export class InboxService implements OnModuleInit {
 
   async deleteSavedView(organizationId: string, userId: string, viewId: string) {
     const row = await (this.prisma as any).inboxSavedView.findFirst({ where: { id: viewId, organizationId } });
-    if (!row) throw new NotFoundException("Saved view not found in this organization");
-    if (row.userId !== userId) throw new ForbiddenException("শুধু ভিউয়ের মালিকই এটি মুছতে পারবেন।");
+    if (!row) throw notFound("inbox.savedViewNotFoundInThis");
+    if (row.userId !== userId) throw forbidden("inbox.onlyTheViewSOwnerCan2");
     await (this.prisma as any).inboxSavedView.delete({ where: { id: viewId } });
     await this.audit.log({
       organizationId, userId, action: "inbox.saved_view.delete",
@@ -5819,10 +5883,10 @@ export class InboxService implements OnModuleInit {
 
   async createMacro(organizationId: string, userId: string, dto: { name?: string; steps?: unknown; shared?: boolean }) {
     const name = String(dto?.name ?? "").trim().slice(0, 80);
-    if (!name) throw new BadRequestException("ম্যাক্রোর একটি নাম দিন।");
+    if (!name) throw badRequest("inbox.giveTheMacroAName");
     const steps = sanitizeMacroSteps(dto?.steps);
     const mine = await (this.prisma as any).inboxMacro.count({ where: { organizationId, userId } }).catch(() => 0);
-    if (mine >= 50) throw new BadRequestException("আপনার ম্যাক্রোর সীমা (৫০টি) পূর্ণ হয়ে গেছে — পুরোনো কোনোটি মুছে আবার চেষ্টা করুন।");
+    if (mine >= 50) throw badRequest("inbox.yourMacroLimit50IsFull");
     const row = await (this.prisma as any).inboxMacro.create({
       data: { organizationId, userId, name, steps, shared: Boolean(dto?.shared) },
     });
@@ -5837,12 +5901,12 @@ export class InboxService implements OnModuleInit {
    * the team, not writable by them (saved-view policy). */
   async updateMacro(organizationId: string, userId: string, macroId: string, dto: { name?: string; steps?: unknown; shared?: boolean }) {
     const row = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
-    if (!row) throw new NotFoundException("Macro not found in this organization");
-    if (row.userId !== userId) throw new ForbiddenException("শুধু ম্যাক্রোর মালিকই এটি বদলাতে পারবেন।");
+    if (!row) throw notFound("inbox.macroNotFoundInThisOrganization");
+    if (row.userId !== userId) throw forbidden("inbox.onlyTheMacroSOwnerCan");
     const data: any = {};
     if (dto?.name !== undefined) {
       const name = String(dto.name ?? "").trim().slice(0, 80);
-      if (!name) throw new BadRequestException("ম্যাক্রোর একটি নাম দিন।");
+      if (!name) throw badRequest("inbox.giveTheMacroAName");
       data.name = name;
     }
     if (dto?.steps !== undefined) data.steps = sanitizeMacroSteps(dto.steps);
@@ -5857,8 +5921,8 @@ export class InboxService implements OnModuleInit {
 
   async deleteMacro(organizationId: string, userId: string, macroId: string) {
     const row = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
-    if (!row) throw new NotFoundException("Macro not found in this organization");
-    if (row.userId !== userId) throw new ForbiddenException("শুধু ম্যাক্রোর মালিকই এটি মুছতে পারবেন।");
+    if (!row) throw notFound("inbox.macroNotFoundInThisOrganization");
+    if (row.userId !== userId) throw forbidden("inbox.onlyTheMacroSOwnerCan2");
     await (this.prisma as any).inboxMacro.delete({ where: { id: macroId } });
     await this.audit.log({
       organizationId, userId, action: "inbox.macro.delete",
@@ -5918,10 +5982,10 @@ export class InboxService implements OnModuleInit {
   private async runMacroStep(organizationId: string, actorId: string, conv: any, step: MacroStep): Promise<void> {
     if (step.type === "reply") {
       const qr = await (this.prisma as any).quickReply.findFirst({ where: { id: step.quickReplyId, organizationId } });
-      if (!qr) throw new BadRequestException("ম্যাক্রোর Quick Replyটি পাওয়া যায়নি — হয়তো মুছে ফেলা হয়েছে।");
+      if (!qr) throw badRequest("inbox.theMacroSQuickReplyWas");
       const vars = await this.macroVariableContext(organizationId, conv);
       const content = renderQuickReplyVariables(qr.content, vars);
-      if (!content.trim()) throw new BadRequestException("Quick Reply-এর লেখা খালি।");
+      if (!content.trim()) throw badRequest("inbox.theQuickReplyTextIsEmpty");
       await this.sendReply(organizationId, actorId, conv.id, content, { signature: true, quickReplyId: qr.id });
     } else if (step.type === "assign") {
       const target = step.assignedUserId === "me" ? actorId : step.assignedUserId;
@@ -5954,7 +6018,7 @@ export class InboxService implements OnModuleInit {
   async runMacro(organizationId: string, actorId: string, macroId: string, conversationId: string) {
     const macro = await (this.prisma as any).inboxMacro.findFirst({ where: { id: macroId, organizationId } });
     if (!macro || (macro.userId !== actorId && !macro.shared)) {
-      throw new NotFoundException("Macro not found in this organization");
+      throw notFound("inbox.macroNotFoundInThisOrganization");
     }
     const steps = sanitizeMacroSteps(macro.steps);
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
@@ -6008,20 +6072,20 @@ export class InboxService implements OnModuleInit {
     ids: string[]; quickReplyId?: string; templateId?: string;
   }) {
     const ids = [...new Set((dto.ids ?? []).map((s) => String(s).trim()).filter(Boolean))];
-    if (!ids.length) throw new BadRequestException("কমপক্ষে একটি কথোপকথন বেছে নিন।");
-    if (ids.length > 25) throw new BadRequestException("একবারে সর্বোচ্চ ২৫টি কথোপকথনে বাল্ক রিপ্লাই করা যাবে।");
+    if (!ids.length) throw badRequest("inbox.selectAtLeastOneConversation");
+    if (ids.length > 25) throw badRequest("inbox.bulkRepliesCanBeSentTo");
     const quickReplyId = dto.quickReplyId ? String(dto.quickReplyId).trim() : "";
     const templateId = dto.templateId ? String(dto.templateId).trim() : "";
     if (Boolean(quickReplyId) === Boolean(templateId)) {
-      throw new BadRequestException("বাল্ক রিপ্লাইয়ের জন্য Quick Reply অথবা Template — ঠিক একটি বেছে নিন।");
+      throw badRequest("inbox.forABulkReplyChooseExactly");
     }
     let quickReply: any = null;
     if (quickReplyId) {
       quickReply = await (this.prisma as any).quickReply.findFirst({ where: { id: quickReplyId, organizationId } });
-      if (!quickReply) throw new NotFoundException("Quick reply not found in this organization");
+      if (!quickReply) throw notFound("inbox.quickReplyNotFoundInThis");
     } else {
       const tpl = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: templateId, organizationId } });
-      if (!tpl) throw new NotFoundException("Template not found in this organization");
+      if (!tpl) throw notFound("inbox.templateNotFoundInThisOrganization");
     }
     const results: { id: string; ok: boolean; error?: string }[] = [];
     for (const id of ids) {
@@ -6031,11 +6095,11 @@ export class InboxService implements OnModuleInit {
           await this.sendTemplate(organizationId, actorId, id, templateId, []);
         } else {
           if (conv.channel === "whatsapp" && this.whatsappWindow(conv)?.open === false) {
-            throw new BadRequestException("WhatsApp ২৪ ঘণ্টার উইন্ডো বন্ধ — এই কথোপকথনে এখন Quick Reply পাঠানো যাবে না; Template ব্যবহার করুন।");
+            throw badRequest("inbox.theWhatsapp24HourWindowIs");
           }
           const vars = await this.macroVariableContext(organizationId, conv);
           const content = renderQuickReplyVariables(quickReply.content, vars);
-          if (!content.trim()) throw new BadRequestException("Quick Reply-এর লেখা খালি।");
+          if (!content.trim()) throw badRequest("inbox.theQuickReplyTextIsEmpty");
           await this.sendReply(organizationId, actorId, id, content, { signature: true, quickReplyId: quickReply.id });
         }
         results.push({ id, ok: true });
@@ -6069,17 +6133,17 @@ export class InboxService implements OnModuleInit {
     ids: string[]; action: string; assignedUserId?: string | null; tag?: string;
   }) {
     const ids = [...new Set((dto.ids ?? []).map((s) => String(s).trim()).filter(Boolean))];
-    if (!ids.length) throw new BadRequestException("কমপক্ষে একটি কথোপকথন বেছে নিন।");
-    if (ids.length > 25) throw new BadRequestException("একবারে সর্বোচ্চ ২৫টি কথোপকথনে বাল্ক অ্যাকশন করা যাবে।");
+    if (!ids.length) throw badRequest("inbox.selectAtLeastOneConversation");
+    if (ids.length > 25) throw badRequest("inbox.bulkActionsCanBeAppliedTo");
     const action = dto.action;
     if (!["close", "assign", "tag-add", "mark-read"].includes(action)) {
-      throw new BadRequestException("Invalid bulk action (close | assign | tag-add | mark-read)");
+      throw badRequest("inbox.invalidBulkActionCloseAssignTag");
     }
     if (action === "assign" && dto.assignedUserId === undefined) {
-      throw new BadRequestException("assignedUserId is required for the assign action");
+      throw badRequest("inbox.assigneduseridIsRequiredForTheAssign");
     }
     const tag = (dto.tag ?? "").trim();
-    if (action === "tag-add" && !tag) throw new BadRequestException("tag is required for the tag-add action");
+    if (action === "tag-add" && !tag) throw badRequest("inbox.tagIsRequiredForTheTag");
     const results: { id: string; ok: boolean; error?: string }[] = [];
     for (const id of ids) {
       try {
@@ -6130,7 +6194,7 @@ export class InboxService implements OnModuleInit {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     await this.assertConnectionAccess(organizationId, actorId, conv);
     const product = await (this.prisma as any).product.findFirst({ where: { id: dto.productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("inbox.productNotFoundInThisOrganization");
     const cardText = composeProductCardText(product, dto.caption);
     const fetched = await this.fetchProductImage(product).catch(() => null);
     if (fetched) {
@@ -6177,7 +6241,7 @@ export class InboxService implements OnModuleInit {
 
   private async getConversationOrThrow(organizationId: string, conversationId: string) {
     const conv = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-    if (!conv) throw new NotFoundException("Conversation not found in this organization");
+    if (!conv) throw notFound("inbox.conversationNotFoundInThisOrganization");
     return conv;
   }
 
@@ -6408,10 +6472,10 @@ export class InboxService implements OnModuleInit {
    */
   async mergeCustomerFromConversation(organizationId: string, actorId: string, conversationId: string, dto: { sourceCustomerId: string; targetCustomerId: string }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
-    if (!this.customers) throw new BadRequestException("Customer merge is not available in this deployment");
-    if (!dto?.sourceCustomerId || !dto?.targetCustomerId) throw new BadRequestException("sourceCustomerId and targetCustomerId are required");
+    if (!this.customers) throw badRequest("inbox.customerMergeIsNotAvailableIn");
+    if (!dto?.sourceCustomerId || !dto?.targetCustomerId) throw badRequest("inbox.sourcecustomeridAndTargetcustomeridAreRequired");
     if (conv.customerId !== dto.sourceCustomerId && conv.customerId !== dto.targetCustomerId) {
-      throw new BadRequestException("মার্জের অন্তত এক পক্ষ এই কথোপকথনের গ্রাহক হতে হবে।");
+      throw badRequest("inbox.atLeastOneSideOfThe");
     }
     const out = await this.customers.merge(organizationId, actorId, { sourceId: dto.sourceCustomerId, targetId: dto.targetCustomerId });
     this.rtConversation(organizationId, conversationId, { customerId: dto.targetCustomerId });
@@ -6422,14 +6486,14 @@ export class InboxService implements OnModuleInit {
    * conversation — the inverse tie-check of the merge wrapper. */
   async unmergeCustomerFromConversation(organizationId: string, actorId: string, conversationId: string, dto: { sourceCustomerId: string }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
-    if (!this.customers) throw new BadRequestException("Customer merge is not available in this deployment");
-    if (!dto?.sourceCustomerId) throw new BadRequestException("sourceCustomerId is required");
+    if (!this.customers) throw badRequest("inbox.customerMergeIsNotAvailableIn");
+    if (!dto?.sourceCustomerId) throw badRequest("inbox.sourcecustomeridIsRequired");
     const source = await (this.prisma as any).customer.findFirst({
       where: { id: dto.sourceCustomerId, organizationId },
     }).catch(() => null);
-    if (!source) throw new NotFoundException("Customer not found in this organization");
+    if (!source) throw notFound("inbox.customerNotFoundInThisOrganization");
     if (conv.customerId !== dto.sourceCustomerId && conv.customerId !== source.mergedIntoId) {
-      throw new BadRequestException("এই আনমার্জটি এই কথোপকথনের গ্রাহকের সাথে সম্পর্কিত নয়।");
+      throw badRequest("inbox.thisUnmergeIsNotRelatedTo");
     }
     const out = await this.customers.unmerge(organizationId, actorId, { sourceId: dto.sourceCustomerId });
     this.rtConversation(organizationId, conversationId, { customerId: conv.customerId });
@@ -6445,16 +6509,16 @@ export class InboxService implements OnModuleInit {
    */
   async linkConversationCustomer(organizationId: string, actorId: string, conversationId: string, dto: { customerId: string }) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
-    if (!dto?.customerId) throw new BadRequestException("customerId is required");
+    if (!dto?.customerId) throw badRequest("inbox.customeridIsRequired");
     if (conv.customerId) {
-      throw new BadRequestException("এই কথোপকথন ইতিমধ্যে একজন Customer-এর সাথে যুক্ত — বদলাতে হলে মার্জ/আনমার্জ ব্যবহার করুন।");
+      throw badRequest("inbox.thisConversationIsAlreadyLinkedTo");
     }
     const customer = await (this.prisma as any).customer.findFirst({
       where: { id: dto.customerId, organizationId },
     }).catch(() => null);
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (!customer) throw notFound("inbox.customerNotFoundInThisOrganization");
     if (customer.mergedIntoId) {
-      throw new BadRequestException("ওই Customer রেকর্ডটি অন্য রেকর্ডে মার্জ হয়ে গেছে — survivor রেকর্ডটির সাথে যুক্ত করুন।");
+      throw badRequest("inbox.thatCustomerRecordHasBeenMerged");
     }
     const updated = await (this.prisma as any).channelConversation.update({
       where: { id: conversationId }, data: { customerId: dto.customerId },
@@ -6476,7 +6540,7 @@ export class InboxService implements OnModuleInit {
   async setMessagePinned(organizationId: string, actorId: string, conversationId: string, messageId: string, pinned: boolean) {
     await this.getConversationOrThrow(organizationId, conversationId);
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message) throw notFound("inbox.messageNotFoundInThisConversation");
     const updated = await (this.prisma as any).channelMessage.update({
       where: { id: messageId },
       data: pinned ? { pinnedAt: new Date(), pinnedBy: actorId } : { pinnedAt: null, pinnedBy: null },
@@ -6500,13 +6564,13 @@ export class InboxService implements OnModuleInit {
   async reactToMessage(organizationId: string, actorId: string, conversationId: string, messageId: string, emoji: string | null) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     if (!["messenger", "instagram"].includes(conv.channel)) {
-      throw new BadRequestException("এই চ্যানেলে প্ল্যাটফর্ম reaction পাঠানোর সত্যিকারের উপায় নেই — reaction শুধু Messenger/Instagram-এ পাঠানো যায়।");
+      throw badRequest("inbox.thereIsNoRealWayTo");
     }
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
-    if (!message.externalId) throw new BadRequestException("এই মেসেজের প্ল্যাটফর্ম আইডি নেই — reaction পাঠানো যাবে না।");
+    if (!message) throw notFound("inbox.messageNotFoundInThisConversation");
+    if (!message.externalId) throw badRequest("inbox.thisMessageHasNoPlatformId");
     if (emoji !== null && (typeof emoji !== "string" || !emoji.trim() || emoji.length > 16)) {
-      throw new BadRequestException("Reaction emoji সঠিক নয়।");
+      throw badRequest("inbox.theReactionEmojiIsInvalid");
     }
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
@@ -6562,7 +6626,7 @@ export class InboxService implements OnModuleInit {
 
   async markNotificationRead(organizationId: string, userId: string, notificationId: string) {
     const row = await (this.prisma as any).agentNotification?.findFirst({ where: { id: notificationId, organizationId, userId } }).catch(() => null);
-    if (!row) throw new NotFoundException("Notification not found");
+    if (!row) throw notFound("inbox.notificationNotFound");
     return (this.prisma as any).agentNotification.update({ where: { id: notificationId }, data: { readAt: new Date() } });
   }
 
@@ -6687,7 +6751,7 @@ export class InboxService implements OnModuleInit {
   private async createNoteInternal(organizationId: string, actorId: string, conversationId: string, content: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
     const text = content?.trim();
-    if (!text) throw new BadRequestException("Note content is required");
+    if (!text) throw badRequest("inbox.noteContentIsRequired");
     // Deliberately no messaging client here: notes are internal only.
     return (this.prisma as any).conversationNote.create({
       data: { organizationId, conversationId, authorUserId: actorId, content: text.slice(0, 4000) },
@@ -6700,7 +6764,7 @@ export class InboxService implements OnModuleInit {
   }
 
   async createQuickReply(organizationId: string, actorId: string, dto: { title: string; content: string }) {
-    if (!dto.title?.trim() || !dto.content?.trim()) throw new BadRequestException("title and content are required");
+    if (!dto.title?.trim() || !dto.content?.trim()) throw badRequest("inbox.titleAndContentAreRequired");
     return (this.prisma as any).quickReply.create({
       data: { organizationId, title: dto.title.trim().slice(0, 120), content: dto.content.slice(0, 4000), createdByUserId: actorId },
     });
@@ -6708,7 +6772,7 @@ export class InboxService implements OnModuleInit {
 
   async deleteQuickReply(organizationId: string, quickReplyId: string) {
     const row = await (this.prisma as any).quickReply.findFirst({ where: { id: quickReplyId, organizationId } });
-    if (!row) throw new NotFoundException("Quick reply not found in this organization");
+    if (!row) throw notFound("inbox.quickReplyNotFoundInThis");
     await (this.prisma as any).quickReply.delete({ where: { id: quickReplyId } });
     return { deleted: true };
   }
@@ -6719,11 +6783,11 @@ export class InboxService implements OnModuleInit {
   }
 
   async createWhatsAppTemplate(organizationId: string, dto: { name: string; language?: string; category?: string; bodyText?: string }) {
-    if (!dto.name?.trim()) throw new BadRequestException("Template name is required (must match the name in Meta exactly)");
+    if (!dto.name?.trim()) throw badRequest("inbox.templateNameIsRequiredMustMatch");
     const existing = await (this.prisma as any).whatsAppTemplate.findFirst({
       where: { organizationId, name: dto.name.trim(), language: dto.language ?? "bn" },
     });
-    if (existing) throw new BadRequestException("This template name + language is already registered");
+    if (existing) throw badRequest("inbox.thisTemplateNameLanguageIsAlready");
     return (this.prisma as any).whatsAppTemplate.create({
       data: {
         organizationId, name: dto.name.trim(), language: dto.language ?? "bn",
@@ -6734,7 +6798,7 @@ export class InboxService implements OnModuleInit {
 
   async deleteWhatsAppTemplate(organizationId: string, templateId: string) {
     const row = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: templateId, organizationId } });
-    if (!row) throw new NotFoundException("Template not found in this organization");
+    if (!row) throw notFound("inbox.templateNotFoundInThisOrganization");
     await (this.prisma as any).whatsAppTemplate.delete({ where: { id: templateId } });
     return { deleted: true };
   }
@@ -6751,10 +6815,10 @@ export class InboxService implements OnModuleInit {
       where: { organizationId, provider: "whatsapp", status: "CONNECTED" },
       orderBy: { createdAt: "desc" }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException("No connected WhatsApp integration for this organization");
+    if (!integration?.credential) throw badRequest("inbox.noConnectedWhatsappIntegrationForThis");
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
     if (!secrets.wabaId) {
-      throw new BadRequestException("WABA ID সেট করা নেই — WhatsApp Manager / Meta Business Settings থেকে WhatsApp Business Account ID সংগ্রহ করে Inbox-এর WhatsApp সেটিংসে বসান।");
+      throw badRequest("inbox.noWabaIdIsSetCollect");
     }
     return { client: new MetaMessagingClient(secrets), wabaId: secrets.wabaId };
   }
@@ -6867,39 +6931,39 @@ export class InboxService implements OnModuleInit {
     const name = String(dto.name ?? "");
     // Meta rule: lowercase alphanumerics + underscores, ≤512 chars.
     if (!/^[a-z0-9_]{1,512}$/.test(name)) {
-      throw new BadRequestException("টেমপ্লেটের নাম শুধু ছোট হাতের ইংরেজি অক্ষর, সংখ্যা ও আন্ডারস্কোর (_) দিয়ে হতে হবে (সর্বোচ্চ ৫১২ অক্ষর) — যেমন eid_offer_2026।");
+      throw badRequest("inbox.theTemplateNameMayOnlyUse");
     }
     if (!["MARKETING", "UTILITY", "AUTHENTICATION"].includes(dto.category)) {
-      throw new BadRequestException("টেমপ্লেটের ক্যাটাগরি MARKETING, UTILITY বা AUTHENTICATION-এর একটি হতে হবে।");
+      throw badRequest("inbox.theTemplateCategoryMustBeOne");
     }
     const bodyText = String(dto.bodyText ?? "").trim();
-    if (!bodyText) throw new BadRequestException("টেমপ্লেটের মূল লেখা (bodyText) আবশ্যক।");
+    if (!bodyText) throw badRequest("inbox.theTemplateSMainTextBodytext");
     // Distinct positional params {{1}}..{{n}} in the body: Meta
     // needs one example value per positional param.
     const paramIdx = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
     const maxParam = paramIdx.length ? Math.max(...paramIdx) : 0;
     const exampleValues = Array.isArray(dto.exampleValues) ? dto.exampleValues.map((v) => String(v)) : [];
     if (maxParam > 0 && exampleValues.length !== maxParam) {
-      throw new BadRequestException(`মূল লেখায় {{${maxParam}}} পর্যন্ত প্যারামিটার আছে — Meta-র জন্য প্রতিটি প্যারামিটারের একটি করে উদাহরণ মান (exampleValues) দিতে হবে, মোট ${maxParam}টি।`);
+      throw badRequest("inbox.theOriginalTextHasParametersUp", { maxParam: maxParam, maxParam2: maxParam });
     }
     const headerType = dto.headerType ?? "none";
     if (headerType === "text") {
-      if (!dto.headerText?.trim()) throw new BadRequestException("টেক্সট হেডারের জন্য headerText আবশ্যক।");
+      if (!dto.headerText?.trim()) throw badRequest("inbox.headertextIsRequiredForAText");
       if (/\{\{1\}\}/.test(dto.headerText) && !dto.headerExample?.trim()) {
-        throw new BadRequestException("হেডারে {{1}} প্যারামিটার থাকলে তার উদাহরণ মান (headerExample) দিতে হবে।");
+        throw badRequest("inbox.ifTheHeaderHasAParameter");
       }
     }
     if (headerType === "image" && !dto.headerHandle?.trim()) {
-      throw new BadRequestException("ছবির হেডারের জন্য Meta-র Resumable Upload API থেকে পাওয়া উদাহরণ আপলোড হ্যান্ডল (headerHandle) আবশ্যক — এই মুহূর্তে হ্যান্ডল ছাড়া তৈরি করা যাবে না।");
+      throw badRequest("inbox.forAnImageHeaderTheExample");
     }
     const buttons = Array.isArray(dto.buttons) ? dto.buttons : [];
-    if (buttons.length > 10) throw new BadRequestException("একটি টেমপ্লেটে সর্বোচ্চ ১০টি বাটন থাকতে পারে।");
+    if (buttons.length > 10) throw badRequest("inbox.aTemplateCanHaveAtMost");
     for (const b of buttons) {
-      if (!b?.text || String(b.text).length > 25) throw new BadRequestException("বাটনের লেখা আবশ্যক এবং সর্বোচ্চ ২৫ অক্ষরের হতে হবে।");
+      if (!b?.text || String(b.text).length > 25) throw badRequest("inbox.theButtonTextIsRequiredAnd");
       if (b.type === "url" && !/^https?:\/\//i.test(String(b.url ?? ""))) {
-        throw new BadRequestException("URL বাটনের জন্য http(s) দিয়ে শুরু হওয়া একটি বৈধ url আবশ্যক।");
+        throw badRequest("inbox.aUrlButtonNeedsAValid");
       }
-      if (b.type !== "url" && b.type !== "quick_reply") throw new BadRequestException("বাটনের ধরন url বা quick_reply হতে হবে।");
+      if (b.type !== "url" && b.type !== "quick_reply") throw badRequest("inbox.theButtonTypeMustBeUrl");
     }
     // Build components (UPPERCASE create format).
     const components: any[] = [];
@@ -6925,10 +6989,10 @@ export class InboxService implements OnModuleInit {
     // header of its own (the cards carry the media headers).
     if (dto.carouselCards != null) {
       if (headerType !== "none") {
-        throw new BadRequestException("Carousel টেমপ্লেটে আলাদা Header থাকে না — প্রতিটি কার্ডের নিজের ছবি/ভিডিও Header থাকে। headerType 'none' রাখুন।");
+        throw badRequest("inbox.aCarouselTemplateHasNoSeparate");
       }
       try {
-        components.push(buildCarouselComponent(dto.carouselCards) as any);
+        components.push(buildCarouselComponent(dto.carouselCards, await resolveDocumentLocale(this.prisma as any, organizationId)) as any);
       } catch (e) {
         throw new BadRequestException(e instanceof CarouselValidationError ? e.message : "Invalid carousel cards");
       }
@@ -6991,20 +7055,20 @@ export class InboxService implements OnModuleInit {
   async updateConversation(organizationId: string, actorId: string, conversationId: string, dto: { status?: string; assignedUserId?: string | null; assignForMinutes?: number; tags?: string[]; spamFlag?: boolean; autoReplyPaused?: boolean; pipelineStage?: string; outcome?: string | null; outcomeReason?: string | null }) {
     const before = await this.getConversationOrThrow(organizationId, conversationId);
     const beforeAssignee = before.assignedUserId ?? null;
-    if (dto.status && !["open", "pending", "closed"].includes(dto.status)) throw new BadRequestException("Invalid status");
+    if (dto.status && !["open", "pending", "closed"].includes(dto.status)) throw badRequest("inbox.invalidStatus");
     // CX4: timed assignment — assignForMinutes is only meaningful
     // together with an assignee in the same call.
     if (dto.assignForMinutes !== undefined) {
       if (!Number.isInteger(dto.assignForMinutes) || dto.assignForMinutes < 5 || dto.assignForMinutes > 480) {
-        throw new BadRequestException("টাইমড অ্যাসাইনমেন্ট ৫ থেকে ৪৮০ মিনিটের মধ্যে হতে হবে।");
+        throw badRequest("inbox.aTimedAssignmentMustBeBetween");
       }
       if (!dto.assignedUserId) {
-        throw new BadRequestException("টাইমড অ্যাসাইনমেন্টের জন্য কাকে অ্যাসাইন করা হবে তা দিন।");
+        throw badRequest("inbox.forATimedAssignmentSayWho");
       }
     }
     if (dto.assignedUserId) {
       const member = await (this.prisma as any).membership.findFirst({ where: { organizationId, userId: dto.assignedUserId } });
-      if (!member) throw new BadRequestException("Assignee is not a member of this organization");
+      if (!member) throw badRequest("inbox.assigneeIsNotAMemberOf");
     }
     const data: any = {
       ...(dto.status ? { status: dto.status } : {}),
@@ -7033,11 +7097,11 @@ export class InboxService implements OnModuleInit {
     if (dto.spamFlag !== undefined) { data.spamFlag = dto.spamFlag; if (dto.spamFlag === false) data.spamReason = null; }
     if (dto.autoReplyPaused !== undefined) data.autoReplyPaused = Boolean(dto.autoReplyPaused);
     if (dto.pipelineStage !== undefined) {
-      if (!(InboxService.PIPELINE_STAGES as readonly string[]).includes(dto.pipelineStage)) throw new BadRequestException("Invalid pipeline stage");
+      if (!(InboxService.PIPELINE_STAGES as readonly string[]).includes(dto.pipelineStage)) throw badRequest("inbox.invalidPipelineStage");
       data.pipelineStage = dto.pipelineStage;
     }
     if (dto.outcome !== undefined) {
-      if (dto.outcome !== null && !(InboxService.CONVERSATION_OUTCOMES as readonly string[]).includes(dto.outcome)) throw new BadRequestException("Invalid conversation outcome");
+      if (dto.outcome !== null && !(InboxService.CONVERSATION_OUTCOMES as readonly string[]).includes(dto.outcome)) throw badRequest("inbox.invalidConversationOutcome");
       data.outcome = dto.outcome;
     }
     if (dto.outcomeReason !== undefined) data.outcomeReason = dto.outcomeReason ? String(dto.outcomeReason).slice(0, 300) : null;
@@ -7307,7 +7371,7 @@ export class InboxService implements OnModuleInit {
     }).catch(() => null);
     if (!membership) return;
     if (isConnectionDenied(membership, targetId)) {
-      throw new ForbiddenException("এই অ্যাকাউন্টে মেসেজ পাঠানোর অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+      throw forbidden("inbox.youHaveNotBeenGivenPermission2");
     }
   }
 
@@ -7322,7 +7386,7 @@ export class InboxService implements OnModuleInit {
       quoted = await (this.prisma as any).channelMessage.findFirst({
         where: { id: opts.replyToMessageId, conversationId },
       }).catch(() => null);
-      if (!quoted) throw new BadRequestException("Quote করা মেসেজটি এই কথোপকথনে পাওয়া যায়নি — অন্য থ্রেডের মেসেজ quote করা যাবে না।");
+      if (!quoted) throw badRequest("inbox.theQuotedMessageWasNotFound");
     }
     // Milestone 73: a human sender's enabled signature rides
     // along (composer + approved drafts opt in; system
@@ -7381,7 +7445,7 @@ export class InboxService implements OnModuleInit {
       await (this.prisma as any).channelMessage.update({
         where: { id: message.id }, data: { status: "failed", error },
       });
-      throw new BadRequestException(`Message was NOT sent: ${error}`);
+      throw badRequest("inbox.messageWasNotSent", { error: error });
     }
   }
 
@@ -7445,6 +7509,18 @@ export class InboxService implements OnModuleInit {
     const products = await (this.prisma as any).product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
     const matchedProduct = matchProduct(question, products);
 
+    // MB5 (ML13, CD-8 #18): ONE language resolution for both
+    // draft paths — the exact inputs the LLM path's quality
+    // block already used (org → detected → memory), hoisted so
+    // the no-LLM templateDraft fallback selects its bn/en
+    // template set by the SAME resolved language instead of
+    // always emitting the Bangla set.
+    const draftResolvedLanguage = resolveReplyLanguage({
+      orgReplyLanguage: brain.replyLanguage ?? null,
+      detected: detectReplyLanguage(question),
+      memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
+    });
+
     let content: string;
     let usage = { inputTokens: 0, outputTokens: 0, estimated: true };
     if (provider.isRealLlm) {
@@ -7480,11 +7556,7 @@ export class InboxService implements OnModuleInit {
             // customer's own language unless the owner had
             // pinned one.
             ...buildReplyQualityBlock({
-              language: resolveReplyLanguage({
-                orgReplyLanguage: brain.replyLanguage ?? null,
-                detected: detectReplyLanguage(question),
-                memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
-              }),
+              language: draftResolvedLanguage,
               styleInstructions: brain.styleInstructions ?? null,
               platformGuidance: brain.platformGuidance ?? null,
               channel: "draft",
@@ -7496,7 +7568,7 @@ export class InboxService implements OnModuleInit {
       content = result.text.trim();
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated };
     } else {
-      content = templateDraft(question, matchedProduct, brain.publicProfile ? { industry: brain.publicProfile.industry } : null);
+      content = templateDraft(question, matchedProduct, brain.publicProfile ? { industry: brain.publicProfile.industry } : null, draftResolvedLanguage.language);
     }
 
     const draft = await (this.prisma as any).messageDraft.create({
@@ -7580,16 +7652,16 @@ export class InboxService implements OnModuleInit {
   async toneRewrite(organizationId: string, actorId: string, conversationId: string, textRaw: unknown, tone: string): Promise<{ text: string }> {
     await this.getConversationOrThrow(organizationId, conversationId);
     const text = String(textRaw ?? "").trim();
-    if (!text) throw new BadRequestException("লেখা খালি — আগে কিছু লিখুন।");
-    if (text.length > 2000) throw new BadRequestException("লেখা খুব লম্বা (সর্বোচ্চ ২০০০ অক্ষর)।");
+    if (!text) throw badRequest("inbox.theTextIsEmptyWriteSomething");
+    if (text.length > 2000) throw badRequest("inbox.theTextIsTooLongAt");
     if (!["polite", "professional", "sales"].includes(tone)) {
-      throw new BadRequestException("tone must be polite, professional or sales");
+      throw badRequest("inbox.toneMustBePoliteProfessionalOr");
     }
     await this.checkAiAllowed(organizationId, "tone_rewrite");
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
       // Honest boundary, same style as translateMessage.
-      throw new BadRequestException("টোন বদলাতে একটি আসল LLM provider দরকার (LLM_PROVIDER ও API key সেট করুন)। Dev template দিয়ে টোন বদলানো সম্ভব নয়।");
+      throw badRequest("inbox.aRealLlmProviderIsNeeded2");
     }
     const toneInstruction = {
       polite: "মার্জিত ও নম্র (polite and courteous)",
@@ -7607,7 +7679,7 @@ export class InboxService implements OnModuleInit {
     const inputNumbers = new Set(InboxService.extractNumbers(text));
     const invented = InboxService.extractNumbers(rewritten).filter((n) => !inputNumbers.has(n));
     if (invented.length) {
-      throw new BadRequestException("AI সংখ্যা বদলে ফেলেছে, তাই এই রিরাইটটি প্রয়োগ করা হয়নি। আবার চেষ্টা করুন।");
+      throw badRequest("inbox.theAiChangedANumberSo");
     }
     return { text: rewritten };
   }
@@ -7620,9 +7692,9 @@ export class InboxService implements OnModuleInit {
   async sendTemplate(organizationId: string, actorId: string, conversationId: string, templateId: string, variables: string[] = []) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     await this.assertConnectionAccess(organizationId, actorId, conv);
-    if (conv.channel !== "whatsapp") throw new BadRequestException("Template messages are WhatsApp-only");
+    if (conv.channel !== "whatsapp") throw badRequest("inbox.templateMessagesAreWhatsappOnly");
     const template = await (this.prisma as any).whatsAppTemplate.findFirst({ where: { id: templateId, organizationId } });
-    if (!template) throw new NotFoundException("Template not found in this organization");
+    if (!template) throw notFound("inbox.templateNotFoundInThisOrganization");
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
     const client = new MetaMessagingClient(secrets);
@@ -7643,7 +7715,7 @@ export class InboxService implements OnModuleInit {
     } catch (e) {
       const error = e instanceof Error ? e.message : "Template send failed";
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
-      throw new BadRequestException(`Template message was NOT sent: ${error}`);
+      throw badRequest("inbox.templateMessageWasNotSent", { error: error });
     }
   }
 
@@ -7651,7 +7723,7 @@ export class InboxService implements OnModuleInit {
   async sendImageReply(organizationId: string, actorId: string, conversationId: string, imageUrl: string, caption?: string) {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     await this.assertConnectionAccess(organizationId, actorId, conv);
-    if (!/^https:\/\//i.test(imageUrl ?? "")) throw new BadRequestException("imageUrl must be a public https URL");
+    if (!/^https:\/\//i.test(imageUrl ?? "")) throw badRequest("inbox.imageurlMustBeAPublicHttps");
     const integration = await this.integrationForConversation(conv);
     const secrets = await this.secretsFor(integration.id);
     const client = new MetaMessagingClient(secrets);
@@ -7673,7 +7745,7 @@ export class InboxService implements OnModuleInit {
     } catch (e) {
       const error = e instanceof Error ? e.message : "Image send failed";
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
-      throw new BadRequestException(`Image was NOT sent: ${error}`);
+      throw badRequest("inbox.imageWasNotSent", { error: error });
     }
   }
 
@@ -7695,10 +7767,10 @@ export class InboxService implements OnModuleInit {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     await this.assertConnectionAccess(organizationId, actorId, conv);
     const bytes = Buffer.from(String(dto.dataBase64 ?? ""), "base64");
-    if (!bytes.length) throw new BadRequestException("ফাইলটি খালি অথবা পড়া যায়নি।");
-    if (bytes.length > MEDIA_UPLOAD_MAX_BYTES) throw new BadRequestException(`ফাইল খুব বড় — সর্বোচ্চ ${Math.round(MEDIA_UPLOAD_MAX_BYTES / 100000) / 10}MB পর্যন্ত আপলোড করা যাবে।`);
+    if (!bytes.length) throw badRequest("inbox.theFileIsEmptyOrCould");
+    if (bytes.length > MEDIA_UPLOAD_MAX_BYTES) throw badRequest("inbox.theFileIsTooLargeUploads", { p1: Math.round(MEDIA_UPLOAD_MAX_BYTES / 100000) / 10 });
     const detected = detectMediaKind(bytes, dto.contentType);
-    if (!detected) throw new BadRequestException("এই ফাইল ফরম্যাটটি পাঠানো যায় না — ছবি (PNG/JPG/WebP/GIF), অডিও/ভয়েস, MP4/WebM ভিডিও অথবা PDF দিন।");
+    if (!detected) throw badRequest("inbox.thisFileFormatCannotBeSent");
     const kind = detected.kind;
     // IN5a: browser WebM voice notes headed for WhatsApp/Telegram
     // are transcoded to OGG/Opus first (WhatsApp rejects WebM,
@@ -7760,7 +7832,7 @@ export class InboxService implements OnModuleInit {
     } catch (e) {
       const error = e instanceof Error ? e.message : "Media send failed";
       await (this.prisma as any).channelMessage.update({ where: { id: message.id }, data: { status: "failed", error } });
-      throw new BadRequestException(`Media was NOT sent: ${error}`);
+      throw badRequest("inbox.mediaWasNotSent", { error: error });
     }
   }
 
@@ -7824,14 +7896,14 @@ export class InboxService implements OnModuleInit {
       return new MetaMessagingClient(secrets).downloadWhatsAppMedia(message.mediaId);
     }
     const res = await fetch(message.mediaUrl);
-    if (!res.ok) throw new BadRequestException(`Media fetch failed (${res.status})`);
+    if (!res.ok) throw badRequest("inbox.mediaFetchFailed", { resStatus: res.status });
     return { bytes: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? "application/octet-stream" };
   }
 
   async getMessageMedia(organizationId: string, conversationId: string, messageId: string): Promise<{ bytes: Buffer; contentType: string }> {
     const conv = await this.getConversationOrThrow(organizationId, conversationId);
     const message = await (this.prisma as any).channelMessage.findFirst({ where: { id: messageId, conversationId } });
-    if (!message) throw new NotFoundException("Message not found in this conversation");
+    if (!message) throw notFound("inbox.messageNotFoundInThisConversation");
     if (message.mediaStorageKey) {
       const stored = await this.mediaStore().get(message.mediaStorageKey).catch(() => null);
       if (stored) return { bytes: stored, contentType: message.mediaContentType ?? "application/octet-stream" };
@@ -7848,23 +7920,23 @@ export class InboxService implements OnModuleInit {
       await this.captureMessageMedia(organizationId, conv, message, got).catch(() => undefined);
       return got;
     }
-    throw new NotFoundException("This message has no media");
+    throw notFound("inbox.thisMessageHasNoMedia");
   }
 
   async dismissDraft(organizationId: string, conversationId: string, draftId: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
     const draft = await (this.prisma as any).messageDraft.findFirst({ where: { id: draftId, conversationId, organizationId } });
-    if (!draft) throw new NotFoundException("Draft not found");
+    if (!draft) throw notFound("inbox.draftNotFound");
     return (this.prisma as any).messageDraft.update({ where: { id: draftId }, data: { status: "dismissed" } });
   }
 
   async sendDraft(organizationId: string, actorId: string, conversationId: string, draftId: string, editedContent?: string) {
     await this.getConversationOrThrow(organizationId, conversationId);
     const draft = await (this.prisma as any).messageDraft.findFirst({ where: { id: draftId, conversationId, organizationId } });
-    if (!draft) throw new NotFoundException("Draft not found");
-    if (draft.status !== "suggested") throw new BadRequestException("Draft is no longer pending");
+    if (!draft) throw notFound("inbox.draftNotFound");
+    if (draft.status !== "suggested") throw badRequest("inbox.draftIsNoLongerPending");
     const content = (editedContent ?? draft.content).trim();
-    if (!content) throw new BadRequestException("Message content is empty");
+    if (!content) throw badRequest("inbox.messageContentIsEmpty");
     // CX11ac: a draft send is always AI-assisted (the text came
     // from a draft); edited = the final content differs from the
     // draft's own trimmed text.
@@ -7932,13 +8004,40 @@ export function matchProduct(text: string, products: any[]): any | null {
 
 /** Deterministic draft for the dev-template provider: grounded in real
  *  product/policy data when found, otherwise an honest "we will confirm"
- *  placeholder - it never invents a price or a policy. */
-export function templateDraft(lastInbound: string, product: any | null, profile: any | null): string {
-  const greeting = "আসসালামু আলাইকুম!";
+ *  placeholder - it never invents a price or a policy.
+ *  MB5 (ML13, CD-8 #18): bilingual template sets — the English
+ *  set mirrors the Bangla set branch-for-branch and is selected
+ *  by the same resolved language the draft path uses
+ *  (suggestDraft's resolveReplyLanguage result). "mixed" takes
+ *  the Bangla set (the platform home-market default; the LLM
+ *  path renders true Banglish when a real provider exists).
+ *  The default stays "bn" so existing direct callers are
+ *  byte-identical. */
+export function templateDraft(lastInbound: string, product: any | null, profile: any | null, language: "bn" | "en" | "mixed" = "bn"): string {
   const text = lastInbound.toLowerCase();
   const asksPrice = /দাম|price|কত টাকা|cost/.test(text);
   const asksDelivery = /ডেলিভারি|delivery|শিপিং|shipping|কুরিয়ার/.test(text);
   const asksStock = /স্টক|stock|আছে কি|available|in stock/.test(text);
+  if (language === "en") {
+    const greeting = "Hello!";
+    if (asksPrice && product) {
+      return `${greeting} The price of ${product.name} is ${formatMinor(BigInt(product.priceMinor), product.currency)}. To order, please send your name, address and phone number and we will complete the rest of the process.`;
+    }
+    if (asksStock && product) {
+      return product.stockQuantity !== null && product.stockQuantity !== undefined
+        ? `${greeting} Yes, ${product.name} is in stock now (${product.stockQuantity} pcs). Let us know if you would like to order.`
+        : `${greeting} We are checking the stock of ${product.name} and will confirm shortly.`;
+    }
+    if (asksDelivery) {
+      return `${greeting} We will let you know the delivery charge and time for your area — please tell us your district/area name.`;
+    }
+    if (product) {
+      return `${greeting} Thank you for asking about ${product.name}. The price is ${formatMinor(BigInt(product.priceMinor), product.currency)}. Feel free to ask if you want to know anything else.`;
+    }
+    const business = profile?.industry ? "" : "";
+    return `${greeting} Thank you for your message.${business} We are checking your question and will reply with a confirmed answer — please wait a moment.`;
+  }
+  const greeting = "আসসালামু আলাইকুম!";
   if (asksPrice && product) {
     return `${greeting} ${product.name} এর দাম ${formatMinor(BigInt(product.priceMinor), product.currency)}। অর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও ফোন নম্বর দিন, আমরা বাকি প্রক্রিয়া সম্পন্ন করে দেব।`;
   }

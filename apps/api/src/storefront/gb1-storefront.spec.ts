@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { validateShopPageBlocks, slugifyShopPageTitle, SYSTEM_PAGES } from "./shop-pages";
 import { normalizeProductVideo } from "../products/product-video";
@@ -166,20 +167,20 @@ describe("GB1 validateShopPageBlocks", () => {
   });
 
   it("rejects unknown types, flat (non-contract) blocks, raw oversize and per-field oversize in Bengali", () => {
-    expect(() => validateShopPageBlocks([{ type: "html", data: { html: "<b>x</b>" } }])).toThrow(BadRequestException);
+    expect(() => validateShopPageBlocks([{ type: "html", data: { html: "<b>x</b>" } }])).toThrow(ApiException);
     expect(() => validateShopPageBlocks([{ type: "html", data: { html: "<b>x</b>" } }])).toThrow(/অজানা ব্লক ধরন/);
     // The FLAT shape is not the contract — fields must live in data.
-    expect(() => validateShopPageBlocks([{ type: "paragraph", text: "flat" }])).toThrow(BadRequestException);
-    expect(() => validateShopPageBlocks([{ type: "paragraph" }])).toThrow(BadRequestException);
+    expect(() => validateShopPageBlocks([{ type: "paragraph", text: "flat" }])).toThrow(ApiException);
+    expect(() => validateShopPageBlocks([{ type: "paragraph" }])).toThrow(ApiException);
     const fortyOne = Array.from({ length: 41 }, () => ({ type: "paragraph", data: { text: "x" } }));
     expect(() => validateShopPageBlocks(fortyOne)).toThrow(/সর্বোচ্চ 40টি/);
     const huge = Array.from({ length: 7 }, () => ({ type: "paragraph", data: { text: "অ".repeat(5000) } }));
     expect(() => validateShopPageBlocks(huge)).toThrow(/মোট আকার/);
-    expect(() => validateShopPageBlocks([{ type: "heading", data: { text: "অ".repeat(201) } }])).toThrow(BadRequestException);
-    expect(() => validateShopPageBlocks([{ type: "heading", data: { text: "ok", level: 5 } }])).toThrow(BadRequestException);
-    expect(() => validateShopPageBlocks([{ type: "list", data: { items: [] } }])).toThrow(BadRequestException);
-    expect(() => validateShopPageBlocks([{ type: "image", data: { url: "ftp://x/y.jpg" } }])).toThrow(BadRequestException);
-    expect(() => validateShopPageBlocks("nope")).toThrow(BadRequestException);
+    expect(() => validateShopPageBlocks([{ type: "heading", data: { text: "অ".repeat(201) } }])).toThrow(ApiException);
+    expect(() => validateShopPageBlocks([{ type: "heading", data: { text: "ok", level: 5 } }])).toThrow(ApiException);
+    expect(() => validateShopPageBlocks([{ type: "list", data: { items: [] } }])).toThrow(ApiException);
+    expect(() => validateShopPageBlocks([{ type: "image", data: { url: "ftp://x/y.jpg" } }])).toThrow(ApiException);
+    expect(() => validateShopPageBlocks("nope")).toThrow(ApiException);
     expect(validateShopPageBlocks(undefined)).toEqual([]);
     expect(validateShopPageBlocks([])).toEqual([]);
   });
@@ -198,7 +199,7 @@ describe("GB1 shop pages (service)", () => {
     expect(made.page.blocks).toEqual([{ type: "paragraph", data: { text: "হ্যালো" } }]);
     expect(made.page.isSystem).toBe(false);
     await expect(svc.createPage("org-1", "user-1", { title: "My Page" } as any)).rejects.toThrow(/এই slug-এ ইতিমধ্যে একটি পেজ আছে/);
-    await expect(svc.createPage("org-1", "user-1", { title: "শুধু বাংলা" } as any)).rejects.toThrow(BadRequestException);
+    await expect(svc.createPage("org-1", "user-1", { title: "শুধু বাংলা" } as any)).rejects.toThrow(ApiException);
     // "about" was seeded as a system page by createPage's ensure step.
     await expect(svc.createPage("org-1", "user-1", { title: "About Clone", slug: "about" } as any)).rejects.toThrow(/ইতিমধ্যে/);
 
@@ -207,7 +208,7 @@ describe("GB1 shop pages (service)", () => {
     await expect(svc.updatePage("org-1", "user-1", about.id, { slug: "about-us" } as any)).rejects.toThrow(/slug বদলানো যায় না/);
     await expect(svc.deletePage("org-1", "user-1", about.id)).rejects.toThrow(/মুছে ফেলা যায় না/);
     // Foreign-org page id is a 404, never a leak.
-    await expect(svc.updatePage("org-2", "user-1", about.id, { title: "X" } as any)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updatePage("org-2", "user-1", about.id, { title: "X" } as any)).rejects.toBeInstanceOf(ApiException);
 
     const removed = await svc.deletePage("org-1", "user-1", made.page.id);
     expect(removed.deleted).toBe(true);
@@ -245,7 +246,7 @@ describe("GB1 shop pages (service)", () => {
     });
     const { svc } = makeService(prisma);
     await svc.listPages("org-1");
-    await expect(svc.getPublicPage("shop-one", "contact")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getPublicPage("shop-one", "contact")).rejects.toBeInstanceOf(ApiException);
     const { pages } = await svc.listPages("org-1");
     const contact = pages.find((p: any) => p.slug === "contact")!;
     await svc.updatePage("org-1", "user-1", contact.id, { published: true } as any);
@@ -303,11 +304,11 @@ describe("GB1 popup", () => {
     // endsAt <= startsAt on the merged state is refused.
     await expect(
       svc.upsertPopup("org-1", "user-1", { startsAt: future, endsAt: past } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
     await svc.upsertPopup("org-1", "user-1", { startsAt: past, endsAt: null } as any);
     await expect(
       svc.upsertPopup("org-1", "user-1", { ctaUrl: "notaurl" } as any),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
 
     const pub = await svc.getPublicPopup("shop-one");
     expect(pub.popup).toMatchObject({ title: "অফার", trigger: "delay_seconds", delaySeconds: 5, showOn: "home" });

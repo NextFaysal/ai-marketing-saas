@@ -16,10 +16,14 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useLocale } from "@/lib/i18n/provider";
 import {
+  BLOG_POST_TRANSLATION_FIELDS, CATEGORY_TRANSLATION_FIELDS,
   PRODUCT_TRANSLATION_FIELDS, STOREFRONT_STRING_FIELDS, TRANSLATION_LOCALES,
-  canApprove, deleteCurrencyRate, fetchCurrencyRates, fetchProductTranslations,
-  fetchStorefrontStringTranslations, findTranslation, generateProductAiDraft,
+  canApprove, deleteCurrencyRate, fetchBlogPostTranslations, fetchCategoryTranslations,
+  fetchCurrencyRates, fetchProductTranslations,
+  fetchStorefrontStringTranslations, findTranslation, generateBlogPostAiDraft,
+  generateCategoryAiDraft, generateProductAiDraft,
   generateStringsAiDraft, sourceLabel, statusLabel, updateTranslation, upsertCurrencyRate,
   upsertTranslation,
   type CurrencyRateView, type TranslationView,
@@ -36,6 +40,7 @@ function FieldEditor(props: {
   onChanged: () => void;
   onError: (msg: string) => void;
 }) {
+  const { dict, t, locale } = useLocale();
   const [text, setText] = useState(props.existing?.text ?? "");
   const [busy, setBusy] = useState(false);
   useEffect(() => { setText(props.existing?.text ?? ""); }, [props.existing?.id, props.existing?.text, props.locale]);
@@ -53,7 +58,7 @@ function FieldEditor(props: {
       });
       props.onChanged();
     } catch (e: any) {
-      props.onError(e?.message ?? "সংরক্ষণ করা যায়নি");
+      props.onError(e?.message ?? dict.products.couldNotSave);
     } finally { setBusy(false); }
   }
 
@@ -64,7 +69,7 @@ function FieldEditor(props: {
       await updateTranslation(props.orgId, props.existing.id, { status });
       props.onChanged();
     } catch (e: any) {
-      props.onError(e?.message ?? "হালনাগাদ করা যায়নি");
+      props.onError(e?.message ?? dict.products.couldNotUpdate);
     } finally { setBusy(false); }
   }
 
@@ -82,32 +87,29 @@ function FieldEditor(props: {
             </span>
           </>
         ) : (
-          <span className="text-[10px] text-slate-400">এখনো অনুবাদ নেই — দোকানে মূল লেখাই দেখাবে</span>
+          <span className="text-[10px] text-slate-400">{dict.products.noTranslationYetTheShop}</span>
         )}
       </div>
       <textarea
-        rows={props.field === "name" ? 1 : 3}
+        rows={props.field === "name" || props.field === "title" ? 1 : 3}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="অনুবাদ লিখুন অথবা AI খসড়া তৈরি করুন…"
+        placeholder={dict.products.writeTheTranslationOrGenerate}
         className="w-full rounded-lg border px-2.5 py-1.5 text-xs"
       />
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={busy || !text.trim()} onClick={save}
           className="rounded-lg bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
-          সংরক্ষণ করুন
-        </button>
+          {dict.common.save}</button>
         {canApprove(props.existing) && props.existing!.text === text.trim() ? (
           <button type="button" disabled={busy} onClick={() => setStatus("approved")}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
-            অনুমোদন করুন (দোকানে দেখাবে)
-          </button>
+            {dict.products.approveWillShowInThe}</button>
         ) : null}
         {props.existing?.status === "approved" ? (
           <button type="button" disabled={busy} onClick={() => setStatus("draft")}
             className="rounded-lg border px-3 py-1.5 text-[11px] font-semibold text-slate-600 disabled:opacity-50">
-            খসড়ায় ফেরত নিন
-          </button>
+            {dict.products.moveBackToDraft}</button>
         ) : null}
       </div>
     </div>
@@ -115,6 +117,7 @@ function FieldEditor(props: {
 }
 
 export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; productId: string }) {
+  const { dict, t } = useLocale();
   const [locale, setLocale] = useState<string>("hi");
   const [productItems, setProductItems] = useState<TranslationView[]>([]);
   const [stringItems, setStringItems] = useState<TranslationView[]>([]);
@@ -147,7 +150,7 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
       setNotice(out.note);
       await reload();
     } catch (e: any) {
-      setError(e?.message ?? "AI খসড়া তৈরি করা যায়নি");
+      setError(e?.message ?? dict.products.couldNotGenerateTheAI);
     } finally { setAiBusy(false); }
   }
 
@@ -162,7 +165,7 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
       setRateForm({ currency: "", ratePerUnit: "", sourceNote: "" });
       await reload();
     } catch (e: any) {
-      setError(e?.message ?? "রেট সংরক্ষণ করা যায়নি");
+      setError(e?.message ?? dict.products.couldNotSaveTheRate);
     }
   }
 
@@ -172,20 +175,18 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
       await deleteCurrencyRate(orgId, currency);
       await reload();
     } catch (e: any) {
-      setError(e?.message ?? "রেট মোছা যায়নি");
+      setError(e?.message ?? dict.products.couldNotDeleteTheRate);
     }
   }
 
   return (
     <div className="rounded-xl border border-teal-300 bg-teal-50/40 p-3.5 space-y-3">
-      <div className="text-xs font-bold text-teal-950">🌐 অনুবাদ (বহুভাষিক দোকান)</div>
+      <div className="text-xs font-bold text-teal-950">{dict.products.translationsMultilingualShop}</div>
       <p className="text-[11px] text-slate-500">
-        অনুমোদিত অনুবাদই শুধু দোকানে দেখায় — খসড়া (AI-তৈরি হোক বা নিজে লেখা) অনুমোদন ছাড়া কখনো প্রকাশিত হয় না।
-        অনুবাদ না থাকলে মূল লেখাই দেখায়। দোকানের লিংকে <code>?locale=hi</code> দিলে ক্রেতা সেই ভাষায় দেখতে পান।
-      </p>
+        {dict.products.onlyApprovedTranslationsShowIn}<code>?locale=hi</code> {dict.products.buyersCanViewInThat}</p>
 
       <div className="flex flex-wrap items-center gap-2">
-        <label className="text-[11px] font-semibold text-slate-600" htmlFor="nf5-locale">ভাষা</label>
+        <label className="text-[11px] font-semibold text-slate-600" htmlFor="nf5-locale">{dict.products.language}</label>
         <select id="nf5-locale" value={locale} onChange={(e) => setLocale(e.target.value)}
           className="rounded-lg border px-2 py-1.5 text-xs">
           {TRANSLATION_LOCALES.map((l) => (
@@ -194,12 +195,11 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
         </select>
         <button type="button" disabled={aiBusy} onClick={() => aiDraft("product")}
           className="rounded-lg bg-teal-700 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
-          {aiBusy ? "তৈরি হচ্ছে…" : "🤖 এই পণ্যের AI খসড়া তৈরি করুন"}
+          {aiBusy ? dict.products.creating : dict.products.generateAnAIDraftFor}
         </button>
         <button type="button" disabled={aiBusy} onClick={() => aiDraft("strings")}
           className="rounded-lg border border-teal-700 px-3 py-1.5 text-[11px] font-semibold text-teal-800 disabled:opacity-50">
-          দোকানের লেখার AI খসড়া
-        </button>
+          {dict.products.aIDraftOfTheShop}</button>
       </div>
 
       {notice ? <p className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-[11px] text-sky-900">{notice}</p> : null}
@@ -215,7 +215,7 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
       </div>
 
       <div className="space-y-2">
-        <div className="text-[11px] font-bold text-slate-600">দোকানের লেখা (এই ভাষায়)</div>
+        <div className="text-[11px] font-bold text-slate-600">{dict.products.shopTextInThisLanguage}</div>
         {STOREFRONT_STRING_FIELDS.map((f) => (
           <FieldEditor key={`s-${f.field}-${locale}`} orgId={orgId} entityType="storefront_string" entityId="shop"
             field={f.field} label={f.label} locale={locale}
@@ -225,32 +225,137 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-2.5 space-y-2">
-        <div className="text-[11px] font-bold text-slate-700">💱 ডিসপ্লে মুদ্রা (শুধু দেখানোর জন্য)</div>
+        <div className="text-[11px] font-bold text-slate-700">{dict.products.displayCurrencyForDisplayOnly}</div>
         <p className="text-[11px] text-slate-500">
-          রেট আপনি নিজে লিখবেন — কোনো লাইভ রেট আনা হয় না। রূপান্তরিত দাম সবসময় “আনুমানিক” লেবেলসহ দেখায়;
-          চেকআউটে হিসাব সবসময় দোকানের মূল মুদ্রায় ({rates.baseCurrency}) হয়। রেট না দিলে কোনো রূপান্তরিত দাম দেখায় না।
-        </p>
+          {dict.products.youEnterTheRateYourself}{rates.baseCurrency}{dict.products.withoutARateNoConverted}</p>
         {rates.items.map((r) => (
           <div key={r.currency} className="flex flex-wrap items-center gap-2 text-[11px] text-slate-700">
             <span className="font-bold">{r.currency}</span>
-            <span>১ {r.currency} = {r.ratePerUnit} {rates.baseCurrency}</span>
-            <span className="text-slate-400">উৎস: {r.sourceNote}</span>
-            <button type="button" onClick={() => removeRate(r.currency)} className="text-red-600 font-semibold">মুছুন</button>
+            <span>{dict.products.text1yf}{r.currency} = {r.ratePerUnit} {rates.baseCurrency}</span>
+            <span className="text-slate-400">{dict.products.source}{r.sourceNote}</span>
+            <button type="button" onClick={() => removeRate(r.currency)} className="text-red-600 font-semibold">{dict.products.delete}</button>
           </div>
         ))}
         <div className="grid grid-cols-3 gap-2">
           <input value={rateForm.currency} onChange={(e) => setRateForm({ ...rateForm, currency: e.target.value })}
-            placeholder="মুদ্রা (USD)" className="rounded-lg border px-2 py-1.5 text-xs" />
+            placeholder={dict.products.currencyUSD} className="rounded-lg border px-2 py-1.5 text-xs" />
           <input value={rateForm.ratePerUnit} onChange={(e) => setRateForm({ ...rateForm, ratePerUnit: e.target.value })}
-            placeholder={`রেট (১ একক = কত ${rates.baseCurrency})`} className="rounded-lg border px-2 py-1.5 text-xs" />
+            placeholder={t("products.rate1UnitHowMany", { baseCurrency: rates.baseCurrency })} className="rounded-lg border px-2 py-1.5 text-xs" />
           <input value={rateForm.sourceNote} onChange={(e) => setRateForm({ ...rateForm, sourceNote: e.target.value })}
-            placeholder="রেটের উৎস (আবশ্যক)" className="rounded-lg border px-2 py-1.5 text-xs" />
+            placeholder={dict.products.rateSourceRequired} className="rounded-lg border px-2 py-1.5 text-xs" />
         </div>
         <button type="button" onClick={saveRate}
           className="rounded-lg bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-white">
-          রেট সংরক্ষণ করুন
-        </button>
+          {dict.products.saveRate}</button>
       </div>
     </div>
+  );
+}
+
+/**
+ * MB5 (ML15) — the generalised entity panel: the SAME locale
+ * picker, AI-draft flow and FieldEditor list/approve machinery
+ * as the product panel above, parameterised by entity. Used
+ * for categories (name + description) and blog posts (title
+ * only). The honesty rules are the panel-wide ones: drafts say
+ * "দোকানে দেখাবে না", AI output lands as a draft, and approval
+ * is always an explicit human click.
+ */
+function EntityTranslationsPanel(props: {
+  orgId: string;
+  entityType: "category" | "blog_post";
+  entityId: string;
+  fields: readonly { field: string; label: string }[];
+  fetchItems: (orgId: string, entityId: string) => Promise<{ items: TranslationView[] }>;
+  generateDraft: (orgId: string, entityId: string, locale: string) => Promise<{ note: string; items: TranslationView[] }>;
+  aiButtonLabel: string;
+}) {
+  const { dict } = useLocale();
+  const [locale, setLocale] = useState<string>("hi");
+  const [items, setItems] = useState<TranslationView[]>([]);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!props.orgId || !props.entityId) return;
+    const out = await props.fetchItems(props.orgId, props.entityId).catch(() => ({ items: [] as TranslationView[] }));
+    setItems(out.items);
+  }, [props.orgId, props.entityId, props.fetchItems]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  async function aiDraft() {
+    setAiBusy(true); setError(""); setNotice("");
+    try {
+      const out = await props.generateDraft(props.orgId, props.entityId, locale);
+      setNotice(out.note);
+      await reload();
+    } catch (e: any) {
+      setError(e?.message ?? dict.products.couldNotGenerateTheAI);
+    } finally { setAiBusy(false); }
+  }
+
+  return (
+    <div className="rounded-xl border border-teal-300 bg-teal-50/40 p-3.5 space-y-3">
+      <div className="text-xs font-bold text-teal-950">{dict.products.translationsMultilingualShop}</div>
+      <p className="text-[11px] text-slate-500">
+        {dict.products.onlyApprovedTranslationsShowIn}<code>?locale=hi</code> {dict.products.buyersCanViewInThat}</p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-semibold text-slate-600">{dict.products.language}</label>
+        <select value={locale} onChange={(e) => setLocale(e.target.value)}
+          className="rounded-lg border px-2 py-1.5 text-xs">
+          {TRANSLATION_LOCALES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label} ({l.code})</option>
+          ))}
+        </select>
+        <button type="button" disabled={aiBusy} onClick={aiDraft}
+          className="rounded-lg bg-teal-700 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
+          {aiBusy ? dict.products.creating : props.aiButtonLabel}
+        </button>
+      </div>
+
+      {notice ? <p className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-[11px] text-sky-900">{notice}</p> : null}
+      {error ? <p className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">{error}</p> : null}
+
+      <div className="space-y-2">
+        {props.fields.map((f) => (
+          <FieldEditor key={`${props.entityType}-${f.field}-${locale}`} orgId={props.orgId}
+            entityType={props.entityType} entityId={props.entityId}
+            field={f.field} label={f.label} locale={locale}
+            existing={findTranslation(items, f.field, locale)}
+            onChanged={reload} onError={setError} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** MB5 (ML15): translations for one category (name + description). */
+export function CategoryTranslationsPanel({ orgId, categoryId }: { orgId: string; categoryId: string }) {
+  const { dict } = useLocale();
+  return (
+    <EntityTranslationsPanel
+      orgId={orgId} entityType="category" entityId={categoryId}
+      fields={CATEGORY_TRANSLATION_FIELDS}
+      fetchItems={fetchCategoryTranslations}
+      generateDraft={generateCategoryAiDraft}
+      aiButtonLabel={dict.products.categoryAiDraft}
+    />
+  );
+}
+
+/** MB5 (ML15): translations for one blog post — TITLE only. */
+export function BlogPostTranslationsPanel({ orgId, blogPostId }: { orgId: string; blogPostId: string }) {
+  const { dict } = useLocale();
+  return (
+    <EntityTranslationsPanel
+      orgId={orgId} entityType="blog_post" entityId={blogPostId}
+      fields={BLOG_POST_TRANSLATION_FIELDS}
+      fetchItems={fetchBlogPostTranslations}
+      generateDraft={generateBlogPostAiDraft}
+      aiButtonLabel={dict.products.blogTitleAiDraft}
+    />
   );
 }

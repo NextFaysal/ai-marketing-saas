@@ -91,9 +91,9 @@ describe("CampaignsService workflow guards", () => {
   it("an incomplete plan cannot be submitted; a draft cannot be approved or published", async () => {
     const svc = new CampaignsService(fakePrisma() as any, auditStub, devLlm);
     const plan = await svc.createPlan("org-1", "u", { name: "Empty", objective: "OUTCOME_TRAFFIC", adAccountId: "acc-1" });
-    await expect(svc.submitForApproval("org-1", "u", plan.id)).rejects.toThrow("not ready for approval");
-    await expect(svc.approve("org-1", "u", plan.id)).rejects.toThrow("Only pending_approval");
-    await expect(svc.publish("org-1", "u", plan.id)).rejects.toThrow("must be approved before publishing");
+    await expect(svc.submitForApproval("org-1", "u", plan.id)).rejects.toMatchObject({ code: "campaigns.planIsNotReadyForApproval" });
+    await expect(svc.approve("org-1", "u", plan.id)).rejects.toMatchObject({ code: "campaigns.onlyPendingApprovalPlansCanBe" });
+    await expect(svc.publish("org-1", "u", plan.id)).rejects.toMatchObject({ code: "campaigns.planMustBeApprovedBeforePublishing" });
   });
 
   it("approved plans are frozen for editing; rejection reopens editing", async () => {
@@ -112,7 +112,7 @@ describe("CampaignsService workflow guards", () => {
     await svc.addAd("org-1", planId, s2.id, { name: "A2", primaryText: "text", linkUrl: "https://x.example" });
     await svc.submitForApproval("org-1", "creator", planId);
     await svc.approve("org-1", "owner", planId);
-    await expect(svc.addAdSet("org-1", planId, { name: "S3", dailyBudget: "50", optimizationGoal: "LINK_CLICKS", pageId: "pg", countries: ["BD"] })).rejects.toThrow("can no longer be edited");
+    await expect(svc.addAdSet("org-1", planId, { name: "S3", dailyBudget: "50", optimizationGoal: "LINK_CLICKS", pageId: "pg", countries: ["BD"] })).rejects.toMatchObject({ code: "campaigns.planIsAndCanNoLonger" });
   });
 
   it("sales ad sets optimizing for conversions require a pixel", async () => {

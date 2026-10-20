@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { setPlatformConfigSnapshot } from "../common/platform-config";
 
@@ -161,7 +162,7 @@ describe("OU2 refresh — refreshDomainHttps", () => {
   it("refuses before the domain is verified", async () => {
     const prisma = makePrisma(); seed(prisma);
     const { svc } = makeSvc(prisma);
-    await expect(svc.refreshDomainHttps("org-1", "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.refreshDomainHttps("org-1", "user-1")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("re-reads the existing hostname (no duplicate create) and maps active+active to active", async () => {

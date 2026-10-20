@@ -1,3 +1,7 @@
+import type { UiLocale } from "@repo/contracts";
+import { aiBn, aiEn } from "./i18n/ai";
+import { interpolate } from "./i18n/lookup";
+
 export type AspectRatio = "1:1" | "9:16" | "16:9" | "4:5";
 
 export type TemplateStyle =
@@ -13,6 +17,7 @@ export type TemplateStyle =
 export interface ColorPalette {
   id: string;
   name: string;
+  nameEn: string;
   bgStart: string;
   bgEnd: string;
   accent: string;
@@ -26,7 +31,7 @@ export interface ColorPalette {
 export const BANNER_PALETTES: ColorPalette[] = [
   {
     id: "navy",
-    name: "রয়্যাল নেভি",
+    name: "রয়্যাল নেভি", nameEn: "Royal Navy",
     bgStart: "#0a1128",
     bgEnd: "#1c2a4f",
     accent: "#38bdf8",
@@ -38,7 +43,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "crimson",
-    name: "ধামাকা রুবি",
+    name: "ধামাকা রুবি", nameEn: "Dhamaka Ruby",
     bgStart: "#3b0716",
     bgEnd: "#881337",
     accent: "#f43f5e",
@@ -50,7 +55,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "emerald",
-    name: "ট্রাস্ট এমারেল্ড",
+    name: "ট্রাস্ট এমারেল্ড", nameEn: "Trust Emerald",
     bgStart: "#022c22",
     bgEnd: "#065f46",
     accent: "#34d399",
@@ -62,7 +67,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "violet",
-    name: "লাক্সারি ভায়োলেট",
+    name: "লাক্সারি ভায়োলেট", nameEn: "Luxury Violet",
     bgStart: "#2e1065",
     bgEnd: "#581c87",
     accent: "#a855f7",
@@ -74,7 +79,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "gold",
-    name: "ফেস্টিভ গোল্ড",
+    name: "ফেস্টিভ গোল্ড", nameEn: "Festive Gold",
     bgStart: "#271704",
     bgEnd: "#78350f",
     accent: "#fbbf24",
@@ -86,7 +91,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "obsidian",
-    name: "মডার্ন ব্ল্যাক",
+    name: "মডার্ন ব্ল্যাক", nameEn: "Modern Black",
     bgStart: "#09090b",
     bgEnd: "#27272a",
     accent: "#e4e4e7",
@@ -98,7 +103,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "eid_emerald_gold",
-    name: "🌙 ঈদ রয়্যাল গোল্ড",
+    name: "🌙 ঈদ রয়্যাল গোল্ড", nameEn: "🌙 Eid Royal Gold",
     bgStart: "#064e3b",
     bgEnd: "#022c22",
     accent: "#fbbf24",
@@ -110,7 +115,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "boishakh_red",
-    name: "🪕 বৈশাখী লাল-সাদা",
+    name: "🪕 বৈশাখী লাল-সাদা", nameEn: "🪕 Boishakhi Red-White",
     bgStart: "#7f1d1d",
     bgEnd: "#991b1b",
     accent: "#ffffff",
@@ -122,7 +127,7 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
   {
     id: "cyber_neon",
-    name: "⚡ ব্ল্যাক ফ্রাইডে নিয়ন",
+    name: "⚡ ব্ল্যাক ফ্রাইডে নিয়ন", nameEn: "⚡ Black Friday Neon",
     bgStart: "#09090b",
     bgEnd: "#18181b",
     accent: "#f97316",
@@ -134,15 +139,15 @@ export const BANNER_PALETTES: ColorPalette[] = [
   },
 ];
 
-export const BANNER_TEMPLATES: { id: TemplateStyle; label: string; icon: string }[] = [
-  { id: "minimal", label: "প্রিমিয়াম মিনিমাল", icon: "✨" },
-  { id: "flash_sale", label: "ধামাকা অফার", icon: "⚡" },
-  { id: "cod_trust", label: "ক্যাশ অন ডেলিভারি", icon: "🚚" },
-  { id: "festive", label: "উৎসবের স্পেশাল", icon: "🎉" },
-  { id: "eid_special", label: "ঈদ মোবারক মেগা সেল", icon: "🌙" },
-  { id: "pohela_boishakh", label: "বৈশাখী মেলা লাল-সাদা", icon: "🪕" },
-  { id: "black_friday", label: "১১.১১ ও ব্ল্যাক ফ্রাইডে", icon: "🔥" },
-  { id: "winter_clearance", label: "উইন্টার ক্লিয়ারেন্স", icon: "❄️" },
+export const BANNER_TEMPLATES: { id: TemplateStyle; label: string; labelEn: string; icon: string }[] = [
+  { id: "minimal", label: "প্রিমিয়াম মিনিমাল", labelEn: "Premium Minimal", icon: "✨" },
+  { id: "flash_sale", label: "ধামাকা অফার", labelEn: "Dhamaka Offer", icon: "⚡" },
+  { id: "cod_trust", label: "ক্যাশ অন ডেলিভারি", labelEn: "Cash on Delivery", icon: "🚚" },
+  { id: "festive", label: "উৎসবের স্পেশাল", labelEn: "Festival Special", icon: "🎉" },
+  { id: "eid_special", label: "ঈদ মোবারক মেগা সেল", labelEn: "Eid Mubarak Mega Sale", icon: "🌙" },
+  { id: "pohela_boishakh", label: "বৈশাখী মেলা লাল-সাদা", labelEn: "Boishakhi Fair Red-White", icon: "🪕" },
+  { id: "black_friday", label: "১১.১১ ও ব্ল্যাক ফ্রাইডে", labelEn: "11.11 & Black Friday", icon: "🔥" },
+  { id: "winter_clearance", label: "উইন্টার ক্লিয়ারেন্স", labelEn: "Winter Clearance", icon: "❄️" },
 ];
 
 export function getPaletteById(id: string): ColorPalette {
@@ -162,30 +167,32 @@ export function calculateDiscountPercent(
 
 export function generateDiscountBadge(
   priceMinor: bigint | number | string,
-  compareAtMinor?: bigint | number | string | null
+  compareAtMinor?: bigint | number | string | null,
+  locale: "bn" | "en" = "bn"
 ): { text: string; percent: number } | null {
   const pct = calculateDiscountPercent(priceMinor, compareAtMinor);
   if (!pct || pct <= 0) return null;
   return {
-    text: `ফ্ল্যাট ${pct}% ছাড়`,
+    text: interpolate((locale === "en" ? aiEn : aiBn).f3BadgeFlatOff, { pct }),
     percent: pct,
   };
 }
 
-export function formatBannerDimensions(ratio: AspectRatio): {
+export function formatBannerDimensions(ratio: AspectRatio, locale: UiLocale = "bn"): {
   width: number;
   height: number;
   label: string;
 } {
+  const d = locale === "en" ? aiEn : aiBn;
   switch (ratio) {
     case "9:16":
-      return { width: 1080, height: 1920, label: "রিলস ও স্টোরিজ (1080×1920)" };
+      return { width: 1080, height: 1920, label: d.f3DimReelsStories };
     case "16:9":
-      return { width: 1920, height: 1080, label: "ল্যান্ডস্কেপ ও থাম্বনেইল (1920×1080)" };
+      return { width: 1920, height: 1080, label: d.f3DimLandscape };
     case "4:5":
-      return { width: 1080, height: 1350, label: "ইনস্টাগ্রাম ও ফেসবুক ফিড (1080×1350)" };
+      return { width: 1080, height: 1350, label: d.f3DimFeed };
     case "1:1":
     default:
-      return { width: 1080, height: 1080, label: "স্কয়ার ও ক্যারোসেল (1080×1080)" };
+      return { width: 1080, height: 1080, label: d.f3DimSquare };
   }
 }

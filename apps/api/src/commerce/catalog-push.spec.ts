@@ -1,4 +1,5 @@
 import { NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CatalogPushService } from "./catalog-push.service";
 import { SyncOutboxService } from "./sync-outbox.service";
 import { computeStockDiverged, pendingOutboxKeys } from "./stock-divergence";
@@ -185,8 +186,8 @@ describe("CatalogPushService — publish, archive, inventory, listings-for-new-p
     expect(out).toEqual({ enqueued: 1, skipped: 0 });
     expect(prisma.storeListing.rows.find((l: any) => l.id === "lst-draft").publishState).toBe("published");
     expect(prisma.syncOutbox.rows).toHaveLength(1);
-    await expect(svc.publishListing("org-2", "lst-draft")).rejects.toThrow(NotFoundException);
-    await expect(svc.publishListing("org-1", "lst-nope")).rejects.toThrow(NotFoundException);
+    await expect(svc.publishListing("org-2", "lst-draft")).rejects.toThrow(ApiException);
+    await expect(svc.publishListing("org-1", "lst-nope")).rejects.toThrow(ApiException);
   });
 
   it("enqueueArchive only targets published full-manage listings, keyed with the hash", async () => {

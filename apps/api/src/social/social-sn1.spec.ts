@@ -185,7 +185,7 @@ describe("SN1 playlists endpoint (SocialPublishService.listYouTubePlaylists)", (
     const oauth: any = { ensureAccessToken: jest.fn(async () => "x") };
     const svc = publishService(db, { ytClient, oauth });
     const err = await svc.listYouTubePlaylists(ORG, "acct-page").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.aPlaylistIsOnlyForYoutube" });
     expect(err.message).toContain("শুধু YouTube অ্যাকাউন্টের জন্য");
     expect(oauth.ensureAccessToken).not.toHaveBeenCalled();
     expect(ytClient.listPlaylists).not.toHaveBeenCalled();

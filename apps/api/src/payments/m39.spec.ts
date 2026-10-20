@@ -123,7 +123,7 @@ describe("M39 coupon + credit checkout math", () => {
 
   it("refuses expired coupons and previews honestly", async () => {
     const { svc } = makePayments(0n);
-    await expect(svc.previewCoupon("org-1", "OLD", "GROWTH")).rejects.toThrow(/expired/);
+    await expect(svc.previewCoupon("org-1", "OLD", "GROWTH")).rejects.toMatchObject({ code: "payments.couponExpiredCode", status: 400 });
     const preview = await svc.previewCoupon("org-1", "SAVE10", "STARTER");
     expect(preview.discountMinor).toBe("15000");
     expect(preview.dueMinor).toBe("135000");
@@ -228,12 +228,12 @@ describe("M39 refunds + proration (AdminService)", () => {
     expect(first.netMinor).toBe("200000");
     expect(first.accessRevoked).toBe(false);
     expect(p.subscription.rows[0].status).toBe("ACTIVE");
-    await expect(svc.refundPayment(admin, "pay-1", { amountMinor: "200001", reason: "too much" })).rejects.toThrow(/exceeds/);
+    await expect(svc.refundPayment(admin, "pay-1", { amountMinor: "200001", reason: "too much" })).rejects.toMatchObject({ code: "admin.refundExceedsTheRemainingRefundableAmount", status: 400 });
     const rest: any = await svc.refundPayment(admin, "pay-1", { reason: "full refund", revokeAccess: true });
     expect(rest.refundedMinor).toBe("300000");
     expect(rest.accessRevoked).toBe(true);
     expect(p.subscription.rows[0].status).toBe("PAST_DUE");
-    await expect(svc.refundPayment(admin, "pay-1", { reason: "again" })).rejects.toThrow(/fully refunded/);
+    await expect(svc.refundPayment(admin, "pay-1", { reason: "again" })).rejects.toMatchObject({ code: "admin.thisPaymentHasAlreadyBeenFully", status: 400 });
   });
 
   it("credits the unused fraction of the old plan on a mid-period plan change", async () => {

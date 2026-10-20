@@ -115,6 +115,6 @@ describe("W6 governance", () => {
     expect(installed.trigger).toBe("order_delivered");
     expect(installed.steps).toEqual(WORKFLOW_PRESETS.find((p) => p.key === "delivered_review")!.steps);
     expect(tables.workflow.rows).toHaveLength(1);
-    await expect(svc.installPreset("org", "u1", "nope")).rejects.toThrow(/not found/i);
+    await expect(svc.installPreset("org", "u1", "nope")).rejects.toMatchObject({ code: "workflows.presetNotFound" });
   });
 });

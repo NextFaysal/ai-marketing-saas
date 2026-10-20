@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import {
   COURIER_PROVIDERS,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/courier-analytics";
 
 export default function CourierAnalyticsPage() {
+  const { dict, t, locale } = useLocale();
   // District search & filter
   const [searchDistrict, setSearchDistrict] = useState("");
   const [selectedZone, setSelectedZone] = useState<string>("all");
@@ -40,8 +43,8 @@ export default function CourierAnalyticsPage() {
 
   // Live recommendation
   const recommendation = useMemo(() => {
-    return recommendBestCourier(destAddress, parcelWeight, 1500, priority);
-  }, [destAddress, parcelWeight, priority]);
+    return recommendBestCourier(destAddress, parcelWeight, 1500, priority, locale);
+  }, [destAddress, parcelWeight, priority, locale]);
 
   // Live RTO loss calculation
   const rtoReport = useMemo(() => {
@@ -51,8 +54,9 @@ export default function CourierAnalyticsPage() {
       outboundShippingTaka: outboundCharge,
       returnFeeTaka: returnFee,
       packagingLossTaka: 30,
+      locale,
     });
-  }, [monthlyShipments, returnRate, outboundCharge, returnFee]);
+  }, [monthlyShipments, returnRate, outboundCharge, returnFee, locale]);
 
   return (
     <div className="space-y-6">
@@ -60,14 +64,12 @@ export default function CourierAnalyticsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="page-title">🚚 কুরিয়ার পারফরম্যান্স ও জেলাভিত্তিক SLA অ্যানালিটিক্স</h1>
+            <h1 className="page-title">{dict.orders.courierPerformanceDistrictWiseSLA}</h1>
             <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
-              AI ডিসপ্যাচ হাব
-            </span>
+              {dict.orders.aIDispatchHub}</span>
           </div>
           <p className="text-xs text-slate-500">
-            পাঠাও, স্টিডফাস্ট ও রেডেক্সের জেলাভিত্তিক ডেলিভারি সাকসেস রেট, দ্রুততম ট্র্যাকিং এবং আরটিও (RTO) লস প্রিভেনশন
-          </p>
+            {dict.orders.districtWiseDeliverySuccessRates}</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -75,14 +77,12 @@ export default function CourierAnalyticsPage() {
             href="/dashboard/orders"
             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
           >
-            ← অর্ডার লিস্ট
-          </Link>
+            {dict.orders.orderList2}</Link>
           <Link
             href="/dashboard/order-notifications"
             className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold"
           >
-            🔔 কুরিয়ার SMS নোটিফিকেশন
-          </Link>
+            {dict.orders.courierSMSNotification}</Link>
         </div>
       </div>
 
@@ -96,25 +96,24 @@ export default function CourierAnalyticsPage() {
                 <span className="font-bold text-sm text-slate-900">{cp.nameBangla}</span>
               </div>
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
-                {cp.overallSuccessRate}% সাকসেস
-              </span>
+                {cp.overallSuccessRate}{dict.orders.success}</span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-2">
               <div>
-                <span className="text-slate-400 block text-[10px]">ঢাকা মেট্রো চার্জ:</span>
-                <span className="font-bold text-slate-800">৳{cp.dhakaChargeTaka}</span>
-                <span className="text-[10px] text-slate-400 block">({cp.avgSlaDaysDhaka} দিন)</span>
+                <span className="text-slate-400 block text-[10px]">{dict.orders.dhakaMetroCharge}</span>
+                <span className="font-bold text-slate-800">{dict.orders.text1yr}{cp.dhakaChargeTaka}</span>
+                <span className="text-[10px] text-slate-400 block">({cp.avgSlaDaysDhaka} {dict.orders.days}</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">ঢাকার বাইরে চার্জ:</span>
-                <span className="font-bold text-slate-800">৳{cp.outsideDhakaChargeTaka}</span>
-                <span className="text-[10px] text-slate-400 block">({cp.avgSlaDaysOutside} দিন)</span>
+                <span className="text-slate-400 block text-[10px]">{dict.orders.outsideDhakaCharge}</span>
+                <span className="font-bold text-slate-800">{dict.orders.text1yr}{cp.outsideDhakaChargeTaka}</span>
+                <span className="text-[10px] text-slate-400 block">({cp.avgSlaDaysOutside} {dict.orders.days}</span>
               </div>
             </div>
 
             <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
-              <span className="text-slate-500">গড় রিটার্ন (RTO):</span>
+              <span className="text-slate-500">{dict.orders.averageReturnRTO}</span>
               <span className={`font-bold ${cp.rtoRate <= 10 ? "text-emerald-700" : "text-amber-700"}`}>
                 {cp.rtoRate}%
               </span>
@@ -130,48 +129,48 @@ export default function CourierAnalyticsPage() {
           <div className="flex items-center gap-2 border-b pb-3">
             <span className="text-xl">🎯</span>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">স্মার্ট কুরিয়ার ডিসপ্যাচ রেকমেন্ডার</h3>
-              <p className="text-xs text-slate-500">গ্রাহকের ঠিকানা ও ওজন অনুযায়ী সেরা কুরিয়ার স্বয়ংক্রিয়ভাবে নির্বাচন করুন</p>
+              <h3 className="text-sm font-bold text-slate-900">{dict.orders.smartCourierDispatchRecommender}</h3>
+              <p className="text-xs text-slate-500">{dict.orders.automaticallySelectTheBestCourier}</p>
             </div>
           </div>
 
           <div className="space-y-3 text-xs">
             <div>
-              <label className="block font-semibold text-slate-700">ডেলিভারি জেলা / ঠিকানা লিখুন</label>
+              <label className="block font-semibold text-slate-700">{dict.orders.enterTheDeliveryDistrictAddress}</label>
               <input
                 type="text"
                 value={destAddress}
                 onChange={(e) => setDestAddress(e.target.value)}
-                placeholder="যেমন: Dhanmondi, Dhaka বা Chittagong GEC"
+                placeholder={dict.orders.eGDhanmondiDhakaOr}
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block font-semibold text-slate-700">পার্সেলের ওজন</label>
+                <label className="block font-semibold text-slate-700">{dict.orders.parcelWeight}</label>
                 <select
                   value={parcelWeight}
                   onChange={(e) => setParcelWeight(Number(e.target.value))}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold"
                 >
-                  <option value={500}>৫০০ গ্রাম পর্যন্ত</option>
-                  <option value={1000}>১ কেজি</option>
-                  <option value={2000}>২ কেজি</option>
-                  <option value={3000}>৩ কেজি+</option>
+                  <option value={500}>{dict.orders.upTo500Grams}</option>
+                  <option value={1000}>{dict.orders.text1ti00i6}</option>
+                  <option value={2000}>{dict.orders.text1tz1mwd}</option>
+                  <option value={3000}>{dict.orders.text1yzngtb}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700">অগ্রাধিকার</label>
+                <label className="block font-semibold text-slate-700">{dict.orders.priority}</label>
                 <select
                   value={priority}
                   onChange={(e) => setPriority(e.target.value as any)}
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold"
                 >
-                  <option value="speed">দ্রুততম ডেলিভারি (Speed)</option>
-                  <option value="cost">সাশ্রয়ী খরচ (Cost)</option>
-                  <option value="safety">সর্বোচ্চ সাকসেস রেট (Safety)</option>
+                  <option value="speed">{dict.orders.fastestDeliverySpeed}</option>
+                  <option value="cost">{dict.orders.lowestCostCost}</option>
+                  <option value="safety">{dict.orders.highestSuccessRateSafety}</option>
                 </select>
               </div>
             </div>
@@ -181,8 +180,7 @@ export default function CourierAnalyticsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">
-                    এআই সুপারিশকৃত সেরা কুরিয়ার
-                  </span>
+                    {dict.orders.aIRecommendedBestCourier}</span>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-xl">
                       {COURIER_PROVIDERS[recommendation.recommendedProvider].logo}
@@ -194,8 +192,8 @@ export default function CourierAnalyticsPage() {
                 </div>
 
                 <div className="text-right">
-                  <span className="text-[10px] text-slate-500">আনুমানিক চার্জ</span>
-                  <div className="text-base font-black text-indigo-700">৳{recommendation.estimatedCostTaka}</div>
+                  <span className="text-[10px] text-slate-500">{dict.orders.estimatedCharge2}</span>
+                  <div className="text-base font-black text-indigo-700">{dict.orders.text1yr}{recommendation.estimatedCostTaka}</div>
                 </div>
               </div>
 
@@ -205,17 +203,17 @@ export default function CourierAnalyticsPage() {
 
               <div className="grid grid-cols-2 gap-2 border-t border-indigo-100 pt-2 text-[11px]">
                 <div>
-                  <span className="text-slate-400">ডেলিভারি সময়: </span>
+                  <span className="text-slate-400">{dict.orders.deliveryTime}</span>
                   <span className="font-bold text-slate-800">{recommendation.estimatedDeliveryDays}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400">প্রত্যাশিত সাকসেস: </span>
+                  <span className="text-slate-400">{dict.orders.expectedSuccess}</span>
                   <span className="font-bold text-emerald-700">{recommendation.successRateExpected}%</span>
                 </div>
               </div>
 
               <div className="rounded-lg bg-white/80 p-2 text-[10px] text-slate-600 border border-slate-200">
-                <strong>বিকল্প কুরিয়ার: </strong>
+                <strong>{dict.orders.alternativeCouriers}</strong>
                 {COURIER_PROVIDERS[recommendation.alternativeProvider].nameBangla} — {recommendation.alternativeReasonBangla}
               </div>
             </div>
@@ -227,15 +225,15 @@ export default function CourierAnalyticsPage() {
           <div className="flex items-center gap-2 border-b pb-3">
             <span className="text-xl">🛡️</span>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">আরটিও (RTO) আর্থিক ক্ষতি ও মার্জিন ক্যালকুলেটর</h3>
-              <p className="text-xs text-slate-500">ব্যর্থ ডেলিভারির ফলে অপচয় হওয়া ডেলিভারি ফি ও সম্ভাব্য সাশ্রয় হিসাব করুন</p>
+              <h3 className="text-sm font-bold text-slate-900">{dict.orders.rTOFinancialLossMarginCalculator}</h3>
+              <p className="text-xs text-slate-500">{dict.orders.calculateDeliveryFeesWastedFrom}</p>
             </div>
           </div>
 
           <div className="space-y-3 text-xs">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block font-semibold text-slate-700">মাসিক মোট শিপমেন্ট সংখ্যা</label>
+                <label className="block font-semibold text-slate-700">{dict.orders.monthlyTotalShipments}</label>
                 <input
                   type="number"
                   min="1"
@@ -246,7 +244,7 @@ export default function CourierAnalyticsPage() {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700">বর্তমান রিটার্ন হার (RTO %)</label>
+                <label className="block font-semibold text-slate-700">{dict.orders.currentReturnRateRTO}</label>
                 <div className="flex items-center gap-2 mt-1">
                   <input
                     type="range"
@@ -264,40 +262,39 @@ export default function CourierAnalyticsPage() {
             {/* Financial Loss Metrics */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
-                <span className="text-[10px] font-bold text-rose-800 uppercase">মাসিক মোট আর্থিক ক্ষতি</span>
+                <span className="text-[10px] font-bold text-rose-800 uppercase">{dict.orders.monthlyTotalFinancialLoss}</span>
                 <div className="text-xl font-black text-rose-700 mt-1">
-                  ৳{rtoReport.totalNetLossTaka.toLocaleString("en-IN")}
+                  {dict.orders.text1yr}{fmtNumber(locale, rtoReport.totalNetLossTaka)}
                 </div>
                 <p className="text-[10px] text-rose-600 mt-0.5">
-                  {rtoReport.returnedOrdersCount}টি ফেরত আসা পার্সেলের ক্ষতি
-                </p>
+                  {rtoReport.returnedOrdersCount}{dict.orders.lossFromReturnedParcels}</p>
               </div>
 
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-                <span className="text-[10px] font-bold text-emerald-800 uppercase">অগ্রিম চার্জ নিলে সাশ্রয়</span>
+                <span className="text-[10px] font-bold text-emerald-800 uppercase">{dict.orders.savingsIfAdvanceChargeIs}</span>
                 <div className="text-xl font-black text-emerald-700 mt-1">
-                  ৳{rtoReport.savingsWithAdvanceChargeTaka.toLocaleString("en-IN")}
+                  {dict.orders.text1yr}{fmtNumber(locale, rtoReport.savingsWithAdvanceChargeTaka)}
                 </div>
-                <p className="text-[10px] text-emerald-600 mt-0.5">মাসিক নেট প্রফিট বৃদ্ধি পাবে</p>
+                <p className="text-[10px] text-emerald-600 mt-0.5">{dict.orders.monthlyNetProfitWillIncrease}</p>
               </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5">
               <div className="flex justify-between">
-                <span className="text-slate-600">আউটবাউন্ড ডেলিভারি খরচ অপচয়:</span>
-                <span className="font-bold text-slate-800">৳{rtoReport.shippingLossTaka.toLocaleString("en-IN")}</span>
+                <span className="text-slate-600">{dict.orders.outboundDeliveryCostWaste}</span>
+                <span className="font-bold text-slate-800">{dict.orders.text1yr}{fmtNumber(locale, rtoReport.shippingLossTaka)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600">কুরিয়ারের রিটার্ন হ্যান্ডলিং চার্জ (৫০%):</span>
-                <span className="font-bold text-slate-800">৳{rtoReport.returnFeeLossTaka.toLocaleString("en-IN")}</span>
+                <span className="text-slate-600">{dict.orders.courierReturnHandlingCharge50}</span>
+                <span className="font-bold text-slate-800">{dict.orders.text1yr}{fmtNumber(locale, rtoReport.returnFeeLossTaka)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-600">নষ্ট হওয়া প্যাকেজিং ম্যাটেরিয়াল বাবদ:</span>
-                <span className="font-bold text-slate-800">৳{rtoReport.packagingLossTaka.toLocaleString("en-IN")}</span>
+                <span className="text-slate-600">{dict.orders.forDamagedPackagingMaterial}</span>
+                <span className="font-bold text-slate-800">{dict.orders.text1yr}{fmtNumber(locale, rtoReport.packagingLossTaka)}</span>
               </div>
               <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold">
-                <span>প্রতি সফল অর্ডারে অপচয়ের প্রভাব:</span>
-                <span className="text-rose-600">+৳{rtoReport.lossPerSuccessfulOrderTaka} / অর্ডার</span>
+                <span>{dict.orders.wasteImpactPerSuccessfulOrder}</span>
+                <span className="text-rose-600">{dict.orders.text2zs}{rtoReport.lossPerSuccessfulOrderTaka} {dict.orders.order4}</span>
               </div>
             </div>
 
@@ -312,8 +309,8 @@ export default function CourierAnalyticsPage() {
       <div className="card space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">📊 জেলাভিত্তিক ডেলিভারি SLA ও সাকসেস মেট্রিক্স</h3>
-            <p className="text-xs text-slate-500">বাংলাদেশের প্রধান শহর ও অঞ্চলভিত্তিক কুরিয়ার ডেলিভারি পারফরম্যান্স</p>
+            <h3 className="text-sm font-bold text-slate-900">{dict.orders.districtWiseDeliverySLASuccess}</h3>
+            <p className="text-xs text-slate-500">{dict.orders.courierDeliveryPerformanceForBangladesh}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -322,15 +319,15 @@ export default function CourierAnalyticsPage() {
               onChange={(e) => setSelectedZone(e.target.value)}
               className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
             >
-              <option value="all">সব জোন</option>
-              <option value="dhaka_metro">ঢাকা মেট্রো</option>
-              <option value="dhaka_suburb">ঢাকা উপশহর</option>
-              <option value="divisional_city">বিভাগীয় শহর</option>
-              <option value="remote_district">পার্বত্য ও প্রত্যন্ত</option>
+              <option value="all">{dict.orders.allZones}</option>
+              <option value="dhaka_metro">{dict.orders.dhakaMetro}</option>
+              <option value="dhaka_suburb">{dict.orders.dhakaSuburb}</option>
+              <option value="divisional_city">{dict.orders.divisionalCities}</option>
+              <option value="remote_district">{dict.orders.hillyRemote}</option>
             </select>
             <input
               type="text"
-              placeholder="জেলা বা জোন খুঁজুন..."
+              placeholder={dict.orders.searchDistrictOrZone}
               value={searchDistrict}
               onChange={(e) => setSearchDistrict(e.target.value)}
               className="input w-48 text-xs"
@@ -342,13 +339,13 @@ export default function CourierAnalyticsPage() {
           <table className="w-full text-left text-xs">
             <thead className="border-b bg-slate-50 font-semibold text-slate-600">
               <tr>
-                <th className="py-2.5 px-3">জেলা / অঞ্চল</th>
-                <th className="py-2.5 px-3">লজিস্টিকস জোন</th>
-                <th className="py-2.5 px-3">সেরা কুরিয়ার পার্টনার</th>
-                <th className="py-2.5 px-3">গড় ডেলিভারি সময়</th>
-                <th className="py-2.5 px-3">ডেলিভারি সাকসেস হার</th>
-                <th className="py-2.5 px-3">রিটার্ন (RTO) হার</th>
-                <th className="py-2.5 px-3 text-right">গড় শিপিং চার্জ</th>
+                <th className="py-2.5 px-3">{dict.orders.districtRegion}</th>
+                <th className="py-2.5 px-3">{dict.orders.logisticsZone}</th>
+                <th className="py-2.5 px-3">{dict.orders.bestCourierPartner}</th>
+                <th className="py-2.5 px-3">{dict.orders.averageDeliveryTime}</th>
+                <th className="py-2.5 px-3">{dict.orders.deliverySuccessRate}</th>
+                <th className="py-2.5 px-3">{dict.orders.returnRTORate}</th>
+                <th className="py-2.5 px-3 text-right">{dict.orders.averageShippingCharge}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -368,7 +365,7 @@ export default function CourierAnalyticsPage() {
                         <span className="font-semibold text-slate-800">{cp.nameBangla}</span>
                       </div>
                     </td>
-                    <td className="py-3 px-3 font-semibold text-slate-700">{d.avgDeliveryHours} ঘণ্টা</td>
+                    <td className="py-3 px-3 font-semibold text-slate-700">{d.avgDeliveryHours} {dict.orders.hours}</td>
                     <td className="py-3 px-3">
                       <span className="rounded bg-emerald-100 px-2 py-0.5 font-bold text-emerald-800">
                         {d.deliverySuccessRate}%
@@ -380,7 +377,7 @@ export default function CourierAnalyticsPage() {
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right font-black text-slate-900">
-                      ৳{d.avgShippingCostTaka}
+                      {dict.orders.text1yr}{d.avgShippingCostTaka}
                     </td>
                   </tr>
                 );

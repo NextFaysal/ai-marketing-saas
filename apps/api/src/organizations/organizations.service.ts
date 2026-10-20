@@ -5,7 +5,7 @@ import { AuditService } from "../audit/audit.service";
 import { StorageService } from "../storage/storage.service";
 import { StorageRegistryService } from "../storage/storage-registry.service";
 import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../storage/media-url";
-import { ApproveJoinRequestDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, RequestToJoinDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateOrgIdentityDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
+import { ApproveJoinRequestDto, CreateInviteLinkDto, CreateOrganizationDto, InviteMemberDto, PlanChangeRequestDto, RejectJoinRequestDto, RequestToJoinDto, UpdateBrandingDto, UpdateBusinessProfileDto, UpdateOrgIdentityDto, UpdateOrgLocaleDto, UpdateSecurityPolicyDto, UploadLogoDto } from "./organizations.dto";
 import { MediaStore } from "../inbox/media-store";
 import { PERMISSION_AREAS, PERMISSION_AREA_KEYS, PRESET_ROLE_PROFILES, effectiveAccess, findUnknownAreas, normalizeOverrides, presetProfile } from "../common/permission-catalog";
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_KEYS } from "../common/agent-notify";
@@ -22,6 +22,7 @@ import { storageUsageForOrg } from "../common/storage-usage";
 import { depositConfigOf } from "../fraud/deposit";
 import { dhakaMonthStartUtc, todayDhakaKey } from "../common/plan-limit-checks";
 import { Role } from "@repo/db";
+import { badRequest, conflict, forbidden, notFound } from "../i18n";
 
 const INVITABLE_ROLES: Role[] = ["ADMIN", "MARKETING_MANAGER", "ADVERTISER", "SUPPORT_AGENT", "ANALYST", "VIEWER"] as Role[];
 
@@ -41,10 +42,10 @@ export function normalizeGoogleReviewUrl(raw: unknown): string | null {
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new BadRequestException("Google রিভিউ লিংকটি সঠিক http/https ঠিকানা নয়।");
+    throw badRequest("organizations.googleReviewLinkInvalid");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new BadRequestException("Google রিভিউ লিংকটি সঠিক http/https ঠিকানা নয়।");
+    throw badRequest("organizations.googleReviewLinkInvalid");
   }
   return trimmed;
 }
@@ -86,8 +87,8 @@ export class OrganizationsService {
     // Conflict behaviour and message.
     const availability = await slugAvailability(this.prisma as any, dto.slug);
     if (!availability.available) {
-      if (availability.reason === "taken") throw new ConflictException("This slug is already taken");
-      throw new BadRequestException(availability.message);
+      if (availability.reason === "taken") throw conflict("organizations.slugAlreadyTaken");
+      throw badRequest(availability.code ?? "common.slugInvalidFormat", availability.params);
     }
     // ORG12 (Organization Next OB4): per-user owned-org cap from
     // the platform setting "maxOrgsPerUser". No setting = no cap
@@ -106,7 +107,7 @@ export class OrganizationsService {
         owned = await (this.prisma as any).membership.count({ where: { userId, role: "OWNER" } });
       } catch { owned = -1; }
       if (owned >= orgCap) {
-        throw new BadRequestException(`আপনি সর্বোচ্চ ${orgCap}টি Organization-এর মালিক হতে পারবেন — সেই সীমা পূর্ণ হয়ে গেছে। নতুন Organization তৈরি করতে চাইলে প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করুন।`);
+        throw badRequest("organizations.orgOwnershipCapReached", { cap: orgCap });
       }
     }
     const org = await (this.prisma as any).$transaction(async (tx: any) => {
@@ -136,7 +137,7 @@ export class OrganizationsService {
 
   async getOne(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     return { ...this.tenantOrgView(org), creditMinor: BigInt(org.creditMinor ?? 0).toString() };
   }
 
@@ -168,10 +169,10 @@ export class OrganizationsService {
    */
   async invite(organizationId: string, actorId: string, dto: InviteMemberDto, ip?: string) {
     if (!INVITABLE_ROLES.includes(dto.role as Role)) {
-      throw new BadRequestException("Role cannot be assigned through invitation");
+      throw badRequest("organizations.roleNotViaInvitation");
     }
     const user = await (this.prisma as any).user.findUnique({ where: { email: dto.email.toLowerCase().trim() } });
-    if (!user) throw new BadRequestException("This person does not have an account yet. Ask them to register first.");
+    if (!user) throw badRequest("organizations.personNoAccountYet");
     const { orgLimitOverrides, orgPlan, planLimits } = await import("../common/platform-settings");
     const overrides = await orgLimitOverrides(this.prisma as any, organizationId);
     const mergedLimits = await planLimits(this.prisma as any);
@@ -179,13 +180,13 @@ export class OrganizationsService {
     if (seatLimit != null) {
       const activeMembers = await (this.prisma as any).membership.count({ where: { organizationId, status: "ACTIVE" } });
       if (activeMembers >= seatLimit) {
-        throw new BadRequestException(`This organization's plan allows ${seatLimit} seats and all are in use. Remove a member or upgrade the plan.`);
+        throw badRequest("organizations.seatLimitReached", { seats: seatLimit });
       }
     }
     const existing = await (this.prisma as any).membership.findUnique({
       where: { userId_organizationId: { userId: user.id, organizationId } },
     });
-    if (existing) throw new ConflictException("This person is already a member of this organization");
+    if (existing) throw conflict("organizations.personAlreadyMember");
     const membership = await (this.prisma as any).membership.create({
       data: { userId: user.id, organizationId, role: dto.role, status: "ACTIVE" },
     });
@@ -331,11 +332,11 @@ export class OrganizationsService {
   async requestPlanChange(organizationId: string, actorId: string, dto: PlanChangeRequestDto, ip?: string) {
     const ps = await import("../common/platform-settings");
     if (!(ps.PLAN_TIERS as readonly string[]).includes(dto.requestedPlan)) {
-      throw new BadRequestException(`Unknown plan "${dto.requestedPlan}"`);
+      throw badRequest("organizations.unknownPlanNamed", { plan: dto.requestedPlan });
     }
     const current = await ps.orgPlan(this.prisma as any, organizationId);
     if (dto.requestedPlan === current) {
-      throw new BadRequestException(`The organization is already on the ${current} plan`);
+      throw badRequest("organizations.orgAlreadyOnPlan", { plan: current });
     }
     await (this.prisma as any).adminNote.create({
       data: {
@@ -361,8 +362,8 @@ export class OrganizationsService {
 
   async pauseSubscription(organizationId: string, actorId: string, ip?: string) {
     const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
-    if (!sub) throw new BadRequestException("কোনো সাবস্ক্রিপশন পাওয়া যায়নি — pause করার মতো কিছু নেই।");
-    if (sub.status === "CANCELLED") throw new BadRequestException("বাতিল হওয়া সাবস্ক্রিপশন pause করা যাবে না।");
+    if (!sub) throw badRequest("organizations.noSubscriptionToPause");
+    if (sub.status === "CANCELLED") throw badRequest("organizations.cancelledSubscriptionNoPause");
     if (sub.pausedAt) return { ok: true, paused: true, pausedAt: sub.pausedAt };
     const pausedAt = new Date();
     await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt } });
@@ -375,7 +376,7 @@ export class OrganizationsService {
 
   async resumeSubscription(organizationId: string, actorId: string, ip?: string) {
     const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
-    if (!sub) throw new BadRequestException("কোনো সাবস্ক্রিপশন পাওয়া যায়নি — resume করার মতো কিছু নেই।");
+    if (!sub) throw badRequest("organizations.noSubscriptionToResume");
     if (!sub.pausedAt) return { ok: true, paused: false, pausedAt: null };
     await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: null } });
     await this.audit.log({
@@ -424,7 +425,7 @@ export class OrganizationsService {
       }),
     ]);
     if (members + pendingInvites >= seatLimit) {
-      throw new BadRequestException(`This organization's plan allows ${seatLimit} seats and all are in use (counting pending invitations). Remove a member, revoke an invitation, or upgrade the plan.`);
+      throw badRequest("organizations.seatLimitReachedWithInvites", { seats: seatLimit });
     }
   }
 
@@ -458,7 +459,7 @@ export class OrganizationsService {
 
   async createEmailInvitation(organizationId: string, actorId: string, dto: InviteMemberDto, ip?: string) {
     if (!INVITABLE_ROLES.includes(dto.role as Role)) {
-      throw new BadRequestException("Role cannot be assigned through invitation");
+      throw badRequest("organizations.roleNotViaInvitation");
     }
     const email = dto.email.toLowerCase().trim();
     const existingUser = await (this.prisma as any).user.findUnique({ where: { email } });
@@ -466,12 +467,12 @@ export class OrganizationsService {
       const membership = await (this.prisma as any).membership.findUnique({
         where: { userId_organizationId: { userId: existingUser.id, organizationId } },
       });
-      if (membership) throw new ConflictException("This person is already a member of this organization");
+      if (membership) throw conflict("organizations.personAlreadyMember");
     }
     const pending = await (this.prisma as any).memberInvitation.findFirst({
       where: { organizationId, email, status: "pending", expiresAt: { gt: new Date() } },
     });
-    if (pending) throw new ConflictException("A pending invitation already exists for this email. Revoke or resend it instead.");
+    if (pending) throw conflict("organizations.pendingInvitationExists");
     await this.seatGuard(organizationId);
     const rawToken = randomBytes(24).toString("base64url");
     const inv = await (this.prisma as any).memberInvitation.create({
@@ -506,8 +507,8 @@ export class OrganizationsService {
 
   async revokeInvitation(organizationId: string, actorId: string, invitationId: string, ip?: string) {
     const inv = await (this.prisma as any).memberInvitation.findFirst({ where: { id: invitationId, organizationId } });
-    if (!inv) throw new NotFoundException("Invitation not found");
-    if (inv.status !== "pending") throw new BadRequestException(`Invitation is already ${inv.status}`);
+    if (!inv) throw notFound("organizations.invitationNotFound");
+    if (inv.status !== "pending") throw badRequest("organizations.invitationAlreadyStatus", { status: inv.status });
     await (this.prisma as any).memberInvitation.update({ where: { id: inv.id }, data: { status: "revoked" } });
     await this.audit.log({
       organizationId, userId: actorId, action: "org.invite_revoked", entityType: "MemberInvitation", entityId: inv.id,
@@ -518,9 +519,9 @@ export class OrganizationsService {
 
   async resendInvitation(organizationId: string, actorId: string, invitationId: string, ip?: string) {
     const inv = await (this.prisma as any).memberInvitation.findFirst({ where: { id: invitationId, organizationId } });
-    if (!inv) throw new NotFoundException("Invitation not found");
-    if (inv.status === "accepted") throw new BadRequestException("Invitation was already accepted");
-    if (inv.status === "revoked") throw new BadRequestException("Invitation was revoked; create a new one instead");
+    if (!inv) throw notFound("organizations.invitationNotFound");
+    if (inv.status === "accepted") throw badRequest("organizations.invitationAlreadyAccepted");
+    if (inv.status === "revoked") throw badRequest("organizations.invitationWasRevoked");
     const rawToken = randomBytes(24).toString("base64url");
     const updated = await (this.prisma as any).memberInvitation.update({
       where: { id: inv.id },
@@ -545,7 +546,7 @@ export class OrganizationsService {
     const inv = await (this.prisma as any).memberInvitation.findUnique({
       where: { tokenHash: this.hashInviteToken(rawToken) },
     });
-    if (!inv) throw new NotFoundException("Invitation not found or the link is invalid");
+    if (!inv) throw notFound("organizations.invitationNotFoundOrInvalid");
     return inv;
   }
 
@@ -568,11 +569,11 @@ export class OrganizationsService {
 
   async acceptInvitation(user: { userId: string; email: string }, rawToken: string, ip?: string) {
     const inv = await this.findInvitationByToken(rawToken);
-    if (inv.status === "revoked") throw new BadRequestException("This invitation was revoked");
-    if (inv.status === "accepted") throw new BadRequestException("This invitation was already used");
-    if (this.invitationStatus(inv) === "expired") throw new BadRequestException("This invitation has expired. Ask the organization admin to resend it.");
+    if (inv.status === "revoked") throw badRequest("organizations.invitationRevoked");
+    if (inv.status === "accepted") throw badRequest("organizations.invitationAlreadyUsed");
+    if (this.invitationStatus(inv) === "expired") throw badRequest("organizations.invitationExpired");
     if (user.email.toLowerCase().trim() !== inv.email) {
-      throw new ForbiddenException("This invitation was sent to a different email address. Sign in with the invited email to accept it.");
+      throw forbidden("organizations.invitationDifferentEmail");
     }
     const existing = await (this.prisma as any).membership.findUnique({
       where: { userId_organizationId: { userId: user.userId, organizationId: inv.organizationId } },
@@ -642,15 +643,15 @@ export class OrganizationsService {
   private async assertOrgAdmin(organizationId: string, actorId: string) {
     const actor = await this.memberOrThrow(organizationId, actorId);
     if (actor.role !== "OWNER" && actor.role !== "ADMIN") {
-      throw new ForbiddenException("Only an OWNER or ADMIN can do this");
+      throw forbidden("organizations.ownerOrAdminOnly");
     }
-    if (actor.status !== "ACTIVE") throw new BadRequestException("Your membership is not active");
+    if (actor.status !== "ACTIVE") throw badRequest("organizations.membershipNotActive");
     return actor;
   }
 
   async createInviteLink(organizationId: string, actorId: string, dto: CreateInviteLinkDto, ip?: string) {
     if (!INVITABLE_ROLES.includes(dto.role as Role)) {
-      throw new BadRequestException("Role cannot be assigned through an invite link");
+      throw badRequest("organizations.roleNotViaInviteLink");
     }
     await this.assertOrgAdmin(organizationId, actorId);
     const maxUses = dto.maxUses ?? 10;
@@ -684,8 +685,8 @@ export class OrganizationsService {
   async revokeInviteLink(organizationId: string, actorId: string, linkId: string, ip?: string) {
     await this.assertOrgAdmin(organizationId, actorId);
     const link = await (this.prisma as any).orgInviteLink.findFirst({ where: { id: linkId, organizationId } });
-    if (!link) throw new NotFoundException("Invite link not found");
-    if (link.revokedAt) throw new BadRequestException("This invite link was already revoked");
+    if (!link) throw notFound("organizations.inviteLinkNotFound");
+    if (link.revokedAt) throw badRequest("organizations.inviteLinkAlreadyRevoked");
     await (this.prisma as any).orgInviteLink.update({ where: { id: link.id }, data: { revokedAt: new Date() } });
     await this.audit.log({
       organizationId, userId: actorId, action: "org.invite_link_revoked", entityType: "OrgInviteLink", entityId: link.id,
@@ -708,7 +709,7 @@ export class OrganizationsService {
   async getInviteLinkPublic(rawToken: string) {
     const link = await this.findInviteLinkByToken(rawToken);
     if (!link || this.inviteLinkState(link) !== "active") {
-      throw new NotFoundException("Invitation link not found or the link is invalid");
+      throw notFound("organizations.invitationLinkInvalid");
     }
     const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
     return { organizationId: link.organizationId, organizationName: org?.name ?? "", role: link.role, valid: true };
@@ -720,9 +721,9 @@ export class OrganizationsService {
    * overshoot the cap or double-file a pending request. */
   async requestToJoin(user: { userId: string; email: string }, rawToken: string, dto: RequestToJoinDto, ip?: string) {
     const link = await this.findInviteLinkByToken(rawToken);
-    if (!link) throw new NotFoundException("Invitation link not found or the link is invalid");
+    if (!link) throw notFound("organizations.invitationLinkInvalid");
     if (this.inviteLinkState(link) !== "active") {
-      throw new BadRequestException("This invite link is no longer accepting requests");
+      throw badRequest("organizations.inviteLinkClosed");
     }
     const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
     const message = (dto.message ?? "").trim().slice(0, 500) || null;
@@ -730,14 +731,14 @@ export class OrganizationsService {
       const membership = await tx.membership.findUnique({
         where: { userId_organizationId: { userId: user.userId, organizationId: link.organizationId } },
       });
-      if (membership) throw new ConflictException("You are already a member of this organization");
+      if (membership) throw conflict("organizations.alreadyOrgMember");
       const pending = await tx.orgJoinRequest.findFirst({
         where: { organizationId: link.organizationId, userId: user.userId, status: "PENDING" },
       });
-      if (pending) throw new ConflictException("You already have a pending request to join this organization");
+      if (pending) throw conflict("organizations.alreadyPendingJoinRequest");
       const fresh = await tx.orgInviteLink.findUnique({ where: { id: link.id } });
       if (!fresh || this.inviteLinkState(fresh) !== "active") {
-        throw new BadRequestException("This invite link is no longer accepting requests");
+        throw badRequest("organizations.inviteLinkClosed");
       }
       const created = await tx.orgJoinRequest.create({
         data: { organizationId: link.organizationId, userId: user.userId, inviteLinkId: link.id, message, status: "PENDING" },
@@ -760,7 +761,7 @@ export class OrganizationsService {
    * current state never hides an already-filed request. */
   async getMyJoinRequest(user: { userId: string; email: string }, rawToken: string) {
     const link = await this.findInviteLinkByToken(rawToken);
-    if (!link) throw new NotFoundException("Invitation link not found or the link is invalid");
+    if (!link) throw notFound("organizations.invitationLinkInvalid");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: link.organizationId } });
     const mine = await (this.prisma as any).orgJoinRequest.findFirst({
       where: { organizationId: link.organizationId, userId: user.userId },
@@ -807,8 +808,8 @@ export class OrganizationsService {
   async approveJoinRequest(organizationId: string, actorId: string, requestId: string, dto: ApproveJoinRequestDto, ip?: string) {
     await this.assertOrgAdmin(organizationId, actorId);
     const req = await (this.prisma as any).orgJoinRequest.findFirst({ where: { id: requestId, organizationId } });
-    if (!req) throw new NotFoundException("Join request not found");
-    if (req.status !== "PENDING") throw new BadRequestException(`This request was already ${String(req.status).toLowerCase()}`);
+    if (!req) throw notFound("organizations.joinRequestNotFound");
+    if (req.status !== "PENDING") throw badRequest("organizations.requestAlreadyStatus", { status: String(req.status).toLowerCase() });
     let role = (dto.role ?? undefined) as Role | undefined;
     if (!role && req.inviteLinkId) {
       const link = await (this.prisma as any).orgInviteLink.findUnique({ where: { id: req.inviteLinkId } });
@@ -816,7 +817,7 @@ export class OrganizationsService {
     }
     role = (role ?? "VIEWER") as Role;
     if (!INVITABLE_ROLES.includes(role)) {
-      throw new BadRequestException("Role cannot be assigned through a join request");
+      throw badRequest("organizations.roleNotViaJoinRequest");
     }
     const existing = await (this.prisma as any).membership.findUnique({
       where: { userId_organizationId: { userId: req.userId, organizationId } },
@@ -836,7 +837,7 @@ export class OrganizationsService {
       return { ok: true, alreadyMember: true, organizationId, role: existing.role };
     }
     if (existing) {
-      throw new BadRequestException("This user already has a membership in this organization that is not active. Resolve that membership instead of approving a new request.");
+      throw badRequest("organizations.resolveInactiveMembership");
     }
     // The plan's seat limit is enforced HERE — the single moment
     // a membership is about to exist — with the same guard the
@@ -861,8 +862,8 @@ export class OrganizationsService {
   async rejectJoinRequest(organizationId: string, actorId: string, requestId: string, dto: RejectJoinRequestDto, ip?: string) {
     await this.assertOrgAdmin(organizationId, actorId);
     const req = await (this.prisma as any).orgJoinRequest.findFirst({ where: { id: requestId, organizationId } });
-    if (!req) throw new NotFoundException("Join request not found");
-    if (req.status !== "PENDING") throw new BadRequestException(`This request was already ${String(req.status).toLowerCase()}`);
+    if (!req) throw notFound("organizations.joinRequestNotFound");
+    if (req.status !== "PENDING") throw badRequest("organizations.requestAlreadyStatus", { status: String(req.status).toLowerCase() });
     const reason = (dto.reason ?? "").trim().slice(0, 500) || null;
     await (this.prisma as any).orgJoinRequest.update({
       where: { id: req.id }, data: { status: "REJECTED", decidedById: actorId, decidedAt: new Date(), rejectReason: reason },
@@ -960,11 +961,11 @@ export class OrganizationsService {
     const membership = await (this.prisma as any).membership.findUnique({
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
     });
-    if (!membership) throw new NotFoundException("That user is not a member of this organization");
+    if (!membership) throw notFound("connections.userNotOrgMember");
     const target = await (this.prisma as any).user.findUnique({ where: { id: targetUserId } });
-    if (!target) throw new NotFoundException("User not found");
+    if (!target) throw notFound("auth.userNotFound");
     if (!target.totpEnabled && !target.totpSecretEncrypted) {
-      throw new BadRequestException("This member does not have two-factor authentication set up");
+      throw badRequest("organizations.memberNoTotp");
     }
     await (this.prisma as any).user.update({
       where: { id: targetUserId },
@@ -984,7 +985,7 @@ export class OrganizationsService {
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
       include: { user: { select: { id: true, name: true, email: true } } },
     });
-    if (!membership) throw new NotFoundException("That user is not a member of this organization");
+    if (!membership) throw notFound("connections.userNotOrgMember");
     return membership;
   }
 
@@ -1001,10 +1002,10 @@ export class OrganizationsService {
 
   async updateMemberRole(organizationId: string, actorId: string, targetUserId: string, role: string, ip?: string) {
     if (!INVITABLE_ROLES.includes(role as Role)) {
-      throw new BadRequestException("This role cannot be assigned (OWNER is never assignable here)");
+      throw badRequest("organizations.roleNotAssignable");
     }
     const membership = await this.memberOrThrow(organizationId, targetUserId);
-    if (membership.role === "OWNER") throw new BadRequestException("The organization owner's role cannot be changed");
+    if (membership.role === "OWNER") throw badRequest("organizations.ownerRoleImmutable");
     if (membership.role === role) return { ok: true, userId: targetUserId, role, unchanged: true };
     const from = membership.role;
     const updated = await (this.prisma as any).membership.update({
@@ -1018,10 +1019,10 @@ export class OrganizationsService {
   }
 
   async setMemberStatus(organizationId: string, actorId: string, targetUserId: string, status: string, ip?: string) {
-    if (status !== "SUSPENDED" && status !== "ACTIVE") throw new BadRequestException("Status must be SUSPENDED or ACTIVE");
+    if (status !== "SUSPENDED" && status !== "ACTIVE") throw badRequest("organizations.statusSuspendedOrActive");
     const membership = await this.memberOrThrow(organizationId, targetUserId);
-    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be suspended");
-    if (targetUserId === actorId) throw new BadRequestException("You cannot change your own status");
+    if (membership.role === "OWNER") throw badRequest("organizations.ownerNotSuspendable");
+    if (targetUserId === actorId) throw badRequest("organizations.cannotChangeOwnStatus");
     if (membership.status === status) return { ok: true, userId: targetUserId, status, unchanged: true };
     let handedOver = 0;
     if (status === "SUSPENDED") {
@@ -1067,8 +1068,8 @@ export class OrganizationsService {
 
   async removeMember(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
     const membership = await this.memberOrThrow(organizationId, targetUserId);
-    if (membership.role === "OWNER") throw new BadRequestException("The organization owner cannot be removed");
-    if (targetUserId === actorId) throw new BadRequestException("You cannot remove yourself");
+    if (membership.role === "OWNER") throw badRequest("organizations.ownerCannotBeRemoved");
+    if (targetUserId === actorId) throw badRequest("organizations.cannotRemoveSelf");
     const handedOver = await this.purgeMembership(organizationId, membership);
     await this.audit.log({
       organizationId, userId: actorId, action: "org.member_removed", entityType: "Membership", entityId: membership.id,
@@ -1101,23 +1102,23 @@ export class OrganizationsService {
    * this is the only path that can create an owner. */
   async transferOwnership(organizationId: string, actorId: string, targetUserId: string, ip?: string) {
     if (!targetUserId || typeof targetUserId !== "string") {
-      throw new BadRequestException("targetUserId is required");
+      throw badRequest("organizations.targetUserIdRequired");
     }
     if (targetUserId === actorId) {
-      throw new BadRequestException("You are already the owner of this organization");
+      throw badRequest("organizations.alreadyOrgOwner");
     }
     const actor = await this.memberOrThrow(organizationId, actorId);
     if (actor.role !== "OWNER") {
-      throw new ForbiddenException("Only the current owner can transfer ownership");
+      throw forbidden("organizations.onlyOwnerCanTransfer");
     }
-    if (actor.status !== "ACTIVE") throw new BadRequestException("Your membership is not active");
+    if (actor.status !== "ACTIVE") throw badRequest("organizations.membershipNotActive");
     const target = await this.memberOrThrow(organizationId, targetUserId);
-    if (target.role === "OWNER") throw new BadRequestException("That member is already the owner");
+    if (target.role === "OWNER") throw badRequest("organizations.memberAlreadyOwner");
     if (target.status !== "ACTIVE") {
-      throw new BadRequestException("Ownership can only be transferred to an ACTIVE member");
+      throw badRequest("organizations.transferToActiveOnly");
     }
     if (target.role !== "ADMIN") {
-      throw new BadRequestException("Ownership can only be transferred to an ADMIN member — promote the member to ADMIN first");
+      throw badRequest("organizations.transferToAdminOnly");
     }
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
     await (this.prisma as any).$transaction(async (tx: any) => {
@@ -1157,7 +1158,7 @@ export class OrganizationsService {
   async leaveOrganization(organizationId: string, userId: string, ip?: string) {
     const membership = await this.memberOrThrow(organizationId, userId);
     if (membership.role === "OWNER") {
-      throw new BadRequestException("The owner cannot leave the organization — first transfer ownership to an ADMIN member (Team page → মালিকানা হস্তান্তর), then leave.");
+      throw badRequest("organizations.ownerCannotLeave");
     }
     const handedOver = await this.purgeMembership(organizationId, membership);
     await this.audit.log({
@@ -1173,9 +1174,9 @@ export class OrganizationsService {
    * subscription are deliberately untouched (see acceptance). */
   async archiveOrganization(organizationId: string, actorId: string, ip?: string) {
     const actor = await this.memberOrThrow(organizationId, actorId);
-    if (actor.role !== "OWNER") throw new ForbiddenException("Only the owner can archive this organization");
+    if (actor.role !== "OWNER") throw forbidden("organizations.onlyOwnerCanArchive");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     if (org.archivedAt) return { ok: true, organizationId, archivedAt: org.archivedAt, unchanged: true };
     const updated = await (this.prisma as any).organization.update({
       where: { id: organizationId }, data: { archivedAt: new Date() },
@@ -1189,9 +1190,9 @@ export class OrganizationsService {
   /** ORG3: restore an archived organization — OWNER only. */
   async restoreOrganization(organizationId: string, actorId: string, ip?: string) {
     const actor = await this.memberOrThrow(organizationId, actorId);
-    if (actor.role !== "OWNER") throw new ForbiddenException("Only the owner can restore this organization");
+    if (actor.role !== "OWNER") throw forbidden("organizations.onlyOwnerCanRestore");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     if (!org.archivedAt) return { ok: true, organizationId, archivedAt: null, unchanged: true };
     await (this.prisma as any).organization.update({
       where: { id: organizationId }, data: { archivedAt: null },
@@ -1227,40 +1228,40 @@ export class OrganizationsService {
   async updateIdentity(organizationId: string, actorId: string, dto: UpdateOrgIdentityDto, ip?: string) {
     const actor = await this.memberOrThrow(organizationId, actorId);
     if (!["OWNER", "ADMIN"].includes(actor.role)) {
-      throw new ForbiddenException("Organization-এর তথ্য বদলাতে মালিক (OWNER) বা অ্যাডমিন (ADMIN) হতে হবে");
+      throw forbidden("organizations.orgInfoChangeOwnerAdmin");
     }
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
 
     const provided = ["name", "currency", "timezone", "country"].filter((f) => (dto as any)[f] !== undefined);
     if (provided.length === 0) {
-      throw new BadRequestException("কিছুই বদলানোর জন্য পাঠানো হয়নি — অন্তত একটি ঘর পূরণ করুন");
+      throw badRequest("organizations.nothingSentToChange");
     }
 
     const data: Record<string, string> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name).trim();
-      if (!name) throw new BadRequestException("প্রতিষ্ঠানের নাম খালি হতে পারে না");
+      if (!name) throw badRequest("organizations.orgNameEmpty");
       if (name !== org.name) data.name = name;
     }
     if (dto.currency !== undefined) {
       const currency = String(dto.currency).trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(currency)) {
-        throw new BadRequestException("Currency ঠিকমতো দিন — ৩ অক্ষরের ISO কোড (যেমন BDT, USD)");
+        throw badRequest("organizations.currencyFormatInvalid");
       }
       if (currency !== org.currency) data.currency = currency;
     }
     if (dto.timezone !== undefined) {
       const timezone = String(dto.timezone).trim();
       if (!timezone || !isValidTimezone(timezone)) {
-        throw new BadRequestException("Timezone টি চেনা যাচ্ছে না — IANA নাম দিন (যেমন Asia/Dhaka)");
+        throw badRequest("organizations.timezoneNotRecognized");
       }
       if (timezone !== org.timezone) data.timezone = timezone;
     }
     if (dto.country !== undefined) {
       const country = String(dto.country).trim().toUpperCase();
       if (!/^[A-Z]{2}$/.test(country)) {
-        throw new BadRequestException("দেশের কোড ২ অক্ষরের হতে হবে (যেমন BD, IN, US)");
+        throw badRequest("organizations.countryCodeFormat");
       }
       if (country !== org.country) data.country = country;
     }
@@ -1274,6 +1275,29 @@ export class OrganizationsService {
       metadata: { fields }, ipAddress: ip,
     });
     return { ...this.tenantOrgView(updated), creditMinor: BigInt(updated.creditMinor ?? 0).toString(), changedFields: fields };
+  }
+
+  /** ML1 (Multi-Language MB1): set the organization's dashboard
+   * default UI language (bn | en — the DTO's @IsIn is the
+   * allowlist). OWNER/ADMIN + ACTIVE via assertOrgAdmin, like
+   * the other admin surfaces. Members without their own
+   * User.preferredLocale follow this default; the storefront's
+   * StorefrontSetting.locale is a separate choice and is not
+   * touched here. Returns getOne(), so the tenant view carries
+   * dashboardLocale exactly as listMine/getOne already serve
+   * the full org row. */
+  async updateDashboardLocale(organizationId: string, actorId: string, dto: UpdateOrgLocaleDto, ip?: string) {
+    await this.assertOrgAdmin(organizationId, actorId);
+    const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw notFound("common.orgNotFound");
+    await (this.prisma as any).organization.update({
+      where: { id: organizationId }, data: { dashboardLocale: dto.dashboardLocale },
+    });
+    await this.audit.log({
+      organizationId, userId: actorId, action: "org.dashboard_locale_updated", entityType: "Organization", entityId: organizationId,
+      metadata: { dashboardLocale: dto.dashboardLocale }, ipAddress: ip,
+    });
+    return this.getOne(organizationId);
   }
 
   // ---------- ORG11 (Organization Next OB4): security policy ----------
@@ -1314,7 +1338,7 @@ export class OrganizationsService {
   async getSecurityPolicy(organizationId: string, actorId: string, sid?: string) {
     await this.memberOrThrow(organizationId, actorId);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     return this.securityPolicyView(org, actorId, sid);
   }
 
@@ -1326,14 +1350,14 @@ export class OrganizationsService {
   async updateSecurityPolicy(organizationId: string, actorId: string, dto: UpdateSecurityPolicyDto, ip?: string, sid?: string) {
     const actor = await this.memberOrThrow(organizationId, actorId);
     if (actor.role !== "OWNER") {
-      throw new ForbiddenException("নিরাপত্তা নীতি বদলাতে Organization-এর মালিক (OWNER) হতে হবে");
+      throw forbidden("organizations.securityPolicyOwnerOnly");
     }
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
 
     const data: Record<string, unknown> = {};
     if (dto.requireMfa !== undefined) {
-      if (typeof dto.requireMfa !== "boolean") throw new BadRequestException("requireMfa true বা false হতে হবে");
+      if (typeof dto.requireMfa !== "boolean") throw badRequest("organizations.requireMfaBoolean");
       if (dto.requireMfa === true && org.requireMfa !== true) {
         let myTotpEnabled = false;
         try {
@@ -1341,14 +1365,14 @@ export class OrganizationsService {
           myTotpEnabled = me?.totpEnabled === true;
         } catch { /* read as not enabled — the safe direction here */ }
         if (!myTotpEnabled) {
-          throw new BadRequestException("আগে নিজের অ্যাকাউন্টে MFA (2FA) চালু করুন — Settings → নিরাপত্তা (2FA) থেকে চালু করে তারপর এই নীতি চালু করুন। নিজে MFA ছাড়া এই নীতি চালু করলে আপনি নিজেই এই Organization-এ ঢুকতে পারবেন না।");
+          throw badRequest("organizations.enableOwnMfaFirst");
         }
       }
       if (dto.requireMfa !== (org.requireMfa === true)) data.requireMfa = dto.requireMfa;
     }
     if (dto.sessionMaxAgeHours !== undefined) {
       if (dto.sessionMaxAgeHours !== null && (!Number.isInteger(dto.sessionMaxAgeHours) || dto.sessionMaxAgeHours < 1 || dto.sessionMaxAgeHours > 720)) {
-        throw new BadRequestException("Session-এর সর্বোচ্চ বয়স ১–৭২০ ঘণ্টার মধ্যে হতে হবে (বা সীমা তুলতে খালি পাঠান)");
+        throw badRequest("organizations.sessionMaxAgeRange");
       }
       if (dto.sessionMaxAgeHours !== (org.sessionMaxAgeHours ?? null)) data.sessionMaxAgeHours = dto.sessionMaxAgeHours;
     }
@@ -1379,13 +1403,13 @@ export class OrganizationsService {
     const actor = await p.membership.findUnique({
       where: { userId_organizationId: { userId: actorId, organizationId } },
     });
-    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    if (!actor || actor.status !== "ACTIVE") throw notFound("organizations.actorNotActiveMember");
     const isManager = ["OWNER", "ADMIN"].includes(actor.role);
-    if (!isManager && actorId !== targetUserId) throw new ForbiddenException("You can only view your own access");
+    if (!isManager && actorId !== targetUserId) throw forbidden("organizations.viewOwnAccessOnly");
     const target = await p.membership.findUnique({
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
     });
-    if (!target) throw new NotFoundException("That user is not a member of this organization");
+    if (!target) throw notFound("connections.userNotOrgMember");
     const overrides = normalizeOverrides(target.permissionOverrides);
     const customRole = await this.customRoleOf(organizationId, target);
     return {
@@ -1416,13 +1440,13 @@ export class OrganizationsService {
    * overridden. Every change is audited with its diff. */
   async updateMemberAccess(organizationId: string, actorId: string, targetUserId: string, dto: { grants?: string[]; denies?: string[] }, ip?: string) {
     const unknown = findUnknownAreas(dto);
-    if (unknown.length) throw new BadRequestException(`Unknown permission areas: ${unknown.join(", ")}`);
+    if (unknown.length) throw badRequest("organizations.unknownPermissionAreas", { areas: unknown.join(", ") });
     const p = this.prisma as any;
     const target = await p.membership.findUnique({
       where: { userId_organizationId: { userId: targetUserId, organizationId } },
     });
-    if (!target) throw new NotFoundException("That user is not a member of this organization");
-    if (target.role === "OWNER") throw new BadRequestException("The owner's access cannot be customized — the owner always has full access");
+    if (!target) throw notFound("connections.userNotOrgMember");
+    if (target.role === "OWNER") throw badRequest("organizations.ownerAccessNotCustomizable");
     const before = normalizeOverrides(target.permissionOverrides);
     const after = normalizeOverrides(dto);
     const diff = {
@@ -1446,17 +1470,17 @@ export class OrganizationsService {
   private validateCustomRoleName(raw: unknown): string {
     const name = typeof raw === "string" ? raw.trim() : "";
     if (name.length < 1 || name.length > 60) {
-      throw new BadRequestException("Custom role name must be 1–60 characters");
+      throw badRequest("organizations.customRoleNameLength");
     }
     return name;
   }
 
   private validateCustomRoleAreas(raw: unknown): string[] {
     if (!Array.isArray(raw) || raw.length === 0) {
-      throw new BadRequestException("A custom role needs at least one permission area");
+      throw badRequest("organizations.customRoleNeedsArea");
     }
     const unknown = raw.filter((k) => typeof k !== "string" || !PERMISSION_AREA_KEYS.includes(k as string)).map((k) => String(k));
-    if (unknown.length) throw new BadRequestException(`Unknown permission areas: ${unknown.join(", ")}`);
+    if (unknown.length) throw badRequest("organizations.unknownPermissionAreas", { areas: unknown.join(", ") });
     return [...new Set(raw as string[])];
   }
 
@@ -1499,23 +1523,23 @@ export class OrganizationsService {
     let name: string; let areas: string[]; let presetKey: string | null = null;
     if (dto.presetKey != null && dto.presetKey !== "") {
       if (dto.name !== undefined || dto.areas !== undefined) {
-        throw new BadRequestException("When presetKey is given, the name and areas come from the preset profile — send presetKey on its own");
+        throw badRequest("organizations.presetKeyOnItsOwn");
       }
       const profile = presetProfile(dto.presetKey);
-      if (!profile) throw new BadRequestException(`Unknown preset role profile: ${dto.presetKey}`);
+      if (!profile) throw badRequest("organizations.unknownPresetRole", { preset: dto.presetKey });
       name = profile.label; areas = [...profile.areas]; presetKey = profile.key;
     } else {
       name = this.validateCustomRoleName(dto.name);
       areas = this.validateCustomRoleAreas(dto.areas);
     }
     const existing = await p.customRole.findFirst({ where: { organizationId, name } });
-    if (existing) throw new BadRequestException(`A custom role named "${name}" already exists in this organization`);
+    if (existing) throw badRequest("organizations.customRoleNameExists", { name: name });
     let row: any;
     try {
       row = await p.customRole.create({ data: { organizationId, name, areas, presetKey } });
     } catch (e) {
       if (this.isUniqueViolation(e)) {
-        throw new BadRequestException(`A custom role named "${name}" already exists in this organization`);
+        throw badRequest("organizations.customRoleNameExists", { name: name });
       }
       throw e;
     }
@@ -1532,21 +1556,21 @@ export class OrganizationsService {
   async updateCustomRole(organizationId: string, actorId: string, roleId: string, dto: { name?: string; areas?: string[] }, ip?: string) {
     const p = this.prisma as any;
     const row = await p.customRole.findFirst({ where: { id: roleId, organizationId } });
-    if (!row) throw new NotFoundException("Custom role not found in this organization");
+    if (!row) throw notFound("organizations.customRoleNotFoundInOrg");
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = this.validateCustomRoleName(dto.name);
     if (dto.areas !== undefined) data.areas = this.validateCustomRoleAreas(dto.areas);
     if (Object.keys(data).length === 0) return this.customRoleView(organizationId, row);
     if (typeof data.name === "string" && data.name !== row.name) {
       const clash = await p.customRole.findFirst({ where: { organizationId, name: data.name } });
-      if (clash) throw new BadRequestException(`A custom role named "${data.name}" already exists in this organization`);
+      if (clash) throw badRequest("organizations.customRoleNameExists", { name: data.name });
     }
     let updated: any;
     try {
       updated = await p.customRole.update({ where: { id: row.id }, data });
     } catch (e) {
       if (this.isUniqueViolation(e)) {
-        throw new BadRequestException(`A custom role named "${String(data.name ?? row.name)}" already exists in this organization`);
+        throw badRequest("organizations.customRoleNameExists", { name: String(data.name ?? row.name) });
       }
       throw e;
     }
@@ -1564,10 +1588,10 @@ export class OrganizationsService {
   async deleteCustomRole(organizationId: string, actorId: string, roleId: string, ip?: string) {
     const p = this.prisma as any;
     const row = await p.customRole.findFirst({ where: { id: roleId, organizationId } });
-    if (!row) throw new NotFoundException("Custom role not found in this organization");
+    if (!row) throw notFound("organizations.customRoleNotFoundInOrg");
     const inUse = await this.customRoleMemberCount(organizationId, roleId);
     if (inUse > 0) {
-      throw new BadRequestException(`This custom role is assigned to ${inUse} member(s) — unassign it from them before deleting`);
+      throw badRequest("organizations.customRoleInUse", { count: inUse });
     }
     await p.customRole.delete({ where: { id: row.id } });
     await this.audit.log({
@@ -1585,13 +1609,13 @@ export class OrganizationsService {
     const p = this.prisma as any;
     const membership = await this.memberOrThrow(organizationId, targetUserId);
     if (membership.role === "OWNER") {
-      throw new BadRequestException("The owner's access cannot be customized — the owner always has full access");
+      throw badRequest("organizations.ownerAccessNotCustomizable");
     }
     let roleRow: any = null;
     const customRoleId = dto.customRoleId ?? null;
     if (customRoleId !== null) {
       roleRow = await p.customRole.findFirst({ where: { id: customRoleId, organizationId } });
-      if (!roleRow) throw new NotFoundException("Custom role not found in this organization");
+      if (!roleRow) throw notFound("organizations.customRoleNotFoundInOrg");
     }
     await p.membership.update({ where: { id: membership.id }, data: { customRoleId } });
     await this.audit.log({
@@ -1645,7 +1669,7 @@ export class OrganizationsService {
         where: { id: sessionId, userId: targetUserId },
       });
     } catch { session = null; }
-    if (!session) throw new NotFoundException("Session not found for this member");
+    if (!session) throw notFound("organizations.memberSessionNotFound");
     const alreadyRevoked = Boolean(session.revokedAt);
     if (!alreadyRevoked) {
       await (this.prisma as any).userSession.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
@@ -1696,12 +1720,12 @@ export class OrganizationsService {
 
   async updateMyNotificationPreferences(organizationId: string, userId: string, dto: { mutedCategories?: string[] }, ip?: string) {
     if (!Array.isArray(dto?.mutedCategories)) {
-      throw new BadRequestException("mutedCategories must be an array of notification category keys");
+      throw badRequest("organizations.mutedCategoriesInvalid");
     }
     const unknown = dto.mutedCategories
       .filter((k) => typeof k !== "string" || !NOTIFICATION_CATEGORY_KEYS.includes(k as string))
       .map((k) => String(k));
-    if (unknown.length) throw new BadRequestException(`Unknown notification categories: ${unknown.join(", ")}`);
+    if (unknown.length) throw badRequest("organizations.unknownNotificationCategories", { list: unknown.join(", ") });
     const mutedCategories = [...new Set(dto.mutedCategories)];
     await (this.prisma as any).notificationPreference.upsert({
       where: { userId_organizationId: { userId, organizationId } },
@@ -1725,7 +1749,7 @@ export class OrganizationsService {
     const actor = await p.membership.findUnique({
       where: { userId_organizationId: { userId: actorId, organizationId } },
     });
-    if (!actor || actor.status !== "ACTIVE") throw new NotFoundException("Actor is not an active member of this organization");
+    if (!actor || actor.status !== "ACTIVE") throw notFound("organizations.actorNotActiveMember");
     const isManager = ["OWNER", "ADMIN", "MARKETING_MANAGER"].includes(actor.role);
     const userId = isManager ? query.userId : actorId;
     const take = Math.min(100, Math.max(1, Math.round(Number(query.take ?? 30)) || 30));
@@ -1786,9 +1810,9 @@ export class OrganizationsService {
    */
   async submitVerification(organizationId: string, actorId: string, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     if (org.verificationStatus === "verified") {
-      throw new BadRequestException("এই প্রতিষ্ঠানটি ইতিমধ্যে যাচাইকৃত — আবার জমা দেওয়ার দরকার নেই");
+      throw badRequest("organizations.orgAlreadyVerified");
     }
     const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
     const has = (v: unknown) => typeof v === "string" && v.trim().length > 0;
@@ -1798,12 +1822,9 @@ export class OrganizationsService {
     if (!has(profile?.contactPhone) && !has(profile?.contactEmail)) missing.push("যোগাযোগের ফোন বা ইমেইল");
     if (!has(profile?.tradeLicenseNo)) missing.push("ট্রেড লাইসেন্স নম্বর");
     if (missing.length) {
-      throw new BadRequestException({
-        statusCode: 400,
-        message: `যাচাইয়ের জন্য জমা দিতে আরও তথ্য লাগবে: ${missing.join(", ")} — Business Profile এ এগুলো পূরণ করে আবার জমা দিন।`,
-        missing,
-        error: "Bad Request",
-      } as any);
+      const missingErr = badRequest("organizations.verificationInfoMissing", { missing: missing.join(", ") });
+      missingErr.extra = { missing };
+      throw missingErr;
     }
     const updated = await (this.prisma as any).organization.update({
       where: { id: organizationId },
@@ -1823,7 +1844,7 @@ export class OrganizationsService {
    * only — see common/storage-usage for the honesty contract). */
   async storageUsage(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId }, select: { id: true } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     return storageUsageForOrg(this.prisma as any, organizationId);
   }
 
@@ -1862,11 +1883,11 @@ export class OrganizationsService {
         data.codBlockedDistricts = null;
       } else {
         if (!Array.isArray(raw) || raw.length > 64) {
-          throw new BadRequestException("COD ব্লক করা জেলার তালিকা সর্বোচ্চ ৬৪টি হতে পারবে");
+          throw badRequest("organizations.codBlockedDistrictsMax");
         }
         const cleaned = raw.map((d: any) => String(d ?? "").trim());
         if (cleaned.some((d: string) => d.length === 0 || d.length > 100)) {
-          throw new BadRequestException("COD ব্লক করা প্রতিটি জেলার নাম ১–১০০ অক্ষরের হতে হবে");
+          throw badRequest("organizations.codBlockedDistrictNameLength");
         }
         data.codBlockedDistricts = cleaned.length ? cleaned : null;
       }
@@ -1876,7 +1897,7 @@ export class OrganizationsService {
       if (typeof raw === "string" && raw.trim()) {
         const normalized = raw.replace(/[০-৯]/g, (d) => "০১২৩৪৫৬৭৮৯".indexOf(d).toString()).replace(/[\s-]/g, "");
         if (!/^01\d{9}$/.test(normalized)) {
-          throw new BadRequestException(`${key === "bkashNumber" ? "বিকাশ" : "নগদ"} নম্বরটি সঠিক ১১ ডিজিটের মোবাইল নম্বর হতে হবে (01 দিয়ে শুরু)`);
+          throw badRequest("organizations.paymentNumberFormat", { provider: key === "bkashNumber" ? "বিকাশ" : "নগদ" });
         }
         data[key] = normalized;
       }
@@ -1887,23 +1908,23 @@ export class OrganizationsService {
     if (dto.billingEmails != null) {
       const list = (Array.isArray(dto.billingEmails) ? dto.billingEmails : [])
         .map((e) => String(e ?? "").trim().toLowerCase()).filter(Boolean);
-      if (list.length > 3) throw new BadRequestException("Billing ইমেইল সর্বোচ্চ ৩টি রাখা যাবে");
+      if (list.length > 3) throw badRequest("organizations.billingEmailsMax");
       for (const e of list) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) throw new BadRequestException(`Billing ইমেইলটি সঠিক নয়: ${e}`);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) throw badRequest("organizations.billingEmailInvalid", { email: e });
       }
       (data as any).billingEmails = list.length ? [...new Set(list)] : null;
     }
     // Milestone 77: the AI reply language is a closed set.
     if (dto.aiReplyLanguage != null && dto.aiReplyLanguage !== "") {
       if (!["bn", "en", "auto"].includes(dto.aiReplyLanguage)) {
-        throw new BadRequestException("AI এর উত্তরের ভাষা bn, en বা auto হতে হবে");
+        throw badRequest("organizations.aiReplyLanguageInvalid");
       }
     }
     if (dto.businessHours != null) {
       const hours = dto.businessHours as { timezone?: string; windows?: unknown };
       const tz = typeof hours.timezone === "string" && hours.timezone ? hours.timezone : "Asia/Dhaka";
-      if (!isValidTimezone(tz)) throw new BadRequestException("ব্যবসার সময়ের Timezone টি সঠিক নয়");
-      if (!isValidWindows(hours.windows)) throw new BadRequestException("ব্যবসার সময়ের উইন্ডোগুলো সঠিক ফরম্যাটে নয় (HH:MM–HH:MM)");
+      if (!isValidTimezone(tz)) throw badRequest("organizations.businessHoursTimezoneInvalid");
+      if (!isValidWindows(hours.windows)) throw badRequest("organizations.businessHoursWindowsFormat");
       data.businessHours = { timezone: tz, windows: hours.windows ?? {} };
     }
     const profile = await (this.prisma as any).businessProfile.upsert({
@@ -2005,7 +2026,7 @@ export class OrganizationsService {
     if (dto.primaryColor !== undefined) {
       const color = dto.primaryColor.trim();
       if (color === "") data.primaryColor = null;
-      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new BadRequestException("প্রাইমারি রঙ হতে হবে #RRGGBB ফরম্যাটে (যেমন #4F46E5)");
+      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw badRequest("organizations.primaryColorFormat");
       else data.primaryColor = color.toUpperCase();
     }
     // TD9: when the domain field is present, read the CURRENT org
@@ -2027,14 +2048,14 @@ export class OrganizationsService {
     if ((dto as any).brandSecondaryColor !== undefined) {
       const color = String((dto as any).brandSecondaryColor).trim();
       if (color === "") data.brandSecondaryColor = null;
-      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new BadRequestException("সেকেন্ডারি রঙ হতে হবে #RRGGBB ফরম্যাটে (যেমন #B45309)");
+      else if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw badRequest("organizations.secondaryColorFormat");
       else data.brandSecondaryColor = color.toUpperCase();
     }
     if ((dto as any).brandFont !== undefined) {
       const font = String((dto as any).brandFont).trim();
       const allowed = ["hind-siliguri", "noto-sans-bengali", "arial", "georgia", "verdana"];
       if (font === "") data.brandFont = null;
-      else if (!allowed.includes(font)) throw new BadRequestException("ফন্ট তালিকা থেকে বেছে নিন (Hind Siliguri, Noto Sans Bengali, Arial, Georgia, Verdana)");
+      else if (!allowed.includes(font)) throw badRequest("organizations.fontChoiceInvalid");
       else data.brandFont = font;
     }
     if (dto.customDomain !== undefined) {
@@ -2042,19 +2063,19 @@ export class OrganizationsService {
       if (domain === "") data.customDomain = null;
       else {
         if (!/^(?=.{4,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/.test(domain)) {
-          throw new BadRequestException("ডোমেইনটি সঠিক ফরম্যাটে লিখুন (যেমন reports.youragency.com) — প্রোটোকল বা পাথ ছাড়া");
+          throw badRequest("organizations.domainFormatInvalid");
         }
         // TD9: the platform's own domain / subdomains can never be
         // claimed here either — same refusal as setCustomDomain.
         if (isPlatformHostedDomain(domain)) {
-          throw new BadRequestException(PLATFORM_CUSTOM_DOMAIN_MESSAGE);
+          throw badRequest("common.platformDomainNotAllowed");
         }
         const taken = await (this.prisma as any).organization.findFirst({ where: { customDomain: domain, NOT: { id: organizationId } } });
-        if (taken) throw new ConflictException("এই ডোমেইনটি অন্য একটি Organization ইতিমধ্যে সংরক্ষণ করেছে");
+        if (taken) throw conflict("organizations.domainAlreadyReserved");
         data.customDomain = domain;
       }
     }
-    if (Object.keys(data).length === 0) throw new BadRequestException("পরিবর্তন করার মতো কোনো ফিল্ড পাঠানো হয়নি");
+    if (Object.keys(data).length === 0) throw badRequest("organizations.noFieldSentToChange");
     const org = await (this.prisma as any).organization.update({ where: { id: organizationId }, data });
     // TD9: a domain CHANGE on this path must also reset the
     // storefront verification — the old domain's proof must never
@@ -2091,14 +2112,14 @@ export class OrganizationsService {
 
   async uploadLogo(organizationId: string, actorId: string, dto: UploadLogoDto, ip?: string) {
     if (!(OrganizationsService.LOGO_CONTENT_TYPES as readonly string[]).includes(dto.contentType)) {
-      throw new BadRequestException("লোগো হতে হবে PNG, JPEG অথবা WebP ছবি");
+      throw badRequest("organizations.logoImageType");
     }
     let bytes: Buffer;
-    try { bytes = Buffer.from(dto.dataBase64, "base64"); } catch { throw new BadRequestException("ছবির ডেটা পড়া যায়নি"); }
-    if (bytes.length === 0) throw new BadRequestException("ছবির ডেটা খালি");
-    if (bytes.length > OrganizationsService.LOGO_MAX_BYTES) throw new BadRequestException("লোগোর সাইজ সর্বোচ্চ ১.৫ MB হতে পারবে");
+    try { bytes = Buffer.from(dto.dataBase64, "base64"); } catch { throw badRequest("organizations.imageDataUnreadable"); }
+    if (bytes.length === 0) throw badRequest("organizations.imageDataEmpty");
+    if (bytes.length > OrganizationsService.LOGO_MAX_BYTES) throw badRequest("organizations.logoSizeMax");
     const sniffed = OrganizationsService.sniffLogoType(bytes);
-    if (sniffed !== dto.contentType) throw new BadRequestException("ছবির আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না");
+    if (sniffed !== dto.contentType) throw badRequest("organizations.imageFormatMismatch");
     // RB4/RM5: with object storage on, the logo lands in the
     // PUBLIC bucket under a hash-versioned key and logoUrl stores
     // the absolute CDN URL. Local mode keeps the M59 fixed-key +
@@ -2139,7 +2160,7 @@ export class OrganizationsService {
 
   async removeLogo(organizationId: string, actorId: string, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     // RB4/RM5: a CDN-era logo's registry row is marked trashed
     // (the object itself is deleted by RM11's lifecycle job);
     // legacy rows carry no registry entry. Best-effort — removal

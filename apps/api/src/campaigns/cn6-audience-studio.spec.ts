@@ -121,7 +121,7 @@ describe("CN6 audience studio", () => {
   it("an empty source refuses creation honestly (nothing attached, no record)", async () => {
     const { tables, svc } = setup();
     const { plan, adSet } = await draft(svc, tables);
-    await expect(svc.studioCreateAudience("org", plan.id, adSet.id, "u", { source: "cart_abandoners", name: "Abandoners", attach: true })).rejects.toThrow(/No contacts/);
+    await expect(svc.studioCreateAudience("org", plan.id, adSet.id, "u", { source: "cart_abandoners", name: "Abandoners", attach: true })).rejects.toMatchObject({ code: "audiences.noContactsWithAnEmailOr" });
     expect(tables.audienceRecord.rows).toHaveLength(0);
   });
 
@@ -154,7 +154,7 @@ describe("CN6 audience studio", () => {
     expect(tables.audienceRecord.rows.filter((r: any) => r.source === "recent_purchasers")).toHaveLength(1);
     set = tables.campaignAdSet.rows.find((s: any) => s.id === adSet.id);
     expect(set.targeting.exclusionPresets).toHaveLength(1);
-    await expect(svc.studioApplyExclusionPreset("org", plan.id, adSet.id, "u", { preset: "nope" })).rejects.toThrow(/preset must be one of/);
+    await expect(svc.studioApplyExclusionPreset("org", plan.id, adSet.id, "u", { preset: "nope" })).rejects.toMatchObject({ code: "campaigns.presetMustBeOneOf" });
   });
 
   it("when Meta refuses, the preset answers unavailable and targeting stays untouched", async () => {
@@ -192,6 +192,6 @@ describe("CN6 audience studio", () => {
     const { tables, svc } = setup();
     const { plan, adSet } = await draft(svc, tables);
     tables.campaignPlan.rows.find((p: any) => p.id === plan.id).status = "approved";
-    await expect(svc.studioCreateAudience("org", plan.id, adSet.id, "u", { source: "buyers", name: "B" })).rejects.toThrow(/can no longer be edited/);
+    await expect(svc.studioCreateAudience("org", plan.id, adSet.id, "u", { source: "buyers", name: "B" })).rejects.toMatchObject({ code: "campaigns.planIsAndCanNoLonger" });
   });
 });

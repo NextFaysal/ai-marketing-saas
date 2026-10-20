@@ -6,19 +6,38 @@
  * placeholders, never fabricated values.
  */
 
+import type { UiLocale } from "./i18n/dict";
+import { sharedBn, sharedEn } from "./i18n/shared";
+
+/** MB2 F2: label copy resolves through the `shared` namespace;
+ * every helper keeps locale default "bn" so existing
+ * callers/tests stay byte-identical. */
+const SD = (locale: UiLocale = "bn"): typeof sharedBn =>
+  locale === "en" ? sharedEn : sharedBn;
+
 /* ---------------- AX21: merchant API keys ---------------- */
 
 export const MERCHANT_API_SCOPES = [
-  { key: "products:read", label: "পণ্য পড়া (products:read)" },
-  { key: "products:write", label: "পণ্য লেখা/বদলানো (products:write)" },
-  { key: "orders:read", label: "অর্ডার পড়া (orders:read)" },
-  { key: "customers:read", label: "গ্রাহক পড়া (customers:read)" },
+  { key: "products:read", label: sharedBn.scopeProductsRead, labelEn: sharedEn.scopeProductsRead },
+  { key: "products:write", label: sharedBn.scopeProductsWrite, labelEn: sharedEn.scopeProductsWrite },
+  { key: "orders:read", label: sharedBn.scopeOrdersRead, labelEn: sharedEn.scopeOrdersRead },
+  { key: "customers:read", label: sharedBn.scopeCustomersRead, labelEn: sharedEn.scopeCustomersRead },
 ] as const;
 
 export type MerchantApiScope = (typeof MERCHANT_API_SCOPES)[number]["key"];
 
-export function merchantApiScopeLabel(scope: string): string {
-  return MERCHANT_API_SCOPES.find((s) => s.key === scope)?.label ?? scope;
+/** Scope rows with a single resolved `label` for the locale. */
+export function merchantApiScopesFor(locale: UiLocale = "bn"): { key: MerchantApiScope; label: string }[] {
+  return MERCHANT_API_SCOPES.map((s) => ({
+    key: s.key,
+    label: locale === "en" ? s.labelEn : s.label,
+  }));
+}
+
+export function merchantApiScopeLabel(scope: string, locale: UiLocale = "bn"): string {
+  const found = MERCHANT_API_SCOPES.find((s) => s.key === scope);
+  if (!found) return scope;
+  return locale === "en" ? found.labelEn : found.label;
 }
 
 export interface MerchantApiKeyRecord {
@@ -50,10 +69,11 @@ export function formatMerchantKeyPrefix(keyPrefix: string | null | undefined): s
   return `qk_live_${p}…`;
 }
 
-export function merchantApiKeyStatusLabel(status: string): string {
+export function merchantApiKeyStatusLabel(status: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (status) {
-    case "active": return "সক্রিয়";
-    case "revoked": return "বাতিল করা";
+    case "active": return d.keyStatusActive;
+    case "revoked": return d.keyStatusRevoked;
     default: return status;
   }
 }
@@ -75,12 +95,13 @@ export function merchantKeysFromPayload(payload: unknown): MerchantApiKeyRecord[
 
 /** Validates the create form before it is sent (server re-checks;
  * the create DTO caps the name at 80 chars). */
-export function validateMerchantKeyDraft(name: string, scopes: readonly string[]): string | null {
-  if (!name.trim()) return "কী-এর নাম লিখুন।";
-  if (name.trim().length > 80) return "কী-এর নাম সর্বোচ্চ ৮০ অক্ষরের হতে পারবে।";
-  if (scopes.length === 0) return "অন্তত একটি স্কোপ বেছে নিন।";
+export function validateMerchantKeyDraft(name: string, scopes: readonly string[], locale: UiLocale = "bn"): string | null {
+  const d = SD(locale);
+  if (!name.trim()) return d.keyNameRequired;
+  if (name.trim().length > 80) return d.keyNameTooLong;
+  if (scopes.length === 0) return d.keyScopeRequired;
   const allowed = new Set<string>(MERCHANT_API_SCOPES.map((s) => s.key));
-  if (scopes.some((s) => !allowed.has(s))) return "একটি স্কোপ সঠিক নয়।";
+  if (scopes.some((s) => !allowed.has(s))) return d.keyScopeInvalid;
   return null;
 }
 
@@ -149,20 +170,22 @@ export function exportDownloadFilename(exportId: string): string {
   return `data-export-${exportId}.json`;
 }
 
-export function dataExportKindLabel(kind: string): string {
+export function dataExportKindLabel(kind: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (kind) {
-    case "manual": return "ম্যানুয়াল";
-    case "backup": return "স্বয়ংক্রিয় ব্যাকআপ";
+    case "manual": return d.exportKindManual;
+    case "backup": return d.exportKindBackup;
     default: return kind;
   }
 }
 
-export function dataExportStatusLabel(status: string): string {
+export function dataExportStatusLabel(status: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (status) {
-    case "pending": return "তৈরি হচ্ছে…";
-    case "ready": return "প্রস্তুত";
-    case "failed": return "ব্যর্থ";
-    case "expired": return "মেয়াদ শেষ";
+    case "pending": return d.exportStatusPending;
+    case "ready": return d.exportStatusReady;
+    case "failed": return d.exportStatusFailed;
+    case "expired": return d.exportStatusExpired;
     default: return status;
   }
 }
@@ -173,15 +196,16 @@ export function canDownloadExport(row: Pick<DataExportRow, "status"> | null | un
   return row?.status === "ready";
 }
 
-/** Byte size → Bengali-digit human size; null = "—" (unknown,
- * never a fabricated 0). Mirrors the settings-page byte format. */
-export function formatExportSize(sizeBytes: number | null | undefined): string {
+/** Byte size → human size in the locale's digits; null = "—"
+ * (unknown, never a fabricated 0). Mirrors the settings-page
+ * byte format. The bn path is byte-identical to the original
+ * Bengali-digit format ("০ বাইট", bn-BD grouping). */
+export function formatExportSize(sizeBytes: number | null | undefined, locale: UiLocale = "bn"): string {
   if (sizeBytes == null || !Number.isFinite(sizeBytes) || sizeBytes < 0) return "—";
-  if (sizeBytes === 0) return "০ বাইট";
-  const units = ["বাইট", "KB", "MB", "GB", "TB"];
+  const units = [SD(locale).sizeUnitByte, "KB", "MB", "GB", "TB"];
   let v = sizeBytes; let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toLocaleString("bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
+  return `${v.toLocaleString(locale === "en" ? "en-IN" : "bn-BD", { maximumFractionDigits: 2 })} ${units[i]}`;
 }
 
 /* ---------------- ORG16: data import / restore ---------------- */
@@ -219,70 +243,85 @@ export interface DataImportJob {
   completedAt: string | null;
 }
 
-const IMPORT_TABLE_LABELS: Record<string, string> = {
-  organization: "প্রতিষ্ঠান",
-  businessProfile: "ব্যবসার প্রোফাইল",
-  members: "সদস্যরা",
-  products: "পণ্য",
-  orders: "অর্ডার",
-  customers: "ক্রেতা",
-  leads: "লিড",
-  conversations: "কথোপকথন",
-  campaignPlans: "ক্যাম্পেইন পরিকল্পনা",
-  integrations: "সংযোগসমূহ",
-  subscription: "সাবস্ক্রিপশন",
-  payments: "পেমেন্ট",
-  supportTickets: "সাপোর্ট টিকিট",
-  orderItems: "অর্ডারের আইটেম",
-  mediaAssets: "মিডিয়া ফাইল",
-};
-
-export function dataImportTableLabel(table: string): string {
-  return IMPORT_TABLE_LABELS[table] ?? table;
+/** Import table labels per locale (bn record is the source). */
+export function importTableLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    organization: d.tblOrganization,
+    businessProfile: d.tblBusinessProfile,
+    members: d.tblMembers,
+    products: d.tblProducts,
+    orders: d.tblOrders,
+    customers: d.tblCustomers,
+    leads: d.tblLeads,
+    conversations: d.tblConversations,
+    campaignPlans: d.tblCampaignPlans,
+    integrations: d.tblIntegrations,
+    subscription: d.tblSubscription,
+    payments: d.tblPayments,
+    supportTickets: d.tblSupportTickets,
+    orderItems: d.tblOrderItems,
+    mediaAssets: d.tblMediaAssets,
+  };
 }
 
-const SKIP_REASON_LABELS: Record<string, string> = {
-  target_identity_kept: "এই প্রতিষ্ঠানের নিজের পরিচয়ই থাকবে",
-  people_not_restored: "সদস্যপদ ও ব্যবহারকারী ফিরিয়ে আনা হয় না",
-  billing_state_not_transferred: "বিলিং অবস্থা স্থানান্তর হয় না",
-  billing_ledger_not_transferred: "বিলিং লেজার স্থানান্তর হয় না",
-  connections_not_restored: "সংযোগের credential bundle-এ থাকে না",
-  transcripts_not_in_bundle: "বার্তাগুলো bundle-এ নেই",
-  ad_children_not_in_bundle: "বিজ্ঞাপনের বিস্তারিত bundle-এ নেই",
-  messages_not_in_bundle: "টিকিটের বার্তা bundle-এ নেই",
-  bytes_not_in_bundle: "ফাইলের বাইট bundle-এ নেই, শুধু তথ্য থাকে",
-};
+export function dataImportTableLabel(table: string, locale: UiLocale = "bn"): string {
+  return importTableLabelsFor(locale)[table] ?? table;
+}
 
-export function dataImportSkipReasonLabel(reason: string | undefined): string {
+/** Import skip-reason labels per locale (bn record is the source). */
+export function importSkipReasonLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    target_identity_kept: d.skipTargetIdentity,
+    people_not_restored: d.skipPeopleNotRestored,
+    billing_state_not_transferred: d.skipBillingState,
+    billing_ledger_not_transferred: d.skipBillingLedger,
+    connections_not_restored: d.skipConnectionsNotRestored,
+    transcripts_not_in_bundle: d.skipTranscriptsNotInBundle,
+    ad_children_not_in_bundle: d.skipAdChildrenNotInBundle,
+    messages_not_in_bundle: d.skipMessagesNotInBundle,
+    bytes_not_in_bundle: d.skipBytesNotInBundle,
+  };
+}
+
+export function dataImportSkipReasonLabel(reason: string | undefined, locale: UiLocale = "bn"): string {
   if (!reason) return "";
-  return SKIP_REASON_LABELS[reason] ?? reason;
+  return importSkipReasonLabelsFor(locale)[reason] ?? reason;
 }
 
-const IMPORT_ERROR_LABELS: Record<string, string> = {
-  target_org_not_empty: "এই প্রতিষ্ঠানটি খালি নয় — ইমপোর্ট শুধু একদম নতুন, খালি প্রতিষ্ঠানে করা যায়।",
-  bundle_not_an_object: "ফাইলটি সঠিক bundle ফরম্যাটে নয়।",
-  import_row_cap_exceeded: "Bundle-টি এই পদ্ধতির জন্য বড় — মোট ফিরিয়ে-আনা সারি সীমার বেশি।",
-};
+/** Import error labels per locale (bn record is the source). */
+export function importErrorLabelsFor(locale: UiLocale = "bn"): Record<string, string> {
+  const d = SD(locale);
+  return {
+    target_org_not_empty: d.impErrTargetNotEmpty,
+    bundle_not_an_object: d.impErrBundleNotObject,
+    import_row_cap_exceeded: d.impErrRowCapExceeded,
+  };
+}
 
-export function dataImportErrorLabel(error: string): string {
-  if (IMPORT_ERROR_LABELS[error]) return IMPORT_ERROR_LABELS[error];
+export function dataImportErrorLabel(error: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
+  const table = importErrorLabelsFor(locale);
+  if (table[error]) return table[error];
   if (error.startsWith("credential_field_present:")) {
-    return "Bundle-এ credential-জাতীয় তথ্য আছে — নিরাপত্তার কারণে পুরো bundle বাতিল করা হয়েছে।";
+    return d.impErrCredentialField;
   }
   if (error.startsWith("source_table_truncated:")) {
-    return "উৎস এক্সপোর্টটি অসম্পূর্ণ ছিল (কিছু ডেটা কাটা পড়েছিল) — অসম্পূর্ণ bundle ফিরিয়ে আনা হয় না।";
+    return d.impErrSourceTruncated;
   }
   if (error.startsWith("row_count_mismatch:") || error.startsWith("malformed") || error.startsWith("unexpected") || error.startsWith("duplicate") || error.startsWith("dangling")) {
-    return "Bundle-এর ভেতরের ডেটায় অসঙ্গতি আছে — ফাইলটি বদলানো বা নষ্ট হয়ে থাকতে পারে।";
+    return d.impErrDataInconsistent;
   }
   return error;
 }
 
-export function dataImportJobStatusLabel(status: string): string {
+export function dataImportJobStatusLabel(status: string, locale: UiLocale = "bn"): string {
+  const d = SD(locale);
   switch (status) {
-    case "running": return "চলছে…";
-    case "completed": return "সম্পন্ন";
-    case "failed": return "ব্যর্থ";
+    case "running": return d.jobStatusRunning;
+    case "completed": return d.jobStatusCompleted;
+    case "failed": return d.jobStatusFailed;
     default: return status;
   }
 }

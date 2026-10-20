@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 import { TenantGuard } from "../common/tenant.guard";
 
@@ -60,8 +61,8 @@ describe("M35 onboarding + member TOTP reset", () => {
     expect(p.user.rows[0].totpEnabled).toBe(false);
     expect(p.user.rows[0].totpSecretEncrypted).toBeNull();
     expect(auditEntries.some((e: any) => e.action === "org.member_totp_reset")).toBe(true);
-    await expect(svc.resetMemberTotp("org-1", "u-owner", "u-member")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.resetMemberTotp("org-1", "u-owner", "u-stranger")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.resetMemberTotp("org-1", "u-owner", "u-member")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.resetMemberTotp("org-1", "u-owner", "u-stranger")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -84,7 +85,7 @@ describe("M35 PAST_DUE read-only gate (TenantGuard)", () => {
 
   it("blocks writes for PAST_DUE orgs but allows reads and billing requests", async () => {
     const guard = guardWith("PAST_DUE");
-    await expect(guard.canActivate(ctx("POST", "/organizations/org-1/products"))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(ctx("POST", "/organizations/org-1/products"))).rejects.toBeInstanceOf(ApiException);
     await expect(guard.canActivate(ctx("GET", "/organizations/org-1/products"))).resolves.toBe(true);
     await expect(guard.canActivate(ctx("POST", "/organizations/org-1/billing/plan-request"))).resolves.toBe(true);
   });

@@ -1,5 +1,5 @@
 import { ensurePlatformConfig, getPlatformConfigSync } from "../common/platform-config";
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
@@ -15,6 +15,7 @@ import { AlertDispatcher, AlertChannelConfig, AlertNotificationPayload } from ".
 import { DeconstructVideoScriptDto, ConfigureAlertSettingsDto, TestAlertChannelDto, SaveDynamicRulesDto, SimulateRuleTriggerDto } from "./competitors.dto";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { parseMoneyToMinor, formatMinor } from "@repo/contracts";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 
 
@@ -57,7 +58,7 @@ export class CompetitorsService {
 
   private async getOrThrow(organizationId: string, competitorId: string) {
     const c = await (this.prisma as any).competitor.findFirst({ where: { id: competitorId, organizationId } });
-    if (!c) throw new NotFoundException("Competitor not found in this organization");
+    if (!c) throw notFound("competitors.competitorNotFoundInThisOrganization");
     return c;
   }
 
@@ -148,7 +149,7 @@ export class CompetitorsService {
       const secrets = decryptJson<{ accessToken: string }>(integration.credential.encryptedData);
       if (secrets.accessToken) return secrets.accessToken;
     }
-    throw new BadRequestException("No Ad Library access token available. Ask the platform admin to set one in the Admin Console, connect Meta (Milestone 5), or set FACEBOOK_AD_LIBRARY_TOKEN. Meta may require an identity-confirmed user token depending on your country.");
+    throw badRequest("competitors.noAdLibraryAccessTokenAvailable");
   }
 
   async syncAds(organizationId: string, actorId: string, competitorId: string, opts: { countries?: string[]; activeOnly?: boolean } = {}) {
@@ -350,12 +351,12 @@ export class CompetitorsService {
     const ad = await (this.prisma as any).competitorAd.findFirst({
       where: { id: dto.competitorAdId },
     });
-    if (!ad) throw new NotFoundException("Competitor ad not found");
+    if (!ad) throw notFound("competitors.competitorAdNotFound");
     const adCompetitor = await (this.prisma as any).competitor.findFirst({
       where: { id: ad.competitorId },
     });
     if (!adCompetitor || adCompetitor.organizationId !== organizationId) {
-      throw new NotFoundException("Ad does not belong to this organization");
+      throw notFound("competitors.adDoesNotBelongToThis");
     }
 
     let ownProduct: any = null;
@@ -485,7 +486,7 @@ Return strictly valid JSON with this format:
   // ----- Website scan + live price drop & stockout alerts -----
   async scanWebsite(organizationId: string, actorId: string, competitorId: string) {
     const competitor = await this.getOrThrow(organizationId, competitorId);
-    if (!competitor.websiteUrl) throw new BadRequestException("This competitor has no website URL");
+    if (!competitor.websiteUrl) throw badRequest("competitors.thisCompetitorHasNoWebsiteUrl");
     const scan = await new WebsiteScanner().scan(competitor.websiteUrl);
     let stored = 0;
     const generatedAlerts: string[] = [];
@@ -590,7 +591,7 @@ Return strictly valid JSON with this format:
   async addObservation(organizationId: string, competitorId: string, dto: { productName: string; price: string; currency?: string; sourceUrl: string }) {
     await this.getOrThrow(organizationId, competitorId);
     if (!dto.sourceUrl || !/^https?:\/\//i.test(dto.sourceUrl)) {
-      throw new BadRequestException("A source URL is required as evidence for every price observation");
+      throw badRequest("competitors.aSourceUrlIsRequiredAs");
     }
     const obs = await (this.prisma as any).competitorPriceObservation.create({
       data: {
@@ -683,7 +684,7 @@ Return strictly valid JSON with this format:
   async generateInsights(organizationId: string, actorId: string, competitorId?: string) {
     const bundle = await this.buildEvidenceBundle(organizationId, competitorId);
     if (bundle.refs.length === 0) {
-      throw new BadRequestException("No competitor evidence collected yet. Sync ads or scan/add prices first - insights are never generated without evidence.");
+      throw badRequest("competitors.noCompetitorEvidenceCollectedYetSync");
     }
     const provider = this.llm.getProvider();
     const validRefs = new Set(bundle.refs.map((r) => r.ref));
@@ -912,7 +913,7 @@ Format as clean JSON with keys:
       where: { id: dto.competitorAdId, competitorId },
     });
     if (!ad) {
-      throw new NotFoundException(`Competitor ad ${dto.competitorAdId} not found`);
+      throw notFound("competitors.competitorAdNotFound2", { dtoCompetitorAdId: dto.competitorAdId });
     }
 
     let ownProductTitle: string | undefined = undefined;
@@ -1032,13 +1033,13 @@ Format as clean JSON with keys:
       const token = dto.telegramBotToken;
       const chatId = dto.telegramChatId;
       if (!token || !chatId) {
-        throw new BadRequestException("Telegram Bot Token এবং Chat ID প্রয়োজন।");
+        throw badRequest("competitors.telegramBotTokenAndChatId");
       }
       return dispatcher.sendToTelegram(token, chatId, testPayload);
     } else {
       const url = dto.whatsappWebhookUrl;
       if (!url) {
-        throw new BadRequestException("WhatsApp Webhook URL প্রয়োজন।");
+        throw badRequest("competitors.whatsappWebhookUrlIsRequired");
       }
       return dispatcher.sendToWhatsapp(url, testPayload);
     }

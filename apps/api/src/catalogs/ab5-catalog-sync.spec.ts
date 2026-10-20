@@ -385,8 +385,8 @@ describe("AX10 productSyncState / syncStatus / updateCatalog", () => {
     const prisma = fakePrisma();
     seedCatalog(prisma, { organizationId: ORG2 });
     const service = svc(prisma);
-    await expect(service.updateCatalog(ORG, ACTOR, "cat-1", { autoSync: true })).rejects.toThrow(NotFoundException);
-    await expect(service.productSyncState(ORG, "cat-1", "p1")).rejects.toThrow(NotFoundException);
+    await expect(service.updateCatalog(ORG, ACTOR, "cat-1", { autoSync: true })).rejects.toMatchObject({ code: "catalogs.catalogNotFound" });
+    await expect(service.productSyncState(ORG, "cat-1", "p1")).rejects.toMatchObject({ code: "catalogs.catalogNotFound" });
   });
 });
 

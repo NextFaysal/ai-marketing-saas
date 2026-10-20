@@ -216,6 +216,31 @@ export function validatePromotionConfig(
   throw new Error("unknown_type");
 }
 
+/** ML10: reason key → catalog code (bn text = PROMOTION_CONFIG_MESSAGES). */
+export const PROMOTION_CONFIG_CODES: Record<string, string> = {
+  invalid_id: "commerce.promotionConfigInvalidId",
+  invalid_id_list: "commerce.promotionConfigInvalidIdList",
+  bogo_buy_scope_required: "commerce.promotionConfigBogoBuyScope",
+  bogo_get_scope_required: "commerce.promotionConfigBogoGetScope",
+  bogo_buy_qty: "commerce.promotionConfigBogoBuyQty",
+  bogo_get_qty: "commerce.promotionConfigBogoGetQty",
+  bogo_percent: "commerce.promotionConfigBogoPercent",
+  tiered_scope: "commerce.promotionConfigTieredScope",
+  tiered_category_required: "commerce.promotionConfigTieredCategory",
+  tiered_tiers: "commerce.promotionConfigTieredTiers",
+  tiered_tier_threshold: "commerce.promotionConfigTieredThreshold",
+  tiered_percent: "commerce.promotionConfigTieredPercent",
+  tiered_tier_amount: "commerce.promotionConfigTieredAmount",
+  tiered_tier_qty: "commerce.promotionConfigTieredQty",
+  flash_percent: "commerce.promotionConfigFlashPercent",
+  gift_threshold: "commerce.promotionConfigGiftThreshold",
+  gift_product_required: "commerce.promotionConfigGiftProduct",
+  gift_variant_sku: "commerce.promotionConfigGiftVariantSku",
+  gift_qty: "commerce.promotionConfigGiftQty",
+  min_prior_orders: "commerce.promotionConfigMinPriorOrders",
+  unknown_type: "commerce.promotionConfigUnknownType",
+};
+
 export const PROMOTION_CONFIG_MESSAGES: Record<string, string> = {
   invalid_id: "কনফিগে দেওয়া আইডিটি সঠিক নয়",
   invalid_id_list: "কনফিগের আইডি তালিকাটি সঠিক নয়",

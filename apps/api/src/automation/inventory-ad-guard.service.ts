@@ -1,14 +1,13 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CampaignsService } from "../campaigns/campaigns.service";
 import { EventsService } from "../common/events.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 @Injectable()
 export class InventoryAdGuardService {
@@ -226,13 +225,13 @@ export class InventoryAdGuardService {
    */
   async resumeCampaign(organizationId: string, actorId: string, planId: string) {
     if (!this.campaigns) {
-      throw new BadRequestException("Campaigns service not available");
+      throw badRequest("automation.campaignsServiceNotAvailable");
     }
 
     const plan = await (this.prisma as any).campaignPlan.findFirst({
       where: { id: planId, organizationId },
     });
-    if (!plan) throw new NotFoundException("Campaign plan not found");
+    if (!plan) throw notFound("automation.campaignPlanNotFound");
 
     await this.campaigns.setMetaStatus(organizationId, actorId, planId, "ACTIVE");
 

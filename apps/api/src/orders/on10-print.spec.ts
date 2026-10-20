@@ -1,5 +1,4 @@
 import "reflect-metadata";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { PrintCenterService } from "./print-center.service";
 import { CourierService } from "../courier/courier.service";
 import { OrdersBulkService } from "../fulfillment/orders-bulk.service";
@@ -121,10 +120,9 @@ describe("ON10 print jobs", () => {
 
   it("foreign / nonexistent order ids fail the WHOLE request before any job row", async () => {
     const { center, tables } = setup();
+    // MB4: coded ApiException — the missing ids travel in params.
     await expect(center.createJob("org-1", "actor", { type: "invoices", orderIds: ["ord-a", "ord-foreign"] }))
-      .rejects.toBeInstanceOf(BadRequestException);
-    await expect(center.createJob("org-1", "actor", { type: "invoices", orderIds: ["ord-a", "ord-foreign"] }))
-      .rejects.toThrow(/ord-foreign/);
+      .rejects.toMatchObject({ code: "print.ordersNotFoundInOrg", params: { ids: "ord-foreign" } });
     expect(tables.printJob.rows).toHaveLength(0);
   });
 
@@ -154,7 +152,7 @@ describe("ON10 print jobs", () => {
     const list = await center.listJobs("org-1");
     expect(list.total).toBe(1);
     expect(list.items[0].id).toBe(job.id);
-    await expect(center.getJob("org-2", job.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(center.getJob("org-2", job.id)).rejects.toMatchObject({ code: "print.jobNotFound" });
     expect((await center.listJobs("org-2")).total).toBe(0);
   });
 });
@@ -162,7 +160,7 @@ describe("ON10 print jobs", () => {
 describe("ON10 template settings", () => {
   it("rejects a non-http(s) logo URL and accepts a valid one (audited)", async () => {
     const { center, auditLog } = setup();
-    await expect(center.updateTemplate("org-1", "actor", { logoUrl: "ftp://x/y.png" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(center.updateTemplate("org-1", "actor", { logoUrl: "ftp://x/y.png" })).rejects.toMatchObject({ code: "print.logoUrlMustBeHttp" });
     const saved = await center.updateTemplate("org-1", "actor", { logoUrl: "https://shop.example/logo.png", footerText: "ধন্যবাদ" });
     expect(saved.logoUrl).toBe("https://shop.example/logo.png");
     expect((await center.getTemplate("org-1")).footerText).toBe("ধন্যবাদ");

@@ -1,6 +1,5 @@
 import { VoiceService } from "./voice.service";
 import { buildBanglaVoicePrompt } from "./voice.types";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
 
 describe("VoiceService — Automated COD Confirmation Engine", () => {
   let service: VoiceService;
@@ -109,15 +108,15 @@ describe("VoiceService — Automated COD Confirmation Engine", () => {
   });
 
   describe("Initiate Call", () => {
-    it("throws NotFoundException if order does not exist", async () => {
+    it("throws a coded not-found if order does not exist", async () => {
       prismaMock.order.findFirst.mockResolvedValue(null);
 
       await expect(
         service.initiateCall("org-1", "non-existent", "user-1"),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ code: "voice.orderNotFound" });
     });
 
-    it("throws BadRequestException if order is not COD", async () => {
+    it("throws a coded bad-request if order is not COD", async () => {
       prismaMock.order.findFirst.mockResolvedValue({
         id: "order-1",
         isCod: false,
@@ -125,10 +124,10 @@ describe("VoiceService — Automated COD Confirmation Engine", () => {
 
       await expect(
         service.initiateCall("org-1", "order-1", "user-1"),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toMatchObject({ code: "voice.notCodOrder" });
     });
 
-    it("throws BadRequestException if customer phone is missing", async () => {
+    it("throws a coded bad-request if customer phone is missing", async () => {
       prismaMock.order.findFirst.mockResolvedValue({
         id: "order-1",
         isCod: true,
@@ -138,7 +137,7 @@ describe("VoiceService — Automated COD Confirmation Engine", () => {
 
       await expect(
         service.initiateCall("org-1", "order-1", "user-1"),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toMatchObject({ code: "voice.phoneMissing" });
     });
 
     it("creates an outbound call record and dispatches in mock mode", async () => {
@@ -198,6 +197,48 @@ describe("VoiceService — Automated COD Confirmation Engine", () => {
       expect(xml).toContain('action="https://api.example.com/voice/webhook/gather/call-1"');
       expect(xml).toContain('<Say language="bn-BD" voice="Polly.Nabanita">');
       expect(xml).toContain("অর্ডার কনফার্ম করতে ১ চাপুন");
+    });
+
+    it("D-MB4-9: TwiML honours the configured conversationLanguage (en-US)", async () => {
+      prismaMock.orderVoiceCall.findUnique.mockResolvedValue({
+        id: "call-1",
+        organizationId: "org-1",
+        speechPrompt: "Press 1 to confirm your order",
+      });
+      prismaMock.voiceCallSetting.findUnique.mockResolvedValue({
+        organizationId: "org-1",
+        conversationLanguage: "en-US",
+      });
+
+      const xml = await service.generateTwiml("call-1", "https://api.example.com");
+
+      expect(xml).toContain('<Say language="en-US">');
+      expect(xml).not.toContain('language="bn-BD"');
+      expect(xml).toContain("We did not receive a response. Thank you.");
+    });
+
+    it("D-MB4-9: gather-result TwiML honours conversationLanguage (en-US)", async () => {
+      prismaMock.orderVoiceCall.findUnique.mockResolvedValue({
+        id: "call-1",
+        orderId: "order-1",
+        organizationId: "org-1",
+      });
+      prismaMock.voiceCallSetting.findUnique.mockResolvedValue({
+        organizationId: "org-1",
+        conversationLanguage: "en-US",
+      });
+      prismaMock.orderVoiceCall.update.mockResolvedValue({
+        id: "call-1",
+        status: "completed",
+        outcome: "confirmed",
+        digitsPressed: "1",
+      });
+
+      const result = await service.handleGatherResult("call-1", "1");
+
+      expect(result.outcome).toBe("confirmed");
+      expect(result.xml).toContain('<Say language="en-US">');
+      expect(result.xml).toContain("Your order has been confirmed");
     });
   });
 

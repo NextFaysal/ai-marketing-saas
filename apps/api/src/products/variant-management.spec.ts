@@ -1,4 +1,5 @@
 import { ConflictException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ProductsService } from "./products.service";
 import { InventoryService } from "../inventory/inventory.service";
 
@@ -100,14 +101,14 @@ describe("Sales & Data S6 — variant update", () => {
 
   it("404s: unknown variant, variant of another product, product of another org", async () => {
     const { svc } = setup();
-    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v-nope", { name: "X" })).rejects.toThrow(NotFoundException);
-    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v3", { name: "X" })).rejects.toThrow(NotFoundException);
-    await expect(svc.updateVariant("org-1", "actor-1", "p-other-org", "v-foreign", { name: "X" })).rejects.toThrow(NotFoundException);
+    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v-nope", { name: "X" })).rejects.toThrow(ApiException);
+    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v3", { name: "X" })).rejects.toThrow(ApiException);
+    await expect(svc.updateVariant("org-1", "actor-1", "p-other-org", "v-foreign", { name: "X" })).rejects.toThrow(ApiException);
   });
 
   it("duplicate SKU on the same product conflicts; same SKU on a different product succeeds", async () => {
     const { svc } = setup();
-    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v2", { sku: "SHIRT-RED-M" })).rejects.toThrow(ConflictException);
+    await expect(svc.updateVariant("org-1", "actor-1", "p1", "v2", { sku: "SHIRT-RED-M" })).rejects.toThrow(ApiException);
     const out = await svc.updateVariant("org-1", "actor-1", "p2", "v3", { sku: "SHIRT-RED-M" });
     expect(out.sku).toBe("SHIRT-RED-M");
     // Keeping its own SKU is not a conflict (self excluded).
@@ -148,12 +149,12 @@ describe("Sales & Data S6 — variant delete", () => {
     const out = await svc.deleteVariant("org-1", "actor-1", "p1", "v1");
     expect(out).toEqual({ deleted: true, productId: "p1", variantId: "v1" });
     expect(prisma.productVariant.rows.find((v: any) => v.id === "v1")).toBeUndefined();
-    await expect(svc.deleteVariant("org-1", "actor-1", "p1", "v1")).rejects.toThrow(NotFoundException);
+    await expect(svc.deleteVariant("org-1", "actor-1", "p1", "v1")).rejects.toThrow(ApiException);
   });
 
   it("404s for a variant of another product and a product of another org", async () => {
     const { svc } = setup();
-    await expect(svc.deleteVariant("org-1", "actor-1", "p1", "v3")).rejects.toThrow(NotFoundException);
-    await expect(svc.deleteVariant("org-1", "actor-1", "p-other-org", "v-foreign")).rejects.toThrow(NotFoundException);
+    await expect(svc.deleteVariant("org-1", "actor-1", "p1", "v3")).rejects.toThrow(ApiException);
+    await expect(svc.deleteVariant("org-1", "actor-1", "p-other-org", "v-foreign")).rejects.toThrow(ApiException);
   });
 });

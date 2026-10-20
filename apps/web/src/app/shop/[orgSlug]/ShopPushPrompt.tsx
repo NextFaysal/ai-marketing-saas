@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { shopT, type ShopLocale } from "@/lib/shop-i18n";
 import { API_URL } from "@/lib/api";
 import {
   isPushDismissedRecently,
@@ -31,7 +32,8 @@ import { useBottomLiftPx } from "@/lib/shop-bottom-chrome";
  * small prompt card after `promptDelaySec`. Every failure path
  * is silent — a push problem must never break shopping.
  */
-export function ShopPushPrompt({ orgSlug }: { orgSlug: string }) {
+export function ShopPushPrompt({ orgSlug, locale = "bn" }: { orgSlug: string; locale?: ShopLocale | string }) {
+  const t = shopT(locale);
   const [visible, setVisible] = useState(false);
   // ED9: queue grant + bottom lift (dismissal memory stays in
   // this component, exactly as before — the queue owns none).
@@ -150,7 +152,7 @@ export function ShopPushPrompt({ orgSlug }: { orgSlug: string }) {
       style={lift > 0 ? { bottom: `calc(1.25rem + ${lift}px)` } : undefined}
     >
       <p className="text-sm font-semibold leading-relaxed text-slate-800">
-        অফার ও অর্ডারের আপডেট পেতে নোটিফিকেশন চালু করবেন?
+        {t.shopWidgets.pushText}
       </p>
       <div className="mt-3 flex gap-2">
         <button
@@ -159,16 +161,16 @@ export function ShopPushPrompt({ orgSlug }: { orgSlug: string }) {
           disabled={busy}
           className="flex-1 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
         >
-          চালু করুন
-        </button>
+              {t.shopWidgets.pushEnable}
+            </button>
         <button
           type="button"
           onClick={dismiss}
           disabled={busy}
           className="flex-1 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 disabled:opacity-60"
         >
-          না থাক
-        </button>
+              {t.shopWidgets.pushLater}
+            </button>
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHmac, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { seal, unseal } from "../common/platform-config";
 import { validateWebhookUrl, defaultWebhookLookup, type WebhookLookupFn } from "./webhook-url";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * GC23 — outgoing webhooks.
@@ -230,10 +231,10 @@ export class WebhooksOutgoingService {
 
   private validateEvents(events: unknown): string[] {
     const list = Array.isArray(events) ? events.map((e) => String(e)) : [];
-    if (!list.length) throw new BadRequestException("কমপক্ষে একটি ইভেন্ট বেছে দিন");
+    if (!list.length) throw badRequest("webhooksOutgoing.chooseAtLeastOneEvent");
     for (const e of list) {
       if (!(WEBHOOK_EVENTS as readonly string[]).includes(e)) {
-        throw new BadRequestException(`অজানা ইভেন্ট: ${e} — সমর্থিত: ${WEBHOOK_EVENTS.join(", ")}`);
+        throw badRequest("webhooksOutgoing.unknownEventSupported", { e: e, p2: WEBHOOK_EVENTS.join(", ") });
       }
     }
     return [...new Set(list)];
@@ -243,7 +244,7 @@ export class WebhooksOutgoingService {
     const sub = await (this.prisma as any).webhookSubscription.findFirst({
       where: { id, organizationId },
     });
-    if (!sub) throw new NotFoundException("Webhook subscription not found");
+    if (!sub) throw notFound("webhooksOutgoing.webhookSubscriptionNotFound");
     return sub;
   }
 
@@ -345,7 +346,7 @@ export class WebhooksOutgoingService {
     const d = await (this.prisma as any).webhookDelivery.findFirst({
       where: { id: deliveryId, organizationId },
     });
-    if (!d) throw new NotFoundException("Webhook delivery not found");
+    if (!d) throw notFound("webhooksOutgoing.webhookDeliveryNotFound");
     return d;
   }
 

@@ -1,3 +1,4 @@
+import { analyticsBn, analyticsEn } from "./i18n/analytics";
 /**
  * Profit Intelligence, Unit Economics, and Waterfall Calculations.
  */
@@ -97,29 +98,37 @@ export function computeUnitEconomics(
 
 export type DatePresetKey = "today" | "last7" | "last30" | "thisMonth" | "lastMonth";
 
-export function getDateRangePreset(key: DatePresetKey): { from: string; to: string; label: string } {
+export function getDateRangePreset(key: DatePresetKey, locale: "bn" | "en" = "bn"): { from: string; to: string; label: string } {
+  const LABELS: Record<DatePresetKey, { bn: string; en: string }> = {
+    today: { bn: analyticsBn.piPresetToday, en: analyticsEn.piPresetToday },
+    last7: { bn: analyticsBn.piPresetLast7, en: analyticsEn.piPresetLast7 },
+    last30: { bn: analyticsBn.piPresetLast30, en: analyticsEn.piPresetLast30 },
+    thisMonth: { bn: analyticsBn.piPresetThisMonth, en: analyticsEn.piPresetThisMonth },
+    lastMonth: { bn: analyticsBn.piPresetLastMonth, en: analyticsEn.piPresetLastMonth },
+  };
+  const label = LABELS[key][locale];
   const now = new Date();
   const format = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
   if (key === "today") {
     const dStr = format(now);
-    return { from: dStr, to: dStr, label: "আজকে (Today)" };
+    return { from: dStr, to: dStr, label };
   }
 
   if (key === "last7") {
     const from = new Date(Date.now() - 6 * 86400000);
-    return { from: format(from), to: format(now), label: "গত ৭ দিন (7D)" };
+    return { from: format(from), to: format(now), label };
   }
 
   if (key === "last30") {
     const from = new Date(Date.now() - 29 * 86400000);
-    return { from: format(from), to: format(now), label: "গত ৩০ দিন (30D)" };
+    return { from: format(from), to: format(now), label };
   }
 
   if (key === "thisMonth") {
     const from = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { from: format(from), to: format(now), label: "চলতি মাস (This Month)" };
+    return { from: format(from), to: format(now), label };
   }
 
   // lastMonth
@@ -128,6 +137,6 @@ export function getDateRangePreset(key: DatePresetKey): { from: string; to: stri
   return {
     from: format(firstDayLastMonth),
     to: format(lastDayLastMonth),
-    label: "গত মাস (Last Month)",
+    label,
   };
 }

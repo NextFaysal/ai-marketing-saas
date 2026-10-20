@@ -144,7 +144,7 @@ describe("ON1 list v2", () => {
     const out = await svc.setTags("org-1", "actor", "a", [" vip ", "vip", "urgent"]);
     expect(out.tags).toEqual(["vip", "urgent"]);
     await expect(svc.setTags("org-1", "actor", "a", Array.from({ length: 11 }, (_, i) => `t${i}`))).rejects.toThrow(/১০টি/);
-    await expect(svc.setTags("org-1", "actor", "missing", ["x"])).rejects.toThrow("Order not found in this organization");
+    await expect(svc.setTags("org-1", "actor", "missing", ["x"])).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
     await expect(svc.assignOrder("org-1", "actor", "a", "ghost")).rejects.toThrow(/সক্রিয় সদস্য নন/);
     const assigned = await svc.assignOrder("org-1", "actor", "a", "u-9");
     expect(assigned.assigneeId).toBe("u-9");
@@ -167,7 +167,7 @@ describe("ON1 list v2", () => {
     await expect(svc.createSavedView("org-1", "u-1", { name: "x", queue: "bogus" })).rejects.toThrow(/অজানা কিউ/);
     await expect(svc.createSavedView("org-1", "u-1", { name: " " })).rejects.toThrow(/নাম/);
     expect(await svc.listSavedViews("org-1", "u-2")).toEqual([]);
-    await expect(svc.deleteSavedView("org-1", "u-2", view.id)).rejects.toThrow("Saved view not found");
+    await expect(svc.deleteSavedView("org-1", "u-2", view.id)).rejects.toMatchObject({ code: "orders.savedViewNotFound" });
     expect((await svc.deleteSavedView("org-1", "u-1", view.id)).deleted).toBe(true);
   });
 

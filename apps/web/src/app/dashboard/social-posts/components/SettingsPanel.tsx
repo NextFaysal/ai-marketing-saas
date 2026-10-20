@@ -2,7 +2,9 @@
 import React from "react";
 import type { SocialPageCtx } from "./shared";
 import { PLATFORM_LABELS, AccountStatusPill, HealthPill, AccountAvatar, PlatformDot } from "./shared";
-import { AUTO_DRAFT_TOGGLES } from "@/lib/social-posts-su5";
+import { AUTO_DRAFT_TOGGLES, autoDraftToggleLabel } from "@/lib/social-posts-su5";
+import { fmtDateTime, fmtNumber } from "@repo/contracts";
+import { useLocale } from "@/lib/i18n/provider";
 
 /**
  * SU11 — accounts strip + approval setting + Commerce Auto-Draft settings (Settings & Accounts tab). Pure move from the former single-file page:
@@ -38,86 +40,87 @@ function PlatformChip({ platform }: { platform?: string | null }) {
 const TOGGLE_CLS = "h-4 w-4 shrink-0 accent-[var(--brand-from)]";
 
 export function SettingsPanel({ c }: { c: SocialPageCtx }) {
+  const { t, locale } = useLocale();
   const { accounts, autoDraftForm, autoDraftLoaded, busy, connectOAuth, connectSelectedPages, disconnectAccount, discoverPages, discovered, inputCls, metaToken, metaAppSource, setMetaAppSource, onTokenChange, pageSelected, platformModes, requireApproval, requireApprovalLoaded, saveApprovalSetting, saveAutoDraftSettings, selectYouTubeChannel, setAutoDraftForm, setPageSelected, setShowConnect, setYoutubePick, showConnect, youtubePick, approvalTwoStep, saveApprovalTwoStep, accountHealth, failureGroups, checkAccountHealth, retryFailedPost, posts, requireClientApproval, saveRequireClientApproval, telegramTokenInput, setTelegramTokenInput, telegramChannelInput, setTelegramChannelInput, showTelegramConnect, setShowTelegramConnect, connectTelegram, gbpPick, setGbpPick, selectGoogleBusinessLocation, } = c;
   return (
 <>
       {/* Accounts strip — SD7: section card */}
       <div className="soc-section-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">সংযুক্ত অ্যাকাউন্ট ({accounts.length})</div>
+          <div className="font-semibold">{t("social.stConnectedAccounts", { count: fmtNumber(locale, accounts.length) })}</div>
           <div className="flex flex-wrap gap-2">
             <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => setShowConnect((s) => !s)}>
-              Meta অ্যাকাউন্ট যুক্ত করুন
+              {t("social.stConnectMeta")}
             </button>
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.tiktok.configured === false}
-              title={platformModes && !platformModes.tiktok.configured ? "TikTok app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              title={platformModes && !platformModes.tiktok.configured ? t("social.stNotConfigured", { app: "TikTok" }) : undefined}
               onClick={() => connectOAuth("tiktok")}>
-              {busy === "connect-tiktok" ? "TikTok-এ যাচ্ছে..." : "🎵 TikTok যুক্ত করুন"}
+              {busy === "connect-tiktok" ? t("social.stGoingTiktok") : t("social.stConnectTiktok")}
             </button>
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.youtube.configured === false}
-              title={platformModes && !platformModes.youtube.configured ? "Google app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              title={platformModes && !platformModes.youtube.configured ? t("social.stNotConfigured", { app: "Google" }) : undefined}
               onClick={() => connectOAuth("youtube")}>
-              {busy === "connect-youtube" ? "Google-এ যাচ্ছে..." : "▶️ YouTube যুক্ত করুন"}
+              {busy === "connect-youtube" ? t("social.stGoingGoogle") : t("social.stConnectYoutube")}
             </button>
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => setShowTelegramConnect((s) => !s)}>
-              ✈️ Telegram Channel যুক্ত করুন
+              {t("social.stConnectTelegram")}
             </button>
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.threads?.configured === false}
-              title={platformModes && !platformModes.threads?.configured ? "Threads app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              title={platformModes && !platformModes.threads?.configured ? t("social.stNotConfigured", { app: "Threads" }) : undefined}
               onClick={() => connectOAuth("threads")}>
-              {busy === "connect-threads" ? "Threads-এ যাচ্ছে..." : "🧵 Threads যুক্ত করুন"}
+              {busy === "connect-threads" ? t("social.stGoingThreads") : t("social.stConnectThreads")}
             </button>
             <button className="btn-secondary btn-sm disabled:opacity-50" disabled={busy !== "" || platformModes?.googleBusinessProfile?.configured === false}
-              title={platformModes && !platformModes.googleBusinessProfile?.configured ? "Google app এখনো configure করা হয়নি — Platform Operator-এর সাথে যোগাযোগ করুন।" : undefined}
+              title={platformModes && !platformModes.googleBusinessProfile?.configured ? t("social.stNotConfigured", { app: "Google" }) : undefined}
               onClick={() => connectOAuth("google_business_profile")}>
-              {busy === "connect-google_business_profile" ? "Google-এ যাচ্ছে..." : "📍 Google Business Profile যুক্ত করুন"}
+              {busy === "connect-google_business_profile" ? t("social.stGoingGoogle") : t("social.stConnectGbp")}
             </button>
           </div>
         </div>
         {showTelegramConnect ? (
           <div className="space-y-3 border-t border-slate-100 pt-4">
-            <div className="text-sm font-semibold">✈️ Telegram Channel যুক্ত করুন (নিজের Bot দিয়ে)</div>
+            <div className="text-sm font-semibold">{t("social.stTelegramTitle")}</div>
             <ol className="list-decimal space-y-1 pl-5 text-xs text-slate-500">
-              <li>Telegram-এ <strong>@BotFather</strong>-এ গিয়ে একটি Bot বানান — সেখান থেকে পাওয়া <strong>Bot Token</strong>টি নিচে দিন।</li>
-              <li>আপনার Channel-এর Settings → Administrators-এ এই Bot-টিকে <strong>Admin</strong> করুন (Post Messages অনুমতিসহ)।</li>
-              <li>Channel-এর Username (@সহ) দিন — Private Channel হলে numeric Chat ID দিন।</li>
+              <li>{t("social.stTelegramStep1")}</li>
+              <li>{t("social.stTelegramStep2")}</li>
+              <li>{t("social.stTelegramStep3")}</li>
             </ol>
-            <p className="text-xs text-slate-400">যুক্ত করার আগে যাচাই করা হয়: Bot Token ঠিক আছে কিনা, Channel পাওয়া যাচ্ছে কিনা, আর Bot-টি Channel-এর Admin কিনা। যেকোনো ধাপ ব্যর্থ হলে Telegram-এর নিজের বার্তাসহ কারণ দেখানো হবে এবং কিছুই সেভ হবে না। Tokenটি encrypted অবস্থায় সেভ থাকে — কখনো দেখানো হয় না।</p>
+            <p className="text-xs text-slate-400">{t("social.stTelegramVerifyNote")}</p>
             <form
               onSubmit={(e) => { e.preventDefault(); void connectTelegram(); }}
               className="flex flex-wrap items-end gap-2"
             >
-              <label className="block min-w-[220px] flex-1 text-sm">Bot Token (BotFather থেকে)
+              <label className="block min-w-[220px] flex-1 text-sm">{t("social.stBotToken")}
                 <input type="password" className={inputCls} value={telegramTokenInput} onChange={(e) => setTelegramTokenInput(e.target.value)} placeholder="123456789:AA…" autoComplete="off" />
               </label>
               <label className="block min-w-[180px] text-sm">Channel Username / Chat ID
                 <input type="text" className={inputCls} value={telegramChannelInput} onChange={(e) => setTelegramChannelInput(e.target.value)} placeholder="@mychannel" autoComplete="off" />
               </label>
               <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
-                {busy === "connect-telegram" ? "যাচাই করে যুক্ত হচ্ছে..." : "যাচাই করে যুক্ত করুন"}
+                {busy === "connect-telegram" ? t("social.stVerifying") : t("social.stVerifyConnect")}
               </button>
             </form>
           </div>
         ) : null}
         {platformModes && (!platformModes.tiktok.configured || !platformModes.youtube.configured || !platformModes.threads?.configured) ? (
           <p className="text-xs text-slate-400">
-            {!platformModes.tiktok.configured ? "TikTok: Operator এখনো TikTok app configure করেননি — Connect করা যাচ্ছে না। " : null}
-            {!platformModes.youtube.configured ? "YouTube: Operator এখনো Google app configure করেননি — Connect করা যাচ্ছে না।" : null}
-            {!platformModes.threads?.configured ? "Threads: Operator এখনো Threads app configure করেননি — প্ল্যাটফর্ম app দিয়ে Connect করা যাচ্ছে না (নিজের Threads app দিয়ে করা যায়: কানেক্ট সেন্টার → নিজের অ্যাপ)।" : null}
+            {!platformModes.tiktok.configured ? t("social.stTiktokNotConfigured") : null}
+            {!platformModes.youtube.configured ? t("social.stYoutubeNotConfigured") : null}
+            {!platformModes.threads?.configured ? t("social.stThreadsNotConfigured") : null}
           </p>
         ) : null}
         {platformModes?.googleBusinessProfile && !platformModes.googleBusinessProfile.apiAccessApproved ? (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
-            📍 Google Business Profile: <strong>Google Business Profile API access is not yet approved for this platform&apos;s Google project</strong> — প্ল্যাটফর্মের Google প্রজেক্টের জন্য GBP API-এর অনুমোদন এখনো পাওয়া যায়নি। Location যুক্ত করা গেলেও, Operator অনুমোদন ঘোষণা না করা পর্যন্ত কোনো GBP পোস্ট প্রকাশ করা যাবে না — প্রকাশের চেষ্টা এই কারণ দেখিয়েই ব্যর্থ হবে, কিছুই Google-এ যাবে না।
+            {t("social.stGbpNote")}
           </p>
         ) : null}
         {youtubePick ? (
           <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
-            <div className="text-sm font-semibold text-indigo-900">▶️ কোন YouTube Channelটি যুক্ত করবেন?</div>
-            <p className="text-xs text-indigo-700">আপনার Google অ্যাকাউন্টে একাধিক Channel আছে — যেটিতে ভিডিও আপলোড হবে সেটি বেছে নিন। (এই পছন্দের লিংকটি ১০ মিনিটের মধ্যে মেয়াদোত্তীর্ণ হবে।)</p>
+            <div className="text-sm font-semibold text-indigo-900">{t("social.stYtPickTitle")}</div>
+            <p className="text-xs text-indigo-700">{t("social.stYtPickDesc")}</p>
             {youtubePick.channels.length === 0 ? (
               <>
-                <p className="text-xs text-indigo-700">Channel তালিকা লোড হচ্ছে…</p>
+                <p className="text-xs text-indigo-700">{t("social.stChannelLoading")}</p>
                 {/* SD8: skeleton rows on the picker's EXISTING loading
                     display (empty channel list renders the loading
                     text above) — no new loading state. */}
@@ -131,35 +134,35 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                 <AccountAvatar name={c.title} pictureUrl={c.pictureUrl} platform="youtube" size="lg" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.title}</span>
                 <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => selectYouTubeChannel(c.id)}>
-                  {busy === `yt-pick-${c.id}` ? "যুক্ত হচ্ছে..." : "এই Channel যুক্ত করুন"}
+                  {busy === `yt-pick-${c.id}` ? t("social.stConnecting") : t("social.stConnectThisChannel")}
                 </button>
               </div>
             ))}
-            <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setYoutubePick(null)}>বাতিল করুন</button>
+            <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setYoutubePick(null)}>{t("social.stCancel")}</button>
           </div>
         ) : null}
         {gbpPick ? (
           <div className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
-            <div className="text-sm font-semibold text-indigo-900">📍 কোন Google Business Profile Locationটি যুক্ত করবেন?</div>
-            <p className="text-xs text-indigo-700">আপনার Google অ্যাকাউন্টে একাধিক Location আছে — যেটিতে পোস্ট যাবে সেটি বেছে নিন। (এই পছন্দের লিংকটি ১০ মিনিটের মধ্যে মেয়াদোত্তীর্ণ হবে।)</p>
+            <div className="text-sm font-semibold text-indigo-900">{t("social.stGbpPickTitle")}</div>
+            <p className="text-xs text-indigo-700">{t("social.stGbpPickDesc")}</p>
             {gbpPick.locations.length === 0 ? (
-              <p className="text-xs text-indigo-700">Location তালিকা লোড হচ্ছে…</p>
+              <p className="text-xs text-indigo-700">{t("social.stLocationLoading")}</p>
             ) : gbpPick.locations.map((l) => (
               <div key={l.id} className="flex items-center gap-3 rounded-lg bg-white p-2.5">
                 <AccountAvatar name={l.title} platform="google_business_profile" size="lg" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{l.title}{l.accountLabel ? <span className="text-xs text-slate-400"> — {l.accountLabel}</span> : null}</span>
                 <button className="btn-primary btn-sm disabled:opacity-50" disabled={busy !== ""} onClick={() => selectGoogleBusinessLocation(l.id)}>
-                  {busy === `gbp-pick-${l.id}` ? "যুক্ত হচ্ছে..." : "এই Location যুক্ত করুন"}
+                  {busy === `gbp-pick-${l.id}` ? t("social.stConnecting") : t("social.stConnectThisLocation")}
                 </button>
               </div>
             ))}
-            <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setGbpPick(null)}>বাতিল করুন</button>
+            <button className="text-xs font-semibold text-slate-500 underline" disabled={busy !== ""} onClick={() => setGbpPick(null)}>{t("social.stCancel")}</button>
           </div>
         ) : null}
         {accounts.length === 0 ? (
           <div className="soc-empty">
             <span className="soc-empty-icon">🔗</span>
-            <p className="text-sm text-slate-500">এখনো কোনো Social অ্যাকাউন্ট যুক্ত নেই। উপরের বোতামে Meta Access Token দিয়ে Facebook Page যুক্ত করুন — Page-এর সাথে Instagram থাকলে সেটিও যুক্ত হবে।</p>
+            <p className="text-sm text-slate-500">{t("social.stNoAccounts")}</p>
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -175,33 +178,33 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                     <AccountStatusPill status={a.status} />
                     {health ? <HealthPill health={health.health} /> : null}
                   </div>
-                  {health?.healthCheckedAt ? <div className="mt-0.5 text-[11px] text-slate-400">শেষ যাচাই: {new Date(health.healthCheckedAt).toLocaleString("bn-BD")}</div> : null}
+                  {health?.healthCheckedAt ? <div className="mt-0.5 text-[11px] text-slate-400">{t("social.stLastChecked", { date: fmtDateTime(locale, health.healthCheckedAt) })}</div> : null}
                   {(a.platform === "instagram" || a.platform === "telegram" || a.platform === "threads") && a.username ? <div className="text-xs text-slate-500">@{a.username}</div> : null}
                   {a.platform === "tiktok" ? (
                     <div className="mt-1 text-xs text-slate-500">
                       {platformModes?.tiktok.audited
-                        ? "Direct post mode — app audit সম্পন্ন, পোস্ট সরাসরি প্রকাশিত হয়।"
-                        : "Inbox mode — audit বাকি: নির্ধারিত সময়ে ভিডিও Creator-এর TikTok inbox-এ পৌঁছাবে, তাকে app থেকে post সম্পূর্ণ করতে হবে।"}
+                        ? t("social.stTiktokDirect")
+                        : t("social.stTiktokInbox")}
                     </div>
                   ) : null}
                   {a.platform === "youtube" ? (
                     <div className="mt-1 text-xs text-slate-500">
-                      আপলোড YouTube-এ <strong>Private</strong> হিসেবে যায় — Google app যাচাই সম্পন্ন হলে Public করা যাবে। ভিডিও Channel-এর YouTube Studio-তে দেখা যাবে।
+                      {t("social.stYoutubeNote")}
                     </div>
                   ) : null}
                   {a.platform === "telegram" ? (
                     <div className="mt-1 text-xs text-slate-500">
-                      পোস্ট Bot-এর মাধ্যমে Channel-এ যায় — Bot-টির Admin মর্যাদা তুলে নিলে প্রকাশ ব্যর্থ হবে (Telegram-এর বার্তাই দেখানো হবে)। সৎ সীমা: Telegram Bot API পোস্টের Views/Engagement দেয় না, তাই এই অ্যাকাউন্টের Insights পাওয়া যায় না।
+                      {t("social.stTelegramNote")}
                     </div>
                   ) : null}
                   {a.platform === "threads" ? (
                     <div className="mt-1 text-xs text-slate-500">
-                      পোস্ট Threads-এ সরাসরি প্রকাশিত হয় (Container flow)। সৎ সীমা: প্রোডাকশনে প্রকাশের জন্য Operator-এর Threads app-এ Meta-র App Review (Advanced Access) লাগতে পারে — না থাকলে Meta শুধু app-role থাকা অ্যাকাউন্টে অনুমতি দেয়, আর প্রত্যাখ্যান এলে Meta-র আসল বার্তাটাই দেখা যাবে।
+                      {t("social.stThreadsNote")}
                     </div>
                   ) : null}
                   {a.platform === "google_business_profile" ? (
                     <div className="mt-1 text-xs text-slate-500">
-                      পোস্ট এই Location-এর Google Business Profile-এ Local Post হিসেবে যায় (লেখা + সর্বোচ্চ একটি ছবি + লিংক)। সৎ সীমা: প্রকাশের জন্য প্ল্যাটফর্মের Google প্রজেক্টে Google-এর GBP API access অনুমোদন লাগে{platformModes?.googleBusinessProfile && !platformModes.googleBusinessProfile.apiAccessApproved ? " — সেটি এখনো অনুমোদিত নয়, তাই প্রকাশ এখন এই কারণ দেখিয়ে ব্যর্থ হবে" : ""}। Review পড়া/উত্তর দেওয়া এই সংস্করণে নেই।
+                      {t("social.stGbpAccountNote")}{platformModes?.googleBusinessProfile && !platformModes.googleBusinessProfile.apiAccessApproved ? t("social.stGbpNotApprovedSuffix") : ""}{t("social.stGbpNoteEnd")}
                     </div>
                   ) : null}
                   {a.lastError ? (
@@ -212,7 +215,7 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                   {a.status === "connected" ? (
                     <div className="mt-3 rounded-lg bg-red-50/60 px-2.5 py-2 ring-1 ring-inset ring-red-100">
                       <button className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-xs font-semibold text-red-600 disabled:opacity-50" disabled={busy !== ""} onClick={() => disconnectAccount(a)}>
-                        {busy === `disconnect-${a.id}` ? "বিচ্ছিন্ন হচ্ছে..." : "বিচ্ছিন্ন করুন"}
+                        {busy === `disconnect-${a.id}` ? t("social.stDisconnecting") : t("social.stDisconnect")}
                       </button>
                     </div>
                   ) : null}
@@ -226,24 +229,24 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
         {showConnect ? (
           <div className="space-y-3 border-t border-slate-100 pt-4">
             <form onSubmit={discoverPages} className="flex flex-wrap items-end gap-2">
-              <label className="block min-w-0 flex-1 text-sm">Meta Access Token (Page পোস্টের অনুমতিসহ)
-                <input type="password" className={inputCls} value={metaToken} onChange={(e) => onTokenChange(e.target.value)} placeholder="Token পেস্ট করুন" autoComplete="off" />
+              <label className="block min-w-0 flex-1 text-sm">{t("social.stMetaTokenLabel")}
+                <input type="password" className={inputCls} value={metaToken} onChange={(e) => onTokenChange(e.target.value)} placeholder={t("social.stTokenPlaceholder")} autoComplete="off" />
               </label>
               <button className="btn-primary disabled:opacity-50" disabled={busy !== ""}>
-                {busy === "discover" ? "খোঁজা হচ্ছে..." : "🔍 Page খুঁজুন"}
+                {busy === "discover" ? t("social.stSearching") : t("social.stFindPages")}
               </button>
             </form>
-            <label className="block text-sm">এই Tokenটি কোন অ্যাপের?
+            <label className="block text-sm">{t("social.stTokenAppLabel")}
               <select className={inputCls} value={metaAppSource} onChange={(e) => setMetaAppSource(e.target.value as "platform" | "own")}>
-                <option value="platform">প্ল্যাটফর্মের Meta অ্যাপের Token</option>
-                <option value="own">আমার নিজের Meta অ্যাপের Token (Connect Center-এ আগে সেভ করা)</option>
+                <option value="platform">{t("social.stTokenPlatform")}</option>
+                <option value="own">{t("social.stTokenOwn")}</option>
               </select>
             </label>
-            <p className="text-xs text-slate-400">Tokenটি শুধু যাচাই ও যুক্ত করার কাজে ব্যবহৃত হয়। একটি Page বেছে নিলে তার সাথে যুক্ত Instagram অ্যাকাউন্টটিও স্বয়ংক্রিয়ভাবে যুক্ত হবে। অ্যাপ-বাছাইটি অ্যাকাউন্টে সেভ থাকে — নিজের অ্যাপ বেছে নিলে পরের Token নবায়ন/হিলিং আপনার নিজের অ্যাপ দিয়েই হবে।</p>
+            <p className="text-xs text-slate-400">{t("social.stTokenNote")}</p>
             {discovered ? (
               discovered.length === 0 ? (
                 <div className="soc-empty-sm">
-                  <p className="text-sm text-slate-500">এই Token-এর অধীনে কোনো Page পাওয়া যায়নি।</p>
+                  <p className="text-sm text-slate-500">{t("social.stNoPages")}</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -254,23 +257,23 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                         {p.pictureUrl ? <img src={p.pictureUrl} alt="" className="h-8 w-8 rounded-full object-cover" /> : null}
                         <span className="font-medium">{p.name}</span>
                         <span className="inline-flex items-center gap-1.5 rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-medium text-slate-600"><PlatformDot platform="meta_page" />Facebook Page</span>
-                        {p.alreadyConnectedPage ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">আগে থেকেই কানেক্টেড</span> : null}
+                        {p.alreadyConnectedPage ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">{t("social.stAlreadyConnected")}</span> : null}
                       </label>
                       <div className="ml-7 mt-1.5 border-l-2 border-slate-200 pl-3 text-sm">
                         {p.instagram ? (
                           <span className="flex flex-wrap items-center gap-2">
                             {p.instagram.pictureUrl ? <img src={p.instagram.pictureUrl} alt="" className="h-6 w-6 rounded-full object-cover" /> : null}
                             <span>Instagram{p.instagram.username ? ` — @${p.instagram.username}` : ""}</span>
-                            {p.alreadyConnectedInstagram ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">আগে থেকেই কানেক্টেড</span> : null}
+                            {p.alreadyConnectedInstagram ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-medium text-green-700">{t("social.stAlreadyConnected")}</span> : null}
                           </span>
                         ) : (
-                          <span className="text-slate-400">Instagram যুক্ত নেই</span>
+                          <span className="text-slate-400">{t("social.stInstagramNone")}</span>
                         )}
                       </div>
                     </div>
                   ))}
                   <button className="btn-primary disabled:opacity-50" disabled={busy !== ""} onClick={connectSelectedPages}>
-                    {busy === "connect" ? "যুক্ত হচ্ছে..." : "বেছে নেওয়া Page যুক্ত করুন"}
+                    {busy === "connect" ? t("social.stConnecting") : t("social.stConnectPages")}
                   </button>
                 </div>
               )
@@ -281,42 +284,42 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
 
       {/* SP7 approval setting — SD7: section card, one toggle shape */}
       <div className="soc-section-card">
-        <div className="font-semibold">পোস্ট অনুমোদন ব্যবস্থা</div>
+        <div className="font-semibold">{t("social.stApprovalTitle")}</div>
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" className={TOGGLE_CLS} checked={requireApproval} disabled={busy !== "" || !requireApprovalLoaded}
             onChange={(e) => saveApprovalSetting(e.target.checked)} />
-          <span>প্রকাশ / শিডিউলের আগে অনুমোদন বাধ্যতামূলক</span>
-          {busy === "approval-setting" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
+          <span>{t("social.stApprovalRequired")}</span>
+          {busy === "approval-setting" ? <span className="text-xs text-slate-400">{t("social.stSaving")}</span> : null}
         </label>
-        <p className="text-xs text-slate-500">চালু থাকলে: যারা OWNER/ADMIN নন, তাদের পোস্ট প্রকাশ বা শিডিউলের আগে অনুমোদন লাগবে। OWNER/ADMIN-এর নিজের পোস্ট স্বয়ংক্রিয়ভাবে অনুমোদিত। প্রত্যাখ্যান করতে হলে কারণ লিখতে হবে।</p>
+        <p className="text-xs text-slate-500">{t("social.stApprovalHelp")}</p>
         {/* SU9: optional second step — Manager first, then Owner. */}
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" className={TOGGLE_CLS} checked={approvalTwoStep} disabled={busy !== "" || !requireApprovalLoaded}
             onChange={(e) => saveApprovalTwoStep(e.target.checked)} />
-          <span>দুই-ধাপের অনুমোদন (Manager → Owner)</span>
-          {busy === "approval-two-step" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
+          <span>{t("social.stTwoStep")}</span>
+          {busy === "approval-two-step" ? <span className="text-xs text-slate-400">{t("social.stSaving")}</span> : null}
         </label>
-        <p className="text-xs text-slate-500">চালু থাকলে অনুমোদন দুই ধাপে হয়: প্রথমে Manager ধাপের অনুমোদন, তারপর চূড়ান্ত অনুমোদন। বন্ধ থাকলে আগের এক-ধাপের নিয়মই থাকে।</p>
+        <p className="text-xs text-slate-500">{t("social.stTwoStepHelp")}</p>
         {/* SN2: optional third gate — the client's own sign-off via share link. */}
         <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" className={TOGGLE_CLS} checked={requireClientApproval} disabled={busy !== "" || !requireApprovalLoaded}
             onChange={(e) => saveRequireClientApproval(e.target.checked)} />
-          <span>ক্লায়েন্ট অনুমোদন বাধ্যতামূলক (শেয়ার লিংক)</span>
-          {busy === "client-approval-requirement" ? <span className="text-xs text-slate-400">সংরক্ষণ হচ্ছে...</span> : null}
+          <span>{t("social.stClientApproval")}</span>
+          {busy === "client-approval-requirement" ? <span className="text-xs text-slate-400">{t("social.stSaving")}</span> : null}
         </label>
-        <p className="text-xs text-slate-500">চালু থাকলে: শেয়ার লিংকে ক্লায়েন্টের সর্বশেষ সিদ্ধান্ত "অনুমোদিত" না হলে পোস্টটি publish/schedule হবে না — "ক্লায়েন্ট অনুমোদন বাকি" বলে আটকাবে। বন্ধ থাকলে ক্লায়েন্ট review শুধু রেকর্ড হিসেবে থাকে, কোনো gate নয়।</p>
+        <p className="text-xs text-slate-500">{t("social.stClientApprovalHelp")}</p>
       </div>
 
       {/* SU5: Commerce Auto-Draft settings — SD7: section card */}
       <div className="soc-section-card">
         <div className="font-semibold">🤖 Commerce Auto-Draft</div>
-        <p className="text-xs text-slate-500">এগুলো শুধু draft তৈরি করে — publish হয় মানুষের অনুমোদনে।</p>
+        <p className="text-xs text-slate-500">{t("social.stAutoDraftHelp")}</p>
         <div className="space-y-2">
-          {AUTO_DRAFT_TOGGLES.map((t) => (
-            <label key={t.key} className="flex cursor-pointer items-center gap-2 text-sm">
-              <input type="checkbox" className={TOGGLE_CLS} checked={autoDraftForm[t.key]} disabled={busy !== "" || !autoDraftLoaded}
-                onChange={(e) => setAutoDraftForm((f) => ({ ...f, [t.key]: e.target.checked }))} />
-              <span>{t.label}</span>
+          {AUTO_DRAFT_TOGGLES.map((tg) => (
+            <label key={tg.key} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className={TOGGLE_CLS} checked={autoDraftForm[tg.key]} disabled={busy !== "" || !autoDraftLoaded}
+                onChange={(e) => setAutoDraftForm((f) => ({ ...f, [tg.key]: e.target.checked }))} />
+              <span>{autoDraftToggleLabel(tg.key, locale)}</span>
             </label>
           ))}
         </div>
@@ -326,24 +329,24 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
             onChange={(e) => setAutoDraftForm((f) => ({ ...f, rssFeedUrl: e.target.value }))}
             placeholder="https://example.com/feed.xml" />
         </label>
-        <p className="text-xs text-slate-500">এই উৎসগুলো (RSS feed ও নিজের YouTube চ্যানেল) থেকে Draft তৈরি হতে Automations-এ “Social Syndication Sweep” job template-টি চালু থাকতে হবে। দৈনিক cap commerce auto-draft-এর সঙ্গে মিলিয়ে হিসাব হয় — এগুলো কখনো নিজে থেকে Publish হয় না, শুধু Draft তৈরি হয়।</p>
+        <p className="text-xs text-slate-500">{t("social.stSyndicationNote")}</p>
         <div className="flex flex-wrap items-end gap-3">
-          <label className="block text-sm">প্রতিদিন সর্বোচ্চ draft সংখ্যা (১–২০)
+          <label className="block text-sm">{t("social.stDailyCap")}
             <input type="number" min={1} max={20} className="input mt-1 w-28" value={autoDraftForm.maxDraftsPerDay}
               disabled={busy !== "" || !autoDraftLoaded}
               onChange={(e) => setAutoDraftForm((f) => ({ ...f, maxDraftsPerDay: Number(e.target.value) }))} />
           </label>
-          <label className="block min-w-[220px] flex-1 text-sm">কোন অ্যাকাউন্টে draft যাবে
+          <label className="block min-w-[220px] flex-1 text-sm">{t("social.stDraftAccount")}
             <select className={inputCls} value={autoDraftForm.socialAccountId} disabled={busy !== "" || !autoDraftLoaded}
               onChange={(e) => setAutoDraftForm((f) => ({ ...f, socialAccountId: e.target.value }))}>
-              <option value="">প্রথম connected Facebook Page</option>
+              <option value="">{t("social.stFirstFbPage")}</option>
               {accounts.filter((a) => a.platform === "meta_page").map((a) => (
                 <option key={a.id} value={a.id}>{a.name} ({PLATFORM_LABELS[a.platform] ?? a.platform})</option>
               ))}
             </select>
           </label>
           <button type="button" className="btn-primary disabled:opacity-50" disabled={busy !== "" || !autoDraftLoaded} onClick={saveAutoDraftSettings}>
-            {busy === "auto-draft-settings" ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
+            {busy === "auto-draft-settings" ? t("social.stSaving") : t("social.stSave")}
           </button>
         </div>
       </div>
@@ -351,12 +354,12 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
       {/* SU10: Health & Failures center — SD7: section card, avatar
           identity on health rows, failure groups as ring cards */}
       <div className="soc-section-card">
-        <div className="font-semibold">🩺 অ্যাকাউন্টের স্বাস্থ্য ও ব্যর্থতা (Health & Failures)</div>
+        <div className="font-semibold">{t("social.stHealthTitle")}</div>
         <div className="space-y-2">
-          <div className="text-sm font-medium">অ্যাকাউন্টের স্বাস্থ্য</div>
+          <div className="text-sm font-medium">{t("social.stAccountHealth")}</div>
           {accountHealth.length === 0 ? (
             <div className="soc-empty-sm">
-              <p className="text-sm text-slate-500">কোনো অ্যাকাউন্টের স্বাস্থ্য তথ্য পাওয়া যায়নি।</p>
+              <p className="text-sm text-slate-500">{t("social.stNoHealth")}</p>
             </div>
           ) : accountHealth.map((h) => {
             const acc = accounts.find((a) => a.id === h.id);
@@ -366,11 +369,11 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
                 <span className="font-medium">{h.name}</span>
                 <PlatformChip platform={h.platform} />
                 <HealthPill health={h.health} />
-                {h.healthCheckedAt ? <span className="text-[11px] text-slate-400">শেষ যাচাই: {new Date(h.healthCheckedAt).toLocaleString("bn-BD")}</span> : null}
+                {h.healthCheckedAt ? <span className="text-[11px] text-slate-400">{t("social.stLastChecked", { date: fmtDateTime(locale, h.healthCheckedAt) })}</span> : null}
                 {h.lastError ? <span className="min-w-0 flex-1 break-words text-xs text-red-600">{h.lastError}</span> : null}
                 {acc ? (
                   <button type="button" className="btn-secondary btn-sm ml-auto disabled:opacity-50" disabled={busy !== ""} onClick={() => checkAccountHealth(acc)}>
-                    {busy === `health-${h.id}` ? "যাচাই হচ্ছে..." : "স্বাস্থ্য যাচাই"}
+                    {busy === `health-${h.id}` ? t("social.stChecking") : t("social.stCheckHealth")}
                   </button>
                 ) : null}
               </div>
@@ -378,26 +381,26 @@ export function SettingsPanel({ c }: { c: SocialPageCtx }) {
           })}
         </div>
         <div className="space-y-2 border-t border-slate-100 pt-3">
-          <div className="text-sm font-medium">ব্যর্থ পোস্ট (Failure Center)</div>
+          <div className="text-sm font-medium">{t("social.stFailureCenter")}</div>
           {failureGroups.length === 0 ? (
             <div className="soc-empty-sm">
-              <p className="text-sm text-slate-500">এখন কোনো ব্যর্থ পোস্ট নেই — সব পোস্ট ঠিকঠাক আছে।</p>
+              <p className="text-sm text-slate-500">{t("social.stNoFailures")}</p>
             </div>
           ) : failureGroups.map((g) => (
             <div key={g.signature} className="space-y-1.5 rounded-xl bg-red-50/60 px-3 py-2.5 ring-1 ring-inset ring-red-100">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="min-w-0 flex-1 break-words font-medium text-red-800">{g.signature}</span>
-                <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">{g.count.toLocaleString("bn-BD")}টি পোস্ট</span>
-                <span className="text-[11px] text-slate-400">সর্বশেষ: {new Date(g.latestAt).toLocaleString("bn-BD")}</span>
+                <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">{t("social.stFailedPosts", { count: fmtNumber(locale, g.count) })}</span>
+                <span className="text-[11px] text-slate-400">{t("social.stLatest", { date: fmtDateTime(locale, g.latestAt) })}</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {g.postIds.map((postId) => {
                   const p = posts.find((x) => x.id === postId);
                   return (
                     <span key={postId} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2 py-1 text-xs text-slate-600 ring-1 ring-inset ring-red-100">
-                      <span className="max-w-[220px] truncate" title={p?.caption ?? postId}>{p?.caption || "(ক্যাপশন নেই)"}</span>
+                      <span className="max-w-[220px] truncate" title={p?.caption ?? postId}>{p?.caption || t("social.stNoCaption")}</span>
                       <button type="button" className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200 transition hover:bg-red-100 disabled:opacity-50" disabled={busy !== ""} onClick={() => retryFailedPost(postId)}>
-                        {busy === `retry-${postId}` ? "Retry হচ্ছে..." : "↻ Retry"}
+                        {busy === `retry-${postId}` ? t("social.stRetrying") : "↻ Retry"}
                       </button>
                     </span>
                   );

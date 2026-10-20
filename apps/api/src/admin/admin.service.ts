@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { existsSync, readdirSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
@@ -34,6 +34,7 @@ import { SocialPublishService } from "../social/social-publish.service";
 import { AdsService } from "../ads/ads.service";
 import { publicMediaServingEnabled } from "../storage/media-url";
 import { SLUG_TOMBSTONE_COOLDOWN_DAYS } from "../common/slug-availability";
+import { ApiException, badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 const ADMIN_TIERS = ["SUPER", "SUPPORT", "FINANCE"] as const;
 
@@ -68,7 +69,7 @@ export class AdminService {
   }
 
   private requireReason(reason?: string) {
-    if (!reason?.trim()) throw new BadRequestException("A reason is required for this admin action (it is stored in the audit trail)");
+    if (!reason?.trim()) throw badRequest("admin.aReasonIsRequiredForThis");
     return reason.trim();
   }
 
@@ -185,7 +186,7 @@ export class AdminService {
       where: { id },
       select: { id: true, email: true, name: true, isSuperAdmin: true, adminTier: true, status: true, lastLoginAt: true, createdAt: true, totpEnabled: true },
     });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw notFound("admin.userNotFound");
     const memberships = await (this.prisma as any).membership.findMany({ where: { userId: id } });
     const orgs = await (this.prisma as any).organization.findMany({ where: { id: { in: memberships.map((m: any) => m.organizationId) } } });
     const auditTrail = await (this.prisma as any).auditLog.findMany({ where: { userId: id }, orderBy: { createdAt: "desc" }, take: 20 });
@@ -197,12 +198,12 @@ export class AdminService {
   }
 
   async setUserStatus(actor: any, tier: string, id: string, status: string, reason: string, ip?: string) {
-    if (!["ACTIVE", "SUSPENDED", "DELETED"].includes(status)) throw new BadRequestException("status must be ACTIVE, SUSPENDED or DELETED");
+    if (!["ACTIVE", "SUSPENDED", "DELETED"].includes(status)) throw badRequest("admin.statusMustBeActiveSuspendedOr");
     const why = this.requireReason(reason);
     const user = await (this.prisma as any).user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException("User not found");
-    if (user.id === actor.id) throw new ForbiddenException("You cannot change your own account status");
-    if (user.isSuperAdmin && tier !== "SUPER") throw new ForbiddenException("Changing an admin's status requires the SUPER tier");
+    if (!user) throw notFound("admin.userNotFound");
+    if (user.id === actor.id) throw forbidden("admin.youCannotChangeYourOwnAccount");
+    if (user.isSuperAdmin && tier !== "SUPER") throw forbidden("admin.changingAnAdminSStatusRequires");
     const from = user.status;
     const updated = await (this.prisma as any).user.update({ where: { id }, data: { status } });
     await this.logAdmin(actor, "user_status", "User", id, { from, to: status, reason: why }, ip);
@@ -210,11 +211,11 @@ export class AdminService {
   }
 
   async grantAdmin(actor: any, id: string, tier: string, reason: string, ip?: string) {
-    if (!(ADMIN_TIERS as readonly string[]).includes(tier)) throw new BadRequestException("tier must be SUPER, SUPPORT or FINANCE");
+    if (!(ADMIN_TIERS as readonly string[]).includes(tier)) throw badRequest("admin.tierMustBeSuperSupportOr");
     const why = this.requireReason(reason);
     const user = await (this.prisma as any).user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException("User not found");
-    if (user.status !== "ACTIVE") throw new BadRequestException("Only an ACTIVE user can be granted admin");
+    if (!user) throw notFound("admin.userNotFound");
+    if (user.status !== "ACTIVE") throw badRequest("admin.onlyAnActiveUserCanBe");
     await (this.prisma as any).user.update({ where: { id }, data: { isSuperAdmin: true, adminTier: tier } });
     await this.logAdmin(actor, "grant", "User", id, { tier, reason: why }, ip);
     return { id, isSuperAdmin: true, adminTier: tier };
@@ -223,15 +224,15 @@ export class AdminService {
   async revokeAdmin(actor: any, id: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const user = await (this.prisma as any).user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException("User not found");
-    if (user.id === actor.id) throw new ForbiddenException("You cannot revoke your own admin access — ask another SUPER admin or use the CLI");
+    if (!user) throw notFound("admin.userNotFound");
+    if (user.id === actor.id) throw forbidden("admin.youCannotRevokeYourOwnAdmin");
     if (user.adminTier === "SUPER" || (!user.adminTier && user.isSuperAdmin)) {
       // Only genuine SUPER-tier admins count toward the last-admin
       // protection — SUPPORT/FINANCE admins cannot grant SUPER back.
       const supers = await (this.prisma as any).user.count({
         where: { isSuperAdmin: true, status: "ACTIVE", OR: [{ adminTier: "SUPER" }, { adminTier: null }] },
       });
-      if (supers <= 1) throw new ForbiddenException("This is the last active super admin and cannot be revoked");
+      if (supers <= 1) throw forbidden("admin.thisIsTheLastActiveSuper");
     }
     await (this.prisma as any).user.update({ where: { id }, data: { isSuperAdmin: false, adminTier: null, tokenVersion: (user.tokenVersion ?? 0) + 1 } });
     await this.logAdmin(actor, "revoke", "User", id, { reason: why }, ip);
@@ -240,7 +241,7 @@ export class AdminService {
 
   async forceReset(actor: any, id: string, ip?: string) {
     const user = await (this.prisma as any).user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw notFound("admin.userNotFound");
     const token = issueAdminToken({ purpose: "pwd-reset", sub: id, tv: user.tokenVersion ?? 0 }, 60);
     await this.logAdmin(actor, "force_reset_issued", "User", id, {}, ip);
     return { resetPath: `/reset-password?token=${token}`, expiresInMinutes: 60, note: "Hand this link to the user through a verified channel. It works once — using it revokes all existing sessions." };
@@ -267,7 +268,7 @@ export class AdminService {
 
   async orgDetail(id: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const memberships = await (this.prisma as any).membership.findMany({ where: { organizationId: id } });
     const users = await (this.prisma as any).user.findMany({
       where: { id: { in: memberships.map((m: any) => m.userId) } },
@@ -321,15 +322,15 @@ export class AdminService {
    * admin audit pattern (logAdmin).
    */
   async reviewOrgVerification(actor: any, id: string, decision: string, note?: string, ip?: string) {
-    if (!["approve", "reject"].includes(decision)) throw new BadRequestException("decision must be approve or reject");
+    if (!["approve", "reject"].includes(decision)) throw badRequest("admin.decisionMustBeApproveOrReject2");
     const org = await (this.prisma as any).organization.findUnique({ where: { id } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     if (org.verificationStatus !== "pending") {
-      throw new BadRequestException("শুধু জমা পড়া (pending) আবেদনই রিভিউ করা যায়");
+      throw badRequest("admin.onlySubmittedPendingApplicationsCanBe");
     }
     const trimmedNote = typeof note === "string" ? note.trim() : "";
     if (decision === "reject" && !trimmedNote) {
-      throw new BadRequestException("Reject করলে কারণ/নোট লিখতে হবে — মার্চেন্ট সেটি দেখে ঠিক করে আবার জমা দেবেন");
+      throw badRequest("admin.whenRejectingAReasonNoteMust");
     }
     const from = org.verificationStatus;
     const to = decision === "approve" ? "verified" : "rejected";
@@ -346,10 +347,10 @@ export class AdminService {
   }
 
   async setOrgStatus(actor: any, id: string, status: string, reason: string, ip?: string) {
-    if (!["ACTIVE", "SUSPENDED", "DELETED"].includes(status)) throw new BadRequestException("status must be ACTIVE, SUSPENDED or DELETED");
+    if (!["ACTIVE", "SUSPENDED", "DELETED"].includes(status)) throw badRequest("admin.statusMustBeActiveSuspendedOr");
     const why = this.requireReason(reason);
     const org = await (this.prisma as any).organization.findUnique({ where: { id } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const from = org.status;
     await (this.prisma as any).organization.update({ where: { id }, data: { status } });
     await this.logAdmin(actor, "org_status", "Organization", id, { from, to: status, reason: why }, ip);
@@ -368,8 +369,8 @@ export class AdminService {
   }
 
   async addNote(actor: any, targetType: string, targetId: string, body: string) {
-    if (!["user", "organization"].includes(targetType)) throw new BadRequestException("targetType must be user or organization");
-    if (!body?.trim()) throw new BadRequestException("Note body is required");
+    if (!["user", "organization"].includes(targetType)) throw badRequest("admin.targettypeMustBeUserOrOrganization");
+    if (!body?.trim()) throw badRequest("admin.noteBodyIsRequired");
     return (this.prisma as any).adminNote.create({ data: { targetType, targetId, body: body.trim(), authorId: actor.id } });
   }
 
@@ -452,58 +453,58 @@ export class AdminService {
     for (const [key, value] of Object.entries(patch ?? {})) {
       if (value === undefined) continue; // transformed DTOs carry unset fields as undefined
       if (!(AdminService.SETTING_KEYS as readonly string[]).includes(key)) {
-        throw new BadRequestException(`Unknown setting key: ${key}`);
+        throw badRequest("admin.unknownSettingKey", { key: key });
       }
       if (key === "maintenanceMode" || key === "signupOpen") {
-        if (typeof value !== "boolean") throw new BadRequestException(`${key} must be a boolean`);
+        if (typeof value !== "boolean") throw badRequest("admin.mustBeABoolean", { key: key });
       }
-      if (key === "supportContact" && typeof value !== "string") throw new BadRequestException("supportContact must be a string");
+      if (key === "supportContact" && typeof value !== "string") throw badRequest("admin.supportcontactMustBeAString");
       if (key === "killSwitches") {
         const ks = value as any;
         if (!ks || typeof ks !== "object" || !Array.isArray(ks.aiDisabledOrgIds) || typeof ks.broadcastsPaused !== "boolean") {
-          throw new BadRequestException("killSwitches must be { aiDisabledOrgIds: string[], broadcastsPaused: boolean }");
+          throw badRequest("admin.killswitchesMustBeAidisabledorgidsStringBroadcastspaused");
         }
       }
       if (key === "planPrices" || key === "planYearlyPrices") {
         const pp = value as any;
-        if (!pp || typeof pp !== "object") throw new BadRequestException(`${key} must be an object`);
+        if (!pp || typeof pp !== "object") throw badRequest("admin.mustBeAnObject", { key: key });
         for (const tier of PLAN_TIERS) {
           if (pp[tier] !== undefined && (typeof pp[tier] !== "number" || pp[tier] < 0)) {
-            throw new BadRequestException(`${key}.${tier} must be a non-negative number (minor units)`);
+            throw badRequest("admin.mustBeANonNegativeNumber", { key: key, tier: tier });
           }
         }
       }
       if (key === "planLimits") {
         const pl = value as any;
-        if (!pl || typeof pl !== "object" || Array.isArray(pl)) throw new BadRequestException("planLimits must be an object");
+        if (!pl || typeof pl !== "object" || Array.isArray(pl)) throw badRequest("admin.planlimitsMustBeAnObject");
         for (const tier of PLAN_TIERS) {
           if (pl[tier] === undefined) continue;
           const tierVal = pl[tier];
           if (!tierVal || typeof tierVal !== "object" || Array.isArray(tierVal)) {
-            throw new BadRequestException(`planLimits.${tier} must be an object`);
+            throw badRequest("admin.planlimitsMustBeAnObject2", { tier: tier });
           }
           for (const field of PLAN_LIMIT_FIELDS) {
             if (tierVal[field] !== undefined && (!Number.isInteger(tierVal[field]) || tierVal[field] < 0)) {
-              throw new BadRequestException(`planLimits.${tier}.${field} must be a non-negative integer`);
+              throw badRequest("admin.planlimitsMustBeANonNegative", { tier: tier, field: field });
             }
           }
         }
       }
       if (key === "planFlagDefaults") {
         const pfd = value as any;
-        if (!pfd || typeof pfd !== "object" || Array.isArray(pfd)) throw new BadRequestException("planFlagDefaults must be an object");
+        if (!pfd || typeof pfd !== "object" || Array.isArray(pfd)) throw badRequest("admin.planflagdefaultsMustBeAnObject");
         for (const [flag, perTier] of Object.entries(pfd)) {
           if (!(KNOWN_FLAG_KEYS as readonly string[]).includes(flag)) {
-            throw new BadRequestException(`planFlagDefaults: unknown flag "${flag}" (known: ${KNOWN_FLAG_KEYS.join(", ")})`);
+            throw badRequest("admin.planflagdefaultsUnknownFlagKnown", { flag: flag, p2: KNOWN_FLAG_KEYS.join(", ") });
           }
           if (!perTier || typeof perTier !== "object" || Array.isArray(perTier)) {
-            throw new BadRequestException(`planFlagDefaults.${flag} must be an object of tier -> boolean`);
+            throw badRequest("admin.planflagdefaultsMustBeAnObjectOf", { flag: flag });
           }
           for (const [tier, v] of Object.entries(perTier as Record<string, unknown>)) {
             if (!(PLAN_TIERS as readonly string[]).includes(tier)) {
-              throw new BadRequestException(`planFlagDefaults.${flag}: unknown tier "${tier}"`);
+              throw badRequest("admin.planflagdefaultsUnknownTier", { flag: flag, tier: tier });
             }
-            if (typeof v !== "boolean") throw new BadRequestException(`planFlagDefaults.${flag}.${tier} must be a boolean`);
+            if (typeof v !== "boolean") throw badRequest("admin.planflagdefaultsMustBeABoolean", { flag: flag, tier: tier });
           }
         }
       }
@@ -511,18 +512,18 @@ export class AdminService {
         if (value !== null) {
           const w = value as any;
           if (!w || typeof w !== "object" || !w.startsAt || !w.endsAt || Number.isNaN(Date.parse(w.startsAt)) || Number.isNaN(Date.parse(w.endsAt))) {
-            throw new BadRequestException("maintenanceWindow must be null or { startsAt, endsAt, message?, hardLockout? } with valid ISO dates");
+            throw badRequest("admin.maintenancewindowMustBeNullOrStartsat");
           }
           if (new Date(w.endsAt).getTime() <= new Date(w.startsAt).getTime()) {
-            throw new BadRequestException("maintenanceWindow.endsAt must be after startsAt");
+            throw badRequest("admin.maintenancewindowEndsatMustBeAfterStartsat");
           }
-          if (w.message !== undefined && typeof w.message !== "string") throw new BadRequestException("maintenanceWindow.message must be a string");
-          if (w.hardLockout !== undefined && typeof w.hardLockout !== "boolean") throw new BadRequestException("maintenanceWindow.hardLockout must be a boolean");
+          if (w.message !== undefined && typeof w.message !== "string") throw badRequest("admin.maintenancewindowMessageMustBeAString");
+          if (w.hardLockout !== undefined && typeof w.hardLockout !== "boolean") throw badRequest("admin.maintenancewindowHardlockoutMustBeABoolean");
         }
       }
       if (key === "auditRetentionDays") {
         if (typeof value !== "number" || value < 30 || value > 3650) {
-          throw new BadRequestException("auditRetentionDays must be a number between 30 and 3650");
+          throw badRequest("admin.auditretentiondaysMustBeANumberBetween");
         }
       }
       if (key === "maxOrgsPerUser") {
@@ -531,7 +532,7 @@ export class AdminService {
         // "nobody may create orgs", so the unlimited state has
         // exactly one spelling.
         if (value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 1)) {
-          throw new BadRequestException("maxOrgsPerUser must be null (no limit) or an integer >= 1");
+          throw badRequest("admin.maxorgsperuserMustBeNullNoLimit");
         }
       }
       await (this.prisma as any).systemSetting.upsert({
@@ -555,7 +556,7 @@ export class AdminService {
   async clearPlanLimits(actor: any, tier: string, reason?: string, ip?: string) {
     const why = this.requireReason(reason);
     if (!(PLAN_TIERS as readonly string[]).includes(tier)) {
-      throw new BadRequestException(`Unknown plan tier "${tier}" (known: ${PLAN_TIERS.join(", ")})`);
+      throw badRequest("admin.unknownPlanTierKnown", { tier: tier, p2: PLAN_TIERS.join(", ") });
     }
     const storedRaw = await platformSetting(this.prisma as any, "planLimits");
     const stored: Record<string, unknown> = storedRaw && typeof storedRaw === "object" && !Array.isArray(storedRaw)
@@ -638,15 +639,15 @@ export class AdminService {
     return (this.prisma as any).announcement.findMany({ orderBy: { createdAt: "desc" }, take: 50 });
   }
   async createAnnouncement(actor: any, dto: { title: string; body: string; startsAt?: string; endsAt?: string; audience?: string }, ip?: string) {
-    if (!dto.title?.trim() || !dto.body?.trim()) throw new BadRequestException("Announcement title and body are required");
-    if (dto.startsAt && Number.isNaN(Date.parse(dto.startsAt))) throw new BadRequestException("startsAt must be a valid ISO date");
-    if (dto.endsAt && Number.isNaN(Date.parse(dto.endsAt))) throw new BadRequestException("endsAt must be a valid ISO date");
+    if (!dto.title?.trim() || !dto.body?.trim()) throw badRequest("admin.announcementTitleAndBodyAreRequired");
+    if (dto.startsAt && Number.isNaN(Date.parse(dto.startsAt))) throw badRequest("admin.startsatMustBeAValidIso");
+    if (dto.endsAt && Number.isNaN(Date.parse(dto.endsAt))) throw badRequest("admin.endsatMustBeAValidIso");
     if (dto.startsAt && dto.endsAt && new Date(dto.endsAt).getTime() <= new Date(dto.startsAt).getTime()) {
-      throw new BadRequestException("endsAt must be after startsAt");
+      throw badRequest("admin.endsatMustBeAfterStartsat");
     }
     const audience = dto.audience ?? "all";
     if (!AdminService.ANNOUNCEMENT_AUDIENCES.includes(audience)) {
-      throw new BadRequestException(`audience must be one of ${AdminService.ANNOUNCEMENT_AUDIENCES.join(", ")}`);
+      throw badRequest("admin.audienceMustBeOneOf", { p1: AdminService.ANNOUNCEMENT_AUDIENCES.join(", ") });
     }
     const row = await (this.prisma as any).announcement.create({
       data: { title: dto.title.trim(), body: dto.body.trim(), audience, startsAt: dto.startsAt ? new Date(dto.startsAt) : null, endsAt: dto.endsAt ? new Date(dto.endsAt) : null, active: true, createdById: actor.id },
@@ -656,14 +657,14 @@ export class AdminService {
   }
   async setAnnouncementActive(actor: any, id: string, active: boolean, ip?: string) {
     const row = await (this.prisma as any).announcement.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Announcement not found");
+    if (!row) throw notFound("admin.announcementNotFound");
     await (this.prisma as any).announcement.update({ where: { id }, data: { active } });
     await this.logAdmin(actor, active ? "announcement_activated" : "announcement_deactivated", "Announcement", id, {}, ip);
     return { id, active };
   }
   async deleteAnnouncement(actor: any, id: string, ip?: string) {
     const row = await (this.prisma as any).announcement.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Announcement not found");
+    if (!row) throw notFound("admin.announcementNotFound");
     await (this.prisma as any).announcement.delete({ where: { id } });
     await this.logAdmin(actor, "announcement_deleted", "Announcement", id, { title: row.title }, ip);
     return { id, deleted: true };
@@ -676,14 +677,14 @@ export class AdminService {
 
   async getOrgFlags(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const rows = await (this.prisma as any).orgFeatureFlag.findMany({ where: { organizationId } });
     return { knownFlags: AdminService.KNOWN_FLAGS, flags: rows };
   }
   async setOrgFlag(actor: any, organizationId: string, key: string, enabled: boolean, ip?: string) {
-    if (!key?.trim()) throw new BadRequestException("Flag key is required");
+    if (!key?.trim()) throw badRequest("admin.flagKeyIsRequired");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const row = await (this.prisma as any).orgFeatureFlag.upsert({
       where: { organizationId_key: { organizationId, key } },
       create: { organizationId, key, enabled }, update: { enabled },
@@ -694,12 +695,12 @@ export class AdminService {
 
   async updateOrgLimits(actor: any, organizationId: string, patch: { aiDailyLimitOverride?: number | null; broadcastCapOverride?: number | null; seatLimit?: number | null; whiteLabel?: boolean }, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const data: Record<string, unknown> = {};
     for (const field of ["aiDailyLimitOverride", "broadcastCapOverride", "seatLimit"] as const) {
       if (patch[field] !== undefined) {
         const v = patch[field];
-        if (v !== null && (!Number.isInteger(v) || (v as number) < 0)) throw new BadRequestException(`${field} must be a non-negative integer or null`);
+        if (v !== null && (!Number.isInteger(v) || (v as number) < 0)) throw badRequest("admin.mustBeANonNegativeInteger", { field: field });
         data[field] = v;
       }
     }
@@ -707,7 +708,7 @@ export class AdminService {
     // path (the only admin org PATCH) — boolean-only, audited
     // through logAdmin in the before/after below like the limits.
     if (patch.whiteLabel !== undefined) {
-      if (typeof patch.whiteLabel !== "boolean") throw new BadRequestException("whiteLabel must be a boolean");
+      if (typeof patch.whiteLabel !== "boolean") throw badRequest("admin.whitelabelMustBeABoolean");
       data.whiteLabel = patch.whiteLabel;
     }
     const before = { aiDailyLimitOverride: org.aiDailyLimitOverride ?? null, broadcastCapOverride: org.broadcastCapOverride ?? null, seatLimit: org.seatLimit ?? null, whiteLabel: org.whiteLabel === true };
@@ -726,20 +727,20 @@ export class AdminService {
    * every other org-level admin write. */
   async updateOrgTags(actor: any, organizationId: string, rawTags: unknown, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
-    if (!Array.isArray(rawTags)) throw new BadRequestException("tags must be an array of strings");
+    if (!org) throw notFound("admin.organizationNotFound");
+    if (!Array.isArray(rawTags)) throw badRequest("admin.tagsMustBeAnArrayOf");
     const seen = new Set<string>();
     const tags: string[] = [];
     for (const raw of rawTags as unknown[]) {
-      if (typeof raw !== "string") throw new BadRequestException("Every tag must be a string");
+      if (typeof raw !== "string") throw badRequest("admin.everyTagMustBeAString");
       const t = raw.trim();
       if (!t) continue;
-      if (t.length > 40) throw new BadRequestException("Each tag may be at most 40 characters");
+      if (t.length > 40) throw badRequest("admin.eachTagMayBeAtMost");
       if (seen.has(t)) continue;
       seen.add(t);
       tags.push(t);
     }
-    if (tags.length > 20) throw new BadRequestException("An organization may carry at most 20 tags");
+    if (tags.length > 20) throw badRequest("admin.anOrganizationMayCarryAtMost");
     const before = Array.isArray(org.tags) ? org.tags : [];
     await (this.prisma as any).organization.update({ where: { id: organizationId }, data: { tags } });
     await this.logAdmin(actor, "org_tags_updated", "Organization", organizationId, { before, after: tags }, ip);
@@ -959,7 +960,7 @@ export class AdminService {
 
   private requireOpsService(svc: unknown, label: string) {
     if (!svc) {
-      throw new BadRequestException(`${label} এই deployment-এ উপলব্ধ নয় (service wired নয়) — কোনো retry করা হয়নি।`);
+      throw badRequest("admin.isNotAvailableInThisDeployment", { label: label });
     }
   }
 
@@ -968,7 +969,7 @@ export class AdminService {
     this.requireOpsService(this.socialHealth, "Social retry service");
     const p = this.prisma as any;
     const post = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
-    if (!post) throw new NotFoundException("Social post not found");
+    if (!post) throw notFound("admin.socialPostNotFound");
     const before = { status: post.status };
     try {
       const result = await this.socialHealth!.retryPost(post.organizationId, actor.id, postId);
@@ -992,9 +993,9 @@ export class AdminService {
     this.requireOpsService(this.socialPublish, "Social publish service");
     const p = this.prisma as any;
     const post = await p.socialPost.findUnique({ where: { id: postId } }).catch(() => null);
-    if (!post) throw new NotFoundException("Social post not found");
+    if (!post) throw notFound("admin.socialPostNotFound");
     if (post.status !== "publishing") {
-      throw new BadRequestException(`এই পোস্টটি Publishing অবস্থায় নেই (এখন: "${post.status}") — stuck recovery শুধু Publishing-এ আটকে থাকা পোস্টের জন্য।`);
+      throw badRequest("admin.thisPostIsNotInPublishing", { postStatus: post.status });
     }
     const before = { status: post.status };
     try {
@@ -1023,7 +1024,7 @@ export class AdminService {
     this.requireOpsService(this.socialHealth, "Social health service");
     const p = this.prisma as any;
     const account = await p.socialAccount.findUnique({ where: { id: accountId } }).catch(() => null);
-    if (!account) throw new NotFoundException("Social account not found");
+    if (!account) throw notFound("admin.socialAccountNotFound");
     const before = { status: account.status };
     try {
       const result = await this.socialHealth!.checkAccountHealth(account.organizationId, actor.id, accountId);
@@ -1046,10 +1047,10 @@ export class AdminService {
     this.requireOpsService(this.ads, "Ads sync service");
     const p = this.prisma as any;
     const account = await p.adAccount.findUnique({ where: { id: accountId } }).catch(() => null);
-    if (!account) throw new NotFoundException("Ad account not found");
+    if (!account) throw notFound("admin.adAccountNotFound");
     const platform = String(account.platform ?? "");
     if (!["meta", "google", "tiktok"].includes(platform)) {
-      throw new BadRequestException(`এই Platform-এর (${platform || "অজানা"}) কোনো insights sync পথ নেই — Sync retry করা যাবে না।`);
+      throw badRequest("admin.thisPlatformHasNoInsightsSync", { p1: platform || "অজানা" });
     }
     const before = { platform, updatedAt: account.updatedAt ?? null };
     try {
@@ -1470,7 +1471,7 @@ export class AdminService {
   // ---------------- Support view (metadata-first; content is a separate audited act) ----------------
   async supportView(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const [orders, conversations] = await Promise.all([
       (this.prisma as any).order.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 10 }),
       (this.prisma as any).channelConversation.findMany({ where: { organizationId }, orderBy: { updatedAt: "desc" }, take: 10 }).catch(() => []),
@@ -1490,7 +1491,7 @@ export class AdminService {
   async supportConversationMessages(actor: any, organizationId: string, conversationId: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const conv = await (this.prisma as any).channelConversation.findFirst({ where: { id: conversationId, organizationId } }).catch(() => null);
-    if (!conv) throw new NotFoundException("Conversation not found in this organization");
+    if (!conv) throw notFound("admin.conversationNotFoundInThisOrganization");
     await this.logAdmin(actor, "support_content_access", "ChannelConversation", conversationId, { organizationId, reason: why }, ip);
     const messages = await (this.prisma as any).channelMessage.findMany({ where: { conversationId }, orderBy: { createdAt: "asc" }, take: 50 });
     return { conversationId, messages: (messages as any[]).map((m) => ({ direction: m.direction, body: m.body ?? m.text ?? null, createdAt: m.createdAt })) };
@@ -1514,9 +1515,9 @@ export class AdminService {
   async updateSubscription(actor: any, organizationId: string, dto: { plan?: string; status?: string; currentPeriodEnd?: string | null }, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
-    if (dto.plan !== undefined && !AdminService.PLANS.includes(dto.plan)) throw new BadRequestException(`plan must be one of ${AdminService.PLANS.join(", ")}`);
-    if (dto.status !== undefined && !AdminService.SUB_STATUSES.includes(dto.status)) throw new BadRequestException(`status must be one of ${AdminService.SUB_STATUSES.join(", ")}`);
+    if (!org) throw notFound("admin.organizationNotFound");
+    if (dto.plan !== undefined && !AdminService.PLANS.includes(dto.plan)) throw badRequest("admin.planMustBeOneOf", { p1: AdminService.PLANS.join(", ") });
+    if (dto.status !== undefined && !AdminService.SUB_STATUSES.includes(dto.status)) throw badRequest("admin.statusMustBeOneOf", { p1: AdminService.SUB_STATUSES.join(", ") });
     const existing = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
     const data: Record<string, unknown> = {};
     if (dto.plan !== undefined) data.plan = dto.plan;
@@ -1563,10 +1564,10 @@ export class AdminService {
   async pauseOrgSubscription(actor: any, organizationId: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
-    if (!sub) throw new BadRequestException("Organization has no subscription to pause");
-    if (sub.status === "CANCELLED") throw new BadRequestException("A CANCELLED subscription cannot be paused");
+    if (!sub) throw badRequest("admin.organizationHasNoSubscriptionToPause");
+    if (sub.status === "CANCELLED") throw badRequest("admin.aCancelledSubscriptionCannotBePaused");
     if (sub.pausedAt) return { ...sub, alreadyPaused: true };
     const row = await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: new Date() } });
     await this.logAdmin(actor, "subscription_paused", "Organization", organizationId, { subscriptionId: sub.id, plan: sub.plan, status: sub.status, reason: why }, ip);
@@ -1576,9 +1577,9 @@ export class AdminService {
   async resumeOrgSubscription(actor: any, organizationId: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const sub = await (this.prisma as any).subscription.findFirst({ where: { organizationId }, orderBy: { createdAt: "desc" } });
-    if (!sub) throw new BadRequestException("Organization has no subscription to resume");
+    if (!sub) throw badRequest("admin.organizationHasNoSubscriptionToResume");
     if (!sub.pausedAt) return { ...sub, alreadyResumed: true };
     const row = await (this.prisma as any).subscription.update({ where: { id: sub.id }, data: { pausedAt: null } });
     await this.logAdmin(actor, "subscription_resumed", "Organization", organizationId, { subscriptionId: sub.id, plan: sub.plan, status: sub.status, reason: why }, ip);
@@ -1587,11 +1588,11 @@ export class AdminService {
 
   async recordPayment(actor: any, dto: { organizationId: string; amountMinor: string | number; currency?: string; method: string; reference?: string; periodStart?: string; periodEnd?: string; note?: string }, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: dto.organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
-    if (!AdminService.PAYMENT_METHODS.includes(dto.method)) throw new BadRequestException(`method must be one of ${AdminService.PAYMENT_METHODS.join(", ")}`);
+    if (!org) throw notFound("admin.organizationNotFound");
+    if (!AdminService.PAYMENT_METHODS.includes(dto.method)) throw badRequest("admin.methodMustBeOneOf", { p1: AdminService.PAYMENT_METHODS.join(", ") });
     let amount: bigint;
-    try { amount = BigInt(dto.amountMinor); } catch { throw new BadRequestException("amountMinor must be an integer in minor units"); }
-    if (amount <= 0n) throw new BadRequestException("Payment amount must be positive");
+    try { amount = BigInt(dto.amountMinor); } catch { throw badRequest("admin.amountminorMustBeAnIntegerIn"); }
+    if (amount <= 0n) throw badRequest("admin.paymentAmountMustBePositive");
     const priorPayments = (await (this.prisma as any).saasPayment.count?.({ where: { organizationId: dto.organizationId } })?.catch?.(() => 1)) ?? 1;
     const row = await (this.prisma as any).saasPayment.create({
       data: {
@@ -1626,7 +1627,7 @@ export class AdminService {
   async deletePayment(actor: any, id: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const row = await (this.prisma as any).saasPayment.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Payment not found");
+    if (!row) throw notFound("admin.paymentNotFound");
     await this.logAdmin(actor, "payment_deleted", "SaasPayment", id, { snapshot: { ...row, amountMinor: row.amountMinor.toString() }, reason: why }, ip);
     await (this.prisma as any).saasPayment.delete({ where: { id } });
     return { id, deleted: true };
@@ -1642,19 +1643,19 @@ export class AdminService {
   async refundPayment(actor: any, id: string, dto: { amountMinor?: string | number; reason: string; revokeAccess?: boolean }, ip?: string) {
     const why = this.requireReason(dto.reason);
     const row = await (this.prisma as any).saasPayment.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Payment not found");
+    if (!row) throw notFound("admin.paymentNotFound");
     const gross = BigInt(row.amountMinor ?? 0);
     const already = BigInt(row.refundedMinor ?? 0);
     const remaining = gross - already;
-    if (remaining <= 0n) throw new BadRequestException("This payment has already been fully refunded");
+    if (remaining <= 0n) throw badRequest("admin.thisPaymentHasAlreadyBeenFully");
     let amount: bigint;
     if (dto.amountMinor !== undefined && dto.amountMinor !== null && String(dto.amountMinor) !== "") {
-      try { amount = BigInt(dto.amountMinor); } catch { throw new BadRequestException("amountMinor must be an integer in minor units"); }
+      try { amount = BigInt(dto.amountMinor); } catch { throw badRequest("admin.amountminorMustBeAnIntegerIn"); }
     } else {
       amount = remaining;
     }
-    if (amount <= 0n) throw new BadRequestException("Refund amount must be positive");
-    if (amount > remaining) throw new BadRequestException(`Refund exceeds the remaining refundable amount (${remaining.toString()} minor)`);
+    if (amount <= 0n) throw badRequest("admin.refundAmountMustBePositive");
+    if (amount > remaining) throw badRequest("admin.refundExceedsTheRemainingRefundableAmount", { p1: remaining.toString() });
     const updated = await (this.prisma as any).saasPayment.update({
       where: { id },
       data: { refundedMinor: already + amount, refundedAt: new Date(), refundReason: why },
@@ -1691,7 +1692,7 @@ export class AdminService {
 
   private async paymentWithOrg(id: string) {
     const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id } });
-    if (!payment) throw new NotFoundException("Payment not found");
+    if (!payment) throw notFound("admin.paymentNotFound");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: payment.organizationId } }).catch(() => null);
     return { payment, org };
   }
@@ -1719,7 +1720,7 @@ export class AdminService {
     const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId: payment.organizationId } })?.catch?.(() => null) ?? null;
     const extra: string[] = Array.isArray(profile?.billingEmails) ? profile.billingEmails : [];
     const recipients = [...new Set([...(memberships as any[]).map((m) => m.user?.email).filter(Boolean), ...extra])] as string[];
-    if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found for this organization");
+    if (recipients.length === 0) throw badRequest("admin.noOwnerAdminEmailRecipientsFound");
     const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
     const gross = BigInt(payment.amountMinor ?? 0);
     const refunded = BigInt(payment.refundedMinor ?? 0);
@@ -1869,14 +1870,14 @@ export class AdminService {
   private async actorTotpSecret(actor: any): Promise<string> {
     const { decryptJson } = await import("../integrations/crypto");
     const me = await (this.prisma as any).user.findUnique({ where: { id: actor.id } });
-    if (!me?.totpSecretEncrypted) throw new BadRequestException("No two-factor enrolment in progress. Start enrolment first.");
+    if (!me?.totpSecretEncrypted) throw badRequest("admin.noTwoFactorEnrolmentInProgress");
     return (decryptJson(me.totpSecretEncrypted) as { secret: string }).secret;
   }
 
   async totpConfirm(actor: any, code: string, ip?: string) {
     const { verifyTotp } = await import("../common/totp");
     const secret = await this.actorTotpSecret(actor);
-    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect — check the time on your device and try again");
+    if (!verifyTotp(secret, code)) throw badRequest("admin.thatCodeIsIncorrectCheckThe");
     await (this.prisma as any).user.update({ where: { id: actor.id }, data: { totpEnabled: true } });
     await this.logAdmin(actor, "totp_enabled", "User", actor.id, {}, ip);
     return { totpEnabled: true };
@@ -1885,7 +1886,7 @@ export class AdminService {
   async totpDisable(actor: any, code: string, ip?: string) {
     const { verifyTotp } = await import("../common/totp");
     const secret = await this.actorTotpSecret(actor);
-    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect");
+    if (!verifyTotp(secret, code)) throw badRequest("admin.thatCodeIsIncorrect");
     await (this.prisma as any).user.update({ where: { id: actor.id }, data: { totpEnabled: false, totpSecretEncrypted: null } });
     await this.logAdmin(actor, "totp_disabled", "User", actor.id, {}, ip);
     return { totpEnabled: false, note: "Two-factor is off. A SUPER admin cannot make changes until it is enabled again (reads and enrolment still work)." };
@@ -1937,7 +1938,7 @@ export class AdminService {
   async revokeSessions(actor: any, targetUserId: string, reason: string, ip?: string) {
     const why = this.requireReason(reason);
     const target = await (this.prisma as any).user.findUnique({ where: { id: targetUserId } });
-    if (!target) throw new NotFoundException("User not found");
+    if (!target) throw notFound("admin.userNotFound");
     const next = (target.tokenVersion ?? 0) + 1;
     await (this.prisma as any).user.update({ where: { id: targetUserId }, data: { tokenVersion: next } });
     await this.logAdmin(actor, "sessions_revoked", "User", targetUserId, { reason: why, self: targetUserId === actor.id }, ip);
@@ -1969,11 +1970,11 @@ export class AdminService {
 
   async createPlatformBlueprint(actor: any, dto: any, ip?: string) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.create) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    if (!table?.create) throw badRequest("admin.theCampaignblueprintTableWasNotFound");
     const key = String(dto?.key ?? "").trim();
-    if (!key) throw new BadRequestException("Blueprint key আবশ্যক।");
+    if (!key) throw badRequest("admin.blueprintKeyIsRequired");
     const dupe = await table.findFirst({ where: { key, organizationId: null } });
-    if (dupe) throw new BadRequestException(`Platform blueprint key "${key}" ইতিমধ্যে আছে।`);
+    if (dupe) throw badRequest("admin.aPlatformBlueprintWithKeyAlready", { key: key });
     const row = await table.create({
       data: {
         key, name: String(dto.name ?? key).slice(0, 200), objective: String(dto.objective ?? "OUTCOME_SALES"),
@@ -1988,9 +1989,9 @@ export class AdminService {
 
   async updatePlatformBlueprint(actor: any, id: string, dto: any, ip?: string) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.findFirst) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    if (!table?.findFirst) throw badRequest("admin.theCampaignblueprintTableWasNotFound");
     const row = await table.findFirst({ where: { id } });
-    if (!row || row.organizationId !== null) throw new NotFoundException("Platform blueprint not found");
+    if (!row || row.organizationId !== null) throw notFound("admin.platformBlueprintNotFound");
     const data: any = { version: (row.version ?? 1) + 1 };
     for (const f of ["name", "description", "objective", "category"] as const) if (dto[f] !== undefined) data[f] = dto[f];
     if (dto.advantagePlus !== undefined) data.advantagePlus = !!dto.advantagePlus;
@@ -2000,7 +2001,7 @@ export class AdminService {
     // The key is the row's identity for org clones and
     // instantiate-by-key; renaming it is a delete+create,
     // never a silent edit.
-    if (dto.key !== undefined && dto.key !== row.key) throw new BadRequestException("Blueprint key বদলানো যায় না — নতুন key চাইলে নতুন Blueprint তৈরি করুন।");
+    if (dto.key !== undefined && dto.key !== row.key) throw badRequest("admin.blueprintKeyCannotBeChangedCreate");
     const updated = await table.update({ where: { id }, data });
     await this.logAdmin(actor, "blueprint_updated", "CampaignBlueprint", id, { key: row.key, version: data.version }, ip);
     return updated;
@@ -2008,9 +2009,9 @@ export class AdminService {
 
   async deletePlatformBlueprint(actor: any, id: string, ip?: string) {
     const table = (this.prisma as any).campaignBlueprint;
-    if (!table?.findFirst) throw new BadRequestException("CampaignBlueprint table পাওয়া যায়নি — Migration বাকি।");
+    if (!table?.findFirst) throw badRequest("admin.theCampaignblueprintTableWasNotFound");
     const row = await table.findFirst({ where: { id } });
-    if (!row || row.organizationId !== null) throw new NotFoundException("Platform blueprint not found");
+    if (!row || row.organizationId !== null) throw notFound("admin.platformBlueprintNotFound");
     await table.delete({ where: { id } });
     await this.logAdmin(actor, "blueprint_deleted", "CampaignBlueprint", id, { key: row.key }, ip);
     return { deleted: true, id };
@@ -2162,7 +2163,7 @@ export class AdminService {
   async updatePlatformConfig(actor: any, area: string, patch: Record<string, unknown>, ip?: string) {
     const keyByArea: Record<string, string> = { llm: "llmConfig", meta: "metaAppConfig", smtp: "smtpConfig", sms: "smsConfig", sslcommerz: "sslcommerzConfig", bkash: "bkashConfig", image: "imageConfig", tiktok: "tiktokAppConfig", google: "googleAppConfig", wallet: "walletConfig", linkedin: "linkedinAppConfig", googleOAuth: "googleOAuthConfig", threads: "threadsAppConfig", cloudflare: "cloudflareSaasConfig", stripe: "stripeConfig" };
     const key = keyByArea[area];
-    if (!key) throw new BadRequestException(`Unknown config area: ${area}`);
+    if (!key) throw badRequest("admin.unknownConfigArea", { area: area });
     if (patch.clear === true) {
       await (this.prisma as any).systemSetting.deleteMany({ where: { key } });
       await refreshPlatformConfig(this.prisma as any);
@@ -2183,7 +2184,7 @@ export class AdminService {
     if (area === "llm") {
       if (patch.provider !== undefined) {
         const p = String(patch.provider).toLowerCase();
-        if (!["openai", "anthropic", "gemini", "dev", ""].includes(p)) throw new BadRequestException("provider must be openai | anthropic | gemini | dev");
+        if (!["openai", "anthropic", "gemini", "dev", ""].includes(p)) throw badRequest("admin.providerMustBeOpenaiAnthropicGemini");
         setField("provider", p);
       }
       setField("model", patch.model === undefined ? undefined : String(patch.model));
@@ -2239,7 +2240,7 @@ export class AdminService {
       setField("appId", patch.appId === undefined ? undefined : String(patch.appId));
       if (patch.graphVersion !== undefined) {
         const v = String(patch.graphVersion);
-        if (!/^v\d+\.\d+$/.test(v)) throw new BadRequestException("graphVersion must look like v21.0");
+        if (!/^v\d+\.\d+$/.test(v)) throw badRequest("admin.graphversionMustLookLikeV210");
         setField("graphVersion", v);
       }
       setSecret("appSecret", "appSecretEncrypted", patch.appSecret, patch.clearSecret);
@@ -2248,7 +2249,7 @@ export class AdminService {
       setField("host", patch.host === undefined ? undefined : String(patch.host));
       if (patch.port !== undefined) {
         const port = Number(patch.port);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new BadRequestException("port must be 1-65535");
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw badRequest("admin.portMustBe165535");
         setField("port", port);
       }
       setField("user", patch.user === undefined ? undefined : String(patch.user));
@@ -2274,7 +2275,7 @@ export class AdminService {
       // configured at the moment that payment is verified.
       if (patch.feeBps !== undefined) {
         const feeBps = Number(patch.feeBps);
-        if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw new BadRequestException("feeBps must be an integer 0-10000 (basis points)");
+        if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 10_000) throw badRequest("admin.feebpsMustBeAnInteger0");
         setField("feeBps", feeBps);
       }
       // CC23: four-eyes payout threshold, minor units. null
@@ -2284,14 +2285,14 @@ export class AdminService {
           setField("payoutFourEyesThresholdMinor", null);
         } else {
           const threshold = Number(patch.payoutFourEyesThresholdMinor);
-          if (!Number.isInteger(threshold) || threshold < 0) throw new BadRequestException("payoutFourEyesThresholdMinor must be a non-negative integer (minor units) or null");
+          if (!Number.isInteger(threshold) || threshold < 0) throw badRequest("admin.payoutfoureyesthresholdminorMustBeANonNegative");
           setField("payoutFourEyesThresholdMinor", threshold);
         }
       }
     } else if (area === "image") {
       if (patch.provider !== undefined) {
         const p = String(patch.provider).toLowerCase();
-        if (!["gemini", ""].includes(p)) throw new BadRequestException("image provider must be gemini");
+        if (!["gemini", ""].includes(p)) throw badRequest("admin.imageProviderMustBeGemini");
         setField("provider", p);
       }
       setField("model", patch.model === undefined ? undefined : String(patch.model));
@@ -2324,7 +2325,7 @@ export class AdminService {
         } catch (e) {
           const message = e instanceof Error ? e.message : "unknown error";
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: message }, ip);
-          throw new BadRequestException(`Image provider verification FAILED — the setting was NOT saved: ${message}`);
+          throw badRequest("admin.imageProviderVerificationFailedTheSetting", { message: message });
         }
       }
     }
@@ -2354,7 +2355,7 @@ export class AdminService {
         const probe = await this.probeMetaApp(mergedAppId, mergedSecret, version);
         if (!probe.ok) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
-          throw new BadRequestException(`Meta app verification FAILED — the setting was NOT saved: ${probe.detail}`);
+          throw badRequest("admin.metaAppVerificationFailedTheSetting", { probeDetail: probe.detail });
         }
         metaVerified = { latencyMs: probe.latencyMs };
       }
@@ -2372,7 +2373,7 @@ export class AdminService {
         const probe = await this.probeBkashGrant(merged);
         if (!probe.ok) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
-          throw new BadRequestException(`bKash verification FAILED — the setting was NOT saved: ${probe.detail}`);
+          throw badRequest("admin.bkashVerificationFailedTheSettingWas", { probeDetail: probe.detail });
         }
         bkashVerified = { latencyMs: probe.latencyMs };
       }
@@ -2395,7 +2396,7 @@ export class AdminService {
         const probe = await this.probeCloudflareZone({ apiToken: mergedToken, zoneId: mergedZoneId });
         if (!probe.ok) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
-          throw new BadRequestException(`Cloudflare for SaaS verification FAILED — the setting was NOT saved: ${probe.detail}`);
+          throw badRequest("admin.cloudflareForSaasVerificationFailedThe", { probeDetail: probe.detail });
         }
         cloudflareVerified = { latencyMs: probe.latencyMs, zoneName: probe.zoneName ?? null };
       }
@@ -2419,16 +2420,16 @@ export class AdminService {
         const mode = stripeKeyMode(mergedKey);
         if (!mode) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: "secret key prefix is not sk_/rk_" }, ip);
-          throw new BadRequestException("Stripe verification FAILED — the setting was NOT saved: the secret key must start with sk_test_ / sk_live_ (or rk_)");
+          throw badRequest("admin.stripeVerificationFailedTheSettingWas2");
         }
         const probe = await this.probeStripeBalance(mergedKey);
         if (!probe.ok) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: probe.detail }, ip);
-          throw new BadRequestException(`Stripe verification FAILED — the setting was NOT saved: ${probe.detail}`);
+          throw badRequest("admin.stripeVerificationFailedTheSettingWas3", { probeDetail: probe.detail });
         }
         if (probe.livemode !== (mode === "live")) {
           await this.logAdmin(actor, "platform_config_verify_failed", "SystemSetting", key, { area, error: "livemode mismatch" }, ip);
-          throw new BadRequestException("Stripe verification FAILED — the setting was NOT saved: Stripe's livemode answer disagrees with the key's mode");
+          throw badRequest("admin.stripeVerificationFailedTheSettingWas");
         }
         stripeVerified = { latencyMs: probe.latencyMs, livemode: probe.livemode };
       }
@@ -2456,7 +2457,7 @@ export class AdminService {
     await refreshPlatformConfig(this.prisma as any);
     const cfg = effectiveLlmConfig();
     if (cfg.source === "none" || !cfg.provider || cfg.provider === "dev") {
-      throw new BadRequestException("No real LLM is configured. Set a provider + API key above (or LLM_PROVIDER/LLM_API_KEY in env) first.");
+      throw badRequest("admin.noRealLlmIsConfiguredSet");
     }
     const provider = buildLlmProvider(cfg.provider, cfg.apiKey, cfg.model);
     const started = Date.now();
@@ -2467,7 +2468,7 @@ export class AdminService {
       ]);
       return { ok: true, provider: cfg.provider, model: result.model, source: cfg.source, latencyMs: Date.now() - started, sample: String(result.text).slice(0, 80) };
     } catch (e) {
-      throw new BadRequestException(`LLM test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("admin.llmTestDidNotSucceed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
   }
 
@@ -2478,7 +2479,7 @@ export class AdminService {
     await refreshPlatformConfig(this.prisma as any);
     const cfg = effectiveImageConfig();
     if (cfg.source === "none" || !cfg.provider) {
-      throw new BadRequestException("No image provider is configured. Set a provider + API key above (or IMAGE_PROVIDER/IMAGE_API_KEY in env) first.");
+      throw badRequest("admin.noImageProviderIsConfiguredSet");
     }
     const provider = buildImageProvider(cfg.provider, cfg.apiKey, cfg.model);
     const started = Date.now();
@@ -2492,12 +2493,12 @@ export class AdminService {
         latencyMs: Date.now() - started, bytes: result.bytes.length, contentType: result.contentType,
       };
     } catch (e) {
-      throw new BadRequestException(`Image test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("admin.imageTestDidNotSucceed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
   }
 
   async testEmail(to: string) {
-    if (!to?.includes("@")) throw new BadRequestException("A valid recipient email is required for the test");
+    if (!to?.includes("@")) throw badRequest("admin.aValidRecipientEmailIsRequired");
     await refreshPlatformConfig(this.prisma as any);
     try {
       const out = await new EmailProvider().send({
@@ -2506,19 +2507,19 @@ export class AdminService {
       });
       return { ok: true, providerMessageId: out.providerMessageId };
     } catch (e) {
-      throw new BadRequestException(`Email test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("admin.emailTestDidNotSucceed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
   }
 
   async testSms(to: string) {
     const msisdn = normalizeBdPhone(to ?? "") ?? to;
-    if (!msisdn) throw new BadRequestException("A recipient phone number is required for the test");
+    if (!msisdn) throw badRequest("admin.aRecipientPhoneNumberIsRequired");
     await refreshPlatformConfig(this.prisma as any);
     try {
       const out = await new SmsProvider().send({ to: msisdn, text: "Qosprey AI Marketing: SMS configuration test. No action needed.", reference: `admin-test-${Date.now()}` });
       return { ok: true, providerMessageId: out.providerMessageId };
     } catch (e) {
-      throw new BadRequestException(`SMS test did NOT succeed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("admin.smsTestDidNotSucceed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
   }
 
@@ -3103,7 +3104,7 @@ export class AdminService {
     const rates: Record<string, number> = {};
     for (const [provider, value] of Object.entries(ratesRaw ?? {})) {
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) throw new BadRequestException(`Rate for ${provider} must be a non-negative number (minor units per 1M tokens)`);
+      if (!Number.isFinite(n) || n < 0) throw badRequest("admin.rateForMustBeANon", { provider: provider });
       if (n > 0) rates[provider] = Math.round(n);
     }
     await (this.prisma as any).systemSetting.upsert({
@@ -3117,7 +3118,7 @@ export class AdminService {
 
   async orgHistory(organizationId: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const [audit, payments, sub] = await Promise.all([
       (this.prisma as any).auditLog.findMany({
         where: { OR: [{ organizationId }, { entityType: "Organization", entityId: organizationId }] },
@@ -3154,19 +3155,19 @@ export class AdminService {
     const why = this.requireReason(dto.reason);
     const mode = dto.mode === "write" ? "write" : "read";
     if (mode === "write" && tier !== "SUPER") {
-      throw new ForbiddenException("Write view-as sessions require a SUPER admin");
+      throw forbidden("admin.writeViewAsSessionsRequireA");
     }
-    if (!this.jwt) throw new BadRequestException("View-as is unavailable in this deployment (token service missing)");
+    if (!this.jwt) throw badRequest("admin.viewAsIsUnavailableInThis");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     const memberships = await (this.prisma as any).membership.findMany({
       where: { organizationId, status: "ACTIVE" },
     });
-    if (!memberships.length) throw new BadRequestException("This organization has no active members to view as");
+    if (!memberships.length) throw badRequest("admin.thisOrganizationHasNoActiveMembers");
     const rank = (role: string) => (role === "OWNER" ? 0 : role === "ADMIN" ? 1 : 2);
     const targetMembership = [...memberships].sort((a: any, b: any) => rank(a.role) - rank(b.role))[0];
     const target = await (this.prisma as any).user.findUnique({ where: { id: targetMembership.userId } });
-    if (!target || target.status !== "ACTIVE") throw new BadRequestException("The target member account is not active");
+    if (!target || target.status !== "ACTIVE") throw badRequest("admin.theTargetMemberAccountIsNot");
     // Admin Polish AP2: the session is registered server-side
     // FIRST; the token carries the session id and TenantGuard
     // requires the row to be live — so revocation is real.
@@ -3205,9 +3206,9 @@ export class AdminService {
   /** AP2: revoke a session server-side. Mine, or any for SUPER. */
   async revokeViewAsSession(actor: any, sessionId: string, ip?: string) {
     const s = await (this.prisma as any).viewAsSession.findUnique({ where: { id: sessionId } });
-    if (!s) throw new NotFoundException("View-as session not found");
+    if (!s) throw notFound("admin.viewAsSessionNotFound");
     const isSuper = actor?.adminTier === "SUPER" || actor?.isSuperAdmin;
-    if (s.adminId !== actor.id && !isSuper) throw new ForbiddenException("Only the session's admin (or a SUPER admin) can revoke it");
+    if (s.adminId !== actor.id && !isSuper) throw forbidden("admin.onlyTheSessionSAdminOr");
     if (s.revokedAt) return { ...s, active: false };
     const updated = await (this.prisma as any).viewAsSession.update({ where: { id: sessionId }, data: { revokedAt: new Date(), revokedById: actor.id } });
     await this.logAdmin(actor, "view_as_revoked", "Organization", s.organizationId, { sessionId, mode: s.mode, targetUserId: s.targetUserId }, ip);
@@ -3363,13 +3364,13 @@ export class AdminService {
    */
   async nudgeOrg(actor: any, organizationId: string, kind: string, ip?: string) {
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     let subject = "";
     let text = "";
     if (kind === "onboarding") {
       const { steps } = await this.onboardingStepsFor(organizationId);
       const missing = steps.filter((s) => !s.done).map((s) => s.label);
-      if (!missing.length) throw new BadRequestException("This organization has completed onboarding — nothing to nudge about");
+      if (!missing.length) throw badRequest("admin.thisOrganizationHasCompletedOnboardingNothing");
       subject = "আপনার ওয়ার্কস্পেস সেটআপ শেষ করুন";
       text = `${org.name} — আপনার অ্যাকাউন্টে এখনও বাকি আছে: ${missing.join(", ")}।\n\nড্যাশবোর্ডের চেকলিস্ট থেকে ধাপগুলো শেষ করলেই সব ফিচার ব্যবহার করা যাবে। সাহায্য লাগলে এই ইমেইলের উত্তর দিন অথবা ওয়ার্কস্পেস থেকে Support Ticket খুলুন।`;
     } else if (kind === "trial_expiring") {
@@ -3382,7 +3383,7 @@ export class AdminService {
       subject = "আপনার ইন্টিগ্রেশনে সমস্যা ধরা পড়েছে";
       text = `${org.name} — আপনার কোনো স্টোর/চ্যানেল ইন্টিগ্রেশনের Sync ব্যর্থ হচ্ছে। ড্যাশবোর্ডের Integrations পেজে গিয়ে সংযোগটি পরীক্ষা করুন।`;
     } else {
-      throw new BadRequestException(`Unknown nudge kind: ${kind}`);
+      throw badRequest("admin.unknownNudgeKind", { kind: kind });
     }
     const memberships = await (this.prisma as any).membership.findMany({
       where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
@@ -3408,14 +3409,14 @@ export class AdminService {
   }
 
   async setIpAllowlist(actor: any, entriesRaw: unknown, ip?: string) {
-    if (!Array.isArray(entriesRaw)) throw new BadRequestException("entries must be an array of IPs or CIDR ranges");
+    if (!Array.isArray(entriesRaw)) throw badRequest("admin.entriesMustBeAnArrayOf");
     const entries = entriesRaw.map((e) => String(e).trim()).filter(Boolean);
     for (const entry of entries) {
       const [base, bits] = entry.split("/");
       const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(base) || /^[0-9a-fA-F:]+$/.test(base);
-      if (!isIp) throw new BadRequestException(`Invalid allowlist entry: ${entry}`);
+      if (!isIp) throw badRequest("admin.invalidAllowlistEntry", { entry: entry });
       if (bits !== undefined && (!/^\d+$/.test(bits) || Number(bits) > 32)) {
-        throw new BadRequestException(`Invalid CIDR range in entry: ${entry}`);
+        throw badRequest("admin.invalidCidrRangeInEntry", { entry: entry });
       }
     }
     await (this.prisma as any).systemSetting.upsert({
@@ -3441,12 +3442,12 @@ export class AdminService {
 
   async createApiKey(actor: any, nameRaw: string, ip?: string, scopesRaw?: unknown) {
     const name = String(nameRaw ?? "").trim();
-    if (name.length < 3) throw new BadRequestException("API key name is required (min 3 characters)");
+    if (name.length < 3) throw badRequest("admin.apiKeyNameIsRequiredMin");
     // AP3: validate the requested grants against the catalog.
     const { validateScopes } = await import("../common/api-key-scopes");
     let scopes: string[];
     try { scopes = validateScopes(scopesRaw); }
-    catch (e) { throw new BadRequestException(e instanceof Error ? e.message : "Invalid scopes"); }
+    catch (e) { if (e instanceof ApiException) throw e; throw new BadRequestException(e instanceof Error ? e.message : "Invalid scopes"); }
     const { randomBytes, createHash } = await import("node:crypto");
     const raw = `qosa_${randomBytes(32).toString("hex")}`;
     const keyHash = createHash("sha256").update(raw).digest("hex");
@@ -3460,8 +3461,8 @@ export class AdminService {
   async revokeApiKey(actor: any, id: string, reasonRaw: string, ip?: string) {
     const reason = this.requireReason(reasonRaw);
     const row = await (this.prisma as any).adminApiKey.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("API key not found");
-    if (row.revokedAt) throw new BadRequestException("This API key is already revoked");
+    if (!row) throw notFound("admin.apiKeyNotFound");
+    if (row.revokedAt) throw badRequest("admin.thisApiKeyIsAlreadyRevoked");
     await (this.prisma as any).adminApiKey.update({ where: { id }, data: { revokedAt: new Date() } });
     await this.logAdmin(actor, "api_key_revoked", "AdminApiKey", id, { name: row.name, reason }, ip);
     return { id, revoked: true };
@@ -3470,8 +3471,8 @@ export class AdminService {
   // ---- Bulk org status ----
 
   async bulkOrgStatus(actor: any, organizationIds: string[], status: string, reason: string, ip?: string) {
-    if (!Array.isArray(organizationIds) || organizationIds.length === 0) throw new BadRequestException("organizationIds is required");
-    if (organizationIds.length > 50) throw new BadRequestException("Bulk actions are limited to 50 organizations at a time");
+    if (!Array.isArray(organizationIds) || organizationIds.length === 0) throw badRequest("admin.organizationidsIsRequired");
+    if (organizationIds.length > 50) throw badRequest("admin.bulkActionsAreLimitedTo50");
     const results: { organizationId: string; ok: boolean; error?: string }[] = [];
     for (const id of organizationIds) {
       try {
@@ -3539,12 +3540,12 @@ export class AdminService {
     const reason = this.requireReason(reasonRaw);
     const p = this.prisma as any;
     const org = await p.organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("admin.organizationNotFound");
     if (org.status !== "DELETED") {
-      throw new BadRequestException("Permanent deletion requires the organization to be in DELETED status first (soft-delete it, export its data, then delete permanently)");
+      throw badRequest("admin.permanentDeletionRequiresTheOrganizationTo");
     }
     if (String(confirmName ?? "") !== org.name) {
-      throw new BadRequestException("Confirmation failed: type the organization's exact name to delete it permanently");
+      throw badRequest("admin.confirmationFailedTypeTheOrganizationS");
     }
     const certificate: Record<string, number> = {};
     const idsOf = async (table: string): Promise<string[]> => {
@@ -3687,10 +3688,10 @@ export class AdminService {
     const slug = String(rawSlug ?? "").trim().toLowerCase();
     const p = this.prisma as any;
     const row = await p.slugTombstone?.findUnique?.({ where: { slug } }).catch(() => null);
-    if (!row) throw new NotFoundException("No slug tombstone found for this name");
-    if (row.releasedAt) throw new BadRequestException("This slug was already released");
+    if (!row) throw notFound("admin.noSlugTombstoneFoundForThis");
+    if (row.releasedAt) throw badRequest("admin.thisSlugWasAlreadyReleased");
     if (new Date(row.expiresAt).getTime() <= Date.now()) {
-      throw new BadRequestException("This slug's cooldown has already expired — no release is needed");
+      throw badRequest("admin.thisSlugSCooldownHasAlready");
     }
     const updated = await p.slugTombstone.update({
       where: { slug },
@@ -4069,7 +4070,7 @@ export class AdminService {
 
   private requireQueueName(name: string): string {
     if (!(AdminService.QUEUE_NAMES as readonly string[]).includes(name)) {
-      throw new BadRequestException(`Unknown queue "${name}" — এই সিস্টেমে queue আছে: ${AdminService.QUEUE_NAMES.join(", ")}`);
+      throw badRequest("admin.unknownQueueThisSystemHasQueues", { name: name, p2: AdminService.QUEUE_NAMES.join(", ") });
     }
     return name;
   }
@@ -4327,7 +4328,7 @@ export class AdminService {
   async systemWebhookEvent(id: string) {
     const p = this.prisma as any;
     const row = await p.webhookEvent.findUnique({ where: { id } }).catch(() => null);
-    if (!row) throw new NotFoundException("Webhook event not found");
+    if (!row) throw notFound("admin.webhookEventNotFound");
     let organizationId: string | null = null;
     let organizationName: string | null = null;
     if (row.integrationId) {
@@ -4499,14 +4500,14 @@ export class AdminService {
    * per-recipient outcomes are counted, never assumed.
    */
   async sendCampaign(actor: any, dto: { subject: string; body: string; audience: string; organizationIds?: string[] }, ip?: string) {
-    if (!dto.subject?.trim() || !dto.body?.trim()) throw new BadRequestException("Campaign subject and body are required");
+    if (!dto.subject?.trim() || !dto.body?.trim()) throw badRequest("admin.campaignSubjectAndBodyAreRequired");
     if (dto.audience !== "all" && !AdminService.ANNOUNCEMENT_AUDIENCES.includes(dto.audience)) {
-      throw new BadRequestException(`audience must be "all" or one of ${AdminService.ANNOUNCEMENT_AUDIENCES.join(", ")}`);
+      throw badRequest("admin.audienceMustBeAllOrOne", { p1: AdminService.ANNOUNCEMENT_AUDIENCES.join(", ") });
     }
     const recipients = await this.campaignRecipients(dto.audience, dto.organizationIds);
-    if (recipients.length === 0) throw new BadRequestException("No recipients match this audience");
+    if (recipients.length === 0) throw badRequest("admin.noRecipientsMatchThisAudience");
     if (recipients.length > 500) {
-      throw new BadRequestException(`Audience resolves to ${recipients.length} recipients — over the 500 safety cap. Narrow the audience.`);
+      throw badRequest("admin.audienceResolvesToRecipientsOverThe", { recipientsLength: recipients.length });
     }
     const email = new EmailProvider();
     let sent = 0;
@@ -4523,7 +4524,7 @@ export class AdminService {
       }
     }
     if (configError && sent === 0) {
-      throw new BadRequestException(`Email is not configured — no campaign email was sent. (${configError})`);
+      throw badRequest("admin.emailIsNotConfiguredNoCampaign", { configError: configError });
     }
     const row = await (this.prisma as any).platformCampaign.create({
       data: {
@@ -4541,7 +4542,7 @@ export class AdminService {
     return ((this.prisma as any).changelogEntry?.findMany({ orderBy: { createdAt: "desc" }, take: 100 }).catch(() => [])) ?? [];
   }
   async createChangelog(actor: any, dto: { version?: string; title: string; body: string; published?: boolean }, ip?: string) {
-    if (!dto.title?.trim() || !dto.body?.trim()) throw new BadRequestException("Changelog title and body are required");
+    if (!dto.title?.trim() || !dto.body?.trim()) throw badRequest("admin.changelogTitleAndBodyAreRequired");
     const row = await (this.prisma as any).changelogEntry.create({
       data: {
         version: dto.version?.trim() || null, title: dto.title.trim(), body: dto.body,
@@ -4553,7 +4554,7 @@ export class AdminService {
   }
   async updateChangelog(actor: any, id: string, dto: { version?: string; title?: string; body?: string; published?: boolean }, ip?: string) {
     const row = await (this.prisma as any).changelogEntry.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Changelog entry not found");
+    if (!row) throw notFound("admin.changelogEntryNotFound");
     const data: any = {};
     if (dto.version !== undefined) data.version = dto.version.trim() || null;
     if (dto.title !== undefined) data.title = dto.title.trim();
@@ -4568,7 +4569,7 @@ export class AdminService {
   }
   async deleteChangelog(actor: any, id: string, ip?: string) {
     const row = await (this.prisma as any).changelogEntry.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException("Changelog entry not found");
+    if (!row) throw notFound("admin.changelogEntryNotFound");
     await (this.prisma as any).changelogEntry.delete({ where: { id } });
     await this.logAdmin(actor, "changelog_deleted", "ChangelogEntry", id, { title: row.title }, ip);
     return { deleted: true };
@@ -4602,19 +4603,19 @@ export class AdminService {
 
   async createReferralCampaign(actor: any, dto: any, ip?: string) {
     const code = String(dto.code ?? "").trim().toUpperCase();
-    if (!/^[A-Z0-9][A-Z0-9-]{2,23}$/.test(code)) throw new BadRequestException("code must be 3-24 chars of A-Z, 0-9, -");
-    if (code.startsWith("QOS-")) throw new BadRequestException("codes starting with QOS- are reserved for user referral codes");
-    if (!String(dto.label ?? "").trim()) throw new BadRequestException("label is required");
+    if (!/^[A-Z0-9][A-Z0-9-]{2,23}$/.test(code)) throw badRequest("admin.codeMustBe324Chars");
+    if (code.startsWith("QOS-")) throw badRequest("admin.codesStartingWithQosAreReserved");
+    if (!String(dto.label ?? "").trim()) throw badRequest("admin.labelIsRequired");
     const clash = await (this.prisma as any).referralCampaign.findUnique({ where: { code } }).catch(() => null);
-    if (clash) throw new BadRequestException("a campaign with this code already exists");
+    if (clash) throw badRequest("admin.aCampaignWithThisCodeAlready");
     const money = (v: unknown, label: string) => {
       if (v === undefined || v === null || v === "") return null;
       const n = BigInt(Math.floor(Number(v)));
-      if (n < 0n || n > 100000000n) throw new BadRequestException(`${label} out of range`);
+      if (n < 0n || n > 100000000n) throw badRequest("admin.outOfRange", { label: label });
       return n;
     };
     if (dto.mode !== undefined && dto.mode !== null && !["flat", "percent", "per_plan"].includes(dto.mode)) {
-      throw new BadRequestException("mode must be flat | percent | per_plan");
+      throw badRequest("admin.modeMustBeFlatPercentPer");
     }
     const row = await (this.prisma as any).referralCampaign.create({
       data: {
@@ -4634,7 +4635,7 @@ export class AdminService {
 
   async updateReferralCampaign(actor: any, id: string, dto: any, ip?: string) {
     const row = await (this.prisma as any).referralCampaign.findUnique({ where: { id } }).catch(() => null);
-    if (!row) throw new NotFoundException("Campaign not found");
+    if (!row) throw notFound("admin.campaignNotFound");
     const data: any = {};
     if (dto.label !== undefined) data.label = String(dto.label).trim();
     if (dto.active !== undefined) data.active = dto.active === true;
@@ -4715,21 +4716,21 @@ export class AdminService {
   }, ip?: string) {
     const rewardMinor = Math.floor(Number(dto.rewardMinor));
     if (!Number.isFinite(rewardMinor) || rewardMinor < 0 || rewardMinor > 100000000) {
-      throw new BadRequestException("rewardMinor must be between 0 and 100000000 (minor units)");
+      throw badRequest("admin.rewardminorMustBeBetween0And");
     }
     const money = (v: unknown, label: string) => {
       if (v === undefined) return undefined;
       const n = Math.floor(Number(v));
-      if (!Number.isFinite(n) || n < 0 || n > 100000000) throw new BadRequestException(`${label} must be between 0 and 100000000 (minor units)`);
+      if (!Number.isFinite(n) || n < 0 || n > 100000000) throw badRequest("admin.mustBeBetween0And100000000", { label: label });
       return n;
     };
     // Merge over the stored config so a flat-only update
     // never wipes the v2 fields (and vice versa).
     const current = await referralConfig(this.prisma as any);
     const mode = dto.mode ?? current.mode;
-    if (!["flat", "percent", "per_plan"].includes(mode)) throw new BadRequestException("mode must be flat | percent | per_plan");
+    if (!["flat", "percent", "per_plan"].includes(mode)) throw badRequest("admin.modeMustBeFlatPercentPer");
     const percent = dto.percentOfFirstPayment === undefined ? current.percentOfFirstPayment : Math.floor(Number(dto.percentOfFirstPayment));
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new BadRequestException("percentOfFirstPayment must be 0..100");
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw badRequest("admin.percentoffirstpaymentMustBe0100");
     const perPlan: Record<string, number> = { ...current.perPlanMinor };
     if (dto.perPlanMinor) {
       for (const [k, v] of Object.entries(dto.perPlanMinor)) {
@@ -4740,7 +4741,7 @@ export class AdminService {
     const milestones = dto.milestones === undefined ? current.milestones : dto.milestones.map((m) => {
       const count = Math.floor(Number(m?.count)); const bonusMinor = Math.floor(Number(m?.bonusMinor));
       if (!Number.isFinite(count) || count <= 0 || !Number.isFinite(bonusMinor) || bonusMinor <= 0) {
-        throw new BadRequestException("each milestone needs a positive count and bonusMinor");
+        throw badRequest("admin.eachMilestoneNeedsAPositiveCount");
       }
       return { count, bonusMinor };
     });

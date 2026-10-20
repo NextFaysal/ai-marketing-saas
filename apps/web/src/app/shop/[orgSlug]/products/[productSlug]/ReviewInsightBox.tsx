@@ -1,5 +1,9 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { fmtDate, fmtNumber } from "@repo/contracts";
+import { shopT } from "@/lib/shop-i18n";
+const t = shopT("bn");
+function bn(n: number): string { return fmtNumber("bn", n); }
 import { API_URL } from "@/lib/api";
 
 /**
@@ -21,9 +25,7 @@ import {
   type ReviewInsight,
 } from "@/lib/shop-review-insight";
 
-function bn(n: number): string {
-  return n.toLocaleString("bn-BD");
-}
+
 
 export function ReviewInsightBox({ orgSlug, productSlug }: { orgSlug: string; productSlug: string }) {
   const [insight, setInsight] = useState<ReviewInsight | null>(null);
@@ -52,20 +54,16 @@ export function ReviewInsightBox({ orgSlug, productSlug }: { orgSlug: string; pr
   const total = sentiment.total || sentiment.positive + sentiment.neutral + sentiment.negative;
   const percents = sentimentPercents(sentiment);
   const generatedLabel = insight.generatedAt
-    ? new Date(insight.generatedAt).toLocaleDateString("bn-BD", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
+    ? fmtDate("bn", insight.generatedAt)
     : null;
 
   return (
     <section className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-base font-black text-slate-900">ক্রেতাদের রিভিউ থেকে তৈরি AI সারসংক্ষেপ</h2>
-        {generatedLabel ? <span className="text-xs text-slate-500">তৈরি: {generatedLabel}</span> : null}
+        <h2 className="text-base font-black text-slate-900">{t.shopWidgets.reviewSummaryTitle}</h2>
+        {generatedLabel ? <span className="text-xs text-slate-500">{t.shopWidgets.reviewGeneratedPrefix}{generatedLabel}</span> : null}
         {insight.reviewCount > 0 ? (
-          <span className="text-xs text-slate-500">{bn(insight.reviewCount)}টি রিভিউ বিশ্লেষণ করে</span>
+          <span className="text-xs text-slate-500">{t.shopWidgets.reviewAnalyzed.replace("{count}", bn(insight.reviewCount))}</span>
         ) : null}
       </div>
       <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{insight.summaryText}</p>
@@ -74,16 +72,16 @@ export function ReviewInsightBox({ orgSlug, productSlug }: { orgSlug: string; pr
           <div
             className="flex h-3 w-full overflow-hidden rounded-full bg-slate-200"
             role="img"
-            aria-label={`ইতিবাচক ${bn(sentiment.positive)}, নিরপেক্ষ ${bn(sentiment.neutral)}, নেতিবাচক ${bn(sentiment.negative)}`}
+            aria-label={`${t.shopWidgets.sentimentAriaPrefix}${bn(sentiment.positive)}${t.shopWidgets.sentimentAriaMid1}${bn(sentiment.neutral)}${t.shopWidgets.sentimentAriaMid2}${bn(sentiment.negative)}`}
           >
             <div className="h-full bg-emerald-500" style={{ width: `${percents.positive}%` }} />
             <div className="h-full bg-slate-400" style={{ width: `${percents.neutral}%` }} />
             <div className="h-full bg-rose-500" style={{ width: `${percents.negative}%` }} />
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-slate-600">
-            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500" />ইতিবাচক: {bn(sentiment.positive)}</span>
-            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-slate-400" />নিরপেক্ষ: {bn(sentiment.neutral)}</span>
-            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-rose-500" />নেতিবাচক: {bn(sentiment.negative)}</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500" />{t.shopWidgets.sentimentPositive}{bn(sentiment.positive)}</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-slate-400" />{t.shopWidgets.sentimentNeutral}{bn(sentiment.neutral)}</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-rose-500" />{t.shopWidgets.sentimentNegative}{bn(sentiment.negative)}</span>
           </div>
         </div>
       ) : null}
