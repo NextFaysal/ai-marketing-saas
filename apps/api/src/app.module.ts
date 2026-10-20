@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
-import { APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { ApiI18nExceptionFilter } from "./i18n/api-exception.filter";
+import { LocaleInterceptor } from "./i18n/locale.interceptor";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
@@ -89,6 +91,11 @@ import { ThrottlerGuard } from "./common/throttler.guard";
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // ML10 (MB4): per-request locale resolution (cached on the
+    // request) + the global coded-exception filter that renders
+    // body.message in that locale (D-MB4-1/D-MB4-2).
+    { provide: APP_INTERCEPTOR, useClass: LocaleInterceptor },
+    { provide: APP_FILTER, useClass: ApiI18nExceptionFilter },
   ],
 })
 export class AppModule {}

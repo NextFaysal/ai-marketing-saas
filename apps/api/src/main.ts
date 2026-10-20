@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { AppModule } from "./app.module";
+import { validationExceptionFactory } from "./i18n/validation";
 import { v1AliasMiddleware } from "./public-docs/v1-alias";
 import { createCorsOriginChecker, prismaVerifiedCustomDomainLookup } from "./common/cors-origins";
 
@@ -39,7 +40,10 @@ async function bootstrap() {
     }),
     credentials: true,
   });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
+  // ML10 (MB4, D-MB4-4): validation failures become catalog-coded
+  // errors (validation.* keys) rendered by the global i18n filter;
+  // the default message list is preserved as body.details.
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true, exceptionFactory: validationExceptionFactory }));
   const port = Number(process.env.API_PORT ?? 4000);
   await app.listen(port);
   Logger.log(`API listening on http://localhost:${port}`, "Bootstrap");
