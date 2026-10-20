@@ -84,4 +84,36 @@ export const translationsCatalog: Record<string, { bn: string; en: string }> = {
     bn: "এই মুদ্রার কোনো রেট সেট করা নেই",
     en: "No rate is set for this currency",
   },
+  // MB5 (ML15) — category + blog_post entity types. The old
+  // entityTypeMustBeProductOrStorefrontString key above is
+  // retired (unreferenced since ML15 widened the switch) but
+  // retained for parity/history.
+  "translations.entityTypeMustBeProductCategoryBlogPostOrStorefrontString": {
+    bn: "entityType অবশ্যই product, category, blog_post অথবা storefront_string হতে হবে",
+    en: "entityType must be product, category, blog_post or storefront_string",
+  },
+  "translations.categoryFieldMustBeNameOrDescription": {
+    bn: "ক্যাটাগরির জন্য ক্ষেত্র শুধু name অথবা description হতে পারে",
+    en: "For a category, the field can only be name or description",
+  },
+  "translations.categoryNotFoundInOrg": {
+    bn: "ক্যাটাগরিটি এই সংস্থায় পাওয়া যায়নি",
+    en: "The category was not found in this organization",
+  },
+  "translations.categoryHasNoNameOrDescription": {
+    bn: "এই ক্যাটাগরির কোনো নাম/বিবরণ নেই — আগে ক্যাটাগরির তথ্য যোগ করুন",
+    en: "This category has no name/description — add the category information first",
+  },
+  "translations.blogPostFieldMustBeTitle": {
+    bn: "ব্লগ পোস্টের জন্য ক্ষেত্র শুধু title হতে পারে",
+    en: "For a blog post, the field can only be title",
+  },
+  "translations.blogPostNotFoundInOrg": {
+    bn: "ব্লগ পোস্টটি এই সংস্থায় পাওয়া যায়নি",
+    en: "The blog post was not found in this organization",
+  },
+  "translations.blogPostHasNoTitle": {
+    bn: "এই ব্লগ পোস্টের কোনো শিরোনাম নেই — আগে শিরোনাম যোগ করুন",
+    en: "This blog post has no title — add the title first",
+  },
 };

@@ -38,7 +38,7 @@ import { refreshOrgSearchVectors } from "../products/search-vector";
 import { DeliveryPricingService, cartWeightOf } from "./delivery-pricing.service";
 import { resolveShopLocale } from "../translations/translations";
 import {
-  approvedStorefrontStrings, attachDisplayPrices, displayCurrencyRates, overlayProductTranslations,
+  approvedBlogPostTexts, approvedCategoryTexts, approvedStorefrontStrings, attachDisplayPrices, displayCurrencyRates, overlayProductTranslations,
 } from "../translations/public-translations";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
@@ -953,6 +953,22 @@ export class StorefrontService {
       all = scanned;
     }
     const categories = this.buildCategories(categoryRows, all);
+    // MB5 (ML15): approved category NAME overlays for the shop
+    // locale, under the same public rules as the product overlay
+    // below (approved-only, org-scoped, failure-isolated, base
+    // name kept when no approved row exists). Only names are
+    // served in this payload — category descriptions have no
+    // public serving point today, so none is overlaid here.
+    {
+      const ids = categories.map((c) => c.id).filter((x): x is string => !!x);
+      if (ids.length) {
+        const texts = await approvedCategoryTexts(this.prisma as any, org.id, ids, shopLocale).catch(() => new Map());
+        for (const c of categories) {
+          const t = c.id ? texts.get(String(c.id)) : undefined;
+          if (t?.name) c.name = t.name;
+        }
+      }
+    }
     // GB2 (GC6/GC7): brand map + reservation totals for the
     // serialize extras (both failure-isolated loads).
     const brandMap = await this.loadBrandMap(org.id);
@@ -1224,6 +1240,14 @@ export class StorefrontService {
         .findFirst({ where: { id: product.categoryId, organizationId: org.id } })
         .catch(() => null);
       if (row) category = { id: row.id, name: row.name, slug: row.slug ?? null };
+    }
+    // MB5 (ML15): the PDP serves the category NAME publicly, so
+    // an approved category-name translation for the shop locale
+    // wins here too (same approved-only rules; failure-isolated).
+    if (category.id) {
+      const texts = await approvedCategoryTexts(this.prisma as any, org.id, [category.id], shopLocale).catch(() => new Map());
+      const t = texts.get(String(category.id));
+      if (t?.name) category = { ...category, name: t.name };
     }
 
     const siblings = await this.activeProducts(org.id);
@@ -5387,10 +5411,18 @@ export class StorefrontService {
           orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         })
         .catch(() => [])) ?? [];
+    // MB5 (ML15): this public surface DOES serve post titles,
+    // so approved title translations for the shop locale are
+    // overlaid (approved-only, org-scoped, failure-isolated —
+    // the public-translations rules; drafts never leak).
+    const blogLocale = (setting as any)?.locale ?? "bn";
+    const titleTexts = rows.length
+      ? await approvedBlogPostTexts(this.prisma as any, org.id, rows.map((r) => String(r.id)), blogLocale).catch(() => new Map())
+      : new Map();
     return {
       posts: rows.map((r) => ({
         slug: r.slug,
-        title: r.title,
+        title: titleTexts.get(String(r.id))?.title ?? r.title,
         excerpt: r.excerpt ?? null,
         coverImageUrl: r.coverImageUrl ?? null,
         tags: this.blogTagsOf(r),
@@ -5408,10 +5440,13 @@ export class StorefrontService {
       where: { organizationId: org.id, slug: postSlug, status: "published" },
     });
     if (!row) throw notFound("storefront.blogPostNotFound");
+    // MB5 (ML15): approved title overlay, same rule as the list.
+    const blogLocale = (setting as any)?.locale ?? "bn";
+    const titleTexts = await approvedBlogPostTexts(this.prisma as any, org.id, [String(row.id)], blogLocale).catch(() => new Map());
     return {
       post: {
         slug: row.slug,
-        title: row.title,
+        title: titleTexts.get(String(row.id))?.title ?? row.title,
         excerpt: row.excerpt ?? null,
         coverImageUrl: row.coverImageUrl ?? null,
         blocks: Array.isArray(row.blocks) ? row.blocks : [],

@@ -18,9 +18,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/lib/i18n/provider";
 import {
+  BLOG_POST_TRANSLATION_FIELDS, CATEGORY_TRANSLATION_FIELDS,
   PRODUCT_TRANSLATION_FIELDS, STOREFRONT_STRING_FIELDS, TRANSLATION_LOCALES,
-  canApprove, deleteCurrencyRate, fetchCurrencyRates, fetchProductTranslations,
-  fetchStorefrontStringTranslations, findTranslation, generateProductAiDraft,
+  canApprove, deleteCurrencyRate, fetchBlogPostTranslations, fetchCategoryTranslations,
+  fetchCurrencyRates, fetchProductTranslations,
+  fetchStorefrontStringTranslations, findTranslation, generateBlogPostAiDraft,
+  generateCategoryAiDraft, generateProductAiDraft,
   generateStringsAiDraft, sourceLabel, statusLabel, updateTranslation, upsertCurrencyRate,
   upsertTranslation,
   type CurrencyRateView, type TranslationView,
@@ -88,7 +91,7 @@ function FieldEditor(props: {
         )}
       </div>
       <textarea
-        rows={props.field === "name" ? 1 : 3}
+        rows={props.field === "name" || props.field === "title" ? 1 : 3}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={dict.products.writeTheTranslationOrGenerate}
@@ -246,5 +249,113 @@ export function ProductTranslationsPanel({ orgId, productId }: { orgId: string; 
           {dict.products.saveRate}</button>
       </div>
     </div>
+  );
+}
+
+/**
+ * MB5 (ML15) — the generalised entity panel: the SAME locale
+ * picker, AI-draft flow and FieldEditor list/approve machinery
+ * as the product panel above, parameterised by entity. Used
+ * for categories (name + description) and blog posts (title
+ * only). The honesty rules are the panel-wide ones: drafts say
+ * "দোকানে দেখাবে না", AI output lands as a draft, and approval
+ * is always an explicit human click.
+ */
+function EntityTranslationsPanel(props: {
+  orgId: string;
+  entityType: "category" | "blog_post";
+  entityId: string;
+  fields: readonly { field: string; label: string }[];
+  fetchItems: (orgId: string, entityId: string) => Promise<{ items: TranslationView[] }>;
+  generateDraft: (orgId: string, entityId: string, locale: string) => Promise<{ note: string; items: TranslationView[] }>;
+  aiButtonLabel: string;
+}) {
+  const { dict } = useLocale();
+  const [locale, setLocale] = useState<string>("hi");
+  const [items, setItems] = useState<TranslationView[]>([]);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!props.orgId || !props.entityId) return;
+    const out = await props.fetchItems(props.orgId, props.entityId).catch(() => ({ items: [] as TranslationView[] }));
+    setItems(out.items);
+  }, [props.orgId, props.entityId, props.fetchItems]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  async function aiDraft() {
+    setAiBusy(true); setError(""); setNotice("");
+    try {
+      const out = await props.generateDraft(props.orgId, props.entityId, locale);
+      setNotice(out.note);
+      await reload();
+    } catch (e: any) {
+      setError(e?.message ?? dict.products.couldNotGenerateTheAI);
+    } finally { setAiBusy(false); }
+  }
+
+  return (
+    <div className="rounded-xl border border-teal-300 bg-teal-50/40 p-3.5 space-y-3">
+      <div className="text-xs font-bold text-teal-950">{dict.products.translationsMultilingualShop}</div>
+      <p className="text-[11px] text-slate-500">
+        {dict.products.onlyApprovedTranslationsShowIn}<code>?locale=hi</code> {dict.products.buyersCanViewInThat}</p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-semibold text-slate-600">{dict.products.language}</label>
+        <select value={locale} onChange={(e) => setLocale(e.target.value)}
+          className="rounded-lg border px-2 py-1.5 text-xs">
+          {TRANSLATION_LOCALES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label} ({l.code})</option>
+          ))}
+        </select>
+        <button type="button" disabled={aiBusy} onClick={aiDraft}
+          className="rounded-lg bg-teal-700 px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
+          {aiBusy ? dict.products.creating : props.aiButtonLabel}
+        </button>
+      </div>
+
+      {notice ? <p className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-[11px] text-sky-900">{notice}</p> : null}
+      {error ? <p className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">{error}</p> : null}
+
+      <div className="space-y-2">
+        {props.fields.map((f) => (
+          <FieldEditor key={`${props.entityType}-${f.field}-${locale}`} orgId={props.orgId}
+            entityType={props.entityType} entityId={props.entityId}
+            field={f.field} label={f.label} locale={locale}
+            existing={findTranslation(items, f.field, locale)}
+            onChanged={reload} onError={setError} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** MB5 (ML15): translations for one category (name + description). */
+export function CategoryTranslationsPanel({ orgId, categoryId }: { orgId: string; categoryId: string }) {
+  const { dict } = useLocale();
+  return (
+    <EntityTranslationsPanel
+      orgId={orgId} entityType="category" entityId={categoryId}
+      fields={CATEGORY_TRANSLATION_FIELDS}
+      fetchItems={fetchCategoryTranslations}
+      generateDraft={generateCategoryAiDraft}
+      aiButtonLabel={dict.products.categoryAiDraft}
+    />
+  );
+}
+
+/** MB5 (ML15): translations for one blog post — TITLE only. */
+export function BlogPostTranslationsPanel({ orgId, blogPostId }: { orgId: string; blogPostId: string }) {
+  const { dict } = useLocale();
+  return (
+    <EntityTranslationsPanel
+      orgId={orgId} entityType="blog_post" entityId={blogPostId}
+      fields={BLOG_POST_TRANSLATION_FIELDS}
+      fetchItems={fetchBlogPostTranslations}
+      generateDraft={generateBlogPostAiDraft}
+      aiButtonLabel={dict.products.blogTitleAiDraft}
+    />
   );
 }

@@ -6,9 +6,9 @@
  */
 
 export interface UpsertTranslationDto {
-  entityType?: string; // product | storefront_string
-  entityId?: string; // product id, or "shop" for storefront strings
-  field?: string; // name | description | announcementText | returnPolicyText | deliveryPromiseText
+  entityType?: string; // product | category | blog_post | storefront_string (MB5/ML15 added category + blog_post)
+  entityId?: string; // product/category/blog-post id, or "shop" for storefront strings
+  field?: string; // name | description | title (blog_post only) | announcementText | returnPolicyText | deliveryPromiseText
   locale?: string; // bn | en | hi
   text?: string;
   /** Explicit staff choice only — never defaults to approved. */

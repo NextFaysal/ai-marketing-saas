@@ -40,6 +40,41 @@ export class TranslationsController {
     return this.translations.generateProductDraft(orgId, user.userId, productId, dto);
   }
 
+  // MB5 (ML15): category translations — the product routes'
+  // exact mirror (CD-5: category first).
+  @Get("categories/:categoryId/translations")
+  listForCategory(@Param("organizationId") orgId: string, @Param("categoryId") categoryId: string) {
+    return this.translations.listForCategory(orgId, categoryId);
+  }
+
+  @Post("categories/:categoryId/translations/ai-draft")
+  @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  aiCategoryDraft(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("categoryId") categoryId: string,
+    @Body() dto: AiProductDraftDto,
+  ) {
+    return this.translations.generateCategoryDraft(orgId, user.userId, categoryId, dto);
+  }
+
+  // MB5 (ML15): blog-post TITLE translations (title only, CD-5).
+  @Get("blog-posts/:blogPostId/translations")
+  listForBlogPost(@Param("organizationId") orgId: string, @Param("blogPostId") blogPostId: string) {
+    return this.translations.listForBlogPost(orgId, blogPostId);
+  }
+
+  @Post("blog-posts/:blogPostId/translations/ai-draft")
+  @UseGuards(RolesGuard) @Roles(...WRITE_ROLES)
+  aiBlogPostDraft(
+    @CurrentUser() user: AuthUser,
+    @Param("organizationId") orgId: string,
+    @Param("blogPostId") blogPostId: string,
+    @Body() dto: AiProductDraftDto,
+  ) {
+    return this.translations.generateBlogPostDraft(orgId, user.userId, blogPostId, dto);
+  }
+
   @Get("storefront-string-translations")
   listStrings(@Param("organizationId") orgId: string) {
     return this.translations.listStorefrontStrings(orgId);

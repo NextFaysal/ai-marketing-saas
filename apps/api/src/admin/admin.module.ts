@@ -3,6 +3,8 @@ import { Module } from "@nestjs/common";
 import { AdminController, PublicStatusController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { AdminAiController } from "./admin-ai.controller";
+import { AdminTranslationsController } from "./admin-translations.controller";
+import { AdminTranslationsCoverageService } from "./admin-translations.service";
 import { PlatformTeachingService } from "./platform-teaching.service";
 import { LearningSourcesService } from "./learning-sources.service";
 import { AdminBrainService } from "./admin-brain.service";
@@ -27,8 +29,8 @@ import { AdsModule } from "../ads/ads.module";
   // AnswerStoreService, LearningService) so the admin view/fix
   // can never drift from — or bypass — the tenant paths.
   imports: [AutomationModule, IntegrationsModule, PaymentsModule, AuthModule, ConnectionsModule, SocialModule, AdsModule, OrgBrainModule],
-  controllers: [AdminController, PublicStatusController, AdminAiController],
-  providers: [AdminService, SuperAdminGuard, PlatformTeachingService, LearningSourcesService, AdminBrainService, AdminBrainFixService, AdminOversightService],
+  controllers: [AdminController, PublicStatusController, AdminAiController, AdminTranslationsController],
+  providers: [AdminService, SuperAdminGuard, PlatformTeachingService, LearningSourcesService, AdminBrainService, AdminBrainFixService, AdminOversightService, AdminTranslationsCoverageService],
   exports: [AdminService],
 })
 export class AdminModule {}

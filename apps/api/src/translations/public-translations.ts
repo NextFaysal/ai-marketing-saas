@@ -60,6 +60,69 @@ export async function approvedProductTexts(
   return out;
 }
 
+/**
+ * MB5 (ML15): approved category name/description overlays for
+ * one locale — approvedProductTexts' exact rules (approved-only
+ * IN the query, org-scoped, missing row = base text untouched).
+ */
+export async function approvedCategoryTexts(
+  db: any,
+  organizationId: string,
+  categoryIds: string[],
+  locale: string,
+): Promise<Map<string, { name?: string; description?: string }>> {
+  const out = new Map<string, { name?: string; description?: string }>();
+  if (!db?.contentTranslation || !organizationId || !locale || categoryIds.length === 0) return out;
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      organizationId,
+      entityType: "category",
+      entityId: { in: categoryIds },
+      locale,
+      status: "approved",
+      field: { in: ["name", "description"] },
+    },
+  }).catch(() => []);
+  for (const row of rows ?? []) {
+    if (typeof row?.text !== "string" || !row.text.trim()) continue;
+    const cur = out.get(String(row.entityId)) ?? {};
+    if (row.field === "name") cur.name = row.text;
+    if (row.field === "description") cur.description = row.text;
+    out.set(String(row.entityId), cur);
+  }
+  return out;
+}
+
+/**
+ * MB5 (ML15): approved blog-post TITLE overlays for one locale
+ * (title only — CD-5; content is never overlaid). Same
+ * approved-only/org-scoped rules as the product/category reads.
+ */
+export async function approvedBlogPostTexts(
+  db: any,
+  organizationId: string,
+  postIds: string[],
+  locale: string,
+): Promise<Map<string, { title?: string }>> {
+  const out = new Map<string, { title?: string }>();
+  if (!db?.contentTranslation || !organizationId || !locale || postIds.length === 0) return out;
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      organizationId,
+      entityType: "blog_post",
+      entityId: { in: postIds },
+      locale,
+      status: "approved",
+      field: "title",
+    },
+  }).catch(() => []);
+  for (const row of rows ?? []) {
+    if (typeof row?.text !== "string" || !row.text.trim()) continue;
+    out.set(String(row.entityId), { title: row.text });
+  }
+  return out;
+}
+
 /** Approved storefront_string translations for one locale. */
 export async function approvedStorefrontStrings(
   db: any,

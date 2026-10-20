@@ -34,6 +34,13 @@ import type {
 export const PRODUCT_TRANSLATION_FIELDS = ["name", "description"] as const;
 export const STOREFRONT_STRING_FIELDS = ["announcementText", "returnPolicyText", "deliveryPromiseText"] as const;
 export const STOREFRONT_STRINGS_ENTITY_ID = "shop";
+/** MB5 (ML15, CD-5): Category joins NF5 with the same two
+ * fields as Product (name, description). */
+export const CATEGORY_TRANSLATION_FIELDS = ["name", "description"] as const;
+/** MB5 (ML15, CD-5): BlogPost joins with title ONLY — long-form
+ * content is deliberately NOT in this batch (AI draft cost);
+ * recorded as a partial in the MB5 acceptance. */
+export const BLOG_POST_TRANSLATION_FIELDS = ["title"] as const;
 
 const AI_DRAFT_NOTE_BN = "এটি AI-তৈরি খসড়া — অনুমোদন না করা পর্যন্ত দোকানে দেখাবে না। যাচাই করে অনুমোদন করুন।";
 
@@ -85,13 +92,29 @@ export class TranslationsService {
       }
       return { entityType: "product", field: String(field) };
     }
+    // MB5 (ML15): category — the product pattern, name +
+    // description (CD-5: category first).
+    if (entityType === "category") {
+      if (!(CATEGORY_TRANSLATION_FIELDS as readonly string[]).includes(String(field))) {
+        throw badRequest("translations.categoryFieldMustBeNameOrDescription");
+      }
+      return { entityType: "category", field: String(field) };
+    }
+    // MB5 (ML15): blog_post — title ONLY (CD-5); a "content"
+    // field is refused here, never silently stored.
+    if (entityType === "blog_post") {
+      if (!(BLOG_POST_TRANSLATION_FIELDS as readonly string[]).includes(String(field))) {
+        throw badRequest("translations.blogPostFieldMustBeTitle");
+      }
+      return { entityType: "blog_post", field: String(field) };
+    }
     if (entityType === "storefront_string") {
       if (!(STOREFRONT_STRING_FIELDS as readonly string[]).includes(String(field))) {
         throw badRequest("translations.storefrontFieldMustBeOneOf", { fields: STOREFRONT_STRING_FIELDS.join(", ") });
       }
       return { entityType: "storefront_string", field: String(field) };
     }
-    throw badRequest("translations.entityTypeMustBeProductOrStorefrontString");
+    throw badRequest("translations.entityTypeMustBeProductCategoryBlogPostOrStorefrontString");
   }
 
   private async productOr404(orgId: string, productId: string) {
@@ -100,12 +123,46 @@ export class TranslationsService {
     return product;
   }
 
+  /** MB5 (ML15): the category org check, mirroring productOr404. */
+  private async categoryOr404(orgId: string, categoryId: string) {
+    const category = await this.db().category.findFirst({ where: { id: categoryId, organizationId: orgId } });
+    if (!category) throw notFound("translations.categoryNotFoundInOrg");
+    return category;
+  }
+
+  /** MB5 (ML15): the blog-post org check, mirroring productOr404. */
+  private async blogPostOr404(orgId: string, blogPostId: string) {
+    const post = await this.db().blogPost.findFirst({ where: { id: blogPostId, organizationId: orgId } });
+    if (!post) throw notFound("translations.blogPostNotFoundInOrg");
+    return post;
+  }
+
   // ---------- staff reads ----------
 
   async listForProduct(orgId: string, productId: string) {
     await this.productOr404(orgId, productId);
     const rows = await this.db().contentTranslation.findMany({
       where: { organizationId: orgId, entityType: "product", entityId: productId },
+      orderBy: [{ locale: "asc" }, { field: "asc" }],
+    });
+    return { items: rows.map((r: any) => this.serialize(r)) };
+  }
+
+  /** MB5 (ML15): category translations list, mirroring listForProduct. */
+  async listForCategory(orgId: string, categoryId: string) {
+    await this.categoryOr404(orgId, categoryId);
+    const rows = await this.db().contentTranslation.findMany({
+      where: { organizationId: orgId, entityType: "category", entityId: categoryId },
+      orderBy: [{ locale: "asc" }, { field: "asc" }],
+    });
+    return { items: rows.map((r: any) => this.serialize(r)) };
+  }
+
+  /** MB5 (ML15): blog-post (title) translations list, mirroring listForProduct. */
+  async listForBlogPost(orgId: string, blogPostId: string) {
+    await this.blogPostOr404(orgId, blogPostId);
+    const rows = await this.db().contentTranslation.findMany({
+      where: { organizationId: orgId, entityType: "blog_post", entityId: blogPostId },
       orderBy: [{ locale: "asc" }, { field: "asc" }],
     });
     return { items: rows.map((r: any) => this.serialize(r)) };
@@ -132,8 +189,10 @@ export class TranslationsService {
     const locale = this.assertLocale(dto.locale);
     const text = typeof dto.text === "string" ? dto.text.trim() : "";
     if (!text) throw badRequest("translations.translationTextMustNotBeEmpty");
-    const entityId = entityType === "product" ? String(dto.entityId ?? "") : STOREFRONT_STRINGS_ENTITY_ID;
+    const entityId = entityType === "storefront_string" ? STOREFRONT_STRINGS_ENTITY_ID : String(dto.entityId ?? "");
     if (entityType === "product") await this.productOr404(orgId, entityId);
+    if (entityType === "category") await this.categoryOr404(orgId, entityId);
+    if (entityType === "blog_post") await this.blogPostOr404(orgId, entityId);
     const status = dto.status === "approved" ? "approved" : "draft";
     const where = { organizationId_entityType_entityId_field_locale: { organizationId: orgId, entityType, entityId, field, locale } };
     const row = await this.db().contentTranslation.upsert({
@@ -275,6 +334,52 @@ export class TranslationsService {
     if (fields.length === 0) throw badRequest("translations.productHasNoNameOrDescription");
     const translated = await this.translateFields(orgId, userId, provider, locale, fields, "product_translation");
     const saved = await this.saveDrafts(orgId, userId, "product", productId, locale, translated);
+    return {
+      mode: "ai_draft" as const,
+      provider: provider.name,
+      note: AI_DRAFT_NOTE_BN,
+      items: saved.map((r: any) => this.serialize(r)),
+    };
+  }
+
+  /**
+   * MB5 (ML15): AI draft for a category (name + description when
+   * present) — the product pattern exactly: real-provider only,
+   * always draft + source "ai", approval is a separate human
+   * act (ML-L6).
+   */
+  async generateCategoryDraft(orgId: string, userId: string, categoryId: string, dto: AiProductDraftDto) {
+    const locale = this.assertLocale(dto.locale);
+    const category = await this.categoryOr404(orgId, categoryId);
+    const provider = await this.realProviderOrFail(orgId);
+    const fields = [
+      { field: "name", baseText: String(category.name ?? "") },
+      ...(category.description ? [{ field: "description", baseText: String(category.description) }] : []),
+    ].filter((f) => f.baseText.trim());
+    if (fields.length === 0) throw badRequest("translations.categoryHasNoNameOrDescription");
+    const translated = await this.translateFields(orgId, userId, provider, locale, fields, "category_translation");
+    const saved = await this.saveDrafts(orgId, userId, "category", categoryId, locale, translated);
+    return {
+      mode: "ai_draft" as const,
+      provider: provider.name,
+      note: AI_DRAFT_NOTE_BN,
+      items: saved.map((r: any) => this.serialize(r)),
+    };
+  }
+
+  /**
+   * MB5 (ML15): AI draft for a blog post's TITLE only (CD-5 —
+   * content is not translated in this batch). Same draft-only
+   * discipline as every other entity.
+   */
+  async generateBlogPostDraft(orgId: string, userId: string, blogPostId: string, dto: AiProductDraftDto) {
+    const locale = this.assertLocale(dto.locale);
+    const post = await this.blogPostOr404(orgId, blogPostId);
+    const provider = await this.realProviderOrFail(orgId);
+    const fields = [{ field: "title", baseText: String(post.title ?? "") }].filter((f) => f.baseText.trim());
+    if (fields.length === 0) throw badRequest("translations.blogPostHasNoTitle");
+    const translated = await this.translateFields(orgId, userId, provider, locale, fields, "blog_post_translation");
+    const saved = await this.saveDrafts(orgId, userId, "blog_post", blogPostId, locale, translated);
     return {
       mode: "ai_draft" as const,
       provider: provider.name,
