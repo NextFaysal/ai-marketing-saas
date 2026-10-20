@@ -18,13 +18,26 @@ import {
   type NotificationEventKey,
 } from "@/lib/orders-on5";
 
+/**
+ * MB5 (ML14): a channel template override is either a plain
+ * string (one generic override for every recipient locale) or
+ * the merchant's own per-locale variants { bn?, en? } — the API
+ * config shape since ML14. The editor edits the variant for the
+ * CURRENT UI locale and preserves the other locale's entry
+ * untouched; it never flattens an object into a string.
+ */
+type TemplateOverride =
+  | string
+  | Partial<Record<"bn" | "en", string | null>>
+  | null;
+
 interface EventConfig {
   enabled: boolean;
   channels: NotificationChannelKey[];
   templates: {
-    sms: string | null;
-    whatsapp: string | null;
-    email: string | null;
+    sms: TemplateOverride;
+    whatsapp: TemplateOverride;
+    email: TemplateOverride;
   };
 }
 
@@ -112,8 +125,19 @@ export default function OrderNotificationsPage() {
     if (typeof override === "string" && override.trim()) {
       return override;
     }
+    if (override && typeof override === "object") {
+      // MB5 (ML14): per-locale variant object — show THIS UI
+      // locale's variant; when the merchant has not written one
+      // for this locale, the platform default for the locale
+      // shows (the other locale's variant stays untouched in
+      // state and is never displayed as this locale's text).
+      const variant = override[locale];
+      if (typeof variant === "string" && variant.trim()) {
+        return variant;
+      }
+    }
     return defaultTemplates(locale)[selectedEvent] ?? "";
-  }, [currentEventConfig, selectedEvent, activeChannel]);
+  }, [currentEventConfig, selectedEvent, activeChannel, locale]);
 
   // Rendered preview text with sample variables
   const renderedMessage = useMemo(() => {
@@ -146,13 +170,25 @@ export default function OrderNotificationsPage() {
     const ev = config[selectedEvent];
     if (!ev) return;
 
+    // MB5 (ML14): when the stored override is a per-locale
+    // variant object, the edit lands on the CURRENT UI locale's
+    // entry only — the other locale's variant is preserved
+    // verbatim (never silently flattened into a plain string).
+    const existing = ev.templates[activeChannel];
+    const nextOverride: TemplateOverride =
+      existing && typeof existing === "object"
+        ? { ...existing, [locale]: text === "" ? null : text }
+        : text === ""
+          ? null
+          : text;
+
     setConfig({
       ...config,
       [selectedEvent]: {
         ...ev,
         templates: {
           ...ev.templates,
-          [activeChannel]: text === "" ? null : text,
+          [activeChannel]: nextOverride,
         },
       },
     });

@@ -62,6 +62,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
     items: [
       { id: "analytics", labelKey: "nav.items.analytics", href: "/analytics", icon: "chart" },
       { id: "growth", labelKey: "nav.items.growth", href: "/growth", icon: "trending" },
+      { id: "translations", labelKey: "nav.items.translations", href: "/translations", icon: "chart" },
     ],
   },
   {

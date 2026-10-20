@@ -6,6 +6,7 @@ import { getOrganizationId } from "@/lib/org";
 import { formatMinor } from "@repo/contracts";
 import { useConfirm } from "@repo/ui/client";
 import { MediaImage } from "@/components/MediaImage";
+import { CategoryTranslationsPanel } from "@/components/product-translations";
 
 // EC3/EC4 (Batch B2): product channel / gallery / bundle / category dialogs.
 // All error messages are the API's verbatim message (apiFetch throws
@@ -582,6 +583,9 @@ export function EcCategoryManagerDialog({ onClose, onChanged }: { onClose: () =>
                     <button className="btn-primary disabled:opacity-50" disabled={busy} onClick={() => saveEdit(c.id)}>{dict.products.save}</button>
                     <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => setEditId(null)}>{dict.common.cancel}</button>
                   </div>
+                  {/* MB5 (ML15): category name/description translations
+                      (NF5) — managed beside the category edit form. */}
+                  <CategoryTranslationsPanel orgId={getOrganizationId() ?? ""} categoryId={c.id} />
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-2">

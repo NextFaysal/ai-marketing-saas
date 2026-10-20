@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
 import { useConfirm, useToast } from "@repo/ui/client";
 import { BlocksEditor, cleanBlocks, normalizeBlock, type EditableBlock } from "../BlocksEditor";
+import { BlogPostTranslationsPanel } from "@/components/product-translations";
 
 // AB6 (AX12) — staff blog manager. Consumes the staff routes:
 //   GET    /organizations/:id/storefront/blog           -> { posts[] }
@@ -282,6 +283,15 @@ export default function StorefrontBlogManager() {
                 <Link href={editorLink} target="_blank" className="font-mono font-semibold text-indigo-700">{editorLink} ↗</Link>
                 {eStatus !== "published" ? <span> {dict.commerce.inDraftStateTheLink}</span> : null}
               </p>
+            ) : null}
+
+            {selectedId ? (
+              <div className="border-t pt-4">
+                {/* MB5 (ML15): blog post TITLE translations (NF5) —
+                    managed beside the post editor; the post must
+                    exist first, so this renders only when editing. */}
+                <BlogPostTranslationsPanel orgId={getOrganizationId() ?? ""} blogPostId={selectedId} />
+              </div>
             ) : null}
 
             <div className="space-y-3 border-t pt-4">
