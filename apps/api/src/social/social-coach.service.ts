@@ -11,6 +11,7 @@ import {
 } from "./social-insights.service";
 import { ungroundedNumbers } from "./social-ai.service";
 import { ApiException, forbidden } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg, type OwnerLanguage } from "../ai/owner-language";
 
 /**
  * SN9 — the weekly performance coach.
@@ -24,7 +25,8 @@ import { ApiException, forbidden } from "../i18n/api-exception";
  *      the SU7 insights service. EVERY number the coach ever
  *      states comes from here; nothing is estimated or invented.
  *   2. NARRATION (optional): when the org has a REAL LLM
- *      configured, the provider phrases a short Bengali summary
+ *      configured, the provider phrases a short summary in the
+ *      resolved owner language (MB5; Bengali before that)
  *      from the compute payload ONLY, under the SU4 number
  *      guard — a narration containing any number the compute
  *      did not produce is discarded wholesale and the
@@ -142,16 +144,50 @@ export function computeCoachDigest(
 }
 
 const WEEKDAY_BN = ["রবিবার", "সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার"];
+const WEEKDAY_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** Bengali digits for display (the summary is owner-facing). */
 const bn = (v: number | string): string => String(v).replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[Number(d)]);
 
 /**
- * The deterministic Bengali summary — built ONLY from compute
- * numbers. This is also the fallback whenever narration is
- * unavailable or fails the number guard.
+ * The deterministic summary — built ONLY from compute numbers.
+ * This is also the fallback whenever narration is unavailable or
+ * fails the number guard. MB5 (ML13, CD-4): rendered in the
+ * resolved OWNER language (bn default keeps every existing
+ * caller/spec byte-identical); the en variant mirrors the bn
+ * lines one-for-one with Latin digits.
  */
-export function buildCoachSummary(data: CoachDigestData): string {
+export function buildCoachSummary(data: CoachDigestData, language: OwnerLanguage = "bn"): string {
+  if (language === "en") {
+    const lines: string[] = [];
+    if (!data.dataSufficient) {
+      lines.push(
+        `Not enough performance data accumulated over the last 7 days — ${data.current.posts} posts were published, of which only ${data.current.scoredPosts} have engagement data. Once a few more posts have data, the Coach will be able to give a reliable summary.`,
+      );
+      return lines.join(" ");
+    }
+    lines.push(`In the last 7 days ${data.current.posts} posts were published; total engagement ${data.current.engagement}.`);
+    if (data.engagementDeltaPct !== null) {
+      lines.push(data.engagementDeltaPct >= 0
+        ? `Engagement rose ${data.engagementDeltaPct}% compared with the previous 7 days.`
+        : `Engagement fell ${Math.abs(data.engagementDeltaPct)}% compared with the previous 7 days.`);
+    }
+    const top = data.topPosts[0];
+    if (top) {
+      lines.push(`Top post${top.captionExcerpt ? ` "${top.captionExcerpt}"` : ""} — engagement ${top.engagement}.`);
+    }
+    if (data.bestContentType) {
+      lines.push(`Best-performing content is ${data.bestContentType.kind} — average engagement ${data.bestContentType.avgEngagement}.`);
+    }
+    if (data.bestTime) {
+      lines.push(`Best-time hint: ${WEEKDAY_EN[data.bestTime.dayOfWeek] ?? ""} ${data.bestTime.hour}:00 (average engagement ${data.bestTime.avgEngagement}).`);
+    }
+    const mover = data.hashtagMovers[0];
+    if (mover) {
+      lines.push(`Rising hashtag ${mover.tag} — this week's average engagement ${mover.currentAvg}${mover.previousAvg === null ? " (not present last week)" : ""}.`);
+    }
+    return lines.join(" ");
+  }
   const lines: string[] = [];
   if (!data.dataSufficient) {
     lines.push(
@@ -289,9 +325,11 @@ export class SocialCoachService {
       orderBy: { weekStart: "desc" },
     }).catch(() => null);
     const previewData = await this.compute(organizationId);
+    // MB5 (ML13): the preview is owner-facing too — same chain.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, { organizationId });
     return {
       latest: latestRow ? this.serializeDigest(latestRow) : null,
-      preview: { data: previewData, summary: buildCoachSummary(previewData) },
+      preview: { data: previewData, summary: buildCoachSummary(previewData, language) },
     };
   }
 
@@ -325,19 +363,27 @@ export class SocialCoachService {
   private async narrate(
     organizationId: string,
     data: CoachDigestData,
-  ): Promise<{ summary: string; source: "llm" | "deterministic"; provider: string | null }> {
-    const deterministic = buildCoachSummary(data);
+  ): Promise<{ summary: string; source: "llm" | "deterministic"; provider: string | null; language: OwnerLanguage }> {
+    // MB5 (ML13, CD-4): the coach speaks the resolved OWNER
+    // language (aiReplyLanguage → dashboardLocale → bn; no dto
+    // and no single acting user on this scheduled path) — the
+    // LLM prompt and the deterministic fallback alike. The old
+    // prompt hardcoded Bengali.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, { organizationId });
+    const deterministic = buildCoachSummary(data, language);
     try {
       await this.checkCoachLimit(organizationId);
       const provider = await providerForOrg(this.llm, organizationId);
       if (!provider?.isRealLlm) {
-        return { summary: deterministic, source: "deterministic", provider: provider?.name ?? null };
+        return { summary: deterministic, source: "deterministic", provider: provider?.name ?? null, language };
       }
       const result = await provider.complete([
         {
           role: "system",
           content:
-            "You write a SHORT Bengali weekly performance summary for a business owner. Use ONLY the numbers in the JSON data given — never invent a number, date, platform name or recommendation that the data does not support. Two or three sentences, plain Bengali (বাংলা হরফে).",
+            language === "en"
+              ? "You write a SHORT English weekly performance summary for a business owner. Use ONLY the numbers in the JSON data given — never invent a number, date, platform name or recommendation that the data does not support. Two or three sentences, plain English."
+              : "You write a SHORT Bengali weekly performance summary for a business owner. Use ONLY the numbers in the JSON data given — never invent a number, date, platform name or recommendation that the data does not support. Two or three sentences, plain Bengali (বাংলা হরফে).",
         },
         { role: "user", content: `Data (JSON):\n${JSON.stringify(data)}` },
       ], { maxTokens: 320 });
@@ -354,22 +400,22 @@ export class SocialCoachService {
         },
       }).catch(() => undefined);
       const text = String(result.text ?? "").trim();
-      if (!text) return { summary: deterministic, source: "deterministic", provider: provider.name };
+      if (!text) return { summary: deterministic, source: "deterministic", provider: provider.name, language };
       const bad = ungroundedNumbers(text, coachAllowedNumbers(data));
       if (bad.length > 0) {
         this.logger.warn(`social_coach narration discarded for org ${organizationId}: ungrounded numbers ${bad.join(", ")}`);
-        return { summary: deterministic, source: "deterministic", provider: provider.name };
+        return { summary: deterministic, source: "deterministic", provider: provider.name, language };
       }
-      return { summary: text, source: "llm", provider: provider.name };
+      return { summary: text, source: "llm", provider: provider.name, language };
     } catch (e) {
       this.logger.warn(`social_coach narration unavailable for org ${organizationId}: ${e instanceof Error ? e.message : String(e)}`);
-      return { summary: deterministic, source: "deterministic", provider: null };
+      return { summary: deterministic, source: "deterministic", provider: null, language };
     }
   }
 
   /** OWNER/ADMIN members get the digest notification — the
    * SU10 notifyFailed pattern, fully failure-isolated. */
-  private async notifyOwners(organizationId: string, summary: string) {
+  private async notifyOwners(organizationId: string, summary: string, language: OwnerLanguage = "bn") {
     try {
       const members = await (this.prisma as any).membership.findMany({
         where: { organizationId, role: { in: ["OWNER", "ADMIN"] }, status: "active" },
@@ -380,7 +426,7 @@ export class SocialCoachService {
             organizationId,
             userId: m.userId,
             type: "social_coach_weekly",
-            title: "সাপ্তাহিক Social Coach সারসংক্ষেপ",
+            title: language === "en" ? "Weekly Social Coach summary" : "সাপ্তাহিক Social Coach সারসংক্ষেপ",
             body: summary.slice(0, 500),
             conversationId: null,
           },
@@ -423,7 +469,7 @@ export class SocialCoachService {
       if (winner) return { created: false, digest: this.serializeDigest(winner) };
       throw e;
     }
-    await this.notifyOwners(organizationId, narration.summary);
+    await this.notifyOwners(organizationId, narration.summary, narration.language);
     await this.audit.log({
       organizationId, userId: actorId, action: "social.coach_digest_created",
       entityType: "Organization", entityId: organizationId,

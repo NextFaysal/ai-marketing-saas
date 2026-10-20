@@ -121,6 +121,12 @@ function makeTable(idPrefix: string) {
       if (orderBy?.publishedAt === "desc") out = [...out].sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
       return out[0] ?? null;
     },
+    // MB5: SocialCoachService now reads org locale rungs through
+    // resolveOwnerLanguageForOrg, which uses findUnique — the
+    // fake models the full Prisma surface it consumes.
+    async findUnique({ where }: any = {}) {
+      return rows.find((r) => matches(r, where ?? {})) ?? null;
+    },
     async findMany({ where, orderBy, take }: any = {}) {
       let out = rows.filter((r) => matches(r, where ?? {}));
       if (orderBy?.publishedAt === "desc") out = [...out].sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());

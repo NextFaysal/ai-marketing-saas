@@ -3456,8 +3456,26 @@ export class InboxService implements OnModuleInit {
       if (!provider?.isRealLlm) return failNote("আসল AI provider যুক্ত নেই।");
       const profile = (await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null)) ?? null;
       const threadText = history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n");
+      // MB5 (ML13, coordinator finishing hunk): the summary
+      // language follows the conversation via the CUSTOMER chain
+      // (org aiReplyLanguage → detected from the customer's
+      // latest inbound message → bn) — the same rule as
+      // summarizeConversation; the memory rung is unavailable at
+      // this site (no conversation row/customerKey in scope).
+      // Before MB5 the prompt hardcoded "(Bengali, …)".
+      const lastInboundForNote = [...history].reverse().find((m: any) => m.direction === "in");
+      const noteLanguage = resolveReplyLanguage({
+        orgReplyLanguage: (profile as any)?.aiReplyLanguage ?? null,
+        detected: detectReplyLanguage(String(lastInboundForNote?.content ?? "")),
+      });
+      const noteLanguageName =
+        noteLanguage.language === "en"
+          ? "English"
+          : noteLanguage.language === "mixed"
+            ? "the same mix of Bengali and English (Banglish) as the customer's messages"
+            : "Bengali";
       const result = await provider.complete([
-        { role: "system", content: "You write a ONE-paragraph handover summary (Bengali, 2-4 sentences) for the support agent taking over this conversation. Use ONLY facts from the messages below: what the customer wants, key details already stated, and what is still pending. Never invent numbers, prices, dates or promises — restate only numbers that appear in the messages. Return ONLY the paragraph." },
+        { role: "system", content: `You write a ONE-paragraph handover summary (${noteLanguageName}, 2-4 sentences) for the support agent taking over this conversation. Use ONLY facts from the messages below: what the customer wants, key details already stated, and what is still pending. Never invent numbers, prices, dates or promises — restate only numbers that appear in the messages. Return ONLY the paragraph.` },
         { role: "user", content: threadText.slice(0, 6000) },
       ], { maxTokens: 300 });
       await (this.prisma as any).aIUsageRecord.create({
@@ -5142,10 +5160,47 @@ export class InboxService implements OnModuleInit {
     if (messages.length === 0) throw badRequest("inbox.thereAreNoMessagesInThis");
     const history = [...messages].reverse();
     const provider = await providerForOrg(this.llm, organizationId);
+    // MB5 (ML13, CD-8 #17): the summary language is the
+    // conversation's own language via the CUSTOMER chain
+    // (resolveReplyLanguage — org aiReplyLanguage → detected
+    // from the customer's latest inbound message → remembered
+    // CustomerMemory.languagePref → bn), never a hardcoded
+    // "in Bengali" again. Every read is defensive: a missing
+    // rung degrades to no signal, exactly as the chain allows.
+    let summaryOrgLanguage: string | null = null;
+    try {
+      summaryOrgLanguage = (await (this.prisma as any).businessProfile?.findUnique({
+        where: { organizationId }, select: { aiReplyLanguage: true },
+      }))?.aiReplyLanguage ?? null;
+    } catch { /* org rung unavailable at this site */ }
+    let summaryMemoryLanguage: string | null = null;
+    const summaryCustomerKey =
+      conv && !(conv as any).isPractice && conv.externalContactId
+        ? `${String(conv.channel ?? "")}:${String(conv.externalContactId)}`
+        : null;
+    if (summaryCustomerKey) {
+      try {
+        summaryMemoryLanguage = (await (this.prisma as any).customerMemory?.findFirst({
+          where: { organizationId, customerKey: summaryCustomerKey }, select: { languagePref: true },
+        }))?.languagePref ?? null;
+      } catch { /* memory rung unavailable at this site */ }
+    }
+    const lastInboundForSummary = [...history].reverse().find((m: any) => m.direction === "in");
+    const summaryLanguage = resolveReplyLanguage({
+      orgReplyLanguage: summaryOrgLanguage,
+      detected: detectReplyLanguage(String(lastInboundForSummary?.content ?? "")),
+      memoryLanguagePref: summaryMemoryLanguage,
+    });
+    const summaryLanguageName =
+      summaryLanguage.language === "en"
+        ? "English"
+        : summaryLanguage.language === "mixed"
+          ? "the same mix of Bengali and English (Banglish) as the customer's messages"
+          : "Bengali";
     let summary: string;
     if (provider.isRealLlm) {
       const result = await provider.complete([
-        { role: "system", content: "Summarize this customer-support conversation in Bengali in 3-5 short bullet lines. Use ONLY facts from the messages: what the customer wants, key details (product, price, order), current status, and any pending action. Never invent facts." },
+        { role: "system", content: `Summarize this customer-support conversation in ${summaryLanguageName} in 3-5 short bullet lines. Use ONLY facts from the messages: what the customer wants, key details (product, price, order), current status, and any pending action. Never invent facts.` },
         { role: "user", content: history.map((m: any) => `${m.direction === "in" ? "Customer" : "Business"}: ${m.content ?? `[${m.type}]`}`).join("\n") },
       ], { maxTokens: 400 });
       summary = result.text.trim();
@@ -5153,11 +5208,18 @@ export class InboxService implements OnModuleInit {
         data: { organizationId, userId: actorId, feature: "summary", provider: provider.name, inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated },
       }).catch(() => undefined);
     } else {
-      // Clearly labeled data digest (not an AI summary).
+      // Clearly labeled data digest (not an AI summary) — in the
+      // same resolved conversation language (mixed → bn digest).
       const inbound = history.filter((m: any) => m.direction === "in");
       const intents = [...new Set(inbound.map((m: any) => m.intent).filter(Boolean))];
       const first = inbound[0]?.content ?? "—";
-      summary = [
+      summary = summaryLanguage.language === "en" ? [
+        `Total messages: ${history.length} (customer ${inbound.length}, team ${history.length - inbound.length})`,
+        `Customer's first message: "${String(first).slice(0, 140)}"`,
+        intents.length ? `Detected topics: ${intents.join(", ")}` : "No intent detected",
+        `Conversation status: ${conv.status}${conv.csatRating ? ` · CSAT ${conv.csatRating}/5` : ""}`,
+        "(This is a data-based digest; a detailed summary will be available once a real LLM is connected.)",
+      ].join("\n") : [
         `মোট বার্তা: ${history.length} (গ্রাহক ${inbound.length}, টিম ${history.length - inbound.length})`,
         `গ্রাহকের প্রথম বার্তা: "${String(first).slice(0, 140)}"`,
         intents.length ? `শনাক্ত বিষয়: ${intents.join(", ")}` : "কোনো Intent শনাক্ত হয়নি",
@@ -7447,6 +7509,18 @@ export class InboxService implements OnModuleInit {
     const products = await (this.prisma as any).product.findMany({ where: { organizationId, status: "ACTIVE" }, take: 100 });
     const matchedProduct = matchProduct(question, products);
 
+    // MB5 (ML13, CD-8 #18): ONE language resolution for both
+    // draft paths — the exact inputs the LLM path's quality
+    // block already used (org → detected → memory), hoisted so
+    // the no-LLM templateDraft fallback selects its bn/en
+    // template set by the SAME resolved language instead of
+    // always emitting the Bangla set.
+    const draftResolvedLanguage = resolveReplyLanguage({
+      orgReplyLanguage: brain.replyLanguage ?? null,
+      detected: detectReplyLanguage(question),
+      memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
+    });
+
     let content: string;
     let usage = { inputTokens: 0, outputTokens: 0, estimated: true };
     if (provider.isRealLlm) {
@@ -7482,11 +7556,7 @@ export class InboxService implements OnModuleInit {
             // customer's own language unless the owner had
             // pinned one.
             ...buildReplyQualityBlock({
-              language: resolveReplyLanguage({
-                orgReplyLanguage: brain.replyLanguage ?? null,
-                detected: detectReplyLanguage(question),
-                memoryLanguagePref: brain.customerMemory?.languagePref ?? null,
-              }),
+              language: draftResolvedLanguage,
               styleInstructions: brain.styleInstructions ?? null,
               platformGuidance: brain.platformGuidance ?? null,
               channel: "draft",
@@ -7498,7 +7568,7 @@ export class InboxService implements OnModuleInit {
       content = result.text.trim();
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, estimated: result.tokensEstimated };
     } else {
-      content = templateDraft(question, matchedProduct, brain.publicProfile ? { industry: brain.publicProfile.industry } : null);
+      content = templateDraft(question, matchedProduct, brain.publicProfile ? { industry: brain.publicProfile.industry } : null, draftResolvedLanguage.language);
     }
 
     const draft = await (this.prisma as any).messageDraft.create({
@@ -7934,13 +8004,40 @@ export function matchProduct(text: string, products: any[]): any | null {
 
 /** Deterministic draft for the dev-template provider: grounded in real
  *  product/policy data when found, otherwise an honest "we will confirm"
- *  placeholder - it never invents a price or a policy. */
-export function templateDraft(lastInbound: string, product: any | null, profile: any | null): string {
-  const greeting = "আসসালামু আলাইকুম!";
+ *  placeholder - it never invents a price or a policy.
+ *  MB5 (ML13, CD-8 #18): bilingual template sets — the English
+ *  set mirrors the Bangla set branch-for-branch and is selected
+ *  by the same resolved language the draft path uses
+ *  (suggestDraft's resolveReplyLanguage result). "mixed" takes
+ *  the Bangla set (the platform home-market default; the LLM
+ *  path renders true Banglish when a real provider exists).
+ *  The default stays "bn" so existing direct callers are
+ *  byte-identical. */
+export function templateDraft(lastInbound: string, product: any | null, profile: any | null, language: "bn" | "en" | "mixed" = "bn"): string {
   const text = lastInbound.toLowerCase();
   const asksPrice = /দাম|price|কত টাকা|cost/.test(text);
   const asksDelivery = /ডেলিভারি|delivery|শিপিং|shipping|কুরিয়ার/.test(text);
   const asksStock = /স্টক|stock|আছে কি|available|in stock/.test(text);
+  if (language === "en") {
+    const greeting = "Hello!";
+    if (asksPrice && product) {
+      return `${greeting} The price of ${product.name} is ${formatMinor(BigInt(product.priceMinor), product.currency)}. To order, please send your name, address and phone number and we will complete the rest of the process.`;
+    }
+    if (asksStock && product) {
+      return product.stockQuantity !== null && product.stockQuantity !== undefined
+        ? `${greeting} Yes, ${product.name} is in stock now (${product.stockQuantity} pcs). Let us know if you would like to order.`
+        : `${greeting} We are checking the stock of ${product.name} and will confirm shortly.`;
+    }
+    if (asksDelivery) {
+      return `${greeting} We will let you know the delivery charge and time for your area — please tell us your district/area name.`;
+    }
+    if (product) {
+      return `${greeting} Thank you for asking about ${product.name}. The price is ${formatMinor(BigInt(product.priceMinor), product.currency)}. Feel free to ask if you want to know anything else.`;
+    }
+    const business = profile?.industry ? "" : "";
+    return `${greeting} Thank you for your message.${business} We are checking your question and will reply with a confirmed answer — please wait a moment.`;
+  }
+  const greeting = "আসসালামু আলাইকুম!";
   if (asksPrice && product) {
     return `${greeting} ${product.name} এর দাম ${formatMinor(BigInt(product.priceMinor), product.currency)}। অর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও ফোন নম্বর দিন, আমরা বাকি প্রক্রিয়া সম্পন্ন করে দেব।`;
   }

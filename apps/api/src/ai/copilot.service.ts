@@ -19,6 +19,7 @@ import { catalogAction } from "./actions/action-catalog";
 import { extractGuardNumbers } from "../inbox/business-brain";
 import { formatMinor } from "@repo/contracts";
 import { CopilotAskDto } from "./copilot.dto";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
 import { ApiException, badRequest, forbidden } from "../i18n/api-exception";
 
 /** The AIUsageRecord feature bucket for the copilot's LLM calls. */
@@ -248,12 +249,19 @@ export class CopilotService {
     }
   }
 
-  private async resolveLanguage(organizationId: string, dtoLanguage?: string): Promise<"bn" | "en"> {
-    if (dtoLanguage === "en" || dtoLanguage === "bn") return dtoLanguage;
-    const profile = await this.p().businessProfile
-      ?.findUnique({ where: { organizationId }, select: { aiReplyLanguage: true } })
-      .catch(() => null);
-    return String(profile?.aiReplyLanguage ?? "").toLowerCase() === "en" ? "en" : "bn";
+  /** MB5 (ML13, CD-1/CD-8 #5): the copilot's language is the
+   *  shared OWNER chain — dto → BusinessProfile.aiReplyLanguage
+   *  → Organization.dashboardLocale → acting User.preferredLocale
+   *  → bn — via the frozen resolver in owner-language.ts. This
+   *  method stays as the call seam; it no longer carries its own
+   *  divergent dto→aiReplyLanguage→bn logic. */
+  private async resolveLanguage(organizationId: string, dtoLanguage?: string, userId?: string): Promise<"bn" | "en"> {
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: userId ?? null,
+      dtoLanguage: dtoLanguage ?? null,
+    });
+    return language;
   }
 
   // ---------------- campaign target resolution ----------------
@@ -332,7 +340,7 @@ export class CopilotService {
     const question = typeof dto?.question === "string" ? dto.question.trim() : "";
     if (!question) throw badRequest("ai.writeAQuestionOrAnInstruction");
     await this.checkKillSwitch(organizationId);
-    const language = await this.resolveLanguage(organizationId, dto?.language);
+    const language = await this.resolveLanguage(organizationId, dto?.language, userId);
     const bn = language === "bn";
     const askNorm = normText(question);
 

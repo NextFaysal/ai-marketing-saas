@@ -10,6 +10,7 @@ import { resolveOrgLlmConfig } from "./llm/org-llm-config";
 import { effectiveLlmConfig } from "../common/platform-config";
 import { aiPauseReason, killSwitches } from "../common/platform-settings";
 import { EventsService } from "../common/events.service";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
 
 /**
  * SA-B14 (Smart AI Phase 3, A1): Ads Report Intelligence — the
@@ -719,11 +720,15 @@ export class AdsIntelligenceService {
     const provider = await this.resolveProvider(organizationId);
     if (!provider) return { digest, narration: null, narrationNote: "no_real_llm_provider" };
 
-    const profile = await this.rows<any>(
-      () => this.db().businessProfile.findUnique({ where: { organizationId }, select: { aiReplyLanguage: true } }),
-      null,
-    );
-    const english = String(profile?.aiReplyLanguage ?? "").toLowerCase() === "en";
+    // MB5 (ML13, CD-8 #7): narration language is the shared
+    // OWNER chain (aiReplyLanguage → dashboardLocale → acting
+    // user's preferredLocale → bn) instead of the old binary
+    // `aiReplyLanguage === "en"` check. No dto on this path.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: actorId,
+    });
+    const english = language === "en";
     const system = english
       ? "You are an ads analyst. Using ONLY the verified facts below, write a short summary for the shop owner in English (at most 4 sentences). Use only numbers that appear in the facts — never add a new number, percentage or estimate, and never mention anything the facts do not contain."
       : "আপনি একজন বিজ্ঞাপন বিশ্লেষক। নিচের যাচাইকৃত তথ্যের ভিত্তিতে দোকান মালিকের জন্য বাংলায় একটি সংক্ষিপ্ত সারসংক্ষেপ লিখুন (সর্বোচ্চ ৪ বাক্য)। শুধুমাত্র তথ্যে থাকা সংখ্যা ব্যবহার করুন — নতুন কোনো সংখ্যা, শতাংশ বা অনুমান যোগ করবেন না, আর তথ্যে নেই এমন কিছু বলবেন না।";

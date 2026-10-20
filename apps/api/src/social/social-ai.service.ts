@@ -8,6 +8,7 @@ import { formatMinor } from "@repo/contracts";
 import { SocialService } from "./social.service";
 import { SocialImportService } from "./social-import.service";
 import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 
 /**
  * SU4: numbers in a text, normalized for the grounding guard
@@ -127,7 +128,13 @@ export class SocialAiService {
     // Enforcement FIRST (before any load), mirroring M55.
     await this.checkDailyLimit(organizationId);
 
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8 #13): dto.language still wins; absent, the
+    // default comes from the shared OWNER chain, not a hardcoded bn.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId,
+      dtoLanguage: dto.language ?? null,
+    });
     const count = Math.min(5, Math.max(1, Math.floor(dto.count ?? 3)));
     const topic = dto.topic?.trim() ? dto.topic.trim() : undefined;
 
@@ -628,7 +635,12 @@ export class SocialAiService {
 
     const topic = dto.topic?.trim() ? dto.topic.trim() : "";
     if (!topic) throw badRequest("social.writeATopic");
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8 #13): dto.language wins; absent → OWNER chain.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId,
+      dtoLanguage: dto.language ?? null,
+    });
 
     let product: any = null;
     if (dto.productId) {

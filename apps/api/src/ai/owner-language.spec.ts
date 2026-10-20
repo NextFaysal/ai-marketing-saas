@@ -97,4 +97,15 @@ describe("resolveOwnerLanguageForOrg (fetcher)", () => {
       resolveOwnerLanguageForOrg(prisma as any, { organizationId: "o1", userId: "u1" }),
     ).resolves.toEqual({ language: "en", source: "dashboardLocale" });
   });
+
+  it("a present-but-incomplete model (no callable findUnique) degrades instead of throwing", async () => {
+    const prisma = {
+      businessProfile: {}, // partial test double — no findUnique at all
+      organization: { findUnique: jest.fn(async () => ({ dashboardLocale: "en" })) },
+      user: {},
+    };
+    await expect(
+      resolveOwnerLanguageForOrg(prisma as any, { organizationId: "o1", userId: "u1" }),
+    ).resolves.toEqual({ language: "en", source: "dashboardLocale" });
+  });
 });

@@ -2,7 +2,7 @@ import { createHmac } from "crypto";
 
 process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 
-import { InboxService } from "./inbox.service";
+import { InboxService, templateDraft } from "./inbox.service";
 import { encryptJson } from "../integrations/crypto";
 import { DevTemplateProvider } from "../ai/llm/dev.provider";
 
@@ -129,5 +129,34 @@ describe("InboxService sending + drafts", () => {
     expect(sent.status).toBe("sent");
     expect(prisma.messageDraft.rows[0].status).toBe("sent");
     expect(prisma.channelMessage.rows.find((m: any) => m.direction === "out").sentByAiDraft).toBe(true);
+  });
+});
+
+// MB5 (ML13, CD-8 #18): templateDraft carries bn + en template
+// sets, selected by the resolved language suggestDraft passes;
+// the default (no language argument) stays the Bangla set, and
+// "mixed" takes the Bangla set by design.
+describe("MB5 templateDraft bilingual template sets", () => {
+  const product = { name: "Cotton Panjabi", priceMinor: 150000n, currency: "BDT", stockQuantity: 7 };
+
+  it("en set: price question renders the English template with the real price", () => {
+    const out = templateDraft("What is the price?", product, null, "en");
+    expect(out).toContain("The price of Cotton Panjabi is");
+    expect(out).toContain("1500.00");
+    expect(out).not.toContain("আসসালামু আলাইকুম");
+  });
+
+  it("en set: stock + delivery + generic fallbacks exist in English", () => {
+    expect(templateDraft("Is it in stock?", product, null, "en")).toContain("is in stock now (7 pcs)");
+    expect(templateDraft("Delivery charge?", null, null, "en")).toContain("delivery charge and time for your area");
+    expect(templateDraft("Hello", null, null, "en")).toContain("Thank you for your message.");
+  });
+
+  it("default and mixed keep the Bangla set byte-for-byte", () => {
+    const bnOut = templateDraft("দাম কত?", product, null);
+    expect(bnOut).toContain("আসসালামু আলাইকুম!");
+    expect(bnOut).toContain("এর দাম");
+    expect(templateDraft("দাম কত?", product, null, "mixed")).toBe(bnOut);
+    expect(templateDraft("What is the price?", product, null, "bn")).toContain("আসসালামু আলাইকুম!");
   });
 });

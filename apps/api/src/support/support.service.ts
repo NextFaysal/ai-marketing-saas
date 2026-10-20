@@ -20,6 +20,7 @@ import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { badRequest, notFound } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 
 export const STATUSES = ["open", "pending", "in_progress", "resolved", "closed"] as const;
 export const PRIORITIES = ["normal", "high", "urgent"] as const;
@@ -288,9 +289,15 @@ export class SupportService {
     let aiInstantTip: string | null = null;
     if (this.llmFactory) {
       try {
+        // MB5 (ML13, CD-4): the instant tip follows the resolved
+        // OWNER language instead of a hardcoded Bengali. No dto
+        // and no acting user reach this endpoint's service
+        // signature, so the chain runs on its org rungs
+        // (aiReplyLanguage → dashboardLocale → bn).
+        const { language: tipLanguage } = await resolveOwnerLanguageForOrg(this.prisma as any, { organizationId });
         const provider = this.llmFactory.getProvider();
         const prompt = `You are a helpful SaaS support assistant for 'Next AI Marketing' in Bangladesh. The customer is opening a ticket with Subject: "${dto.subject}" and Details: "${dto.body ?? ""}".
-In 2-3 concise sentences in Bengali (with necessary tech terms in English), suggest the most direct troubleshooting steps or instant solution they can try immediately before waiting for human support. Be polite, friendly, and practical.`;
+In 2-3 concise sentences in ${tipLanguage === "en" ? "English" : "Bengali"} (with necessary tech terms in English), suggest the most direct troubleshooting steps or instant solution they can try immediately before waiting for human support. Be polite, friendly, and practical.`;
         const res = await provider.complete([{ role: "user", content: prompt }]);
         if (res && res.text) aiInstantTip = res.text.trim();
       } catch {

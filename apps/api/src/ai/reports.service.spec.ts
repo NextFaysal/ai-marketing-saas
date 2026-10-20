@@ -61,4 +61,31 @@ describe("ReportsService with the dev template provider", () => {
     expect(second.version).toBe(2);
     expect(prisma.aIReport.rows).toHaveLength(1);
   });
+
+  // MB5 (ML13, CD-8 #16): with no input.language, the default is
+  // the OWNER chain — here Organization.dashboardLocale "en"
+  // (aiReplyLanguage unset) yields an English report, while an
+  // explicit input.language still wins over every rung.
+  it("MB5: absent language resolves via the owner chain (dashboardLocale en); explicit dto still wins", async () => {
+    const prisma: any = {
+      ...fakePrisma(),
+      businessProfile: { findUnique: async () => ({ aiReplyLanguage: null }) },
+      organization: { findUnique: async () => ({ dashboardLocale: "en" }) },
+      user: { findUnique: async () => ({ preferredLocale: "bn" }) },
+    };
+    const svc = new ReportsService(prisma as any, analyticsStub, llmStub, toolsStub);
+    const report = await svc.generate("org-1", "user-1", { type: "daily", date: "2026-10-09" });
+    expect(report.content).toContain("## What happened");
+    expect(report.title).toContain("daily report");
+
+    const prisma2: any = {
+      ...fakePrisma(),
+      businessProfile: { findUnique: async () => ({ aiReplyLanguage: null }) },
+      organization: { findUnique: async () => ({ dashboardLocale: "en" }) },
+      user: { findUnique: async () => ({ preferredLocale: "en" }) },
+    };
+    const svc2 = new ReportsService(prisma2 as any, analyticsStub, llmStub, toolsStub);
+    const bnReport = await svc2.generate("org-1", "user-1", { type: "daily", date: "2026-10-09", language: "bn" });
+    expect(bnReport.content).toContain("যেসব ডেটা নেই");
+  });
 });

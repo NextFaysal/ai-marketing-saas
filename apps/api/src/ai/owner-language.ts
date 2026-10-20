@@ -88,6 +88,26 @@ type PrismaLike = {
  * or a failed read degrades that rung to "no signal", never to
  * an error — language resolution must not break a compose path.
  */
+/**
+ * One defensive model read: a model that is absent, or whose
+ * findUnique is not callable (a partial test double), or whose
+ * read rejects, all degrade the rung to "no signal" — language
+ * resolution must never throw into a compose path. (MB5
+ * assembly amendment: the bare `?.` chain guarded a nullish
+ * model but not a present-but-incomplete one.)
+ */
+async function readRung<T>(
+  model: { findUnique?: unknown } | undefined,
+  args: any,
+): Promise<T | null> {
+  if (!model || typeof model.findUnique !== "function") return null;
+  try {
+    return (await (model.findUnique as (a: any) => Promise<T | null>)(args)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveOwnerLanguageForOrg(
   prisma: PrismaLike,
   input: {
@@ -99,25 +119,19 @@ export async function resolveOwnerLanguageForOrg(
   const dto = pinned(input.dtoLanguage);
   if (dto) return { language: dto, source: "dto" };
   const [profile, org, user] = await Promise.all([
-    prisma.businessProfile
-      ?.findUnique({
-        where: { organizationId: input.organizationId },
-        select: { aiReplyLanguage: true },
-      })
-      .catch(() => null) ?? Promise.resolve(null),
-    prisma.organization
-      ?.findUnique({
-        where: { id: input.organizationId },
-        select: { dashboardLocale: true },
-      })
-      .catch(() => null) ?? Promise.resolve(null),
+    readRung<{ aiReplyLanguage?: string | null }>(prisma.businessProfile, {
+      where: { organizationId: input.organizationId },
+      select: { aiReplyLanguage: true },
+    }),
+    readRung<{ dashboardLocale?: string | null }>(prisma.organization, {
+      where: { id: input.organizationId },
+      select: { dashboardLocale: true },
+    }),
     input.userId
-      ? prisma.user
-          ?.findUnique({
-            where: { id: input.userId },
-            select: { preferredLocale: true },
-          })
-          .catch(() => null) ?? Promise.resolve(null)
+      ? readRung<{ preferredLocale?: string | null }>(prisma.user, {
+          where: { id: input.userId },
+          select: { preferredLocale: true },
+        })
       : Promise.resolve(null),
   ]);
   return resolveOwnerLanguage({

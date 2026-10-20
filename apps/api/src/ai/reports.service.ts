@@ -5,6 +5,7 @@ import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { ToolsService } from "./tools.service";
 import { formatMinor } from "@repo/contracts";
 import { badRequest, notFound } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
 
 export type ReportType = "daily" | "weekly" | "monthly";
 export type ReportLanguage = "bn" | "en";
@@ -81,7 +82,15 @@ export class ReportsService {
   async generate(organizationId: string, actorId: string, input: { type?: ReportType; date?: string; language?: ReportLanguage }) {
     const type: ReportType = input.type ?? "daily";
     if (!["daily", "weekly", "monthly"].includes(type)) throw badRequest("ai.typeMustBeDailyWeeklyOr");
-    const language: ReportLanguage = input.language ?? "bn";
+    // MB5 (ML13, CD-8 #16): an explicit input.language still
+    // wins (dto rung); absent, the default comes from the shared
+    // OWNER chain (aiReplyLanguage → dashboardLocale → acting
+    // user's preferredLocale → bn) instead of a hardcoded "bn".
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: actorId,
+      dtoLanguage: input.language ?? null,
+    });
     const data = await this.buildData(organizationId, type, input.date);
     const provider = await providerForOrg(this.llm, organizationId);
 

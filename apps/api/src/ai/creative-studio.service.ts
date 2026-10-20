@@ -6,6 +6,7 @@ import { CampaignsService } from "../campaigns/campaigns.service";
 import { policyFindingsForText } from "../campaigns/policy-check";
 import { formatMinor } from "@repo/contracts";
 import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "./owner-language";
 
 export const STUDIO_CTAS = [
   "SHOP_NOW",
@@ -79,7 +80,14 @@ export class CreativeStudioService {
       ?.findUnique({ where: { organizationId } })
       .catch(() => null);
 
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8): dto.language still wins; absent, the
+    // default comes from the shared OWNER chain instead of a
+    // hardcoded bn fallback.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId,
+      dtoLanguage: dto.language ?? null,
+    });
     const formattedPrice = formatMinor(BigInt(product.priceMinor), product.currency);
     const compareAtFormatted =
       product.compareAtMinor !== null && product.compareAtMinor !== undefined

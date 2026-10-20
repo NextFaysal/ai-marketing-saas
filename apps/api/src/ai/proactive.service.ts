@@ -8,6 +8,7 @@ import { CommerceAnalyticsService } from "../commerce/commerce-analytics.service
 import { TelegramClient } from "../inbox/channels/telegram.service";
 import { decryptJson } from "../integrations/crypto";
 import { REVENUE_EXCLUDED_STATUSES } from "../analytics/analytics.service";
+import { resolveOwnerLanguageForOrg, type OwnerLanguage } from "./owner-language";
 
 export interface ProactiveSettings {
   briefingEnabled: boolean;
@@ -121,7 +122,7 @@ export class ProactiveService {
    * week, (3) an open unanswered-question backlog of 5+. No signal
    * → no line; nothing is padded or invented.
    */
-  async computeOpportunityRadar(orgId: string): Promise<string[]> {
+  async computeOpportunityRadar(orgId: string, language: OwnerLanguage = "bn"): Promise<string[]> {
     const p = this.p();
     const lines: string[] = [];
     const day = 86_400_000;
@@ -140,7 +141,9 @@ export class ProactiveService {
       for (const i of items as any[]) if (i.productId) sold.set(i.productId, (sold.get(i.productId) ?? 0) + (i.quantity ?? 0));
       for (const prod of low) {
         const qty = sold.get(prod.id) ?? 0;
-        if (qty > 0) lines.push(`“${prod.name}” স্টক মাত্র ${prod.stockQuantity}টি, অথচ গত ১৪ দিনে ${qty}টি বিক্রি হয়েছে — রিস্টকের কথা ভাবুন।`);
+        if (qty > 0) lines.push(language === "en"
+          ? `"${prod.name}" has only ${prod.stockQuantity} left in stock, yet ${qty} were sold in the last 14 days — consider restocking.`
+          : `“${prod.name}” স্টক মাত্র ${prod.stockQuantity}টি, অথচ গত ১৪ দিনে ${qty}টি বিক্রি হয়েছে — রিস্টকের কথা ভাবুন।`);
         if (lines.length >= 3) break;
       }
     }
@@ -158,7 +161,9 @@ export class ProactiveService {
       const recent = rate(rows.filter((s) => new Date(s.createdAt).getTime() >= now - 7 * day));
       const prior = rate(rows.filter((s) => new Date(s.createdAt).getTime() < now - 7 * day));
       if (recent !== null && prior !== null && prior - recent >= 10) {
-        lines.push(`${provider} কুরিয়ারের ডেলিভারি রেট কমেছে: আগের সপ্তাহে ${prior.toFixed(0)}% → এই সপ্তাহে ${recent.toFixed(0)}%।`);
+        lines.push(language === "en"
+          ? `${provider} courier delivery rate dropped: ${prior.toFixed(0)}% the week before → ${recent.toFixed(0)}% this week.`
+          : `${provider} কুরিয়ারের ডেলিভারি রেট কমেছে: আগের সপ্তাহে ${prior.toFixed(0)}% → এই সপ্তাহে ${recent.toFixed(0)}%।`);
       }
     }
 
@@ -166,13 +171,15 @@ export class ProactiveService {
     const openQ = await p.aiUnansweredQuestion.findMany({ where: { organizationId: orgId, status: "open" }, orderBy: { count: "desc" }, take: 1 }).catch(() => []);
     const openCount = await p.aiUnansweredQuestion.count({ where: { organizationId: orgId, status: "open" } }).catch(() => 0);
     if (openCount >= 5 && openQ[0]) {
-      lines.push(`ইনবক্সে ${openCount}টি প্রশ্নের উত্তর এখনো বাকি — সবচেয়ে বেশি আসা প্রশ্ন: “${openQ[0].normalizedQuestion}” (${openQ[0].count}বার)।`);
+      lines.push(language === "en"
+        ? `${openCount} inbox questions are still unanswered — the most frequent: "${openQ[0].normalizedQuestion}" (${openQ[0].count} times).`
+        : `ইনবক্সে ${openCount}টি প্রশ্নের উত্তর এখনো বাকি — সবচেয়ে বেশি আসা প্রশ্ন: “${openQ[0].normalizedQuestion}” (${openQ[0].count}বার)।`);
     }
     return lines.slice(0, 5);
   }
 
   /** Month-to-date revenue vs the previous month's same span. */
-  private async monthPacingLine(orgId: string): Promise<string | null> {
+  private async monthPacingLine(orgId: string, language: OwnerLanguage = "bn"): Promise<string | null> {
     const p = this.p();
     const now = new Date();
     const startThis = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -185,6 +192,9 @@ export class ProactiveService {
     const [cur, prev] = await Promise.all([sum(startThis, now), sum(startPrev, new Date(startPrev.getTime() + elapsedMs))]);
     if (cur <= 0 || prev <= 0) return null;
     const delta = Math.round(((cur - prev) / prev) * 100);
+    if (language === "en") {
+      return `Month pacing: revenue so far this month is ${delta >= 0 ? "+" : ""}${delta}% compared with the same span last month (${delta >= 0 ? "ahead" : "behind"}).`;
+    }
     return `মাসের গতি: এই মাসে এখন পর্যন্ত আয় আগের মাসের একই সময়ের তুলনায় ${delta >= 0 ? "+" : ""}${delta}% (${delta >= 0 ? "এগিয়ে" : "পিছিয়ে"})।`;
   }
 
@@ -194,12 +204,15 @@ export class ProactiveService {
    * absent, the org has no commerce data, or every signal is zero
    * (a zero-everything line is noise, not a briefing).
    */
-  async commerceBriefingLine(orgId: string, now = new Date()): Promise<string | null> {
+  async commerceBriefingLine(orgId: string, now = new Date(), language: OwnerLanguage = "bn"): Promise<string | null> {
     if (!this.commerceAnalytics) return null;
     const signals: any = await this.commerceAnalytics.commerceSignals(orgId, now);
     if (!signals?.hasCommerceData) return null;
     const total = Number(signals.failedSyncs24h ?? 0) + Number(signals.openConflicts ?? 0) + Number(signals.stockDivergedCount ?? 0) + Number(signals.unfulfilledOlderThan48h ?? 0);
     if (total === 0) return null;
+    if (language === "en") {
+      return `Commerce status: in the last 24 hours ${signals.failedSyncs24h} failed syncs, ${signals.openConflicts} open conflicts, ${signals.stockDivergedCount} stock-diverged listings, ${signals.unfulfilledOlderThan48h} unfulfilled orders older than 48 hours. Details: Commerce Hub / Sync Center.`;
+    }
     return `কমার্স অবস্থা: গত ২৪ ঘণ্টায় ব্যর্থ সিঙ্ক ${signals.failedSyncs24h}টি, খোলা কনফ্লিক্ট ${signals.openConflicts}টি, স্টক-বিচ্যুত লিস্টিং ${signals.stockDivergedCount}টি, ৪৮ ঘণ্টার বেশি পুরনো অপূর্ণ অর্ডার ${signals.unfulfilledOlderThan48h}টি। বিস্তারিত: Commerce Hub / Sync Center।`;
   }
 
@@ -221,10 +234,12 @@ export class ProactiveService {
   /** AP6 Assistant Task Inbox — one aggregate for the AI surfaces. */
   async taskInbox(orgId: string) {
     const p = this.p();
+    // MB5 (ML13, CD-7): radar lines follow the resolved owner language.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, { organizationId: orgId });
     const [pendingProposals, unansweredOpen, radar, briefingRows] = await Promise.all([
       p.aIActionProposal.count({ where: { organizationId: orgId, status: "proposed" } }).catch(() => 0),
       p.aiUnansweredQuestion.count({ where: { organizationId: orgId, status: "open" } }).catch(() => 0),
-      this.computeOpportunityRadar(orgId).catch(() => [] as string[]),
+      this.computeOpportunityRadar(orgId, language).catch(() => [] as string[]),
       p.agentNotification.findMany({ where: { organizationId: orgId, type: "ai_briefing", createdAt: { gte: this.startOfToday() } }, take: 1 }).catch(() => []),
     ]);
     return {
@@ -242,6 +257,20 @@ export class ProactiveService {
       return { skipped: "proactive_disabled", briefings: 0, anomalyAlerts: 0 };
     }
     if (!this.tools) return { skipped: "tools_unavailable", briefings: 0, anomalyAlerts: 0 };
+    // MB5 (ML13, CD-7): briefing title, briefing body AND the
+    // anomaly title are composed in ONE language — the resolved
+    // OWNER chain (aiReplyLanguage → dashboardLocale → acting
+    // user's preferredLocale → bn). Before MB5 the body was
+    // hardcoded Bangla while the anomaly title was hardcoded
+    // English. No proactive keys exist in the API catalog
+    // (checked catalog/ — notifications.ts carries the order
+    // templates only), so the two language variants are rendered
+    // at this call site, selected by the resolved language.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId: orgId,
+      userId: actorId,
+    });
+    const en = language === "en";
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const overview: any = await this.tools.execute(orgId, { tool: "get_analytics_overview", args: { from: yesterday, to: yesterday } });
     const anomalyResult: any = await this.tools.getAnomalies(orgId, 14);
@@ -256,25 +285,33 @@ export class ProactiveService {
     if (settings.briefingEnabled) {
       const lines: string[] = [];
       if (Number(overview?.orders ?? 0) > 0) {
-        lines.push(`গতকালের সারসংক্ষেপ (${yesterday}): অর্ডার ${overview.orders}টি, Revenue ${overview.revenue}, Ad Spend ${overview.adSpend}, Contribution Profit ${overview.contributionProfit} (Margin ${overview.contributionMarginPercent ?? "—"}%)।`);
+        lines.push(en
+          ? `Yesterday's summary (${yesterday}): ${overview.orders} orders, Revenue ${overview.revenue}, Ad Spend ${overview.adSpend}, Contribution Profit ${overview.contributionProfit} (Margin ${overview.contributionMarginPercent ?? "—"}%).`
+          : `গতকালের সারসংক্ষেপ (${yesterday}): অর্ডার ${overview.orders}টি, Revenue ${overview.revenue}, Ad Spend ${overview.adSpend}, Contribution Profit ${overview.contributionProfit} (Margin ${overview.contributionMarginPercent ?? "—"}%)।`);
       } else {
-        lines.push(`গতকাল (${yesterday}) কোনো অর্ডার রেকর্ড হয়নি। এটি একটি সৎ “তথ্য নেই” ব্রিফিং — কোনো সংখ্যা বানানো হয়নি। অর্ডার/সিঙ্ক ঠিকমতো হচ্ছে কিনা দেখে নিন।`);
+        lines.push(en
+          ? `No orders were recorded yesterday (${yesterday}). This is an honest "no data" briefing — no numbers were invented. Please check that orders/sync are working properly.`
+          : `গতকাল (${yesterday}) কোনো অর্ডার রেকর্ড হয়নি। এটি একটি সৎ “তথ্য নেই” ব্রিফিং — কোনো সংখ্যা বানানো হয়নি। অর্ডার/সিঙ্ক ঠিকমতো হচ্ছে কিনা দেখে নিন।`);
       }
       if (anomalies.length) {
-        lines.push(`অস্বাভাবিকতা ধরা পড়েছে ${anomalies.length}টি: ${anomalies.slice(0, 3).map((a) => a.message).join(" ")}`);
+        lines.push(en
+          ? `Anomalies detected: ${anomalies.length}: ${anomalies.slice(0, 3).map((a) => a.message).join(" ")}`
+          : `অস্বাভাবিকতা ধরা পড়েছে ${anomalies.length}টি: ${anomalies.slice(0, 3).map((a) => a.message).join(" ")}`);
       }
       if (overview?.cogsCoveragePercent !== undefined && Number(overview.cogsCoveragePercent) < 100) {
-        lines.push(`দ্রষ্টব্য: COGS coverage ${overview.cogsCoveragePercent}% — কিছু পণ্যের কস্ট বাকি, তাই লাভের হিসাব আংশিক।`);
+        lines.push(en
+          ? `Note: COGS coverage ${overview.cogsCoveragePercent}% — some products are missing costs, so the profit figures are partial.`
+          : `দ্রষ্টব্য: COGS coverage ${overview.cogsCoveragePercent}% — কিছু পণ্যের কস্ট বাকি, তাই লাভের হিসাব আংশিক।`);
       }
       // AP6: opportunity radar + month pacing — deterministic,
       // real-signal lines only; empty when there is no signal.
-      const radar = await this.computeOpportunityRadar(orgId).catch(() => [] as string[]);
-      if (radar.length) lines.push(`সুযোগ ও ঝুঁকি:\n${radar.map((r) => `• ${r}`).join("\n")}`);
-      const pacing = await this.monthPacingLine(orgId).catch(() => null);
+      const radar = await this.computeOpportunityRadar(orgId, language).catch(() => [] as string[]);
+      if (radar.length) lines.push(`${en ? "Opportunities & risks:" : "সুযোগ ও ঝুঁকি:"}\n${radar.map((r) => `• ${r}`).join("\n")}`);
+      const pacing = await this.monthPacingLine(orgId, language).catch(() => null);
       if (pacing) lines.push(pacing);
-      const commerceLine = await this.commerceBriefingLine(orgId).catch(() => null);
+      const commerceLine = await this.commerceBriefingLine(orgId, new Date(), language).catch(() => null);
       if (commerceLine) lines.push(commerceLine);
-      const title = `দৈনিক ব্রিফিং — ${yesterday}`;
+      const title = en ? `Daily briefing — ${yesterday}` : `দৈনিক ব্রিফিং — ${yesterday}`;
       const body = lines.join("\n");
       for (const userId of userIds) {
         if (await this.alreadySent(orgId, userId, "ai_briefing")) continue;
@@ -324,7 +361,7 @@ export class ProactiveService {
       const critical = anomalies.filter((a) => a.severity === "critical");
       for (const a of critical) {
         const marker = `[${a.type}]`;
-        const title = `Anomaly Alert — ${a.type}`;
+        const title = en ? `Anomaly Alert — ${a.type}` : `অস্বাভাবিকতা সতর্কতা — ${a.type}`;
         const body = `${marker} ${a.message}`;
         for (const userId of userIds) {
           if (await this.alreadySent(orgId, userId, "ai_anomaly", marker)) continue;

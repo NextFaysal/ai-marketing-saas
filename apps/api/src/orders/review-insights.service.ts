@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 import { badRequest, notFound } from "../i18n";
 
 /** Exact refusal surfaced to staff when no real LLM is configured. */
@@ -129,12 +130,23 @@ export class ReviewInsightsService {
     const provider: any = await providerForOrg(this.llmFactory, organizationId).catch(() => null);
     if (!provider?.isRealLlm) throw badRequest("orders.noLlmConfigured");
 
+    // MB5 (ML13, CD-4): the summary language is the shared OWNER
+    // chain (aiReplyLanguage → dashboardLocale → acting user's
+    // preferredLocale → bn) — no dto on this path; the old prompt
+    // hardcoded Bengali. The prompt states the resolved language
+    // and the summary + themes follow it.
+    const { language: summaryLanguage } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId: actorId ?? null,
+    });
+    const summaryLanguageName = summaryLanguage === "en" ? "English" : "Bengali";
+
     let result: any;
     try {
       result = await provider.complete([
         {
           role: "system",
-          content: "You summarize real customer product reviews for a shop owner. Use ONLY the reviews given; invent nothing. Return ONLY JSON with keys: summary (string, in Bengali, at most ~3 sentences), positive (integer count of positive reviews), neutral (integer), negative (integer), themes (array of at most 5 short strings naming recurring themes). The counts classify the reviews given and must add up to at most the number of reviews given.",
+          content: `You summarize real customer product reviews for a shop owner. Use ONLY the reviews given; invent nothing. Return ONLY JSON with keys: summary (string, in ${summaryLanguageName}, at most ~3 sentences), positive (integer count of positive reviews), neutral (integer), negative (integer), themes (array of at most 5 short strings in ${summaryLanguageName} naming recurring themes). The counts classify the reviews given and must add up to at most the number of reviews given.`,
         },
         {
           role: "user",

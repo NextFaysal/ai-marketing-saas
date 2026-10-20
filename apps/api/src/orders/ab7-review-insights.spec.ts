@@ -21,6 +21,10 @@ function matches(row: any, where: any): boolean {
 function table(rows: any[]) {
   return {
     rows,
+    // MB5: ReviewInsightsService now reads org/user locale rungs
+    // through resolveOwnerLanguageForOrg, which uses findUnique —
+    // the fake models the full Prisma surface it consumes.
+    findUnique: async ({ where }: any) => rows.find((r) => matches(r, where)) ?? null,
     findFirst: async ({ where }: any) => rows.find((r) => matches(r, where)) ?? null,
     findMany: async ({ where }: any = {}) => rows.filter((r) => matches(r, where ?? {})),
     create: async ({ data }: any) => { const row = { id: `new-${rows.length + 1}`, ...data }; rows.push(row); return row; },

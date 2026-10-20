@@ -17,6 +17,7 @@ import { SocialService } from "./social.service";
 import { suggestSocialHashtags } from "./social-ai.service";
 import { GenerateContentDto } from "./content-generation.dto";
 import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 
 /** SA-B19 (G1): the per-call variant cap — a named constant so
  *  no caller can turn generation into a cost storm. */
@@ -184,7 +185,13 @@ export class ContentGenerationService {
     // Enforcement FIRST (before any load), mirroring SP3/SU4.
     await this.checkDailyLimit(organizationId);
 
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8 #14): dto.language still wins; absent, the
+    // default comes from the shared OWNER chain, not a hardcoded bn.
+    const { language } = await resolveOwnerLanguageForOrg(this.prisma as any, {
+      organizationId,
+      userId,
+      dtoLanguage: dto.language ?? null,
+    });
     const count = Math.min(
       CONTENT_GENERATION_MAX_VARIANTS,
       Math.max(1, Math.floor(dto.count ?? CONTENT_GENERATION_DEFAULT_VARIANTS)),
