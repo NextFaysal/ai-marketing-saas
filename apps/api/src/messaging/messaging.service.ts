@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { ApiException, badRequest, conflict, forbidden, notFound, unauthorized, unprocessable } from "../i18n";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
+import { resolveOwnerLanguageForOrg } from "../ai/owner-language";
 import { estimateTokens } from "../ai/llm/llm.types";
 import { formatMinor } from "@repo/contracts";
 import { SEND_TIME_MIN_EVENTS, segmentSuggestionsFromCounts, summarizeSendTimeEvents } from "./messaging-ai";
@@ -3454,7 +3455,17 @@ export class MessagingService {
     }
     const goal = String(dto.goal ?? "").trim();
     if (!goal) throw badRequest("messaging.goalIsRequiredSayWhatThis");
-    const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
+    // MB5 (ML13, CD-8): an explicit dto language still wins;
+    // the DEFAULT now comes from the one owner-facing resolver
+    // (dto → org aiReplyLanguage → org dashboardLocale → the
+    // actor's preferredLocale → bn) instead of a hardcoded bn.
+    const language: "bn" | "en" = (
+      await resolveOwnerLanguageForOrg(this.prisma as any, {
+        organizationId,
+        userId: actorId,
+        dtoLanguage: dto.language,
+      })
+    ).language;
     // Enforcement FIRST (creative-studio discipline): the kill
     // switch / cap run before even the product load.
     await this.checkMessagingAiLimit(organizationId);
