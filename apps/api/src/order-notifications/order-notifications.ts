@@ -4,7 +4,16 @@
  * Config shape (stored as Json on OrderNotificationSetting):
  *   { [eventKey]: { enabled: boolean,
  *                   channels: Array<"sms"|"whatsapp"|"email">,
- *                   templates: { sms: string|null, whatsapp: string|null, email: string|null } } }
+ *                   templates: { sms: TemplateOverride, whatsapp: TemplateOverride, email: TemplateOverride } } }
+ *
+ * MB5 (ML14, CD-2): a TemplateOverride is either a plain string
+ * (a GENERIC merchant override — used verbatim in every locale,
+ * exactly the pre-ML14 meaning, so every existing stored config
+ * behaves byte-identically) or an object
+ * `{ bn?: string|null, en?: string|null }` holding the merchant's
+ * OWN per-locale overrides. Nothing here ever machine-translates
+ * merchant text (D-MB4-5 stands) — the object form is simply two
+ * slots the merchant fills in themselves.
  *
  * Template variables (the ONLY allowed set): customerName,
  * orderNumber, total, due, trackingUrl, shopName, courierName,
@@ -53,10 +62,17 @@ export const TEMPLATE_VARIABLES = [
   "rescheduleDate",
 ] as const;
 
+/** MB5 (ML14): the merchant's own per-locale template overrides. */
+export interface TemplateLocaleVariants {
+  bn?: string | null;
+  en?: string | null;
+}
+export type TemplateOverride = string | TemplateLocaleVariants | null;
+
 export interface EventConfig {
   enabled: boolean;
   channels: NotificationChannel[];
-  templates: { sms: string | null; whatsapp: string | null; email: string | null };
+  templates: { sms: TemplateOverride; whatsapp: TemplateOverride; email: TemplateOverride };
 }
 export type NotificationConfig = Record<NotificationEvent, EventConfig>;
 
@@ -103,14 +119,35 @@ export const DEFAULT_CONFIG: NotificationConfig = Object.fromEntries(
   NOTIFICATION_EVENTS.map((e) => [e, defaultEventConfig(e)]),
 ) as NotificationConfig;
 
-/** Minor (paisa) BigInt → "৳1,250" / "৳1,250.50" (en-IN grouping). */
-export function formatTakaMinor(minor: bigint | number | string | null | undefined): string {
+const BENGALI_DIGITS = ["০", "১", "২", "৩", "৪", "৫", "৬", "৭", "৮", "৯"];
+const toBengaliDigits = (s: string): string => s.replace(/[0-9]/g, (d) => BENGALI_DIGITS[Number(d)]);
+
+/**
+ * Minor (paisa) BigInt → "৳1,250" / "৳1,250.50" (en-IN grouping).
+ *
+ * MB5 (ML14, CD-2): with locale "bn" the amount renders the way
+ * packages/contracts fmtMoneyMinor pins for bn-BD — Bengali
+ * digits with bn-BD (lakh) grouping: "৳১,২৫০" / "৳১,২৫০.৫০"
+ * (the decimal separator stays "." — that is what Intl bn-BD
+ * produces and what the contracts tests pin). No locale (or
+ * "en") keeps the historical Latin/en-IN rendering EXACTLY, so
+ * existing callers (e.g. order-automation) are unchanged.
+ */
+export function formatTakaMinor(
+  minor: bigint | number | string | null | undefined,
+  locale?: ApiLocale,
+): string {
   let v: bigint;
   try { v = BigInt(minor as any); } catch { v = 0n; }
   const negative = v < 0n;
   const abs = negative ? -v : v;
   const whole = abs / 100n;
   const rem = abs % 100n;
+  if (locale === "bn") {
+    const wholeStr = new Intl.NumberFormat("bn-BD").format(whole);
+    const body = rem === 0n ? wholeStr : `${wholeStr}.${toBengaliDigits(String(rem).padStart(2, "0"))}`;
+    return `${negative ? "-" : ""}৳${body}`;
+  }
   const wholeStr = Number(whole).toLocaleString("en-IN");
   const body = rem === 0n ? wholeStr : `${wholeStr}.${String(rem).padStart(2, "0")}`;
   return `${negative ? "-" : ""}৳${body}`;
@@ -176,14 +213,41 @@ export function validateConfig(config: unknown): string | null {
         if (!(NOTIFICATION_CHANNELS as readonly string[]).includes(channel)) {
           return t("orderNotification.config.templatesUnknownChannel", { eventKey, channel });
         }
+        // MB5 (ML14): a template slot is a string (generic
+        // override), null, or a per-locale object
+        // { bn?, en? } whose entries are string|null. Variables
+        // are validated in EVERY locale entry, not just the
+        // generic string.
+        const unknownVariable = (text: string) => {
+          for (const v of extractVariables(text)) {
+            if (!(TEMPLATE_VARIABLES as readonly string[]).includes(v)) return v;
+          }
+          return null;
+        };
         if (tpl !== null && tpl !== undefined && typeof tpl !== "string") {
-          return t("orderNotification.config.templateNotString", { eventKey, channel });
+          if (typeof tpl !== "object" || Array.isArray(tpl)) {
+            return t("orderNotification.config.templateNotString", { eventKey, channel });
+          }
+          for (const [loc, variant] of Object.entries(tpl as Record<string, unknown>)) {
+            if (loc !== "bn" && loc !== "en") {
+              return t("orderNotification.config.templateUnknownLocale", { eventKey, channel, locale: loc });
+            }
+            if (variant !== null && variant !== undefined && typeof variant !== "string") {
+              return t("orderNotification.config.templateVariantNotString", { eventKey, channel, locale: loc });
+            }
+            if (typeof variant === "string") {
+              const bad = unknownVariable(variant);
+              if (bad) {
+                return t("orderNotification.config.unknownVariable", { eventKey, channel, variable: bad, variables: TEMPLATE_VARIABLES.join(", ") });
+              }
+            }
+          }
+          continue;
         }
         if (typeof tpl === "string") {
-          for (const v of extractVariables(tpl)) {
-            if (!(TEMPLATE_VARIABLES as readonly string[]).includes(v)) {
-              return t("orderNotification.config.unknownVariable", { eventKey, channel, variable: v, variables: TEMPLATE_VARIABLES.join(", ") });
-            }
+          const bad = unknownVariable(tpl);
+          if (bad) {
+            return t("orderNotification.config.unknownVariable", { eventKey, channel, variable: bad, variables: TEMPLATE_VARIABLES.join(", ") });
           }
         }
       }
@@ -211,7 +275,22 @@ export function mergeConfig(stored: unknown): NotificationConfig {
     if (raw.templates && typeof raw.templates === "object") {
       for (const ch of NOTIFICATION_CHANNELS) {
         const tpl = raw.templates[ch];
-        if (typeof tpl === "string" || tpl === null) target.templates[ch] = tpl;
+        if (typeof tpl === "string" || tpl === null) {
+          target.templates[ch] = tpl;
+        } else if (tpl && typeof tpl === "object" && !Array.isArray(tpl)) {
+          // MB5 (ML14): keep a per-locale object only when it is
+          // well-formed (bn/en keys, string|null entries) — a
+          // malformed variant fragment degrades to the default
+          // (null), the same rule as every other fragment here.
+          const clean: TemplateLocaleVariants = {};
+          let ok = true;
+          for (const [loc, variant] of Object.entries(tpl as Record<string, unknown>)) {
+            if (loc !== "bn" && loc !== "en") { ok = false; break; }
+            if (variant !== null && variant !== undefined && typeof variant !== "string") { ok = false; break; }
+            clean[loc as "bn" | "en"] = (variant ?? null) as string | null;
+          }
+          if (ok) target.templates[ch] = clean;
+        }
       }
     }
   }
@@ -219,17 +298,31 @@ export function mergeConfig(stored: unknown): NotificationConfig {
 }
 
 /** The template actually sent for an event+channel: the org's
- * override when set (non-empty), else the built-in default. */
+ * override when set (non-empty), else the built-in default.
+ * (Locale-less legacy helper — the bn view: a per-locale object
+ * contributes its bn entry here.) */
 export function templateFor(config: NotificationConfig, event: NotificationEvent, channel: NotificationChannel): string {
   const override = config?.[event]?.templates?.[channel];
   if (typeof override === "string" && override.trim()) return override;
+  if (override && typeof override === "object") {
+    const bn = override.bn;
+    if (typeof bn === "string" && bn.trim()) return bn;
+  }
   return DEFAULT_TEMPLATES[event];
 }
 
 /**
- * ML11 send-time variant: a merchant override (merchant-authored,
- * D-MB4-5) is used verbatim in EVERY locale; only the platform
- * default follows the recipient locale.
+ * ML11 send-time resolution, extended by ML14 (CD-2) into ONE
+ * mechanism with three rungs:
+ *   1. a per-locale variant object: the entry for the RECIPIENT
+ *      locale, when present and non-empty;
+ *   2. a generic string override (merchant-authored, D-MB4-5) —
+ *      used verbatim in EVERY locale, unchanged from ML11;
+ *   3. the platform catalog default IN the recipient locale.
+ * Deliberate (CD-2): a variant object holding ONLY the other
+ * locale falls to rung 3 — the merchant scoped that text to the
+ * other language, so serving it here would recreate exactly the
+ * language-mixing problem ML14 exists to fix.
  */
 export function templateForLocale(
   config: NotificationConfig,
@@ -239,5 +332,9 @@ export function templateForLocale(
 ): string {
   const override = config?.[event]?.templates?.[channel];
   if (typeof override === "string" && override.trim()) return override;
+  if (override && typeof override === "object") {
+    const variant = override[locale];
+    if (typeof variant === "string" && variant.trim()) return variant;
+  }
   return defaultTemplateFor(event, locale);
 }

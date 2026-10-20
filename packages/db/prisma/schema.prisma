@@ -5313,6 +5313,17 @@ model MessageTemplate {
   // content edit; each version's snapshot lives in
   // MessageTemplateVersion.
   blocks         Json?
+  // MB5 (ML14, CD-3): the merchant's OWN per-locale variants of
+  // this template — { bn?: { subject?, body?, htmlBody? },
+  // en?: { … } }, each field a string or null. Nullable: null
+  // (every pre-MB5 row) = no variants, the authored
+  // subject/body/htmlBody are sent verbatim in every locale,
+  // exactly as before. The workflow engine's send steps apply a
+  // variant field ONLY when it is present and non-empty for the
+  // recipient's locale (variant-if-exists); variants are never
+  // machine-translated (D-MB4-5) and are not part of the MX7
+  // version snapshots.
+  variants       Json?
   version        Int      @default(1)
   createdById    String
   createdAt      DateTime @default(now())

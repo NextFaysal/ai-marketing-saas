@@ -1260,6 +1260,8 @@ export const MESSAGING_CATALOG = {
   "messaging.checkSpamPass": { bn: "বিষয়/বার্তায় নিচের স্প্যাম-শব্দ তালিকার কোনো শব্দ নেই।", en: "No word from the spam-word list below appears in the subject/body." },
   "messaging.checkSpamPassVerified": { bn: "শুধু HEURISTIC: নিচের নির্দিষ্ট শব্দ-তালিকার (MS5 তালিকা) সঙ্গে বার্তা মেলানো হয়েছে। Pass মানে শুধু তালিকার কোনো শব্দ মেলেনি — এটি deliverability-র নিশ্চয়তা নয়।", en: "HEURISTIC ONLY: matched the content against the fixed word list below (the MS5 list). A pass means only that none of these listed words matched — it is not a deliverability guarantee." },
   "messaging.spamListLabel": { bn: "Heuristic শব্দ-তালিকা (প্রতিষ্ঠান দেখতে পারে) — এই শব্দগুলো মেলা একটি ঝুঁকির ইঙ্গিত, কোনো provider-এর রায় নয়।", en: "Heuristic word list (org-visible) — matching these words is a risk hint, not a provider verdict." },
+  // MB5 (ML14) — MessageTemplate per-locale variants validation.
+  "messaging.templateVariantsInvalid": { bn: "template variants সঠিক নয় — bn/en-এর প্রতিটিতে subject/body/htmlBody শুধু string অথবা null হতে পারে", en: "Template variants are invalid — each of bn/en may carry subject/body/htmlBody only as a string or null" },
 } as const;
 
 export type MessagingCatalogKey = keyof typeof MESSAGING_CATALOG;

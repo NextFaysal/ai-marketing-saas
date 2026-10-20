@@ -92,6 +92,15 @@ export const NOTIFICATIONS_CATALOG = {
     bn: "\"{{eventKey}}\" event-এর {{channel}} template string অথবা null হতে হবে",
     en: "The {{channel}} template of event \"{{eventKey}}\" must be a string or null",
   },
+  // MB5 (ML14): per-locale variant-object validation.
+  "orderNotification.config.templateUnknownLocale": {
+    bn: "\"{{eventKey}}\" event-এর {{channel}} template-এ অজানা ভাষা: \"{{locale}}\" — সঠিক ভাষা: bn, en",
+    en: "Unknown locale \"{{locale}}\" in the {{channel}} template of event \"{{eventKey}}\" — valid locales: bn, en",
+  },
+  "orderNotification.config.templateVariantNotString": {
+    bn: "\"{{eventKey}}\" event-এর {{channel}} template-এর {{locale}} লেখা string অথবা null হতে হবে",
+    en: "The {{locale}} text of the {{channel}} template of event \"{{eventKey}}\" must be a string or null",
+  },
   "orderNotification.config.unknownVariable": {
     bn: "\"{{eventKey}}\" event-এর {{channel}} template-এ অজানা variable: \"{{{{variable}}}}\" — সঠিক variable: {{variables}}",
     en: "Unknown variable \"{{{{variable}}}}\" in the {{channel}} template of event \"{{eventKey}}\" — valid variables: {{variables}}",

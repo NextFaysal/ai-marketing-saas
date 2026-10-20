@@ -58,6 +58,7 @@ import {
   UNIQUE_COUPON_VARIABLE,
 } from "./personalization";
 import { FESTIVAL_TEMPLATE_PACKS, festivalPackForLocale } from "./festival-templates";
+import { validateTemplateVariants, type TemplateVariants } from "./template-variants";
 import { catalogText, normalizeApiLocale, resolveDocumentLocale } from "../i18n/catalog/send-locale";
 import {
   EngagementContact, EngagementThresholds, DEFAULT_ENGAGEMENT_THRESHOLDS,
@@ -709,7 +710,19 @@ export class MessagingService {
   }
 
   // ---------- Templates ----------
-  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
+  /** MB5 (ML14, CD-3): validate an untrusted `variants` value
+   * for template create/update. Returns the normalised variants
+   * (or null for "no variants"); any malformed shape is the
+   * existing catalogued 400. */
+  private assertTemplateVariants(raw: unknown): TemplateVariants | null {
+    try {
+      return validateTemplateVariants(raw);
+    } catch {
+      throw badRequest("messaging.templateVariantsInvalid");
+    }
+  }
+
+  async createTemplate(organizationId: string, actorId: string, dto: { name: string; channel: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown; variants?: unknown }) {
     if (!["email", "sms"].includes(dto.channel)) throw badRequest("messaging.channelMustBeEmailOrSms");
     if (dto.channel === "email" && !dto.subject) throw badRequest("messaging.emailTemplatesNeedASubject");
     // MS5: HTML is an email-only part — on sms it is REJECTED with
@@ -731,8 +744,11 @@ export class MessagingService {
       blocks = rendered.blocks; body = rendered.body; htmlBody = rendered.htmlBody; emptySlots = rendered.emptySlots;
     }
     if (!blocks && !body) throw badRequest("messaging.templateBodyIsRequiredWriteOne");
+    // MB5 (ML14): per-locale variants are validated on write and
+    // stored verbatim (merchant-authored, never translated).
+    const variants = this.assertTemplateVariants(dto.variants);
     const template = await (this.prisma as any).messageTemplate.create({
-      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body, htmlBody, blocks: blocks ?? undefined, version: 1, createdById: actorId },
+      data: { organizationId, name: dto.name, channel: dto.channel, subject: dto.subject ?? null, body, htmlBody, blocks: blocks ?? undefined, variants: variants ?? undefined, version: 1, createdById: actorId },
     });
     await this.snapshotTemplateVersion(organizationId, actorId, template);
     return blocks ? { ...template, emptySlots } : template;
@@ -947,15 +963,21 @@ export class MessagingService {
     return template;
   }
 
-  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown }) {
+  async updateTemplate(organizationId: string, templateId: string, dto: { name?: string; subject?: string; body?: string; htmlBody?: string | null; blocks?: unknown; variants?: unknown }) {
     const existing = await this.getTemplate(organizationId, templateId);
     // MS5: the EXISTING template's channel decides — htmlBody on
     // a non-email template is an honest 400.
     if (dto.htmlBody !== undefined && existing.channel !== "email") {
       throw badRequest("messaging.htmlBodyIsOnlyAllowedForEmail");
     }
-    const { blocks: rawBlocks, ...rest } = dto as any;
+    const { blocks: rawBlocks, variants: rawVariants, ...rest } = dto as any;
     const data: Record<string, unknown> = { ...rest };
+    // MB5 (ML14): variants are validated exactly like at create;
+    // an explicit null clears them (the template returns to
+    // authored-text-only in every locale).
+    if (rawVariants !== undefined) {
+      data.variants = this.assertTemplateVariants(rawVariants);
+    }
     let emptySlots: { index: number; type: string; reason: string }[] | undefined;
     // MX7: blocks on update re-render body/htmlBody from the new
     // blocks (explicit body/htmlBody alongside is refused, as at
@@ -975,7 +997,7 @@ export class MessagingService {
     // MX7 versioning: a CONTENT change (name/subject/body/htmlBody/
     // blocks) bumps the version and snapshots it; a no-op PATCH
     // (nothing actually differs) keeps the version.
-    const contentChanged = ["name", "subject", "body", "htmlBody", "blocks"].some((k) => data[k] !== undefined && JSON.stringify(data[k] ?? null) !== JSON.stringify((existing as any)[k] ?? null));
+    const contentChanged = ["name", "subject", "body", "htmlBody", "blocks", "variants"].some((k) => data[k] !== undefined && JSON.stringify(data[k] ?? null) !== JSON.stringify((existing as any)[k] ?? null));
     if (contentChanged) data.version = (existing.version ?? 1) + 1;
     const updated = await (this.prisma as any).messageTemplate.update({ where: { id: templateId }, data });
     if (contentChanged) {

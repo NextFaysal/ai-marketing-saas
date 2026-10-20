@@ -13,6 +13,8 @@ import { AbandonedCheckoutsService } from "../commerce/abandoned-checkouts.servi
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { deriveAbandonedCarts, deriveBrowseAbandoned } from "../tracking/abandoned-carts";
 import { badRequest, notFound } from "../i18n/api-exception";
+import { resolveCustomerLocale, type ApiLocale } from "../i18n/catalog/send-locale";
+import { applyTemplateVariant } from "../messaging/template-variants";
 
 export const WORKFLOW_TRIGGERS = [
   "order_created", "lead_created", "lead_stage_changed", "inbox_message_received", "inbox_unanswered",
@@ -1358,6 +1360,43 @@ export class WorkflowsService implements OnModuleInit {
     }
   }
 
+  /**
+   * MB5 (ML14, CD-3) — variant-if-exists for template sends.
+   * A template WITHOUT variants (every pre-MB5 row) short-circuits
+   * to its authored fields with NO extra lookups — byte-identical
+   * behaviour. With variants, the recipient locale comes from the
+   * run context identity through the SAME send-locale machinery
+   * as order notifications (customer/lead →
+   * CustomerMemory.languagePref via resolveCustomerLocale;
+   * unknown/staff → the org default inside that resolver), and
+   * each variant field replaces the authored field only when
+   * present and non-empty for that locale.
+   */
+  private async localizedTemplateFields(
+    organizationId: string,
+    context: Record<string, any>,
+    recipient: { type: string; id: string } | null,
+    template: any,
+  ): Promise<{ subject: string | null; body: string; htmlBody: string | null }> {
+    const authored = {
+      subject: template?.subject ?? null,
+      // MessageTemplate.body is a required column — the "" here
+      // only guards a malformed fake row, never a real send.
+      body: template?.body ?? "",
+      htmlBody: template?.htmlBody ?? null,
+    };
+    if (!template?.variants) return authored;
+    const customerId =
+      recipient?.type === "customer" && recipient.id && recipient.id !== "unknown"
+        ? recipient.id
+        : (context.customerId ?? null);
+    const locale: ApiLocale = await resolveCustomerLocale(this.prisma as any, organizationId, {
+      customerId,
+      conversationId: context.conversationId ?? null,
+    }).catch(() => "bn" as ApiLocale);
+    return applyTemplateVariant(template, locale);
+  }
+
   private async executeStep(organizationId: string, runId: string, step: any, context: Record<string, any>, stepRef = "0"): Promise<string> {
     if (step.type === "send_email" || step.type === "send_sms") {
       const channel = step.type === "send_email" ? "email" : "sms";
@@ -1365,15 +1404,17 @@ export class WorkflowsService implements OnModuleInit {
       if (template.channel !== channel) throw new Error(`Template channel (${template.channel}) does not match step (${channel})`);
       const recipient = await this.resolveRecipient(organizationId, context);
       if (!recipient) throw new Error("No recipient could be resolved from the trigger context");
+      // MB5 (ML14): variant-if-exists (see localizedTemplateFields).
+      const fields = await this.localizedTemplateFields(organizationId, context, recipient, template);
       const result = await this.messaging.sendToRecipient(organizationId, {
-        channel, recipient, subject: template.subject, body: template.body,
+        channel, recipient, subject: fields.subject, body: fields.body,
         // MX4: the template's HTML part now rides along for
         // email (sendToRecipient already supported htmlBody;
         // templates without one — every MS8 preset template
         // has htmlBody null — pass undefined and behave
         // exactly as before). stepRef stamps the delivery row
         // with this step's position for per-step stats.
-        ...(channel === "email" ? { htmlBody: template.htmlBody ?? undefined } : {}),
+        ...(channel === "email" ? { htmlBody: fields.htmlBody ?? undefined } : {}),
         vars: context, workflowRunId: runId, stepRef,
       });
       // MS2: an opt-out skip is not a send and not a failure.
@@ -1465,9 +1506,16 @@ export class WorkflowsService implements OnModuleInit {
       // {{couponCode}} placeholder, the composed body appends
       // the coupon lines after the rendered template body,
       // exactly the way EC10 appends couponLines to its email.
-      const body = `${String(template.body ?? "")}\n\n${couponLines.join("\n")}`;
+      // MB5 (ML14): this step DOES render a MessageTemplate
+      // body (verified — the composed message is the template
+      // body + the coupon lines below), so variant-if-exists
+      // applies to its subject/body exactly like the plain send
+      // steps. (This path never carried htmlBody, so a variant
+      // htmlBody has no effect here.)
+      const fields = await this.localizedTemplateFields(organizationId, context, recipient, template);
+      const body = `${String(fields.body ?? "")}\n\n${couponLines.join("\n")}`;
       const result = await this.messaging.sendToRecipient(organizationId, {
-        channel, recipient, subject: template.subject, body,
+        channel, recipient, subject: fields.subject, body,
         vars: { ...context, couponCode: coupon.code }, workflowRunId: runId,
       });
       // Same send-outcome discipline as send_sms/send_email:

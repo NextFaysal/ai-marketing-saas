@@ -241,7 +241,7 @@ export class OrderNotificationService {
     } catch { return ""; }
   }
 
-  private async buildVars(orgId: string, order: any, customer: any, shipment: any): Promise<Record<string, string>> {
+  private async buildVars(orgId: string, order: any, customer: any, shipment: any, locale: ApiLocale = "bn"): Promise<Record<string, string>> {
     // shopName: StorefrontSetting.shopName || Organization.name
     // (the ShopAccountService resolution, replicated minimally).
     let shopName = "";
@@ -276,8 +276,11 @@ export class OrderNotificationService {
     return {
       customerName,
       orderNumber: String(order.externalNumber ?? order.id),
-      total: formatTakaMinor(total),
-      due: formatTakaMinor(due),
+      // MB5 (ML14, CD-2): money vars render in the RECIPIENT
+      // locale — bn gets Bengali digits (bn-BD grouping), en
+      // keeps the historical Latin/en-IN rendering.
+      total: formatTakaMinor(total, locale),
+      due: formatTakaMinor(due, locale),
       trackingUrl,
       shopName,
       courierName: shipment?.provider ? String(shipment.provider) : "",
@@ -347,25 +350,29 @@ export class OrderNotificationService {
         await this.writeLog(orgId, orderId, event, "none", "failed_no_channel");
         return { event, sent: false, statuses: ["failed_no_channel"] };
       }
-      // e. variables from real data
-      const shipment = await this.resolveShipment(orgId, orderId, data?.shipmentId);
-      const vars = await this.buildVars(orgId, order, customer, shipment);
-      // ON6: the reschedule date is a notify-call input, not
-      // order data — "" when the call carries none.
-      vars.rescheduleDate = data?.rescheduleDate ?? "";
-      const phone = customer?.phone ? String(customer.phone) : shipment?.recipientPhone ? String(shipment.recipientPhone) : null;
-      const email = customer?.email ? String(customer.email) : null;
-      // ML11: the platform default renders at SEND time in the
-      // CUSTOMER recipient's locale — CustomerMemory.languagePref
-      // (mixed → bn) → org dashboardLocale → bn (D-MB4-7).
-      // Merchant overrides and automation-rule custom messages
-      // are merchant-authored and never translated (D-MB4-5).
+      // ML11 + MB5 (ML14): the recipient locale is resolved
+      // BEFORE the variables are built, because the money vars
+      // (total/due) now render in it (CD-2). The locale itself
+      // comes from the CUSTOMER recipient —
+      // CustomerMemory.languagePref (mixed → bn) → org
+      // dashboardLocale → bn (D-MB4-7). Merchant overrides and
+      // automation-rule custom messages are merchant-authored
+      // and never translated (D-MB4-5); the rule path keeps its
+      // historical bn rendering.
       const recipientLocale: ApiLocale = isAutomationRule
         ? "bn"
         : await resolveCustomerLocale(this.prisma as any, orgId, {
             customerId: order.customerId ?? customer?.id ?? null,
             conversationId: order.conversationId ?? null,
           });
+      // e. variables from real data
+      const shipment = await this.resolveShipment(orgId, orderId, data?.shipmentId);
+      const vars = await this.buildVars(orgId, order, customer, shipment, recipientLocale);
+      // ON6: the reschedule date is a notify-call input, not
+      // order data — "" when the call carries none.
+      vars.rescheduleDate = data?.rescheduleDate ?? "";
+      const phone = customer?.phone ? String(customer.phone) : shipment?.recipientPhone ? String(shipment.recipientPhone) : null;
+      const email = customer?.email ? String(customer.email) : null;
       // f. channel loop, in configured order
       const statuses: string[] = [];
       let rowsWritten = 0;

@@ -4,10 +4,13 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 import { OrderNotificationService } from "./order-notifications.service";
 import {
   DEFAULT_CONFIG,
+  DEFAULT_TEMPLATES,
+  DEFAULT_TEMPLATES_EN,
   extractVariables,
   formatTakaMinor,
   mergeConfig,
   renderTemplate,
+  templateForLocale,
   validateConfig,
 } from "./order-notifications";
 
@@ -95,6 +98,10 @@ function makeHarness(opts: {
     organization: makeTable("organization"),
     integration: makeTable("integration"),
     paymentVerification: makeTable("paymentVerification"),
+    // MB5 (ML14): the recipient-locale chain (send-locale.ts)
+    // reads these two tables.
+    channelConversation: makeTable("channelConversation"),
+    customerMemory: makeTable("customerMemory"),
   };
   const prisma: any = { ...tables };
   const auditCalls: any[] = [];
@@ -202,6 +209,58 @@ describe("ON5 pure helpers", () => {
     expect(merged.delivered.channels).toEqual(["sms", "whatsapp", "email"]);
     expect(merged.order_placed.enabled).toBe(true);
   });
+
+  it("ML14 formatTakaMinor: bn renders Bengali digits + bn-BD grouping; en/no-locale unchanged", () => {
+    expect(formatTakaMinor(125000n, "bn")).toBe("৳১,২৫০");
+    expect(formatTakaMinor(125050n, "bn")).toBe("৳১,২৫০.৫০");
+    expect(formatTakaMinor(123456789n, "bn")).toBe("৳১২,৩৪,৫৬৭.৮৯");
+    expect(formatTakaMinor(0n, "bn")).toBe("৳০");
+    expect(formatTakaMinor(125000n, "en")).toBe("৳1,250");
+    expect(formatTakaMinor(125000n)).toBe("৳1,250");
+  });
+
+  it("ML14 validateConfig: per-locale variant objects — valid shapes pass, malformed shapes rejected", () => {
+    expect(validateConfig({ order_placed: { templates: { sms: { bn: "হ্যালো {{customerName}}", en: "Hello {{customerName}}" } } } })).toBeNull();
+    expect(validateConfig({ order_placed: { templates: { sms: { en: null } } } })).toBeNull();
+    // unknown locale key in the variant object
+    expect(validateConfig({ order_placed: { templates: { sms: { fr: "bonjour" } } } })).toContain("অজানা ভাষা");
+    // variant entry that is not a string/null
+    expect(validateConfig({ order_placed: { templates: { sms: { bn: 42 } } } })).toContain("string অথবা null");
+    // an array is not a valid template slot at all
+    expect(validateConfig({ order_placed: { templates: { sms: ["x"] } } })).toContain("string অথবা null");
+    // variables are validated inside EACH locale entry too
+    expect(validateConfig({ order_placed: { templates: { sms: { en: "hi {{bogus}}" } } } })).toContain("অজানা variable");
+  });
+
+  it("ML14 mergeConfig: well-formed variant objects survive; malformed fragments degrade to default null", () => {
+    const merged = mergeConfig({ order_placed: { templates: { sms: { bn: "বাংলা", en: "English" } } } });
+    expect(merged.order_placed.templates.sms).toEqual({ bn: "বাংলা", en: "English" });
+    const degraded = mergeConfig({ order_placed: { templates: { sms: { bn: 42 } } } });
+    expect(degraded.order_placed.templates.sms).toBeNull();
+    const degraded2 = mergeConfig({ order_placed: { templates: { sms: ["x"] } } });
+    expect(degraded2.order_placed.templates.sms).toBeNull();
+  });
+
+  it("ML14 templateForLocale: string wins everywhere; variant picks its locale; other-locale-only → catalog default in recipient locale", () => {
+    const generic = mergeConfig({ order_placed: { templates: { sms: "Generic {{orderNumber}}" } } });
+    expect(templateForLocale(generic, "order_placed", "sms", "bn")).toBe("Generic {{orderNumber}}");
+    expect(templateForLocale(generic, "order_placed", "sms", "en")).toBe("Generic {{orderNumber}}");
+
+    const variants = mergeConfig({ order_placed: { templates: { sms: { bn: "বাংলা {{orderNumber}}", en: "English {{orderNumber}}" } } } });
+    expect(templateForLocale(variants, "order_placed", "sms", "bn")).toBe("বাংলা {{orderNumber}}");
+    expect(templateForLocale(variants, "order_placed", "sms", "en")).toBe("English {{orderNumber}}");
+
+    // Deliberate (CD-2): an object holding ONLY the other locale
+    // does NOT leak across — the catalog default in the
+    // RECIPIENT locale is served instead.
+    const enOnly = mergeConfig({ order_placed: { templates: { sms: { en: "EN ONLY" } } } });
+    expect(templateForLocale(enOnly, "order_placed", "sms", "bn")).toBe(DEFAULT_TEMPLATES.order_placed);
+    const bnOnly = mergeConfig({ order_placed: { templates: { sms: { bn: "শুধু বাংলা" } } } });
+    expect(templateForLocale(bnOnly, "order_placed", "sms", "en")).toBe(DEFAULT_TEMPLATES_EN.order_placed);
+    // An empty-string variant entry counts as unset.
+    const emptyBn = mergeConfig({ order_placed: { templates: { sms: { bn: "  ", en: "English" } } } });
+    expect(templateForLocale(emptyBn, "order_placed", "sms", "bn")).toBe(DEFAULT_TEMPLATES.order_placed);
+  });
 });
 
 // ---------- service ----------
@@ -285,8 +344,12 @@ describe("ON5 OrderNotificationService", () => {
 
     const res = await h.svc.notify(ORG, "order-1", "order_placed");
     expect(res.sent).toBe(true);
-    // total ৳1,250 (125000 minor), due = 125000 − 25000 approved = ৳1,000
-    expect(h.smsCalls[0].text).toBe("হ্যালো Ayesha Rahman অর্ডার ORD-1001 মোট ৳1,250 বকেয়া ৳1,000 — Qosprey Shop");
+    // total 125000 minor, due = 125000 − 25000 approved = 100000.
+    // MB5 (ML14, CD-2) DELIBERATE CHANGE: the recipient here is
+    // bn (no languagePref, org default bn), so the money vars now
+    // render in Bengali digits — this expectation previously
+    // pinned the old Latin-digits-in-bn rendering.
+    expect(h.smsCalls[0].text).toBe("হ্যালো Ayesha Rahman অর্ডার ORD-1001 মোট ৳১,২৫০ বকেয়া ৳১,০০০ — Qosprey Shop");
   });
 
   it("whatsapp without a conversation → skipped_no_channel, then falls through to email", async () => {
@@ -399,6 +462,92 @@ describe("ON5 OrderNotificationService", () => {
     const logs = await h.svc.listLogs(ORG, "order-1");
     expect(logs).toHaveLength(1);
     expect(logs[0].status).toBe("skipped_setting_off");
+  });
+
+  // ---------- MB5 (ML14) per-locale overrides + bn money ----------
+
+  function seedEnglishRecipient(tables: any) {
+    tables.channelConversation.rows.push({
+      id: "conv-en", organizationId: ORG, customerId: "cust-1",
+      channel: "messenger", externalContactId: "ext-1", isPractice: false,
+    });
+    tables.customerMemory.rows.push({
+      id: "mem-1", organizationId: ORG, customerKey: "messenger:ext-1", languagePref: "en",
+    });
+  }
+
+  it("ML14: per-locale variant object — each recipient gets their own locale's variant + money in that locale", async () => {
+    const bn = makeHarness();
+    seedOrder(bn.tables);
+    await seedSetting(bn.tables, {
+      order_placed: { templates: { sms: { bn: "বাংলা অর্ডার {{orderNumber}} মোট {{total}}", en: "English order {{orderNumber}} total {{total}}" } } },
+    });
+    const rBn = await bn.svc.notify(ORG, "order-1", "order_placed");
+    expect(rBn.sent).toBe(true);
+    expect(bn.smsCalls[0].text).toBe("বাংলা অর্ডার ORD-1001 মোট ৳১,২৫০");
+
+    const en = makeHarness();
+    seedOrder(en.tables);
+    seedEnglishRecipient(en.tables);
+    await seedSetting(en.tables, {
+      order_placed: { templates: { sms: { bn: "বাংলা অর্ডার {{orderNumber}} মোট {{total}}", en: "English order {{orderNumber}} total {{total}}" } } },
+    });
+    const rEn = await en.svc.notify(ORG, "order-1", "order_placed");
+    expect(rEn.sent).toBe(true);
+    expect(en.smsCalls[0].text).toBe("English order ORD-1001 total ৳1,250");
+  });
+
+  it("ML14: a generic STRING override is used verbatim in both locales (pre-ML14 behaviour, byte-identical)", async () => {
+    const en = makeHarness();
+    seedOrder(en.tables);
+    seedEnglishRecipient(en.tables);
+    await seedSetting(en.tables, { order_placed: { templates: { sms: "Generic {{orderNumber}}" } } });
+    await en.svc.notify(ORG, "order-1", "order_placed");
+    expect(en.smsCalls[0].text).toBe("Generic ORD-1001");
+  });
+
+  it("ML14: variant object holding ONLY the other locale → catalog default in the recipient locale (bn money included)", async () => {
+    const h = makeHarness();
+    seedOrder(h.tables);
+    await seedSetting(h.tables, { order_placed: { templates: { sms: { en: "EN ONLY TEXT" } } } });
+    const res = await h.svc.notify(ORG, "order-1", "order_placed");
+    expect(res.sent).toBe(true);
+    expect(h.smsCalls[0].text).not.toContain("EN ONLY");
+    // The bn catalog default, with the total in Bengali digits.
+    expect(h.smsCalls[0].text).toContain("গ্রহণ করা হয়েছে");
+    expect(h.smsCalls[0].text).toContain("মোট: ৳১,২৫০");
+  });
+
+  it("ML14: bn recipient of the platform default sees Bengali-digit money; en recipient sees Latin", async () => {
+    const bn = makeHarness();
+    seedOrder(bn.tables);
+    await bn.svc.notify(ORG, "order-1", "order_placed");
+    expect(bn.smsCalls[0].text).toContain("মোট: ৳১,২৫০");
+
+    const en = makeHarness();
+    seedOrder(en.tables);
+    seedEnglishRecipient(en.tables);
+    await en.svc.notify(ORG, "order-1", "order_placed");
+    expect(en.smsCalls[0].text).toContain("Total: ৳1,250");
+  });
+
+  it("ML14: invalid variant shapes are rejected at settings write (400)", async () => {
+    const h = makeHarness();
+    seedOrder(h.tables);
+    await expect(h.svc.updateSettings(ORG, "actor-1", {
+      order_placed: { templates: { sms: { fr: "bonjour" } } },
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(h.svc.updateSettings(ORG, "actor-1", {
+      order_placed: { templates: { sms: { bn: 42 } } },
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(h.svc.updateSettings(ORG, "actor-1", {
+      order_placed: { templates: { sms: ["x"] } },
+    })).rejects.toMatchObject({ status: 400 });
+    // …and a valid variant object writes fine.
+    const saved = await h.svc.updateSettings(ORG, "actor-1", {
+      order_placed: { templates: { sms: { bn: "বাংলা {{orderNumber}}", en: "English {{orderNumber}}" } } },
+    });
+    expect(saved.order_placed.templates.sms).toEqual({ bn: "বাংলা {{orderNumber}}", en: "English {{orderNumber}}" });
   });
 
   it("notify NEVER throws even when a channel explodes", async () => {
