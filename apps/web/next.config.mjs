@@ -12,6 +12,29 @@ const nextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
   },
+  reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        source: "/:all*(svg|jpg|jpeg|png|webp|avif|ico|woff|woff2)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/_next/static/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     // Same-origin API proxy: the browser only ever talks to the web
     // origin, and Next.js forwards /backend/* to the API server-side.

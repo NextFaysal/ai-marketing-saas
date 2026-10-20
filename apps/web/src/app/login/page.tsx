@@ -6,9 +6,9 @@ import { googleErrorMessage } from "@/lib/google-auth";
 import { loginSchema } from "@repo/contracts";
 
 const HIGHLIGHTS = [
-  { title: "সব মার্কেটিং এক জায়গায়", text: "Ads, Orders, Profit আর AI Report, একটাই Operating System এ।" },
-  { title: "অনুমোদন ছাড়া কিছুই লাইভ নয়", text: "প্রতিটি Campaign মানুষের অনুমোদন পেরিয়ে, PAUSED অবস্থায় Publish হয়।" },
-  { title: "বানানো সংখ্যা নয়, প্রমাণিত সংখ্যা", text: "Platform এর রিপোর্ট আর আপনার আসল Order ডেটা আলাদা ও যাচাইযোগ্য।" },
+  { title: "Omnichannel Competitor Spy", text: "Meta, Google ও TikTok-এ প্রতিদ্বন্দীর Winning বিজ্ঞাপন ও স্টকআউট লাইভ ট্র্যাক।" },
+  { title: "Unified Inbox ও ভেরিফাইড AI", text: "Facebook, WhatsApp ও Instagram চ্যাট এক ইনবক্সে; আসল ডাটাবেজ থেকে নির্ভুল উত্তর।" },
+  { title: "COD Fraud Shield ও কুরিয়ার অটোমেশন", text: "ডেলিভারি হিস্ট্রি থেকে রিটার্ন রিস্ক স্কোরিং এবং Steadfast/Pathao-এ ১-ক্লিকে বাল্ক বুকিং।" },
 ];
 
 interface LoginResponse { accessToken?: string; requiresTotp?: boolean; challengeToken?: string }
