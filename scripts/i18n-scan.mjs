@@ -45,6 +45,7 @@ const DICTIONARY_HOME = [
   /\/lib\/shop-i18n\.ts$/,
   /\/translations\//, // NF5 content-translation modules hold localized content by design
   /\/lib\/translations\.ts$/,
+  /\/api\/src\/i18n\//, // MB4: the API message catalog is a dictionary home too
 ];
 const FORMAT_MODULE = /packages\/contracts\/src\/i18n-format\.ts$/;
 const BENGALI = /[\u0980-\u09FF]/;
@@ -54,6 +55,8 @@ function isExcluded(rel) {
   if (DICTIONARY_HOME.some((re) => re.test(rel))) return true;
   return false;
 }
+
+export { ROOT, SURFACES, DICTIONARY_HOME, isExcluded, walk, scanFile, stringLiterals };
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -139,6 +142,10 @@ function scanFile(path) {
   return { bengali, english, localeCalls };
 }
 
+// Main runs ONLY when executed directly (MB6: the gate imports the
+// scanning core from this module without triggering the report).
+const IS_MAIN = process.argv[1]?.endsWith("i18n-scan.mjs");
+if (IS_MAIN) {
 const asJson = process.argv.includes("--json");
 const topN = Number(process.argv.find((a) => a.startsWith("--top"))?.split("=")[1] ?? 10);
 
@@ -191,3 +198,4 @@ if (asJson) {
   );
   console.log(`\nTOTAL: ${g.bengali} Bengali literals · ${g.english} English-UI literals · ${g.localeCalls} direct toLocaleString calls`);
 }
+} // end IS_MAIN

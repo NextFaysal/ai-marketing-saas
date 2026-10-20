@@ -14,7 +14,8 @@
     "db:generate": "pnpm --filter @repo/db generate",
     "db:migrate": "pnpm --filter @repo/db migrate:dev",
     "db:seed": "pnpm --filter @repo/db seed",
-    "i18n:scan": "node scripts/i18n-scan.mjs"
+    "i18n:scan": "node scripts/i18n-scan.mjs",
+    "i18n:gate": "node scripts/i18n-gate.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

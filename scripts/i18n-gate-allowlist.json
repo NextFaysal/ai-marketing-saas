@@ -1,0 +1,4875 @@
+{
+ "$comment": "ML16 i18n enforcement gate — reviewed allowlist. Every entry names WHY the file legitimately carries hardcoded literals / direct locale calls today (the batch decision that classified it). Caps are pinned at the MB6-close counts: growth beyond a cap fails the gate (scripts/i18n-gate.mjs). Do not raise a cap or add an entry without recording the reason.",
+ "generatedFrom": "MB6 close scan (post-sweep tree), reasons reviewed per MB2 E1–E12 / MB3 exceptions / MB4 categories / MB5 exceptions / MB6 spot-checks",
+ "entries": [
+  {
+   "path": "/apps/admin/src/app/alerts/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/analytics/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/audit/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/billing/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "plan-name data placeholders (STARTER/GROWTH/AGENCY) + heuristic noise (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/admin/src/app/growth/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/health/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/layout.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "root metadata title (brand) + English-heuristic noise (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/admin/src/app/login/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/login/totp/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/orgs/[id]/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/orgs/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/admin/src/app/payouts/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 15,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/security/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/settings/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "data-format examples (key formats, email/URL placeholders, JSON examples) — identical in both locales by design (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/admin/src/app/social-ops/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/system/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/tickets/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/usage/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/users/[id]/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/app/users/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/components/AdminLocale.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/components/AdminShell.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/components/AttentionBell.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/components/nav.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/admin/src/components/ui.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/api/src/accounting/accounting.service.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/admin/admin.controller.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/api/src/admin/admin.service.ts",
+   "caps": {
+    "bengali": 91,
+    "english": 19,
+    "localeCalls": 1
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/api/src/admin/learning-sources.service.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 34,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / SVG path data / data strings) — zero Bengali literals, zero direct locale calls; MB3 classified every admin remainder as non-UI"
+  },
+  {
+   "path": "/apps/api/src/ads/ads.csv.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/ads.service.ts",
+   "caps": {
+    "bengali": 10,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/google/google.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 17,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/meta/meta.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/platform-status.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/spend-watch.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ads/tiktok/tiktok.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/affiliates/affiliates.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/agency/agency.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/ai/actions/action-catalog.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/actions/action-engine.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/actions/action-executors.service.ts",
+   "caps": {
+    "bengali": 50,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/actions/inbox-action-proposer.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/ads-intelligence.service.ts",
+   "caps": {
+    "bengali": 17,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/anomaly.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/answer-store.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/assistant-approve.controller.ts",
+   "caps": {
+    "bengali": 23,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/brain-admin.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/chat-attachments.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/chat.service.ts",
+   "caps": {
+    "bengali": 42,
+    "english": 16,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/competitor-intelligence.service.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/competitor-response.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/conversation-mining.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/copilot.service.ts",
+   "caps": {
+    "bengali": 46,
+    "english": 20,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/creative-learning.service.ts",
+   "caps": {
+    "bengali": 40,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/creative-studio.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/customer-memory.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/embeddings.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/forecast.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/growth-copilot.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/images/gemini-image.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/images/image.factory.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/knowledge-indexing.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/learning.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/anthropic.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/dev.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/gemini.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/llm-guard.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/llm.factory.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/llm/openai.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/mentions.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/org-brain.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/performance-learning.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/personas.ts",
+   "caps": {
+    "bengali": 10,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/pgvector-store.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/planner.ts",
+   "caps": {
+    "bengali": 110,
+    "english": 30,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/proposals.service.ts",
+   "caps": {
+    "bengali": 32,
+    "english": 13,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/reply-quality.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/reports.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 14,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/suggestions.ts",
+   "caps": {
+    "bengali": 33,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/tools.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/vector-store.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/vision.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/voice-learning.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/ai/website-learning.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text, intent/keyword data and bn halves of bilingual AI content (MB4 category d, by design); owner-facing compose paths were unified in MB5 and proactive strings catalogued in MB6"
+  },
+  {
+   "path": "/apps/api/src/analytics/analytics.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/analytics/cohort.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/analytics/cohorts.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/attribution/attribution.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/audiences/audiences.service.ts",
+   "caps": {
+    "bengali": 10,
+    "english": 11,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/auth/auth.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/automation/automation.service.ts",
+   "caps": {
+    "bengali": 135,
+    "english": 135,
+    "localeCalls": 3
+   },
+   "reason": "JOB_TEMPLATES bilingual data (bn + En companions, MB4 a2) + the staff billing/dunning email text (MB5: left by design — no recipient-language identity at that site)"
+  },
+  {
+   "path": "/apps/api/src/automation/inventory-ad-guard.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/automation/predictive-replenishment.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/booking/booking.service.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/campaigns/campaigns.service.ts",
+   "caps": {
+    "bengali": 435,
+    "english": 99,
+    "localeCalls": 2
+   },
+   "reason": "platform blueprint + preset data: bn halves with *En companions (plan D7 / MB4 a2); blueprint ad copy stays bn-only per the CA26 seed pin (standing partial)"
+  },
+  {
+   "path": "/apps/api/src/campaigns/frontier.service.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/campaigns/meta-publish.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/campaigns/policy-check.ts",
+   "caps": {
+    "bengali": 16,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/campaigns/series-dates.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/catalogs/catalogs.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/abandoned-checkouts.service.ts",
+   "caps": {
+    "bengali": 22,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/commerce-analytics.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/discounts.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/ec24.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/gift-cards.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/gift-cards.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/license-keys.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/loyalty.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/promotions.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/promotions.ts",
+   "caps": {
+    "bengali": 21,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/commerce/quotes.service.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/admin-token.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/agent-notify.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/cloudflare-for-saas.client.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/custom-domain.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/events.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/feature-flags.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/jwt-auth.guard.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/meta-graph.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/permission-catalog.ts",
+   "caps": {
+    "bengali": 34,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/plan-limit-checks.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/referral.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/slug-availability.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 2
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/storage-usage.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/stripe.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/tenant.guard.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/throttler.guard.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/common/webhook-dispatch.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/ad-library.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/alert-dispatcher.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 6,
+    "localeCalls": 1
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/competitors.service.ts",
+   "caps": {
+    "bengali": 21,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/funnel-auditor.ts",
+   "caps": {
+    "bengali": 21,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/multi-platform-scanner.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/review-miner.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/rules-engine.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/seo-analyzer.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/video-deconstructor.ts",
+   "caps": {
+    "bengali": 14,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/competitors/website-scanner.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/connection-healing.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/connection-monitor.service.ts",
+   "caps": {
+    "bengali": 23,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/connection-timeline.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/connection-usage.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/connections.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/google-connect.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/google.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/llm-verify.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/meta-app.client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/meta-token-exchange.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/payment-refunds.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/payout-legal-gate.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/provider-health.service.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/setup-assistant.service.ts",
+   "caps": {
+    "bengali": 38,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/tenant-gateway.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 10,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/tenant-payments.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/connections/wallet.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/conversions/capi.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/conversions/conversions.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/barcode.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier-client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier-ndr.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier-optimizer.service.ts",
+   "caps": {
+    "bengali": 16,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier-reconciliation.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier-rules.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/courier.service.ts",
+   "caps": {
+    "bengali": 16,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/ecourier.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/paperfly.client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/pathao.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/pdf.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 1
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/redx.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/courier/steadfast.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/creatives/creatives.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/creatives/video-slides.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/crm/lead-assignment.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "MB4-listed (a2) remainder: lead-score reason strings (data-shaped); remainder is data/internal text"
+  },
+  {
+   "path": "/apps/api/src/crm/lead-followups.ts",
+   "caps": {
+    "bengali": 10,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "MB4-listed (a2) remainder: lead-score reason strings (data-shaped); remainder is data/internal text"
+  },
+  {
+   "path": "/apps/api/src/crm/lead-score.ts",
+   "caps": {
+    "bengali": 24,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "MB4-listed (a2) remainder: lead-score reason strings (data-shaped); remainder is data/internal text"
+  },
+  {
+   "path": "/apps/api/src/crm/leads.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "MB4-listed (a2) remainder: lead-score reason strings (data-shaped); remainder is data/internal text"
+  },
+  {
+   "path": "/apps/api/src/customers/erasure.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/cx8/label-scan.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/cx8/product-match.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/cx8/product-recognition.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/data-tools/data-exports.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/data-tools/data-imports.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/delivery/delivery.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/delivery/rider-gps.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/dropship/dropship.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/dropship/supplier-portal.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/feeds/feed-generator.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/feeds/feeds.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/finance/finance-common.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/finance/finance-reports.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/finance/finance.controller.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/finance/ou7-accounting.service.ts",
+   "caps": {
+    "bengali": 20,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/finance/ou7-bank-recon.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fraud-network/fraud-network.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fraud/checkout-guard.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fraud/deposit.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fraud/identifier-lists.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fraud/identifier-utils.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fulfillment/fulfillment-excellence.service.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fulfillment/orders-bulk.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/fulfillment/returns.service.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/gamified-promotions/gamified-promotions.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/gamified-promotions/promo-config.ts",
+   "caps": {
+    "bengali": 23,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/hr/hr.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/imports/csv.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/imports/imports.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/imports/xlsx.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/inbox/ai-instructions.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/business-brain.ts",
+   "caps": {
+    "bengali": 47,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/channels/channel-adapter.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/channels/channel-send.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/channels/email.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/channels/telegram.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/comment-classifier.ts",
+   "caps": {
+    "bengali": 41,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent/keyword matching data — customer-input classification lists, never rendered as copy (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/inbox/comment-humanizer.ts",
+   "caps": {
+    "bengali": 32,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent/keyword matching data — customer-input classification lists, never rendered as copy (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/inbox/demo-pack.ts",
+   "caps": {
+    "bengali": 82,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "demo/seed data (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/inbox/in7-ai.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/inbox.service.ts",
+   "caps": {
+    "bengali": 143,
+    "english": 36,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/intent.ts",
+   "caps": {
+    "bengali": 100,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent/keyword matching data — customer-input classification lists, never rendered as copy (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/inbox/media-intelligence.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/media-store.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/meta-messaging.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 34,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/practice-mode.service.ts",
+   "caps": {
+    "bengali": 12,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/practice.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/product-card.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/realtime.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/social-comments.service.ts",
+   "caps": {
+    "bengali": 32,
+    "english": 10,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/inbox/webchat.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/api/src/installments/installments.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/commerce/health.service.ts",
+   "caps": {
+    "bengali": 42,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/commerce/shopify-catalog.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/commerce/shopify-orders.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/commerce/tracker-check.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/commerce/woo-orders.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/crypto.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/daraz/daraz.client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/daraz/daraz.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/integrations.controller.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/integrations.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/shopify/shopify-auth.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/shopify/shopify-graphql.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/shopify/shopify.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/shopify/shopify.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/woo-auth.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/integrations/woocommerce/woo.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/inventory/inventory.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/knowledge/extract.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/knowledge/knowledge.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/landings/landings.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/landings/sections.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/live-commerce/live-comments.provider.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/live-commerce/live-commerce.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/main.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/membership/store-credit.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/merchant-api/merchant-api.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/messaging/analytics.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/audience-rules.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 13,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/broadcast-personalization.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 14,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/cascade.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/compose-check.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/composer-blocks.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/csv-import.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/email-blocks.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 17,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/email.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/engagement.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 10,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/festival-templates.ts",
+   "caps": {
+    "bengali": 16,
+    "english": 13,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/governance.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/journey-presets-v2.ts",
+   "caps": {
+    "bengali": 48,
+    "english": 28,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/journey-presets.ts",
+   "caps": {
+    "bengali": 32,
+    "english": 17,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/link-tracking.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/messaging.controller.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/messaging.dto.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/messaging.service.ts",
+   "caps": {
+    "bengali": 54,
+    "english": 85,
+    "localeCalls": 1
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/open-token.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/personalization.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 16,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/recurrence.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/sms.provider.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 16,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/template-variants.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/unsubscribe-token.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/messaging/variables.ts",
+   "caps": {
+    "bengali": 25,
+    "english": 11,
+    "localeCalls": 0
+   },
+   "reason": "STOP/keyword matching lists (customer-input data) + bn halves of journey/variable label structures whose labelEn companions were added in MB4 + merchant-content defaults"
+  },
+  {
+   "path": "/apps/api/src/offline-conversions/offline-conversions.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/order-automation/order-automation.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/order-automation/order-automation.ts",
+   "caps": {
+    "bengali": 45,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/order-notifications/order-notifications.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/order-notifications/order-notifications.ts",
+   "caps": {
+    "bengali": 12,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/bd-address-data.ts",
+   "caps": {
+    "bengali": 132,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "Bangladesh address DATA (district/upazila names in both scripts) — data, not UI copy (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/orders/bd-address.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "Bangladesh address DATA (district/upazila names in both scripts) — data, not UI copy (MB4 category d)"
+  },
+  {
+   "path": "/apps/api/src/orders/fraud-score.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/fraud-shield.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/intake-warnings.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-analytics.service.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-chase.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-insights.service.ts",
+   "caps": {
+    "bengali": 69,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-profit.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-queues.ts",
+   "caps": {
+    "bengali": 12,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/order-surgery.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/orders.dto.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/orders.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/packing-scan.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/payment-resend.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/phone-utils.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/print-center.controller.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/print-center.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/product-reviews.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/review-insights.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/reviews.service.ts",
+   "caps": {
+    "bengali": 14,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/risk-score.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/orders/risk.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/organizations/organizations.service.ts",
+   "caps": {
+    "bengali": 51,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "MB4-listed (a2) remainder: onboarding checklist step titles (data-shaped, no per-call locale context in MB4 scope); remainder is data/internal text"
+  },
+  {
+   "path": "/apps/api/src/payments/payments.service.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 21,
+    "localeCalls": 2
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/portfolio/portfolio.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/pos/pos-offline.service.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/pos/pos.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/products/product-image-mirror.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/products/products.service.ts",
+   "caps": {
+    "bengali": 21,
+    "english": 4,
+    "localeCalls": 1
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/products/search-vector.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/public-docs/public-docs.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 51,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/publishing/publishing.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 26,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/purchasing/purchasing.service.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/reconciliation/reconciliation.service.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/reports/report-center.service.ts",
+   "caps": {
+    "bengali": 12,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/reports/report-export.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 7,
+    "localeCalls": 2
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/reports/report-shares.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/reports/reports.controller.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/content-generation.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/google-business.client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/linkedin.client.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/meta-publisher.ts",
+   "caps": {
+    "bengali": 22,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-ai.service.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 42,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-coach.service.ts",
+   "caps": {
+    "bengali": 18,
+    "english": 10,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-commerce-draft.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-health.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-image.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-import.service.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-insights.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-link.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-media-library.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-oauth.service.ts",
+   "caps": {
+    "bengali": 56,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-preflight.ts",
+   "caps": {
+    "bengali": 16,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-publish.service.ts",
+   "caps": {
+    "bengali": 45,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-queue.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-raster.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-share.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-stock.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social-syndication.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social.constants.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/social.service.ts",
+   "caps": {
+    "bengali": 32,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/telegram.client.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/threads.client.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/tiktok.client.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/social/youtube.client.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storage/media-library.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storage/media-migration.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storage/s3-object-store.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storage/s3-xml.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storage/storage.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/delivery-pricing.service.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/digital-download-token.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/retention.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/shop-account.service.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/shop-pages.ts",
+   "caps": {
+    "bengali": 40,
+    "english": 28,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/storefront.controller.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/storefront.service.ts",
+   "caps": {
+    "bengali": 30,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/storefront/tracking.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/subscriptions/subscriptions.service.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/support/support.service.ts",
+   "caps": {
+    "bengali": 31,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/support/ticket-tracking-token.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/tax/accounting.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/tracking/abandoned-carts.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/video-studio/ffmpeg-video.provider.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/video-studio/video-studio.service.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/voice/voice-conversation.engine.ts",
+   "caps": {
+    "bengali": 36,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/voice/voice-conversation.service.ts",
+   "caps": {
+    "bengali": 14,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/voice/voice.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/voice/voice.types.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/warehouse/warehouse.service.ts",
+   "caps": {
+    "bengali": 3,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/webhooks-outgoing/webhook-url.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/webhooks-outgoing/webhooks-outgoing.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/webpush/webpush.service.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/api/src/workflows/workflows.service.ts",
+   "caps": {
+    "bengali": 47,
+    "english": 59,
+    "localeCalls": 0
+   },
+   "reason": "API remainder in MB4's final classification: category (d) internal/prompt/data text, the bn half of bilingual data, or internal plain-Error strings (MB4 exceptions 1+3) — user-facing errors/notifications/documents render from the catalog"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/ad-accounts/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/ai/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "single data label fragment ('বাং' language chip) — not chrome copy; the page renders via the dictionary"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/analytics/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/automations/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 55,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/billing/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/campaign-builder/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/campaigns/festival-playbook-hub.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/campaigns/page.tsx",
+   "caps": {
+    "bengali": 13,
+    "english": 15,
+    "localeCalls": 0
+   },
+   "reason": "preset campaign templates (name/description content a merchant picks) — D7-class content data, no En companions yet (MB2 E5 + NOT BUILT note)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/comments/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "toLocaleDateString() sits in the CSV export row builder (data export format, pre-existing) — not on-screen rendering"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/commerce/accounting/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/commerce/feeds/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/commerce/loading.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "dashboard loading boundary: server component renders via getDict('bn') — no LocaleProvider exists in the loading boundary (MB2 E11)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/commerce/storefront/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 20,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/competitors/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/connections/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/creative-studio/banner-studio.tsx",
+   "caps": {
+    "bengali": 12,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "headline presets + editable copy defaults — merchant content (MB2 E9)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/creative-studio/page.tsx",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "tone options as label/labelEn pairs (D7 pattern; MB2 E9)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/funnels/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/hr/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "toLocaleDateString('en-CA') builds an ISO date KEY (data), not display formatting; the single bn literal is a data default"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/inbox/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 42,
+    "localeCalls": 0
+   },
+   "reason": "intent matching + demo data + bn halves of bilingual data + MB4-listed (a2) health-indicator labels (the *En companions ship in the same structures)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/influencers/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "sample shop-name default data in a converted page (MB2 E9 class)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/layout.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/leads/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/live-commerce/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/messaging/page.tsx",
+   "caps": {
+    "bengali": 41,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "module-level bn consts that are the bn SOURCES of …For(locale) accessors, wired at render — never rendered raw in en mode (MB2 E3)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/order-notifications/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/[id]/loading.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "dashboard loading boundary: server component renders via getDict('bn') — no LocaleProvider exists in the loading boundary (MB2 E11)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/components/CourierHubModal.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/loading.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "dashboard loading boundary: server component renders via getDict('bn') — no LocaleProvider exists in the loading boundary (MB2 E11)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/on2-detail.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "single fallback role-label literal (data default) in a converted page (MB2 E10 small-remainder class)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/orders/reconciliation/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/OrgSwitcher.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/pos/loading.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "dashboard loading boundary: server component renders via getDict('bn') — no LocaleProvider exists in the loading boundary (MB2 E11)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/pos/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "NETWORK_ERROR_MESSAGE is a message-as-data SENTINEL shared byte-identically with lib/api.ts and compared by equality (isNetworkFailure) — control-flow data, not dictionary copy"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/products/loading.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "dashboard loading boundary: server component renders via getDict('bn') — no LocaleProvider exists in the loading boundary (MB2 E11)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/products/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/referral/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/reports/builder/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/ai-control-section.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/ai-learning-section.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/knowledge-section.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/language-section.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/settings/webhooks/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/setup/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-posts/components/AnalyticsPanel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-posts/components/ComposerPanel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-posts/components/PostsPanel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-posts/components/SettingsPanel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-posts/components/shared.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/social-selling/page.tsx",
+   "caps": {
+    "bengali": 3,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "live-simulator sample comment/author/store defaults — sample data (MB2 E9)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/support/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/team/performance/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/whatsapp-bot/page.tsx",
+   "caps": {
+    "bengali": 8,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "Bengali keyword matchers for customer-input matching — input data, not UI copy (MB2 E5)"
+  },
+  {
+   "path": "/apps/web/src/app/dashboard/workflows/page.tsx",
+   "caps": {
+    "bengali": 89,
+    "english": 12,
+    "localeCalls": 2
+   },
+   "reason": "trigger/condition catalogues keyed BY their bn labels (bn string → dictionary-key maps); every rendered label resolves through the dictionary; the 2 toLocaleString calls sit in the same catalogue code (MB2 E2)"
+  },
+  {
+   "path": "/apps/web/src/app/l/[slug]/ConversionBoosters.tsx",
+   "caps": {
+    "bengali": 18,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "pre-existing sample social-proof DATA array (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/l/[slug]/LandingClient.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/l/[slug]/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/landing-client.tsx",
+   "caps": {
+    "bengali": 4,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "showcase SAMPLE content (sample chat/ad/AI copy) — not UI chrome (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/layout.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/manifest.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/offline/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/onboarding/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/page.tsx",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/account/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "'ঢাকা' as a district NAME data value (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/AutomotiveTheme.tsx",
+   "caps": {
+    "bengali": 38,
+    "english": 11,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/BeautyTheme.tsx",
+   "caps": {
+    "bengali": 6,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/blog/[postSlug]/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/blog/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/BooksTheme.tsx",
+   "caps": {
+    "bengali": 57,
+    "english": 7,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/BundleCard.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/checkout/page.tsx",
+   "caps": {
+    "bengali": 2,
+    "english": 8,
+    "localeCalls": 0
+   },
+   "reason": "'ঢাকা' as a district NAME data value (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ElectronicsTheme.tsx",
+   "caps": {
+    "bengali": 24,
+    "english": 10,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ExpressCheckout.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/FashionTheme.tsx",
+   "caps": {
+    "bengali": 9,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/FurnitureTheme.tsx",
+   "caps": {
+    "bengali": 15,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/GroceryTheme.tsx",
+   "caps": {
+    "bengali": 21,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/JewelryTheme.tsx",
+   "caps": {
+    "bengali": 36,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/KidsTheme.tsx",
+   "caps": {
+    "bengali": 47,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/layout.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ListingFilterDrawer.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/PageBlocks.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ProductCard.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 6,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/products/[productSlug]/page.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/products/[productSlug]/ProductDetailClient.tsx",
+   "caps": {
+    "bengali": 7,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "selector default state values (data values matching option labels) + a demo author default (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/QuickView.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopBottomNav.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopCartDrawer.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 16,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopContactButtons.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 4,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopHeader.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 12,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopInstallBar.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopPopup.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopPushPrompt.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/ShopSocialProof.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/[orgSlug]/SportsTheme.tsx",
+   "caps": {
+    "bengali": 33,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "theme sample/demo DATA only (fake product names, prices, spec values, demo arrays) — all UI chrome is dictionary-keyed (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/app/shop/offline/page.tsx",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "static Next metadata/manifest copy — not rendered UI (MB3 exceptions)"
+  },
+  {
+   "path": "/apps/web/src/components/connect/courier-connect-panel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/connect/messaging-connect-panel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/connect/payment-gateway-panel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/connect/sender-connect-panel.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 3,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/global-assistant.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 9,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/route-progress.tsx",
+   "caps": {
+    "bengali": 0,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
+  },
+  {
+   "path": "/apps/web/src/components/step-fields.tsx",
+   "caps": {
+    "bengali": 32,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "DYNAMIC_VARIABLES bn source data with labelEn companions + locale picker (D7 pattern; MB2 E4)"
+  },
+  {
+   "path": "/apps/web/src/lib/ab8.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/abandoned-chase.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "customer-content template defaults (merchant→customer message content) — ML-L5 content class (MB2 E5); per-locale sends need template identity (standing partial)"
+  },
+  {
+   "path": "/apps/web/src/lib/abandoned-tier-chase.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "customer-content template defaults (merchant→customer message content) — ML-L5 content class (MB2 E5); per-locale sends need template identity (standing partial)"
+  },
+  {
+   "path": "/apps/web/src/lib/accounting-nf10.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "API-pinned legal constant kept byte-identical to the API's string (vitest-pinned both sides) — deliberately NOT duplicated into the dictionary (MB2 E8)"
+  },
+  {
+   "path": "/apps/web/src/lib/ai-prompts.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "AI prompt text = content, not UI (MB2 E10)"
+  },
+  {
+   "path": "/apps/web/src/lib/ai-stream.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/api.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "NETWORK_ERROR_MESSAGE sentinel (see pos page entry) — the thrown network-failure message other code compares by equality; message-as-data, not rendered copy"
+  },
+  {
+   "path": "/apps/web/src/lib/app-offers-nf14.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/attachments.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/automation-blueprints.ts",
+   "caps": {
+    "bengali": 151,
+    "english": 81,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/banner-presets.ts",
+   "caps": {
+    "bengali": 17,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/campaign-step-shell.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 2,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/checkout-fields.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/checkout-gc10.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/code128.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/composer-blocks.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/connections.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 3,
+    "localeCalls": 1
+   },
+   "reason": "formatTakaMinor is a test-pinned legacy format kept byte-identical (MB2 ML4 note / E7); remainder is data"
+  },
+  {
+   "path": "/apps/web/src/lib/dropship-nf12.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "API-pinned legal constant kept byte-identical to the API's string (vitest-pinned both sides) — deliberately NOT duplicated into the dictionary (MB2 E8)"
+  },
+  {
+   "path": "/apps/web/src/lib/email-blocks.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "email block label pairs (bn + En companions, D7 pattern)"
+  },
+  {
+   "path": "/apps/web/src/lib/express-checkout.ts",
+   "caps": {
+    "bengali": 6,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "paymentMethodLabelBn is the wired bn fallback behind dictionary-first rendering in ExpressCheckout and is pinned by its own test (MB3); the error fallback is bn-default shop copy at a lib level with no locale input"
+  },
+  {
+   "path": "/apps/web/src/lib/festival-broadcast.ts",
+   "caps": {
+    "bengali": 57,
+    "english": 30,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/festival-playbook.ts",
+   "caps": {
+    "bengali": 175,
+    "english": 127,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/fraud-network-nf13.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/funnel-builder.ts",
+   "caps": {
+    "bengali": 85,
+    "english": 52,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/funnel-sources.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "locale-branching helper: the bn branch intentionally formats via fmtNumBn while the en branch uses contracts fmtNumber — locale-correct by construction"
+  },
+  {
+   "path": "/apps/web/src/lib/gamified-promotions.ts",
+   "caps": {
+    "bengali": 14,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "customer-content template defaults (merchant→customer message content) — ML-L5 content class (MB2 E5); per-locale sends need template identity (standing partial)"
+  },
+  {
+   "path": "/apps/web/src/lib/gb6-team.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  },
+  {
+   "path": "/apps/web/src/lib/google-auth.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/hr-nf11.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/inbox-format.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 0,
+    "localeCalls": 2
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/influencer-campaign.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 4,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/live-commerce.ts",
+   "caps": {
+    "bengali": 13,
+    "english": 5,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/live-selling.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "live-selling seed product names + comment-parser keyword regexes + Bengali-digit input map — seed/input-parsing data, not UI (MB2 E5)"
+  },
+  {
+   "path": "/apps/web/src/lib/loyalty.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/membership.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/money-bn.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 2
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/pos-closing.ts",
+   "caps": {
+    "bengali": 7,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/pos-receipt.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/rel-time-bn.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 2
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/rider-gps.ts",
+   "caps": {
+    "bengali": 15,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "bn digit map (input/display data) + the bn half of the fixAgeLabel pair — the en path was added in MB6 and the dashboard passes its locale; bn default serves the bn-by-design rider token page"
+  },
+  {
+   "path": "/apps/web/src/lib/shop-social-proof.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/shop-sw.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/shop-theme.ts",
+   "caps": {
+    "bengali": 0,
+    "english": 18,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-analytics.ts",
+   "caps": {
+    "bengali": 1,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-board.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-composer.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-media-library.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-post-insights.ts",
+   "caps": {
+    "bengali": 43,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "metric definitions carry bn labels WITH En companions (chipLabelEn/totalLabelEn) + picker; remainder is bn doc comments; 1 toLocaleString inside the same label code (MB2 E6)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-posts-sn.ts",
+   "caps": {
+    "bengali": 5,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-posts-su5.ts",
+   "caps": {
+    "bengali": 9,
+    "english": 2,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/social-stock-coach.ts",
+   "caps": {
+    "bengali": 4,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/storefront-money.ts",
+   "caps": {
+    "bengali": 2,
+    "english": 0,
+    "localeCalls": 1
+   },
+   "reason": "bn formatter lib — producing bn output is its job (MB2 E7); consumers branch by locale or the format is test-pinned byte-identical; new code uses @repo/contracts fmt*"
+  },
+  {
+   "path": "/apps/web/src/lib/video-studio.ts",
+   "caps": {
+    "bengali": 8,
+    "english": 1,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/warehouse-ab3.ts",
+   "caps": {
+    "bengali": 11,
+    "english": 0,
+    "localeCalls": 0
+   },
+   "reason": "small lib remainder: label-pair data (label/labelEn) or content/default data whose consumers render through converted pages (MB2 E10 class)"
+  },
+  {
+   "path": "/apps/web/src/lib/workflow-blueprints.ts",
+   "caps": {
+    "bengali": 722,
+    "english": 288,
+    "localeCalls": 0
+   },
+   "reason": "D7 data catalogue: bn source fields WITH En companions + locale pickers, rendered by locale (plan §৮ D7; MB2 E1)"
+  }
+ ]
+}
