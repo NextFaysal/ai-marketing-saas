@@ -159,9 +159,9 @@ describe("AB3 AN12 — queue operator actions", () => {
     process.env.REDIS_URL = "redis://localhost:6379";
     const q = fakeQueue();
     const svc = svcWithQueue(q);
-    await expect(svc.queuePause(SUPER, "scheduled-jobs", "")).rejects.toThrow(/reason is required/i);
+    await expect(svc.queuePause(SUPER, "scheduled-jobs", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     await expect(svc.queuePause(SUPER, "no-such-queue", REASON)).rejects.toThrow(/Unknown queue/);
-    await expect(svc.queueRetryFailed(SUPER, "webhook", {})).rejects.toThrow(/reason is required/i);
+    await expect(svc.queueRetryFailed(SUPER, "webhook", {})).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     expect(q.calls).toEqual([]);
   });
 
@@ -248,7 +248,7 @@ describe("AB3 AN13 — operator retry delegation", () => {
     let called = false;
     const health = { retryPost: async () => { called = true; } };
     const svc = new AdminService(opsPrisma(), mkAudit(), undefined, health as any, undefined, undefined);
-    await expect(svc.socialOpsRetryPost(SUPER, "post-1", "")).rejects.toThrow(/reason is required/i);
+    await expect(svc.socialOpsRetryPost(SUPER, "post-1", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     expect(called).toBe(false);
     const bare = new AdminService(opsPrisma(), mkAudit());
     await expect(bare.socialOpsRetryPost(SUPER, "post-1", REASON)).rejects.toThrow(/উপলব্ধ নয়/);
@@ -300,8 +300,8 @@ describe("AB3 AN14(a) — clearPlanLimits", () => {
   it("unknown tier and missing reason are refused, store unchanged", async () => {
     const prisma = settingsPrisma({ planLimits: { GROWTH: { aiDaily: 1 } } });
     const svc = new AdminService(prisma, mkAudit());
-    await expect(svc.clearPlanLimits(SUPER, "PRO", REASON)).rejects.toThrow(/Unknown plan tier/);
-    await expect(svc.clearPlanLimits(SUPER, "GROWTH", "")).rejects.toThrow(/reason is required/i);
+    await expect(svc.clearPlanLimits(SUPER, "PRO", REASON)).rejects.toMatchObject({ code: "admin.unknownPlanTierKnown" });
+    await expect(svc.clearPlanLimits(SUPER, "GROWTH", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     expect(prisma._settings.get("planLimits")).toEqual({ GROWTH: { aiDaily: 1 } });
   });
 });

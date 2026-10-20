@@ -163,7 +163,7 @@ describe("CC26 payment links — own gateway", () => {
     expect(serialized).not.toContain("org-1");
     expect(serialized).not.toContain("order-1");
     expect(serialized).not.toContain(b.tables.paymentLink.rows[0].tokenHash);
-    await expect(b.links.getPublicLink("deadbeef".repeat(8))).rejects.toThrow(/not found/i);
+    await expect(b.links.getPublicLink("deadbeef".repeat(8))).rejects.toMatchObject({ code: "connections.paymentLinkNotFound" });
   });
 
   it("the full ride: initiation pays NOTHING; the verified IPN pays the order AND spends the link", async () => {

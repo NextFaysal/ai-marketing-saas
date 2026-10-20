@@ -267,6 +267,6 @@ describe("M14 lead merge", () => {
     expect([...(target.tags ?? [])].sort()).toEqual(["cod", "vip"]);
     const list = await svc.list("org-1");
     expect(list.map((l: any) => l.id)).toEqual(["lead-a"]);
-    await expect(svc.merge("org-1", "owner", "lead-a", "lead-b")).rejects.toThrow("already merged");
+    await expect(svc.merge("org-1", "owner", "lead-a", "lead-b")).rejects.toMatchObject({ code: "crm.sourceLeadIsAlreadyMerged" });
   });
 });

@@ -69,8 +69,8 @@ describe("ChatService (dev template provider, read-only tools)", () => {
     const prisma = fakePrisma();
     const chat = new ChatService(prisma as any, llmStub, toolsStub);
     const conv = await chat.createConversation("org-1", "user-1");
-    await expect(chat.listMessages("org-1", "user-OTHER", conv.id)).rejects.toThrow("not found");
-    await expect(chat.listMessages("org-OTHER", "user-1", conv.id)).rejects.toThrow("not found");
+    await expect(chat.listMessages("org-1", "user-OTHER", conv.id)).rejects.toMatchObject({ code: "ai.conversationNotFound" });
+    await expect(chat.listMessages("org-OTHER", "user-1", conv.id)).rejects.toMatchObject({ code: "ai.conversationNotFound" });
   });
 
   it("sendMessage returns deterministic follow-up suggestions from the tools used", async () => {
@@ -107,9 +107,9 @@ describe("ChatService conversation management (M45)", () => {
     expect(list[0].id).toBe(a.id); // a was touched last by sendMessage
     const renamed = await chat.updateConversation("org-1", "user-1", a.id, { title: "  Weekly review  " });
     expect(renamed.title).toBe("Weekly review");
-    await expect(chat.updateConversation("org-1", "user-1", a.id, { title: "   " })).rejects.toThrow("empty");
-    await expect(chat.updateConversation("org-1", "user-1", a.id, {})).rejects.toThrow("Nothing to update");
-    await expect(chat.updateConversation("org-1", "user-OTHER", a.id, { pinned: true })).rejects.toThrow("not found");
+    await expect(chat.updateConversation("org-1", "user-1", a.id, { title: "   " })).rejects.toMatchObject({ code: "ai.titleCannotBeEmpty" });
+    await expect(chat.updateConversation("org-1", "user-1", a.id, {})).rejects.toMatchObject({ code: "ai.nothingToUpdateSendTitlePinned" });
+    await expect(chat.updateConversation("org-1", "user-OTHER", a.id, { pinned: true })).rejects.toMatchObject({ code: "ai.conversationNotFound" });
   });
 
   it("search matches title and message content, only within the owner's chats", async () => {
@@ -127,7 +127,7 @@ describe("ChatService conversation management (M45)", () => {
     const res = await chat.deleteConversation("org-1", "user-1", a.id);
     expect(res.deleted).toBe(true);
     expect(prisma.aIMessage.rows.filter((m: any) => m.conversationId === a.id)).toEqual([]);
-    await expect(chat.listMessages("org-1", "user-1", a.id)).rejects.toThrow("not found");
+    await expect(chat.listMessages("org-1", "user-1", a.id)).rejects.toMatchObject({ code: "ai.conversationNotFound" });
   });
 
   it("export returns JSON and Markdown built from the stored rows", async () => {

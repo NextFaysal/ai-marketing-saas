@@ -237,6 +237,6 @@ describe("RM10 run", () => {
     const target = new FakeTargetStorage();
     target.mode = "local";
     const svc = makeService(prisma, target, new Map());
-    await expect(svc.run({})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.run({})).rejects.toMatchObject({ code: "storage.migrationCannotBeRunObjectStorage" });
   });
 });

@@ -124,10 +124,10 @@ describe("Sales & Data S6 — product sales report", () => {
 
   it("validates days: integer 1..365 only, default 30", async () => {
     const svc = new ProductsService(fakePrisma() as any, auditStub);
-    await expect(svc.salesReport("org-1", "0", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.salesReport("org-1", "abc", NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.salesReport("org-1", 0, NOW)).rejects.toThrow("days must be an integer between 1 and 365");
-    await expect(svc.salesReport("org-1", 366, NOW)).rejects.toThrow("days must be an integer between 1 and 365");
+    await expect(svc.salesReport("org-1", "0", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.salesReport("org-1", "abc", NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.salesReport("org-1", 0, NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
+    await expect(svc.salesReport("org-1", 366, NOW)).rejects.toMatchObject({ code: "commerce.daysRange" });
     await expect(svc.salesReport("org-1", undefined, NOW)).resolves.toMatchObject({ days: 30 });
     await expect(svc.salesReport("org-1", "", NOW)).resolves.toMatchObject({ days: 30 });
     await expect(svc.salesReport("org-1", "90", NOW)).resolves.toMatchObject({ days: 90 });

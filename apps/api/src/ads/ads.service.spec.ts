@@ -63,6 +63,6 @@ describe("AdsService ad-spend CSV import", () => {
   it("blocks access to another organization's account", async () => {
     const prisma = fakePrisma();
     const svc = new AdsService(prisma as any, audit);
-    await expect(svc.manualEntry("org-OTHER", "user-1", "acc-1", { date: "2026-10-02", spend: "1" })).rejects.toThrow("not found");
+    await expect(svc.manualEntry("org-OTHER", "user-1", "acc-1", { date: "2026-10-02", spend: "1" })).rejects.toMatchObject({ code: "ads.adAccountNotFoundInThis" });
   });
 });

@@ -110,7 +110,7 @@ describe("InboxService sending + drafts", () => {
     expect(sent).toMatchObject({ status: "sent", externalId: "wamid.out1" });
 
     (global as any).fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "outside 24h window" } }) });
-    await expect(svc.sendReply("org-1", "user-1", conv.id, "আবার চেষ্টা")).rejects.toThrow("NOT sent");
+    await expect(svc.sendReply("org-1", "user-1", conv.id, "আবার চেষ্টা")).rejects.toMatchObject({ code: "inbox.messageWasNotSent" });
     const failed = prisma.channelMessage.rows.find((m: any) => m.status === "failed");
     expect(failed.error).toContain("24h window");
   });

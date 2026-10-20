@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
@@ -6,6 +6,7 @@ import { CatalogPushService } from "../commerce/catalog-push.service";
 import { EventsService } from "../common/events.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { parseBdAddress } from "../orders/bd-address";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** EC28: emitted on a stock transition 0 → >0 so the storefront
  * retention service can fire back-in-stock alerts. The
@@ -755,17 +756,17 @@ export class InventoryService {
   ): Promise<{ binId: string; onHand: number; movement: any }> {
     const p: any = this.prisma as any;
     if (!this.binActive(p)) {
-      throw new BadRequestException("বিন-ভিত্তিক স্টক স্তর সক্রিয় নয় — এই কাজটি করা যাচ্ছে না।");
+      throw badRequest("inventory.binBasedStockLevelsAreNot");
     }
     const bin = await p.binLocation.findFirst({
       where: { id: input.binId, organizationId },
     }).catch(() => null);
-    if (!bin) throw new BadRequestException("নির্দিষ্ট বিনটি এই প্রতিষ্ঠানে পাওয়া যায়নি।");
+    if (!bin) throw badRequest("inventory.theSpecifiedBinWasNotFound2");
     const variantId = input.variantId ?? null;
     return this.stockTx(async (db) => {
       const current = await this.globalCounterIn(db, organizationId, input.productId, variantId);
       if (current == null) {
-        throw new BadRequestException("এই পণ্যের স্টক ট্র্যাক করা হচ্ছে না — আগে পণ্যের স্টক সংখ্যা বসান");
+        throw badRequest("inventory.thisProductSStockIsNot");
       }
       await this.seedBalanceIfMissingIn(db, organizationId, input.productId, variantId, current);
       const bal = await db.stockBalance.findFirst({
@@ -773,7 +774,7 @@ export class InventoryService {
       }).catch(() => null);
       const binOnHand = (bal?.onHand as number) ?? 0;
       if (input.refuseNegative && binOnHand + input.delta < 0) {
-        throw new BadRequestException("এই বিনে পর্যাপ্ত স্টক নেই — ট্রান্সফার করা যাচ্ছে না।");
+        throw badRequest("inventory.thereIsNotEnoughStockIn");
       }
       await this.applyBinDeltaIn(db, organizationId, input.productId, variantId, input.binId, input.delta);
       const movement = await db.stockMovement.create({
@@ -815,14 +816,14 @@ export class InventoryService {
       ? await this.activeAllocationsIn(p, organizationId, orderId)
       : [];
     if (!existing.length) {
-      throw new BadRequestException("এই অর্ডারে সক্রিয় স্টক বরাদ্দ নেই — পুনঃবরাদ্দ করা যাচ্ছে না।");
+      throw badRequest("inventory.thereIsNoActiveStockAllocation");
     }
     const target = await p.warehouse.findFirst({
       where: { id: targetWarehouseId, organizationId },
     }).catch(() => null);
-    if (!target) throw new NotFoundException("Target warehouse not found in this organization");
+    if (!target) throw notFound("inventory.targetWarehouseNotFoundInThis");
     if (!target.active) {
-      throw new BadRequestException("লক্ষ্য গুদামটি নিষ্ক্রিয় — সক্রিয় একটি গুদাম বেছে নিন।");
+      throw badRequest("inventory.theTargetWarehouseIsInactiveChoose");
     }
     const result = await this.stockTx(async (db) => {
       const rows = await this.activeAllocationsIn(db, organizationId, orderId);
@@ -1878,33 +1879,33 @@ export class InventoryService {
     const hasDelta = input.delta !== undefined && input.delta !== null;
     const hasSetTo = input.setTo !== undefined && input.setTo !== null;
     if (hasDelta === hasSetTo) {
-      throw new BadRequestException("delta অথবা setTo — ঠিক একটি দিতে হবে (দুটোই বা কোনোটিই নয়)।");
+      throw badRequest("inventory.deltaOrSettoExactlyOneMust");
     }
     const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("inventory.productNotFoundInThisOrganization");
 
     let variant: any = null;
     if (input.variantId) {
       variant = await (this.prisma as any).productVariant.findFirst({
         where: { id: input.variantId, productId },
       });
-      if (!variant) throw new NotFoundException("Variant not found for this product");
+      if (!variant) throw notFound("inventory.variantNotFoundForThisProduct");
     }
     const current: number | null = variant ? variant.stockQuantity : product.stockQuantity;
     if (current == null) {
-      throw new BadRequestException("এই পণ্যের স্টক ট্র্যাক করা হচ্ছে না — আগে পণ্যের স্টক সংখ্যা বসান");
+      throw badRequest("inventory.thisProductSStockIsNot");
     }
     let newBalance: number;
     let appliedDelta: number;
     if (hasSetTo) {
       if (!Number.isInteger(input.setTo) || (input.setTo as number) < 0) {
-        throw new BadRequestException("setTo অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে।");
+        throw badRequest("inventory.settoMustBeAnIntegerOf");
       }
       newBalance = input.setTo as number;
       appliedDelta = newBalance - current;
     } else {
       if (!Number.isInteger(input.delta)) {
-        throw new BadRequestException("delta অবশ্যই পূর্ণসংখ্যা হতে হবে।");
+        throw badRequest("inventory.deltaMustBeAnInteger");
       }
       appliedDelta = input.delta as number;
       newBalance = current + appliedDelta;
@@ -1921,7 +1922,7 @@ export class InventoryService {
         ? await binTable.findFirst({ where: { id: input.binId, organizationId } }).catch(() => null)
         : null;
       if (!explicitBin) {
-        throw new BadRequestException("নির্দিষ্ট বিনটি এই প্রতিষ্ঠানে পাওয়া যায়নি — সঠিক বিন বেছে নিন।");
+        throw badRequest("inventory.theSpecifiedBinWasNotFound");
       }
     }
     const variantId = variant?.id ?? null;
@@ -2423,7 +2424,7 @@ export class InventoryService {
     query: { page?: number; pageSize?: number } = {},
   ) {
     const product = await (this.prisma as any).product.findFirst({ where: { id: productId, organizationId } });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("inventory.productNotFoundInThisOrganization");
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 20));
     const where = { organizationId, productId };

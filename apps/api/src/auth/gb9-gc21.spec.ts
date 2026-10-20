@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, HttpException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { createHash } from "node:crypto";
 import { VerificationService } from "./verification.service";
 import { AuthService } from "./auth.service";
@@ -102,7 +103,7 @@ describe("GC21 email verification tokens", () => {
     await svc.requestEmailVerification("u-1");
     const first = /token=([a-f0-9]+)/.exec(sentMail[0].text)![1];
     await svc.requestEmailVerification("u-1");
-    await expect(svc.verifyEmail(first)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.verifyEmail(first)).rejects.toMatchObject({ code: "auth.verificationLinkExpired", status: 400 });
   });
 
   it("an expired token is refused and an unknown token is refused", async () => {
@@ -110,8 +111,8 @@ describe("GC21 email verification tokens", () => {
     await svc.requestEmailVerification("u-1");
     const rawToken = /token=([a-f0-9]+)/.exec(sentMail[0].text)![1];
     tokens[0].expiresAt = new Date(Date.now() - 1000);
-    await expect(svc.verifyEmail(rawToken)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.verifyEmail("f".repeat(64))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.verifyEmail(rawToken)).rejects.toMatchObject({ code: "auth.verificationLinkExpired", status: 400 });
+    await expect(svc.verifyEmail("f".repeat(64))).rejects.toMatchObject({ code: "auth.verificationLinkInvalidOrExpired", status: 400 });
   });
 
   it("unconfigured email returns sent:false and never throws (registration stays unblocked)", async () => {
@@ -137,7 +138,7 @@ describe("GC21 phone OTP", () => {
     const out: any = await svc.setPhone("u-1", "01998765432");
     expect(out.phone).toBe("+8801998765432");
     expect(out.phoneVerifiedAt).toBeNull();
-    await expect(svc.setPhone("u-1", "12345")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.setPhone("u-1", "12345")).rejects.toMatchObject({ code: "auth.bdMobileNumberInvalid", status: 400 });
   });
 
   it("configured SMS: code is hashed, verify stamps phoneVerifiedAt, reuse fails", async () => {
@@ -155,7 +156,7 @@ describe("GC21 phone OTP", () => {
     const verified: any = await svc.verifyPhoneOtp("u-1", code);
     expect(verified.verified).toBe(true);
     expect(users[0].phoneVerifiedAt).toBeInstanceOf(Date);
-    await expect(svc.verifyPhoneOtp("u-1", code)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.verifyPhoneOtp("u-1", code)).rejects.toMatchObject({ code: "auth.otpCodeFailed", status: 400 });
   });
 
   it("attempt cap: the 5th wrong code kills the OTP — even the right code then fails", async () => {
@@ -165,12 +166,12 @@ describe("GC21 phone OTP", () => {
     const code = /কোড: (\d{6})/.exec(sentSms[0].text)![1];
     const wrong = code === "000000" ? "000001" : "000000";
     for (let i = 0; i < 5; i++) {
-      await expect(svc.verifyPhoneOtp("u-1", wrong)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.verifyPhoneOtp("u-1", wrong)).rejects.toMatchObject({ code: "auth.otpCodeFailed", status: 400 });
     }
     const row = tokens.find((t) => t.kind === "phone");
     expect(row.attempts).toBe(5);
     expect(row.usedAt).toBeInstanceOf(Date);
-    await expect(svc.verifyPhoneOtp("u-1", code)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.verifyPhoneOtp("u-1", code)).rejects.toMatchObject({ code: "auth.otpCodeFailed", status: 400 });
   });
 
   it("a provider failure returns provider_error, kills the code, verifies nothing", async () => {
@@ -326,8 +327,8 @@ describe("GC21 merchant verification workflow", () => {
     const { p, org } = makeOrgWorld({ address: null, businessAddress: null, contactPhone: null, contactEmail: null, tradeLicenseNo: null });
     const svc = new OrganizationsService(p, auditStub);
     const err: any = await svc.submitVerification("org-1", "u-1").catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
-    const body = err.getResponse();
+    expect(err).toMatchObject({ code: "organizations.verificationInfoMissing", status: 400 });
+    const body = err.extra;
     expect(body.missing).toEqual(expect.arrayContaining(["ব্যবসার ঠিকানা", "যোগাযোগের ফোন বা ইমেইল", "ট্রেড লাইসেন্স নম্বর"]));
     expect(org.verificationStatus).toBe("unverified");
   });
@@ -341,7 +342,7 @@ describe("GC21 merchant verification workflow", () => {
 
     const admin = new AdminService(p, auditStub);
     // Reject without a note is refused — the merchant needs the reason.
-    await expect(admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "reject", "")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "reject", "")).rejects.toMatchObject({ status: 400 });
     const rejected: any = await admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "reject", "ট্রেড লাইসেন্স নম্বরটি পড়া যাচ্ছে না");
     expect(rejected.verificationStatus).toBe("rejected");
     expect(rejected.verificationNote).toContain("পড়া যাচ্ছে না");
@@ -355,8 +356,8 @@ describe("GC21 merchant verification workflow", () => {
     const approved: any = await admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "approve");
     expect(approved.verificationStatus).toBe("verified");
     // A decided org cannot be re-decided; a verified org cannot resubmit.
-    await expect(admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "approve")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(orgs.submitVerification("org-1", "u-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(admin.reviewOrgVerification({ id: "admin-1" }, "org-1", "approve")).rejects.toBeInstanceOf(ApiException);
+    await expect(orgs.submitVerification("org-1", "u-1")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("businessAddress alone satisfies the address requirement", async () => {

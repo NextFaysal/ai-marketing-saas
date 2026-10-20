@@ -206,10 +206,10 @@ describe("SP5 schedulePost", () => {
     const publishing = seedPost(db, { status: "publishing" });
     const { social } = services(db);
     const e1 = await social.schedulePost(ORG, ACTOR, published.id, { scheduledAt: FUTURE() }).catch((e) => e);
-    expect(e1).toBeInstanceOf(ConflictException);
+    expect(e1).toMatchObject({ code: "social.thePostCannotBeScheduledIn" });
     expect(e1.message).toContain("শিডিউল করা যাবে না");
     const e2 = await social.schedulePost(ORG, ACTOR, publishing.id, { scheduledAt: FUTURE() }).catch((e) => e);
-    expect(e2).toBeInstanceOf(ConflictException);
+    expect(e2).toMatchObject({ code: "social.thePostCannotBeScheduledIn" });
     expect(db.auditRows.filter((r: Row) => r.action === "social.post_scheduled")).toHaveLength(0);
   });
 
@@ -218,10 +218,10 @@ describe("SP5 schedulePost", () => {
     const post = seedPost(db);
     const { social } = services(db);
     const bad = await social.schedulePost(ORG, ACTOR, post.id, { scheduledAt: "not-a-date" }).catch((e) => e);
-    expect(bad).toBeInstanceOf(BadRequestException);
+    expect(bad).toMatchObject({ code: "social.giveAValidDateAndTime" });
     expect(bad.message).toContain("সঠিক তারিখ ও সময় দিন");
     const past = await social.schedulePost(ORG, ACTOR, post.id, { scheduledAt: new Date(Date.now() - 10 * 60_000).toISOString() }).catch((e) => e);
-    expect(past).toBeInstanceOf(BadRequestException);
+    expect(past).toMatchObject({ code: "social.theScheduledTimeCannotBeIn" });
     expect(past.message).toContain("অতীতে হতে পারবে না");
     const grace = await social.schedulePost(ORG, ACTOR, post.id, { scheduledAt: new Date(Date.now() - 2 * 60_000).toISOString() });
     expect(grace.status).toBe("scheduled");
@@ -232,7 +232,7 @@ describe("SP5 schedulePost", () => {
     const post = seedPost(db);
     const { social } = services(db);
     const err = await social.schedulePost(ORG2, ACTOR, post.id, { scheduledAt: FUTURE() }).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 });
 
@@ -252,7 +252,7 @@ describe("SP5 cancelSchedule", () => {
     const post = seedPost(db);
     const { social } = services(db);
     const err = await social.cancelSchedule(ORG, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
+    expect(err).toMatchObject({ code: "social.onlyAScheduledPostSSchedule" });
     expect(err.message).toContain("শুধু শিডিউল করা পোস্টের শিডিউল বাতিল করা যায়");
   });
 });
@@ -290,7 +290,7 @@ describe("SP5 publishNow", () => {
     const fn = jest.fn(async () => ({ platformPostId: "x", platformUrl: null }));
     publish.publishToPlatform = fn;
     const err = await publish.publishNow(ORG, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
+    expect(err).toMatchObject({ code: "social.thisPostCannotBePublishedNow" });
     expect(fn).not.toHaveBeenCalled();
   });
 
@@ -302,7 +302,7 @@ describe("SP5 publishNow", () => {
     const fn = jest.fn(async () => ({ platformPostId: "x", platformUrl: null }));
     publish.publishToPlatform = fn;
     const err = await publish.publishNow(ORG, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
+    expect(err).toMatchObject({ code: "social.thePostIsBeingPublishedBy" });
     expect(err.message).toContain("অন্য একটি প্রক্রিয়ায় প্রকাশ হচ্ছে");
     expect(fn).not.toHaveBeenCalled();
   });
@@ -312,7 +312,7 @@ describe("SP5 publishNow", () => {
     const post = seedPost(db);
     const { publish } = services(db);
     const err = await publish.publishNow(ORG2, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 });
 

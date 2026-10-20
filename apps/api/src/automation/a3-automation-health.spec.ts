@@ -185,11 +185,11 @@ describe("A3 dead-letter list + replay", () => {
   it("replay: another org's entry is a 404; own entry replays via the existing mechanism exactly once", async () => {
     const db = fakeDb(); db.jobs.push(jobRow()); seedDlq(db);
     const svc = service(db, { syncOrganization: jest.fn(async () => ({})) });
-    await expect(svc.replayOrgDeadLetter(ORG, "dlq-3", "owner")).rejects.toThrow(/not found/i);
+    await expect(svc.replayOrgDeadLetter(ORG, "dlq-3", "owner")).rejects.toMatchObject({ code: "automation.deadLetterEntryNotFound" });
     const out: any = await svc.replayOrgDeadLetter(ORG, "dlq-1", "owner");
     expect(out).toMatchObject({ replayed: true });
     expect(db.dlq.find((r: Row) => r.id === "dlq-1")!.replayedAt).toBeTruthy();
-    await expect(svc.replayOrgDeadLetter(ORG, "dlq-1", "owner")).rejects.toThrow(/already replayed/);
+    await expect(svc.replayOrgDeadLetter(ORG, "dlq-1", "owner")).rejects.toMatchObject({ code: "automation.thisEntryWasAlreadyReplayed" });
   });
 });
 

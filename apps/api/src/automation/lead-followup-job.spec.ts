@@ -32,6 +32,6 @@ describe("lead_followup_sweep job", () => {
       {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     );
     await expect(svc.executeJob({ organizationId: "org-9", createdById: "owner", type: "lead_followup_sweep" }))
-      .rejects.toThrow("Leads service is not available");
+      .rejects.toMatchObject({ code: "automation.leadsServiceIsNotAvailableIn" });
   });
 });

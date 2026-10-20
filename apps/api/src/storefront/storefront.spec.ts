@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { BD_DISTRICTS } from "@repo/contracts";
 import { StorefrontService } from "./storefront.service";
 
@@ -182,9 +183,9 @@ describe("StorefrontService — shop availability + home", () => {
     const prisma = makePrisma();
     seedWorld(prisma);
     const { svc } = makeService(prisma);
-    await expect(svc.shopHome("shop-off", {})).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.shopHome("no-such-shop", {})).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.createCart("shop-off")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.shopHome("shop-off", {})).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.shopHome("no-such-shop", {})).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createCart("shop-off")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("404s when shopEnabled is false", async () => {
@@ -192,7 +193,7 @@ describe("StorefrontService — shop availability + home", () => {
     seedWorld(prisma);
     prisma.storefrontSetting.rows[0].shopEnabled = false;
     const { svc } = makeService(prisma);
-    await expect(svc.shopHome("shop-one", {})).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.shopHome("shop-one", {})).rejects.toBeInstanceOf(ApiException);
   });
 
   it("home merges Category rows + legacy strings with ACTIVE counts, paginates, searches", async () => {
@@ -263,8 +264,8 @@ describe("StorefrontService — product detail", () => {
     const prisma = makePrisma();
     seedWorld(prisma);
     const { svc } = makeService(prisma);
-    await expect(svc.productDetail("shop-one", "draft-item")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.productDetail("shop-one", "other-item")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.productDetail("shop-one", "draft-item")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.productDetail("shop-one", "other-item")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -312,30 +313,30 @@ describe("StorefrontService — cart", () => {
 
   it("wrong token 404s, and a token never works under another org's slug", async () => {
     const { svc, cartToken } = await setup();
-    await expect(svc.getCart("shop-one", "bogus-token")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getCart("shop-two", cartToken)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getCart("shop-one", "bogus-token")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getCart("shop-two", cartToken)).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.patchCartLine("shop-two", cartToken, { productId: "p-other", quantity: 1 }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getCart("shop-one", undefined)).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getCart("shop-one", undefined)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects products of another org / inactive products and foreign variants", async () => {
     const { svc, cartToken } = await setup();
     await expect(
       svc.patchCartLine("shop-one", cartToken, { productId: "p-other", quantity: 1 }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.patchCartLine("shop-one", cartToken, { productId: "p-draft", quantity: 1 }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.patchCartLine("shop-one", cartToken, { productId: "p-b", variantId: "v-a1", quantity: 1 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("contact requires at least one of email/phone and stores trimmed values", async () => {
     const { svc, cartToken } = await setup();
-    await expect(svc.setCartContact("shop-one", cartToken, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.setCartContact("shop-one", cartToken, {})).rejects.toBeInstanceOf(ApiException);
     const r = await svc.setCartContact("shop-one", cartToken, { email: "  a@b.com ", phone: " 01700000000 " });
     expect(r.cart.email).toBe("a@b.com");
     expect(r.cart.phone).toBe("01700000000");
@@ -349,7 +350,7 @@ describe("StorefrontService — staff settings + zones", () => {
     const { svc, audit } = makeService(prisma);
     await expect(
       svc.updateSettings("org-1", "user-1", { featuredProductIds: ["p-other"] }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     const ok = await svc.updateSettings("org-1", "user-1", { shopName: "নতুন নাম", featuredProductIds: ["p-a"] });
     expect(ok.setting.shopName).toBe("নতুন নাম");
     expect(ok.setting.featuredProductIds).toEqual(["p-a"]);
@@ -367,12 +368,12 @@ describe("StorefrontService — staff settings + zones", () => {
     expect(created.zone.freeAboveMinor).toBe("100000");
     await expect(
       svc.createZone("org-1", "user-1", { name: "x", kind: "district_list", districts: ["টেকনাফ"], chargeMinor: "1" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.createZone("org-1", "user-1", { name: "x", kind: "all", chargeMinor: "10.5" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateZone("org-2", "user-1", created.zone.id, { name: "hijack" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.deleteZone("org-2", "user-1", created.zone.id)).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateZone("org-2", "user-1", created.zone.id, { name: "hijack" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.deleteZone("org-2", "user-1", created.zone.id)).rejects.toBeInstanceOf(ApiException);
     const upd = await svc.updateZone("org-1", "user-1", created.zone.id, { chargeMinor: "9000" });
     expect(upd.zone.chargeMinor).toBe("9000");
     const del = await svc.deleteZone("org-1", "user-1", created.zone.id);

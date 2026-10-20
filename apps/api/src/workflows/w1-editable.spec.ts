@@ -66,7 +66,7 @@ describe("W1 editable workflows", () => {
     const { svc } = setup();
     const wf: any = await svc.create("org", "u1", { name: "A", trigger: "lead_created", steps: [{ type: "add_lead_activity", text: "hi" }] });
     await expect(svc.update("org", wf.id, { steps: [{ type: "wait", minutes: 0 }] })).rejects.toThrow(/wait steps/);
-    await expect(svc.update("org", wf.id, { trigger: "nope" })).rejects.toThrow(/Invalid trigger/);
+    await expect(svc.update("org", wf.id, { trigger: "nope" })).rejects.toMatchObject({ code: "workflows.invalidTrigger" });
     const ok: any = await svc.update("org", wf.id, { steps: [{ type: "add_lead_activity", text: "v2" }], name: "A2" }, "u1");
     expect(ok.name).toBe("A2");
     expect(ok.steps[0].text).toBe("v2");

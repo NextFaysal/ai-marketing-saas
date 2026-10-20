@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { normalizeBdPhone, phoneDigits } from "../orders/phone-utils";
 import { classifyOutcome } from "../orders/risk-score";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * NF13 (FB5) — Platform Fraud Network. PRIVACY IS THE PRODUCT.
@@ -167,7 +168,7 @@ export class FraudNetworkService {
 
   async updateSettings(orgId: string, actorId: string, dto: { enabled?: unknown }) {
     if (typeof dto?.enabled !== "boolean") {
-      throw new BadRequestException("enabled boolean হতে হবে");
+      throw badRequest("fraudNetwork.enabledMustBeBoolean");
     }
     const enabling = dto.enabled === true;
     if (enabling && !this.isAvailable()) {

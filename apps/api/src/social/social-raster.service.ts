@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { storedAssetPublicUrl } from "../storage/media-url";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** Converts SVG bytes to PNG bytes (the real implementation is sharp). */
 export type SvgToPngConverter = (svgBytes: Buffer) => Promise<Buffer>;
@@ -106,9 +107,9 @@ export class SocialRasterService {
     const asset = await (this.prisma as any).mediaAsset.findFirst({
       where: { id: assetId, organizationId },
     });
-    if (!asset) throw new NotFoundException("Media asset not found in this organization");
+    if (!asset) throw notFound("social.mediaAssetNotFoundInThis");
     if (!String(asset.contentType ?? "").includes("svg")) {
-      throw new BadRequestException("শুধু SVG ছবির PNG সংস্করণ তৈরি করা যায় — এই ফাইলটি SVG নয়।");
+      throw badRequest("social.aPngVersionCanOnlyBe");
     }
     const png = await this.ensurePngAsset(organizationId, actorId, asset);
     await this.audit.log({

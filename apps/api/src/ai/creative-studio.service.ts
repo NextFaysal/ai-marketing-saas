@@ -1,10 +1,11 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { estimateTokens } from "./llm/llm.types";
 import { CampaignsService } from "../campaigns/campaigns.service";
 import { policyFindingsForText } from "../campaigns/policy-check";
 import { formatMinor } from "@repo/contracts";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
 
 export const STUDIO_CTAS = [
   "SHOP_NOW",
@@ -37,7 +38,7 @@ export class CreativeStudioService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "ai.aiFeaturesTemporarilyPausedPlatformWide" : "ai.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -47,10 +48,7 @@ export class CreativeStudioService {
       where: { organizationId, feature: "creative_studio", createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("ai.dailyAiGenerationLimitReachedFor", { limit: limit }, 429);
     }
   }
 
@@ -75,7 +73,7 @@ export class CreativeStudioService {
     const product = await (this.prisma as any).product.findFirst({
       where: { id: dto.productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("ai.productNotFoundInThisOrganization");
 
     const businessProfile = await (this.prisma as any).businessProfile
       ?.findUnique({ where: { organizationId } })
@@ -169,7 +167,7 @@ export class CreativeStudioService {
       }
 
       if (variants.length === 0) {
-        throw new BadRequestException("The AI provider returned no usable copy variants. Nothing was saved.");
+        throw badRequest("ai.theAiProviderReturnedNoUsable");
       }
     } else {
       // Dev template path — exactly 3 variants from product facts ONLY
@@ -265,20 +263,18 @@ export class CreativeStudioService {
     },
   ) {
     const headline = dto.headline?.trim() ?? "";
-    if (!headline) throw new BadRequestException("headline is required");
+    if (!headline) throw badRequest("ai.headlineIsRequired");
     const primaryText = dto.primaryText?.trim() ?? "";
-    if (!primaryText) throw new BadRequestException("primaryText is required");
+    if (!primaryText) throw badRequest("ai.primarytextIsRequired");
     const callToAction = dto.callToAction ?? "SHOP_NOW";
     if (!(STUDIO_CTAS as readonly string[]).includes(callToAction)) {
-      throw new BadRequestException(
-        `Invalid callToAction "${callToAction}". Must be one of: ${STUDIO_CTAS.join(", ")}`,
-      );
+      throw badRequest("ai.invalidCalltoactionMustBeOneOf", { callToAction: callToAction, p2: STUDIO_CTAS.join(", ") });
     }
 
     const product = await (this.prisma as any).product.findFirst({
       where: { id: dto.productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("ai.productNotFoundInThisOrganization");
 
     const businessProfile = await (this.prisma as any).businessProfile
       ?.findUnique({ where: { organizationId } })
@@ -286,9 +282,7 @@ export class CreativeStudioService {
 
     const linkUrl = dto.linkUrl ?? businessProfile?.websiteUrl ?? "";
     if (!linkUrl) {
-      throw new BadRequestException(
-        "A landing link is required: pass linkUrl or set the business website URL in Business Knowledge",
-      );
+      throw badRequest("ai.aLandingLinkIsRequiredPass");
     }
 
     const plan: any = await this.campaigns.createPlan(organizationId, userId, {

@@ -139,12 +139,12 @@ describe("CN3 catalog ads", () => {
     const { tables, svc } = setup();
     seedCatalog(tables, "local");
     const plan: any = await svc.createPlan("org", "u", { name: "P", objective: "OUTCOME_SALES", adAccountId: "acc-1" });
-    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-1", productSetId: "set-1" })).rejects.toThrow(/not created on Meta yet/);
+    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-1", productSetId: "set-1" })).rejects.toMatchObject({ code: "campaigns.productSetIsNotCreatedOn" });
     tables.productSet.rows[0].status = "created"; tables.productSet.rows[0].externalSetId = "set-meta-1";
     tables.catalogRecord.rows.push({ id: "cat-2", organizationId: "org", name: "Other", externalCatalogId: "cat-meta-2", status: "connected" });
-    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-2", productSetId: "set-1" })).rejects.toThrow(/different catalog/);
-    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "nope", productSetId: "set-1" })).rejects.toThrow(/Catalog not found/);
-    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-1" })).rejects.toThrow(/BOTH/);
+    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-2", productSetId: "set-1" })).rejects.toMatchObject({ code: "campaigns.thatProductSetBelongsToA" });
+    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "nope", productSetId: "set-1" })).rejects.toMatchObject({ code: "campaigns.catalogNotFoundInThisOrganization" });
+    await expect(svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-1" })).rejects.toMatchObject({ code: "campaigns.catalogAdsNeedBothACatalog" });
     const ok: any = await svc.addAdSet("org", plan.id, { name: "S", dailyBudget: "500", optimizationGoal: "OFFSITE_CONVERSIONS", pageId: "pg", countries: ["BD"], catalogRecordId: "cat-1", productSetId: "set-1" });
     expect(ok.productSetId).toBe("set-1");
     // A catalog set carrying a pixel event is refused at save.
@@ -241,8 +241,8 @@ describe("CN3 retargeting preset", () => {
     expect(choice.status).toBe("needs_choice");
     expect(choice.candidates.map((c: any) => c.id)).toEqual(["aud-1"]);
 
-    await expect(svc.applyRetargetingPreset("org", plan.id, "u", { kind: "product_viewers", audienceRecordId: "aud-2" })).rejects.toThrow(/different ad account/);
-    await expect(svc.applyRetargetingPreset("org", plan.id, "u", { kind: "product_viewers", audienceRecordId: "aud-3" })).rejects.toThrow(/not ready/);
+    await expect(svc.applyRetargetingPreset("org", plan.id, "u", { kind: "product_viewers", audienceRecordId: "aud-2" })).rejects.toMatchObject({ code: "campaigns.thatAudienceBelongsToADifferent" });
+    await expect(svc.applyRetargetingPreset("org", plan.id, "u", { kind: "product_viewers", audienceRecordId: "aud-3" })).rejects.toMatchObject({ code: "campaigns.audienceIsNotReadyStatus" });
 
     const created: any = await svc.applyRetargetingPreset("org", plan.id, "u", { kind: "product_viewers", audienceRecordId: "aud-1", pageId: "pg", pixelId: "px-1" });
     expect(created.status).toBe("created");

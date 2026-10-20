@@ -18,6 +18,7 @@ import {
   RescheduleNdrDto,
   ResolveNdrDto,
 } from "./courier-ndr.dto";
+import { notFound } from "../i18n";
 
 // Statuses from Steadfast, Pathao, RedX that signal delivery failure, hold, or unreachable customer
 export const NDR_STATUS_KEYWORDS = [
@@ -249,7 +250,7 @@ export class CourierNdrService {
     const incident = await (this.prisma as any).courierNdrIncident.findFirst({
       where: { id: incidentId, organizationId },
     });
-    if (!incident) throw new NotFoundException("NDR incident not found");
+    if (!incident) throw notFound("courier.ndrIncidentNotFound");
 
     const updated = await (this.prisma as any).courierNdrIncident.update({
       where: { id: incidentId },
@@ -271,7 +272,7 @@ export class CourierNdrService {
     const incident = await (this.prisma as any).courierNdrIncident.findFirst({
       where: { id: incidentId, organizationId },
     });
-    if (!incident) throw new NotFoundException("NDR incident not found");
+    if (!incident) throw notFound("courier.ndrIncidentNotFound");
 
     const updated = await (this.prisma as any).courierNdrIncident.update({
       where: { id: incidentId },
@@ -292,7 +293,7 @@ export class CourierNdrService {
     const shipment = await (this.prisma as any).courierShipment.findFirst({
       where: { trackingToken: token },
     });
-    if (!shipment) throw new NotFoundException("Shipment not found");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
 
     const incident = await (this.prisma as any).courierNdrIncident.findFirst({
       where: {

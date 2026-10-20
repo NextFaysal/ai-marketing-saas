@@ -207,7 +207,7 @@ describe("CourierService bulk booking + PDFs (M53)", () => {
     expect(inv.startsWith("%PDF")).toBe(true);
     expect(inv).toContain("Cotton T-Shirt");
     expect(inv).toContain("Invoice: A1");
-    await expect(svc.labelPdf("org-1", "nope")).rejects.toThrow(/not found/i);
-    await expect(svc.invoicePdf("org-2", "ord-a")).rejects.toThrow(/not found/i); // org isolation
+    await expect(svc.labelPdf("org-1", "nope")).rejects.toMatchObject({ code: "courier.shipmentNotFound" });
+    await expect(svc.invoicePdf("org-2", "ord-a")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" }); // org isolation
   });
 });

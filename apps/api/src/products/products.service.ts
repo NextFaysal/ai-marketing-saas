@@ -11,7 +11,7 @@ import { PromotionsService, type CheckoutEvaluation, type LoyaltyRedeemInput } f
 import { LoyaltyService } from "../commerce/loyalty.service";
 import { GiftCardsService } from "../commerce/gift-cards.service";
 import { PriceListsService, pickGroupPrice } from "../commerce/price-lists.service";
-import { GIFT_CARD_CONFIG_MESSAGES, validateGiftCardConfig } from "../commerce/gift-cards";
+import { GIFT_CARD_CONFIG_CODES, validateGiftCardConfig } from "../commerce/gift-cards";
 import { AffiliatesService } from "../affiliates/affiliates.service";
 import { BlockedPhoneService } from "../fraud/blocked-phone.service";
 import { CheckoutGuardService } from "../fraud/checkout-guard.service";
@@ -52,42 +52,42 @@ export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, 
     if (dto.preorderReleaseDate === null || dto.preorderReleaseDate === undefined) out.preorderReleaseDate = null;
     else {
       const d = new Date(dto.preorderReleaseDate);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("প্রি-অর্ডার রিলিজের তারিখ সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("products.preorderReleaseDateInvalid");
       out.preorderReleaseDate = d;
     }
   }
   if (!partial || has("preorderLimit")) {
     if (dto.preorderLimit === null || dto.preorderLimit === undefined) out.preorderLimit = null;
-    else if (!Number.isInteger(dto.preorderLimit) || dto.preorderLimit < 1) throw new BadRequestException("প্রি-অর্ডার সীমা কমপক্ষে ১ হতে হবে");
+    else if (!Number.isInteger(dto.preorderLimit) || dto.preorderLimit < 1) throw badRequest("products.preorderLimitMin");
     else out.preorderLimit = dto.preorderLimit;
   }
   if (!partial || has("digital")) out.digital = !!dto.digital;
   if (!partial || has("digitalFileUrl")) out.digitalFileUrl = dto.digitalFileUrl?.trim() || null;
   if (!partial || has("digitalAccessLimit")) {
     if (dto.digitalAccessLimit === null || dto.digitalAccessLimit === undefined) out.digitalAccessLimit = null;
-    else if (!Number.isInteger(dto.digitalAccessLimit) || dto.digitalAccessLimit < 1) throw new BadRequestException("ডিজিটাল অ্যাক্সেস সীমা কমপক্ষে ১ হতে হবে");
+    else if (!Number.isInteger(dto.digitalAccessLimit) || dto.digitalAccessLimit < 1) throw badRequest("products.digitalAccessLimitMin");
     else out.digitalAccessLimit = dto.digitalAccessLimit;
   }
   // AB5 (AX9): digital delivery type + signed-link lifetime.
   if (!partial || has("digitalDeliveryType")) {
     if (dto.digitalDeliveryType === null || dto.digitalDeliveryType === undefined) out.digitalDeliveryType = "file";
-    else if (!["file", "license", "both"].includes(dto.digitalDeliveryType)) throw new BadRequestException("ডিজিটাল ডেলিভারির ধরন file, license অথবা both হতে হবে");
+    else if (!["file", "license", "both"].includes(dto.digitalDeliveryType)) throw badRequest("products.digitalDeliveryTypeInvalid");
     else out.digitalDeliveryType = dto.digitalDeliveryType;
   }
   if (!partial || has("digitalLinkExpiryHours")) {
     if (dto.digitalLinkExpiryHours === null || dto.digitalLinkExpiryHours === undefined) out.digitalLinkExpiryHours = null;
-    else if (!Number.isInteger(dto.digitalLinkExpiryHours) || dto.digitalLinkExpiryHours < 1 || dto.digitalLinkExpiryHours > 720) throw new BadRequestException("ডিজিটাল লিংকের মেয়াদ ১–৭২০ ঘণ্টার মধ্যে হতে হবে");
+    else if (!Number.isInteger(dto.digitalLinkExpiryHours) || dto.digitalLinkExpiryHours < 1 || dto.digitalLinkExpiryHours > 720) throw badRequest("products.digitalLinkExpiryRange");
     else out.digitalLinkExpiryHours = dto.digitalLinkExpiryHours;
   }
   if (!partial || has("subscriptionEnabled")) out.subscriptionEnabled = !!dto.subscriptionEnabled;
   if (!partial || has("subscriptionIntervalDays")) {
     if (dto.subscriptionIntervalDays === null || dto.subscriptionIntervalDays === undefined) out.subscriptionIntervalDays = null;
-    else if (!Number.isInteger(dto.subscriptionIntervalDays) || dto.subscriptionIntervalDays < 0) throw new BadRequestException("সাবস্ক্রিপশন ইন্টারভাল সঠিক নয়");
+    else if (!Number.isInteger(dto.subscriptionIntervalDays) || dto.subscriptionIntervalDays < 0) throw badRequest("products.subscriptionIntervalInvalid");
     else out.subscriptionIntervalDays = dto.subscriptionIntervalDays;
   }
   if (!partial || has("subscriptionDiscountPercent")) {
     if (dto.subscriptionDiscountPercent === null || dto.subscriptionDiscountPercent === undefined) out.subscriptionDiscountPercent = null;
-    else if (!Number.isInteger(dto.subscriptionDiscountPercent) || dto.subscriptionDiscountPercent < 0 || dto.subscriptionDiscountPercent > 100) throw new BadRequestException("সাবস্ক্রিপশন ছাড় ০–১০০% এর মধ্যে হতে হবে");
+    else if (!Number.isInteger(dto.subscriptionDiscountPercent) || dto.subscriptionDiscountPercent < 0 || dto.subscriptionDiscountPercent > 100) throw badRequest("products.subscriptionDiscountRange");
     else out.subscriptionDiscountPercent = dto.subscriptionDiscountPercent;
   }
   if (!partial || has("wholesaleTiers")) out.wholesaleTiers = validateWholesaleTiers(dto.wholesaleTiers);
@@ -96,7 +96,7 @@ export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, 
   if (!partial || has("videoUrl")) {
     const raw = dto.videoUrl === null || dto.videoUrl === undefined ? null : String(dto.videoUrl).trim() || null;
     if (raw !== null && !isValidProductVideoUrl(raw)) {
-      throw new BadRequestException("ভিডিও URL সঠিক নয় — YouTube, Vimeo অথবা সরাসরি mp4/webm লিংক দিন");
+      throw badRequest("products.videoUrlInvalid");
     }
     out.videoUrl = raw;
   }
@@ -119,7 +119,7 @@ export function normalizeEc24Fields(dto: any, partial: boolean): Record<string, 
         out.giftCardConfig = validateGiftCardConfig(dto.giftCardConfig);
       } catch (e) {
         const key = e instanceof Error ? e.message : "";
-        throw new BadRequestException(GIFT_CARD_CONFIG_MESSAGES[key] ?? "গিফট কার্ড কনফিগ সঠিক নয়");
+        throw badRequest(GIFT_CARD_CONFIG_CODES[key] ?? "commerce.giftCardConfigInvalid");
       }
     }
   }
@@ -156,14 +156,14 @@ export const DIGITAL_FILE_BLOCKED_EXTENSIONS = ["exe", "bat", "sh", "js", "html"
 export function validateTaxRateBps(v: unknown): number | null {
   if (v === undefined || v === null) return null;
   if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 10000) {
-    throw new BadRequestException("VAT হার 0–10000 basis points-এর মধ্যে হতে হবে (1500 = 15%)");
+    throw badRequest("products.vatRateRange");
   }
   return v as number;
 }
 
 function parseMoney(value: string, field: string): bigint {
   try { return parseMoneyToMinor(value); }
-  catch { throw new BadRequestException(`Invalid ${field}: ${value}`); }
+  catch { throw badRequest("products.invalidFieldValue", { field: field, value: value }); }
 }
 
 // BigInt cannot be JSON-serialized; the API always returns money as strings.
@@ -228,6 +228,7 @@ import { imageExtForContentType, mediaKeyFromCdnUrl, publicMediaUrl } from "../s
 import { detectMediaKind } from "../inbox/media-sniff";
 import { ProductImageMirrorService } from "./product-image-mirror.service";
 import { TenantPaymentsService } from "../connections/tenant-payments.service";
+import { badRequest, conflict, internalError, notFound } from "../i18n";
 
 @Injectable()
 export class ProductsService {
@@ -347,7 +348,7 @@ export class ProductsService {
   private async resolveOnlineSelection(orgId: string, dto: PublicCheckoutOrderDto) {
     if (!dto.onlinePayment) return null;
     if (!this.tenantPayments?.assertPublicPaymentOption) {
-      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+      throw badRequest("connections.onlinePaymentOptionUnavailable");
     }
     return this.tenantPayments.assertPublicPaymentOption(orgId, dto.onlinePayment);
   }
@@ -421,7 +422,7 @@ export class ProductsService {
     const p = await (this.prisma as any).product.findFirst({
       where: { id: productId, organizationId },
     });
-    if (!p) throw new NotFoundException("Product not found in this organization");
+    if (!p) throw notFound("products.productNotFoundInOrg");
     return p;
   }
 
@@ -430,7 +431,7 @@ export class ProductsService {
     const category = table?.findFirst
       ? await table.findFirst({ where: { id: categoryId, organizationId } })
       : null;
-    if (!category) throw new NotFoundException("Category not found in this organization");
+    if (!category) throw notFound("products.categoryNotFoundInOrg");
     return category;
   }
 
@@ -443,7 +444,7 @@ export class ProductsService {
     const byId = new Map<string, any>(all.map((t: any) => [t.id, t]));
     const found = tagIds.map((id) => byId.get(id));
     if (found.some((t) => !t)) {
-      throw new NotFoundException("Tag not found in this organization");
+      throw notFound("products.tagNotFoundInOrg");
     }
     return found as any[];
   }
@@ -482,7 +483,7 @@ export class ProductsService {
       const dup = await (this.prisma as any).product.findUnique({
         where: { organizationId_sku: { organizationId, sku: dto.sku } },
       });
-      if (dup) throw new ConflictException(`A product with SKU ${dto.sku} already exists in this organization`);
+      if (dup) throw conflict("products.productSkuExists", { sku: dto.sku });
     }
 
     // EC3: a structured categoryId must exist in THIS org; the
@@ -587,7 +588,7 @@ export class ProductsService {
         costs: { orderBy: { effectiveFrom: "desc" }, take: 1 },
       },
     });
-    if (!p) throw new NotFoundException("Product not found");
+    if (!p) throw notFound("products.productNotFound");
     return toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
   }
 
@@ -674,26 +675,25 @@ export class ProductsService {
       ? await table.findFirst({ where: { id: slotId, organizationId } }).catch(() => null)
       : null;
     if (!slot || slot.active === false) {
-      throw new BadRequestException("ডেলিভারি স্লটটি পাওয়া যায়নি বা বন্ধ আছে");
+      throw badRequest("products.deliverySlotUnavailable");
     }
     const scope: string[] = Array.isArray(slot.districtScope) ? slot.districtScope.map((d: any) => String(d)) : [];
     if (scope.length > 0 && (district === null || !scope.includes(district))) {
-      throw new BadRequestException("এই স্লটটি আপনার এলাকার জন্য প্রযোজ্য নয়");
+      throw badRequest("products.slotNotForArea");
     }
-    const dateMsg = "ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr ?? ""))) {
-      throw new BadRequestException(dateMsg);
+      throw badRequest("products.deliveryDateWindow");
     }
     const [y, m, d] = dateStr.split("-").map(Number);
     const probe = new Date(Date.UTC(y, m - 1, d));
     if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
-      throw new BadRequestException(dateMsg);
+      throw badRequest("products.deliveryDateWindow");
     }
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date());
     const [ty, tm, td] = today.split("-").map(Number);
     const maxDate = new Date(Date.UTC(ty, tm - 1, td) + 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     if (dateStr < today || dateStr > maxDate) {
-      throw new BadRequestException(dateMsg);
+      throw badRequest("products.deliveryDateWindow");
     }
     if (slot.capacityPerDay !== null && slot.capacityPerDay !== undefined) {
       const orderTable = (this.prisma as any).order;
@@ -706,7 +706,7 @@ export class ProductsService {
           }).catch(() => 0)
         : 0;
       if (Number(count) >= Number(slot.capacityPerDay)) {
-        throw new BadRequestException("এই স্লটটি পূর্ণ — অন্য স্লট বা তারিখ বেছে নিন");
+        throw badRequest("products.slotFull");
       }
     }
     return slot;
@@ -730,7 +730,7 @@ export class ProductsService {
         variants: { orderBy: { createdAt: "asc" } },
       },
     });
-    if (!p) throw new NotFoundException("Product not found or inactive");
+    if (!p) throw notFound("products.productNotFoundOrInactive");
 
     const bp = p.organization?.businessProfile;
     // EC29: top-level gift-wrap offer for the single checkout —
@@ -793,6 +793,10 @@ export class ProductsService {
         id: p.organization.id,
         name: p.organization.name,
         slug: p.organization.slug,
+        // ML10 (MB4, CD-3): the web checkout reads
+        // organization.locale (defensively) — the shop's
+        // StorefrontSetting locale, defaulting to bn.
+        locale: s?.locale ?? "bn",
         insideDhakaFee: bp?.deliveryChargeInsideMinor ? (Number(bp.deliveryChargeInsideMinor) / 100).toString() : "60",
         outsideDhakaFee: bp?.deliveryChargeOutsideMinor ? (Number(bp.deliveryChargeOutsideMinor) / 100).toString() : "120",
         codAvailable: bp?.codAvailable !== false,
@@ -826,7 +830,7 @@ export class ProductsService {
         variants: true,
       },
     });
-    if (!p) throw new NotFoundException("Product is unavailable or out of stock");
+    if (!p) throw notFound("products.productUnavailable");
 
     // GB3 (GC8): idempotency replay (scope "single") — a retry
     // with a known key returns the first placement's response.
@@ -837,7 +841,7 @@ export class ProductsService {
     // GB3 (GC8): terms consent (read directly from the tables).
     const termsTrust = await this.loadTermsTrust(p.organization.id);
     if (termsTrust.required && dto.termsAccepted !== true) {
-      throw new BadRequestException("অর্ডার সম্পূর্ণ করতে শর্তাবলি পড়ে সম্মতি দেওয়া বাধ্যতামূলক");
+      throw badRequest("products.termsConsentRequired");
     }
     // AB8 (AX27): normalized device hash (invalid/absent = null).
     const deviceHash = normalizeDeviceHash((dto as any).deviceHash);
@@ -872,9 +876,7 @@ export class ProductsService {
     if (this.inventory?.checkAvailability) {
       const verdict = await this.inventory.checkAvailability(p.organization.id, p, null, qty);
       if (!verdict.ok) {
-        throw new BadRequestException(
-          `দুঃখিত, "${p.name}"-এর স্টকে মাত্র ${Math.max(0, verdict.available)}টি আছে — এর বেশি অর্ডার করা যাবে না`,
-        );
+        throw badRequest("products.stockInsufficientNamed", { name: p.name, available: Math.max(0, verdict.available) });
       }
     }
     // AB5 (AX7) PRICE SOURCE precedence: gift-card lines keep
@@ -1024,7 +1026,7 @@ export class ProductsService {
       appliedDiscountId = ec16Evaluation.appliedDiscountId;
     } else if (dto.couponCode?.trim()) {
       if (!this.discounts) {
-        throw new BadRequestException("কুপন সুবিধা এই deployment-এ নেই");
+        throw badRequest("products.couponFeatureUnavailable");
       }
       const v = await this.discounts.validateForCheckout(p.organization.id, dto.couponCode, {
         subtotalMinor: subtotal,
@@ -1041,9 +1043,7 @@ export class ProductsService {
         customerId: buyerCustomerId,
       });
       if (!v.valid) {
-        throw new BadRequestException(
-          `কুপন প্রয়োগ করা যায়নি: ${DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason}`,
-        );
+        throw badRequest("commerce.couponApplyFailed", { reason: DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason });
       }
       discountMinor = v.discountMinor;
       freeShippingApplied = v.freeShipping;
@@ -1099,7 +1099,7 @@ export class ProductsService {
     let chosenSlot: any = null;
     if (dto.deliverySlotId || dto.deliveryDate) {
       if (!dto.deliverySlotId || !dto.deliveryDate) {
-        throw new BadRequestException("স্লট বেছে নিলে তারিখও দিতে হবে");
+        throw badRequest("products.slotNeedsDate");
       }
       chosenSlot = await this.validateDeliverySlotChoice(
         p.organization.id, dto.deliverySlotId, dto.deliveryDate, null,
@@ -1127,7 +1127,7 @@ export class ProductsService {
         parsedConfidence: parsed.confidence,
       });
       if (codEval.refused) {
-        throw new BadRequestException("দুঃখিত, এই অর্ডারের জন্য ক্যাশ অন ডেলিভারি প্রযোজ্য নয়");
+        throw badRequest("products.codNotApplicable");
       }
       codAdvanceRequired = codEval.advanceRequired;
     }
@@ -1139,17 +1139,17 @@ export class ProductsService {
     const fieldValidation = validateFieldAnswers(
       await this.loadCheckoutFieldDefs(p.organization.id), "single", dto.fieldAnswers,
     );
-    if (!fieldValidation.ok) throw new BadRequestException(fieldValidation.error);
+    if (!fieldValidation.ok) throw badRequest(fieldValidation.code, fieldValidation.params);
     const deposit = depositFor(bp, {
       totalMinor: total,
       kind: onlinePayment ? "online" : isCod ? "cod" : "manual",
     });
 
     if (!this.integrations) {
-      throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
+      throw internalError("products.checkoutOrderingUnavailable");
     }
     // ON4: blocklist refusal — generic message, never reveals the blocklist.
-    if (this.blockedPhones && (await this.blockedPhones.isBlocked(p.organization.id, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(p.organization.id, cleanPhone))) throw badRequest("products.orderCannotBeTaken");
     // GB3 (GC9): block_checkout fraud rules (guard writes the
     // hit + attempt rows itself; the caller only refuses).
     if (this.checkoutGuard) {
@@ -1164,7 +1164,7 @@ export class ProductsService {
         phone: cleanPhone,
         channel: "single",
       });
-      if (blockedBy) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+      if (blockedBy) throw badRequest("products.orderCannotBeTaken");
     }
     // GC22: a plan/order block on this PUBLIC checkout surface
     // surfaces ONLY the generic shopper message — never the
@@ -1214,7 +1214,7 @@ export class ProductsService {
       "manual"
     );
     } catch (e) {
-      if (isOrderLimitBlocked(e)) throw new BadRequestException((e as OrderLimitBlockedError).shopperMessage ?? SHOPPER_ORDER_BLOCK_MESSAGE);
+      if (isOrderLimitBlocked(e)) throw badRequest("common.shopperOrderBlock");
       throw e;
     }
 
@@ -1535,7 +1535,7 @@ export class ProductsService {
         tagAssignments: { include: { tag: true } },
       },
     });
-    if (!p) throw new NotFoundException("Product not found in this organization");
+    if (!p) throw notFound("products.productNotFoundInOrg");
     const pub = toPublicProduct(p, p.costs?.[0]?.costMinor ?? null);
     pub.costHistory = (p.costs ?? []).map((c: any) => ({ ...c, costMinor: c.costMinor.toString() }));
     // EC3 gallery + tags. The real client returns the included
@@ -1632,7 +1632,7 @@ export class ProductsService {
   async salesReport(organizationId: string, daysInput?: number | string | null, now = new Date()) {
     const days = daysInput === undefined || daysInput === null || daysInput === "" ? 30 : Number(daysInput);
     if (!Number.isInteger(days) || days < 1 || days > 365) {
-      throw new BadRequestException("days must be an integer between 1 and 365");
+      throw badRequest("commerce.daysRange");
     }
     const end = new Date(dhakaDayStartUtc(now).getTime() + 86400000);
     const start = new Date(end.getTime() - days * 86400000);
@@ -1920,12 +1920,12 @@ export class ProductsService {
     const variant = await (this.prisma as any).productVariant.findFirst({
       where: { id: variantId, productId },
     });
-    if (!variant) throw new NotFoundException("Variant not found for this product");
+    if (!variant) throw notFound("products.variantNotFoundForProduct");
     if (dto.sku) {
       const dup = await (this.prisma as any).productVariant.findFirst({
         where: { productId, sku: dto.sku, id: { not: variantId } },
       });
-      if (dup) throw new ConflictException(`A variant with SKU ${dto.sku} already exists on this product`);
+      if (dup) throw conflict("products.variantSkuExists", { sku: dto.sku });
     }
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name.trim();
@@ -1985,7 +1985,7 @@ export class ProductsService {
     const variant = await (this.prisma as any).productVariant.findFirst({
       where: { id: variantId, productId },
     });
-    if (!variant) throw new NotFoundException("Variant not found for this product");
+    if (!variant) throw notFound("products.variantNotFoundForProduct");
     await (this.prisma as any).productVariant.delete({ where: { id: variantId } });
     await this.audit.log({ organizationId, userId: actorId, action: "product.variant.delete", entityType: "ProductVariant", entityId: variantId, metadata: { productId } });
     await this.pushHook("enqueueForProductChange", () =>
@@ -2055,7 +2055,7 @@ export class ProductsService {
     const byId = new Map<string, any>(images.map((i: any) => [i.id, i]));
     for (const id of imageIds) {
       if (!byId.has(id)) {
-        throw new BadRequestException("All image ids must belong to this product");
+        throw badRequest("products.imageIdsMustBelongToProduct");
       }
     }
     for (let idx = 0; idx < imageIds.length; idx++) {
@@ -2091,7 +2091,7 @@ export class ProductsService {
     const image = table?.findFirst
       ? await table.findFirst({ where: { id: imageId, productId } })
       : null;
-    if (!image) throw new NotFoundException("Image not found for this product");
+    if (!image) throw notFound("products.imageNotFoundForProduct");
     const before = await this.loadImages(productId);
     const wasFirst = before.length > 0 && before[0].id === imageId;
     await table.delete({ where: { id: imageId } });
@@ -2141,9 +2141,7 @@ export class ProductsService {
 
   private productImageStorageOr400(): StorageService {
     if (!this.storage || this.storage.mode !== "s3") {
-      throw new BadRequestException(
-        "সরাসরি ছবি আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি। আপাতত URL দিয়ে ছবি যোগ করুন।",
-      );
+      throw badRequest("products.directImageUploadDisabled");
     }
     return this.storage;
   }
@@ -2151,7 +2149,7 @@ export class ProductsService {
   private normalizeUploadType(contentType: unknown): string {
     const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
     if (!(PRODUCT_IMAGE_UPLOAD_CONTENT_TYPES as readonly string[]).includes(ct)) {
-      throw new BadRequestException("শুধু PNG, JPEG অথবা WebP ছবি আপলোড করা যাবে।");
+      throw badRequest("products.imageTypeRestricted");
     }
     return ct;
   }
@@ -2159,10 +2157,10 @@ export class ProductsService {
   private normalizeUploadSize(sizeBytes: unknown): number {
     const size = Number(sizeBytes);
     if (!Number.isInteger(size) || size < 1) {
-      throw new BadRequestException("ছবির আকার (sizeBytes) সঠিক নয়।");
+      throw badRequest("products.imageSizeInvalid");
     }
     if (size > PRODUCT_IMAGE_UPLOAD_MAX_BYTES) {
-      throw new BadRequestException("ছবিটি অনেক বড় — সর্বোচ্চ ১০ MB পর্যন্ত আপলোড করা যাবে।");
+      throw badRequest("products.imageTooLarge");
     }
     return size;
   }
@@ -2184,7 +2182,7 @@ export class ProductsService {
     if (!uploadUrl) {
       // mode was s3 at the check above, so this should not happen —
       // but a null URL must never be dressed up as a real one.
-      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+      throw badRequest("orders.uploadUrlFailed");
     }
     void actorId;
     return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
@@ -2203,22 +2201,22 @@ export class ProductsService {
     const key = String(dto?.key ?? "");
     const quarantinePrefix = `_quarantine/${organizationId}/product/`;
     if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
-      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+      throw badRequest("orders.uploadKeyInvalid");
     }
     const dropQuarantine = () => storage.delete("public", key).catch(() => undefined);
 
     const head = await storage.head("public", key).catch(() => null);
     if (!head) {
-      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+      throw badRequest("orders.uploadedFileNotFound");
     }
     if (head.sizeBytes !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+      throw badRequest("orders.uploadedSizeMismatch");
     }
     const bytes = await storage.get("public", key).catch(() => null);
     if (!bytes || bytes.length !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+      throw badRequest("orders.uploadedFileUnreadable");
     }
     // Magic bytes decide, never the declaration (media-sniff
     // discipline, same as inbox uploads and the PP3 import).
@@ -2226,7 +2224,7 @@ export class ProductsService {
     if (!detected || detected.kind !== "image" || detected.contentType !== contentType) {
       await dropQuarantine();
       const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
-      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+      throw badRequest("orders.uploadedFormatMismatch", { what: what });
     }
 
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -2292,10 +2290,10 @@ export class ProductsService {
     const dot = base.lastIndexOf(".");
     const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
     if (!base || !ext) {
-      throw new BadRequestException("ফাইলের নামে এক্সটেনশন থাকতে হবে (যেমন .pdf, .zip)।");
+      throw badRequest("products.fileNameNeedsExtension");
     }
     if ((DIGITAL_FILE_BLOCKED_EXTENSIONS as readonly string[]).includes(ext)) {
-      throw new BadRequestException(`.${ext} ফাইল আপলোড করা যাবে না — নিরাপত্তার কারণে executable ফাইল (exe/bat/sh/js/html) নিষিদ্ধ।`);
+      throw badRequest("products.executableFileBlocked", { ext: ext });
     }
     return { fileName: base, ext };
   }
@@ -2303,10 +2301,10 @@ export class ProductsService {
   private normalizeDigitalSize(sizeBytes: unknown): number {
     const size = Number(sizeBytes);
     if (!Number.isInteger(size) || size < 1) {
-      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+      throw badRequest("orders.fileSizeInvalid");
     }
     if (size > DIGITAL_FILE_MAX_BYTES) {
-      throw new BadRequestException("ফাইলটি অনেক বড় — সর্বোচ্চ ১০০ MB পর্যন্ত আপলোড করা যাবে।");
+      throw badRequest("products.fileTooLarge");
     }
     return size;
   }
@@ -2324,7 +2322,7 @@ export class ProductsService {
     const key = `_quarantine/${organizationId}/digital/${randomUUID()}`;
     const uploadUrl = storage.presignedPutUrl("private", key);
     if (!uploadUrl) {
-      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+      throw badRequest("orders.uploadUrlFailed");
     }
     void actorId;
     return { uploadUrl, key, fileName, sizeBytes, expiresInSeconds: 600 };
@@ -2343,17 +2341,17 @@ export class ProductsService {
     const key = String(dto?.key ?? "");
     const quarantinePrefix = `_quarantine/${organizationId}/digital/`;
     if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
-      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+      throw badRequest("orders.uploadKeyInvalid");
     }
     const dropQuarantine = () => storage.delete("private", key).catch(() => undefined);
 
     const head = await storage.head("private", key).catch(() => null);
     if (!head) {
-      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+      throw badRequest("orders.uploadedFileNotFound");
     }
     if (head.sizeBytes !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+      throw badRequest("orders.uploadedSizeMismatch");
     }
     // Small files are read back for a REAL sha256 (the registry
     // must be able to prove what was hosted); large files skip
@@ -2363,7 +2361,7 @@ export class ProductsService {
       const bytes = await storage.get("private", key).catch(() => null);
       if (!bytes || bytes.length !== sizeBytes) {
         await dropQuarantine();
-        throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+        throw badRequest("orders.uploadedFileUnreadable");
       }
       sha256 = createHash("sha256").update(bytes).digest("hex");
     }
@@ -2421,7 +2419,7 @@ export class ProductsService {
    * service dependency, matching the rest of the controller). */
   async mirrorExternalProductImages(organizationId: string, actorId: string) {
     if (!this.imageMirror) {
-      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+      throw badRequest("products.imageMirrorDisabled");
     }
     return this.imageMirror.mirrorExternalImages(organizationId, actorId);
   }
@@ -2431,7 +2429,7 @@ export class ProductsService {
    * not (an explicit owner click is not "automatic"). */
   async getProductImageAutoMirror(organizationId: string) {
     if (!this.imageMirror) {
-      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+      throw badRequest("products.imageMirrorDisabled");
     }
     return { productImageAutoMirror: await this.imageMirror.autoMirrorEnabled(organizationId) };
   }
@@ -2440,7 +2438,7 @@ export class ProductsService {
    * (OWNER/ADMIN at the controller). */
   async setProductImageAutoMirror(organizationId: string, actorId: string, enabled: boolean) {
     if (!this.imageMirror) {
-      throw new BadRequestException("ছবি মিরর সার্ভিস এই deployment-এ চালু নেই।");
+      throw badRequest("products.imageMirrorDisabled");
     }
     return this.imageMirror.setAutoMirrorEnabled(organizationId, enabled, actorId);
   }
@@ -2470,7 +2468,7 @@ export class ProductsService {
     const existing: any[] =
       (await table.findMany({ where: { organizationId } })) ?? [];
     if (existing.some((c: any) => c.slug === slug)) {
-      throw new ConflictException(`A category with slug ${slug} already exists in this organization`);
+      throw conflict("products.categorySlugExists", { slug: slug });
     }
     if (dto.parentId) {
       await this.findCategoryOr404(organizationId, dto.parentId);
@@ -2507,10 +2505,10 @@ export class ProductsService {
         // cycle creatable through a single reparent).
         const parent = await this.findCategoryOr404(organizationId, dto.parentId);
         if (parent.id === categoryId) {
-          throw new BadRequestException("A category cannot be its own parent");
+          throw badRequest("products.categoryOwnParent");
         }
         if (parent.parentId === categoryId) {
-          throw new BadRequestException("A category cannot be moved under its own child");
+          throw badRequest("products.categoryUnderOwnChild");
         }
         data.parentId = parent.id;
       }
@@ -2522,7 +2520,7 @@ export class ProductsService {
       const all: any[] =
         (await (this.prisma as any).category.findMany({ where: { organizationId } })) ?? [];
       if (all.some((c: any) => c.id !== categoryId && c.slug === slug)) {
-        throw new ConflictException(`A category with slug ${slug} already exists in this organization`);
+        throw conflict("products.categorySlugExists", { slug: slug });
       }
       data.name = newName;
       data.slug = slug;
@@ -2565,7 +2563,7 @@ export class ProductsService {
     const existing: any[] =
       (await table.findMany({ where: { organizationId } })) ?? [];
     if (existing.some((t: any) => t.slug === slug)) {
-      throw new ConflictException(`A tag with slug ${slug} already exists in this organization`);
+      throw conflict("products.tagSlugExists", { slug: slug });
     }
     const tag = await table.create({ data: { organizationId, name, slug } });
     await this.audit.log({ organizationId, userId: actorId, action: "product.tag.create", entityType: "ProductTag", entityId: tag.id });
@@ -2583,20 +2581,20 @@ export class ProductsService {
     let fixedMinor: bigint | null = null;
     if (dto.action === "price_percent") {
       if (dto.percent === undefined || dto.percent === null) {
-        throw new BadRequestException("percent is required for price_percent");
+        throw badRequest("products.percentRequiredForPricePercent");
       }
     } else if (dto.action === "price_fixed") {
-      if (!dto.price) throw new BadRequestException("price is required for price_fixed");
+      if (!dto.price) throw badRequest("products.priceRequiredForPriceFixed");
       fixedMinor = parseMoney(dto.price, "price");
     } else if (dto.action === "stock_set") {
       if (dto.quantity === undefined || dto.quantity === null) {
-        throw new BadRequestException("quantity is required for stock_set");
+        throw badRequest("products.quantityRequiredForStockSet");
       }
     } else if (dto.action === "category_set") {
-      if (!dto.categoryId) throw new BadRequestException("categoryId is required for category_set");
+      if (!dto.categoryId) throw badRequest("products.categoryIdRequiredForCategorySet");
       category = await this.findCategoryOr404(organizationId, dto.categoryId);
     } else {
-      throw new BadRequestException(`Unknown bulk edit action: ${dto.action}`);
+      throw badRequest("products.unknownBulkEditAction", { action: dto.action });
     }
     const all: any[] =
       (await (this.prisma as any).product.findMany({ where: { organizationId } })) ?? [];
@@ -2709,10 +2707,10 @@ export class ProductsService {
    */
   async pushBatch(organizationId: string, actorId: string, productIds: unknown) {
     if (!Array.isArray(productIds) || productIds.length === 0) {
-      throw new BadRequestException("কমপক্ষে একটি পণ্য বেছে দিন");
+      throw badRequest("products.selectAtLeastOneProduct");
     }
     if (productIds.length > 50) {
-      throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি পণ্য স্টোরে পাঠানো যায়");
+      throw badRequest("products.pushBatchMax");
     }
     const results: { productId: string; ok: boolean; error?: string; enqueued?: number; skipped?: number }[] = [];
     let enqueued = 0;
@@ -2917,17 +2915,17 @@ export class ProductsService {
   ) {
     await this.getOne(organizationId, productId); // org check
     if (dto.componentProductId === productId) {
-      throw new BadRequestException("পণ্য নিজেই নিজের component হতে পারে না");
+      throw badRequest("products.productOwnComponent");
     }
     const component = await (this.prisma as any).product.findFirst({
       where: { id: dto.componentProductId, organizationId },
     });
-    if (!component) throw new NotFoundException("Component product not found in this organization");
+    if (!component) throw notFound("products.componentProductNotFoundInOrg");
     if (dto.componentVariantId) {
       const variant = await (this.prisma as any).productVariant.findFirst({
         where: { id: dto.componentVariantId, productId: dto.componentProductId },
       });
-      if (!variant) throw new NotFoundException("Component variant not found for the component product");
+      if (!variant) throw notFound("products.componentVariantNotFound");
     }
     const table = (this.prisma as any).bundleItem;
     const dup = table?.findFirst
@@ -2940,7 +2938,7 @@ export class ProductsService {
           },
         })
       : null;
-    if (dup) throw new ConflictException("This component is already part of the bundle");
+    if (dup) throw conflict("products.componentAlreadyInBundle");
     const item = await table.create({
       data: {
         organizationId,
@@ -2965,7 +2963,7 @@ export class ProductsService {
     const item = table?.findFirst
       ? await table.findFirst({ where: { id: itemId, parentProductId: productId } })
       : null;
-    if (!item) throw new NotFoundException("Bundle item not found for this product");
+    if (!item) throw notFound("products.bundleItemNotFoundForProduct");
     await table.delete({ where: { id: itemId } });
     await this.audit.log({ organizationId, userId: actorId, action: "product.bundle.delete", entityType: "BundleItem", entityId: itemId, metadata: { productId } });
     return { deleted: true, productId, itemId };
@@ -3060,7 +3058,7 @@ export class ProductsService {
     const brand = table?.findFirst
       ? await table.findFirst({ where: { id: brandId, organizationId } })
       : null;
-    if (!brand) throw new NotFoundException("Brand not found in this organization");
+    if (!brand) throw notFound("products.brandNotFoundInOrg");
     return brand;
   }
 
@@ -3098,7 +3096,7 @@ export class ProductsService {
 
   async createBrand(organizationId: string, actorId: string, dto: { name: string; logoUrl?: string | null; description?: string | null }) {
     const name = dto.name?.trim();
-    if (!name) throw new BadRequestException("ব্র্যান্ডের নাম দিতে হবে");
+    if (!name) throw badRequest("products.brandNameRequired");
     const slug = await this.uniqueBrandSlug(organizationId, name);
     const brand = await (this.prisma as any).brand.create({
       data: {
@@ -3116,7 +3114,7 @@ export class ProductsService {
     const data: any = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException("ব্র্যান্ডের নাম খালি হতে পারবে না");
+      if (!name) throw badRequest("products.brandNameEmpty");
       data.name = name;
       // A rename re-slugs ONLY when the name actually changed,
       // so existing shop brand URLs stay stable on other edits.

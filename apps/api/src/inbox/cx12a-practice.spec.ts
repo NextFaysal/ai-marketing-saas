@@ -556,8 +556,8 @@ describe("CX12a role gating (RolesGuard pattern)", () => {
       getHandler: () => PracticeController.prototype.toggle,
       getClass: () => PracticeController,
     });
-    expect(() => guard.canActivate(ctxFor("SUPPORT_AGENT") as any)).toThrow(ForbiddenException);
-    expect(() => guard.canActivate(ctxFor("VIEWER") as any)).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(ctxFor("SUPPORT_AGENT") as any)).toThrow(expect.objectContaining({ code: "common.insufficientRole" }));
+    expect(() => guard.canActivate(ctxFor("VIEWER") as any)).toThrow(expect.objectContaining({ code: "common.insufficientRole" }));
     expect(guard.canActivate(ctxFor("ADMIN") as any)).toBe(true);
     expect(guard.canActivate(ctxFor("OWNER") as any)).toBe(true);
   });

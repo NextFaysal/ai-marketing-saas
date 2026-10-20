@@ -163,7 +163,7 @@ describe("EC26 readHeaders", () => {
   });
   it("empty CSV ⇒ 400 header message", async () => {
     const w = makeWorld();
-    await expect(svc(w).readHeaders("")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc(w).readHeaders("")).rejects.toMatchObject({ code: "reconciliation.noHeaderWasFoundInThe" });
     await expect(svc(w).readHeaders("   ")).rejects.toThrow("CSV ফাইলে header পাওয়া যায়নি");
   });
 });
@@ -171,16 +171,16 @@ describe("EC26 readHeaders", () => {
 describe("EC26 courier + profile validation", () => {
   it("foreign integration ⇒ 404; non-courier provider ⇒ 400", async () => {
     const w = makeWorld();
-    await expect(svc(w).getProfile(ORG, "int-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc(w).getProfile(ORG, "int-meta")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc(w).getProfile(ORG, "nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc(w).getProfile(ORG, "int-foreign")).rejects.toMatchObject({ code: "reconciliation.courierIntegrationNotFoundInThis" });
+    await expect(svc(w).getProfile(ORG, "int-meta")).rejects.toMatchObject({ code: "reconciliation.thisIntegrationIsNotACourier" });
+    await expect(svc(w).getProfile(ORG, "nope")).rejects.toMatchObject({ code: "reconciliation.courierIntegrationNotFoundInThis" });
   });
 
   it("saveProfile validates mapping: tracking + amount columns required", async () => {
     const w = makeWorld();
     await expect(
       svc(w).saveProfile(ORG, { courierIntegrationId: "int-sf", mapping: { trackingColumn: "T" } as any }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "reconciliation.isRequiredInColumnMappingIt" });
     const saved = await svc(w).saveProfile(ORG, { courierIntegrationId: "int-sf", mapping: MAPPING as any });
     expect(saved.mapping.trackingColumn).toBe("Tracking ID");
     const got = await svc(w).getProfile(ORG, "int-sf");
@@ -457,10 +457,10 @@ describe("EC26 re-import discipline", () => {
     const s = svc(w);
     await expect(
       s.importSheet(ORG, ACTOR, { courierIntegrationId: "int-sf", csvText: HEADER, mapping: MAPPING as any }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "reconciliation.thereIsNoDataRowIn" });
     await expect(
       s.importSheet(ORG, ACTOR, { courierIntegrationId: "int-sf", csvText: "", mapping: MAPPING as any }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "reconciliation.noHeaderWasFoundInThe" });
     const bigCsv = ["Tracking ID,Amount", ...Array.from({ length: 5001 }, (_, i) => `TRK-${i},100`)].join("\n");
     await expect(
       s.importSheet(ORG, ACTOR, {
@@ -486,8 +486,8 @@ describe("EC26 reads + line resolution", () => {
     expect(new Date(all.items[0].createdAt).getTime()).toBeGreaterThan(new Date(all.items[1].createdAt).getTime());
     const filtered = await s.listImports(ORG, "int-sf");
     expect(filtered.items).toHaveLength(2);
-    await expect(s.getImport(ORG, "imp-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(s.listLines(ORG, "imp-foreign")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s.getImport(ORG, "imp-foreign")).rejects.toMatchObject({ code: "reconciliation.reconciliationImportNotFoundInThis" });
+    await expect(s.listLines(ORG, "imp-foreign")).rejects.toMatchObject({ code: "reconciliation.reconciliationImportNotFoundInThis" });
   });
 
   it("accept_sheet overwrites the collection with the sheet amount + audits old/new", async () => {
@@ -535,9 +535,9 @@ describe("EC26 reads + line resolution", () => {
       courierIntegrationId: "int-sf", csvText: csv("NOPE,REF,100,,"), mapping: MAPPING as any,
     });
     const { items } = await s.listLines(ORG, result.id);
-    await expect(s.resolveLine(ORG, ACTOR, items[0].id, { action: "accept_sheet" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.resolveLine(ORG, ACTOR, items[0].id, { action: "bogus" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.resolveLine(ORG, ACTOR, items[0].id, { action: "accept_sheet" })).rejects.toMatchObject({ code: "reconciliation.thisRowHasNoMatchedShipment" });
+    await expect(s.resolveLine(ORG, ACTOR, items[0].id, { action: "bogus" })).rejects.toMatchObject({ code: "reconciliation.unknownActionGiveAcceptSheetOr" });
     w.lines.push({ id: "line-foreign", organizationId: "org-2", importId: "imp-foreign", outcome: "matched", matchedShipmentId: "x", sheetAmountMinor: 1n });
-    await expect(s.resolveLine(ORG, ACTOR, "line-foreign", { action: "mark_reviewed" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s.resolveLine(ORG, ACTOR, "line-foreign", { action: "mark_reviewed" })).rejects.toMatchObject({ code: "reconciliation.reconciliationLineNotFoundInThis" });
   });
 });

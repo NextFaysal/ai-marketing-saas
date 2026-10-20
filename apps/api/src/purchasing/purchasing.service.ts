@@ -1,7 +1,5 @@
 import {
-  BadRequestException,
   Injectable,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +13,7 @@ import type {
   UpdatePurchaseOrderDto,
   UpdateSupplierDto,
 } from "./purchasing.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC20 — Purchasing & Suppliers.
@@ -55,13 +54,13 @@ export class PurchasingService {
     if (typeof value === "bigint" && value >= 0n) return value;
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) return BigInt(value);
     if (typeof value === "string" && /^\d+$/.test(value.trim())) return BigInt(value.trim());
-    throw new BadRequestException("একক খরচ (unitCostMinor) অবশ্যই ০ বা তার বেশি পূর্ণসংখ্যা (পয়সায়) হতে হবে");
+    throw badRequest("purchasing.theUnitCostUnitcostminorMustBe");
   }
 
   private parseExpectedDate(value: string | null | undefined): Date | null {
     if (value === undefined || value === null) return null;
     const d = new Date(value);
-    if (Number.isNaN(d.getTime())) throw new BadRequestException("প্রত্যাশিত তারিখ (expectedDate) সঠিক নয়");
+    if (Number.isNaN(d.getTime())) throw badRequest("purchasing.theExpectedDateExpecteddateIsNot");
     return d;
   }
 
@@ -69,7 +68,7 @@ export class PurchasingService {
     const row = await (this.prisma as any).supplier.findFirst({
       where: { id: supplierId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("Supplier not found in this organization");
+    if (!row) throw notFound("purchasing.supplierNotFoundInThisOrganization");
     return row;
   }
 
@@ -77,7 +76,7 @@ export class PurchasingService {
     const row = await (this.prisma as any).purchaseOrder.findFirst({
       where: { id: poId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("Purchase order not found in this organization");
+    if (!row) throw notFound("purchasing.purchaseOrderNotFoundInThis");
     return row;
   }
 
@@ -88,27 +87,27 @@ export class PurchasingService {
    * is snapshotted onto the line either way. */
   private async buildItems(orgId: string, rawItems: PurchaseOrderItemDto[]): Promise<any[]> {
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
-      throw new BadRequestException("ক্রয় অর্ডারে অন্তত একটি আইটেম থাকতে হবে");
+      throw badRequest("purchasing.aPurchaseOrderMustHaveAt");
     }
     const out: any[] = [];
     for (const raw of rawItems as any[]) {
       const product = await (this.prisma as any).product.findFirst({
         where: { id: raw.productId, organizationId: orgId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("purchasing.productNotFoundInThisOrganization");
       let variant: any = null;
       if (raw.variantId) {
         variant = await (this.prisma as any).productVariant.findFirst({
           where: { id: raw.variantId, productId: product.id },
         });
-        if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের অন্তর্গত নয়");
+        if (!variant) throw badRequest("purchasing.theVariantDoesNotBelongTo");
       } else if (raw.sku) {
         variant = await (this.prisma as any).productVariant
           .findFirst({ where: { productId: product.id, sku: raw.sku } })
           .catch(() => null);
       }
       if (!Number.isInteger(raw.qtyOrdered) || raw.qtyOrdered <= 0) {
-        throw new BadRequestException("পরিমাণ (qtyOrdered) অবশ্যই ০-এর বেশি পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("purchasing.theQuantityQtyorderedMustBeAn");
       }
       out.push({
         productId: product.id,
@@ -157,7 +156,7 @@ export class PurchasingService {
 
   async createSupplier(orgId: string, actorId: string, dto: CreateSupplierDto) {
     const name = (dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("সরবরাহকারীর নাম আবশ্যক — খালি নাম দেওয়া যাবে না");
+    if (!name) throw badRequest("purchasing.theSupplierNameIsRequiredAn");
     const row = await (this.prisma as any).supplier.create({
       data: {
         organizationId: orgId,
@@ -181,7 +180,7 @@ export class PurchasingService {
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException("সরবরাহকারীর নাম আবশ্যক — খালি নাম দেওয়া যাবে না");
+      if (!name) throw badRequest("purchasing.theSupplierNameIsRequiredAn");
       data.name = name;
     }
     if (dto.phone !== undefined) data.phone = dto.phone;
@@ -301,24 +300,24 @@ export class PurchasingService {
   async updatePurchaseOrder(orgId: string, actorId: string, poId: string, dto: UpdatePurchaseOrderDto) {
     const po = await this.loadPoOr404(orgId, poId);
     if (!["draft", "ordered"].includes(po.status)) {
-      throw new BadRequestException("শুধুমাত্র ড্রাফট বা অর্ডারকৃত (draft/ordered) অবস্থার ক্রয় অর্ডার সম্পাদনা করা যাবে");
+      throw badRequest("purchasing.onlyADraftOrOrderedPurchase");
     }
     // Validate EVERYTHING before writing anything.
     let nextItems: any[] | null = null;
     if (dto.items !== undefined) {
       if (po.status !== "draft") {
-        throw new BadRequestException("আইটেম শুধুমাত্র ড্রাফট অবস্থায় পরিবর্তন করা যায়");
+        throw badRequest("purchasing.itemsCanOnlyBeChangedIn");
       }
       nextItems = await this.buildItems(orgId, dto.items);
     }
     let nextStatus: string | undefined;
     if (dto.status !== undefined && dto.status !== po.status) {
       if (dto.status === "received" || dto.status === "partially_received") {
-        throw new BadRequestException("স্ট্যাটাস received/partially_received ম্যানুয়ালি সেট করা যায় না — পণ্য গ্রহণ (receive) করার মাধ্যমেই এই স্ট্যাটাস নির্ধারিত হয়");
+        throw badRequest("purchasing.theReceivedPartiallyReceivedStatusCannot");
       }
       const allowed = MANUAL_TRANSITIONS[po.status] ?? [];
       if (!allowed.includes(dto.status)) {
-        throw new BadRequestException(`স্ট্যাটাস ${po.status} থেকে ${dto.status}-এ পরিবর্তন করা যাবে না`);
+        throw badRequest("purchasing.theStatusCannotBeChangedFrom", { poStatus: po.status, dtoStatus: dto.status });
       }
       nextStatus = dto.status;
     }
@@ -350,16 +349,16 @@ export class PurchasingService {
   async receive(orgId: string, actorId: string, poId: string, dto: ReceivePurchaseOrderDto) {
     const po = await this.loadPoOr404(orgId, poId);
     if (po.status === "cancelled") {
-      throw new BadRequestException("বাতিল করা ক্রয় অর্ডারে পণ্য গ্রহণ করা যাবে না");
+      throw badRequest("purchasing.productsCannotBeReceivedInA");
     }
     if (po.status === "received") {
-      throw new BadRequestException("এই ক্রয় অর্ডারের সব পণ্য ইতিমধ্যে গ্রহণ করা সম্পন্ন হয়েছে");
+      throw badRequest("purchasing.allProductsOfThisPurchaseOrder");
     }
     if (!["draft", "ordered", "partially_received"].includes(po.status)) {
-      throw new BadRequestException(`এই অবস্থায় (${po.status}) পণ্য গ্রহণ করা যাবে না`);
+      throw badRequest("purchasing.productsCannotBeReceivedInThis", { poStatus: po.status });
     }
     if (!Array.isArray(dto.items) || dto.items.length === 0) {
-      throw new BadRequestException("গ্রহণ করার জন্য অন্তত একটি আইটেম দিন");
+      throw badRequest("purchasing.giveAtLeastOneItemTo");
     }
     const poItems = ((await (this.prisma as any).purchaseOrderItem.findMany({
       where: { purchaseOrderId: po.id },
@@ -373,9 +372,9 @@ export class PurchasingService {
     const plan = new Map<string, { item: any; qty: number; unitCostOverride: bigint | null }>();
     for (const raw of dto.items as any[]) {
       const item = byId.get(raw.itemId);
-      if (!item) throw new BadRequestException("আইটেমটি এই ক্রয় অর্ডারের অন্তর্গত নয়");
+      if (!item) throw badRequest("purchasing.theItemDoesNotBelongTo");
       if (!Number.isInteger(raw.qty) || raw.qty <= 0) {
-        throw new BadRequestException("গ্রহণের পরিমাণ অবশ্যই ০-এর বেশি পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("purchasing.theReceivedQuantityMustBeAn");
       }
       const entry = plan.get(item.id) ?? { item, qty: 0, unitCostOverride: null };
       entry.qty += raw.qty;
@@ -387,9 +386,7 @@ export class PurchasingService {
     for (const { item, qty } of plan.values()) {
       const remaining = item.qtyOrdered - item.qtyReceived;
       if (qty > remaining) {
-        throw new BadRequestException(
-          `এই আইটেমে আর মাত্র ${remaining}টি গ্রহণ করা যাবে — অর্ডার করা হয়েছে ${item.qtyOrdered}টি, ইতিমধ্যে গৃহীত ${item.qtyReceived}টি`,
-        );
+        throw badRequest("purchasing.atMostMoreCanBeReceived", { remaining: remaining, itemQtyOrdered: item.qtyOrdered, itemQtyReceived: item.qtyReceived });
       }
     }
 
@@ -400,7 +397,7 @@ export class PurchasingService {
       const product = await (this.prisma as any).product.findFirst({
         where: { id: item.productId, organizationId: orgId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("purchasing.productNotFoundInThisOrganization");
       const variant = item.variantId
         ? await (this.prisma as any).productVariant.findFirst({
             where: { id: item.variantId, productId: item.productId },

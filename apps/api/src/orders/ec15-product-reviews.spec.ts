@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ProductReviewsService } from "./product-reviews.service";
 
 /**
@@ -116,8 +117,8 @@ describe("EC15 public unified reviews", () => {
     const out = await svc.getPublicBySlug("meghna", "shirt");
     expect(out.product.name).toBe("Cotton Shirt");
     expect(out.summary.count).toBe(2);
-    await expect(svc.getPublicBySlug("nope", "shirt")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getPublicBySlug("meghna", "nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getPublicBySlug("nope", "shirt")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getPublicBySlug("meghna", "nope")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -154,9 +155,9 @@ describe("EC15 staff moderation", () => {
 
   it("reply on an external review is an honest 400; foreign ids 404", async () => {
     const { svc } = fixture();
-    await expect(svc.moderate(ORG, "woocommerce", "ext-1", { replyText: "hi" }, "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.moderate(ORG, "woocommerce", "ext-1", { replyText: "hi" }, "user-1")).rejects.toBeInstanceOf(ApiException);
     await expect(svc.moderate(ORG, "woocommerce", "ext-1", { replyText: "hi" }, "user-1")).rejects.toThrow("বাইরের রিভিউতে উত্তর দেওয়া যায় না");
-    await expect(svc.moderate(ORG, "store", "rev-foreign", { isVisible: false }, "user-1")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.moderate(ORG, "woocommerce", "nope", { isVisible: false }, "user-1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.moderate(ORG, "store", "rev-foreign", { isVisible: false }, "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.moderate(ORG, "woocommerce", "nope", { isVisible: false }, "user-1")).rejects.toBeInstanceOf(ApiException);
   });
 });

@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
 import { CompletePracticeSessionDto, PracticeMessageDto, StartPracticeSessionDto } from "./practice-mode.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const DEFAULT_PRACTICE_SCENARIOS = [
   {
@@ -122,11 +123,11 @@ export class PracticeModeService {
       where: { id: sessionId, organizationId },
     });
 
-    if (!session) throw new NotFoundException("অনুশীলন সেশন পাওয়া যায়নি");
-    if (session.status !== "active") throw new BadRequestException("এই অনুশীলন সেশনটি সক্রিয় নয়");
+    if (!session) throw notFound("inbox.practiceSessionNotFound");
+    if (session.status !== "active") throw badRequest("inbox.thisPracticeSessionIsNotActive");
 
     const userText = dto.message.trim();
-    if (!userText) throw new BadRequestException("বার্তা খালি হতে পারে না");
+    if (!userText) throw badRequest("inbox.theMessageCannotBeEmpty2");
 
     const history: Array<{ role: string; text: string; timestamp: string }> = Array.isArray(session.transcript)
       ? [...session.transcript]
@@ -179,7 +180,7 @@ export class PracticeModeService {
       where: { id: sessionId, organizationId },
     });
 
-    if (!session) throw new NotFoundException("অনুশীলন সেশন পাওয়া যায়নি");
+    if (!session) throw notFound("inbox.practiceSessionNotFound");
 
     const completed = await (this.prisma as any).practiceSession.update({
       where: { id: session.id },

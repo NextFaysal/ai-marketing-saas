@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CommerceService } from "./commerce.service";
 
 function matches(row: any, where: any): boolean {
@@ -158,19 +159,19 @@ describe("CommerceService.resolveConflict", () => {
   it("404s for a conflict in another organization", async () => {
     const { svc, prisma } = makeSvc();
     seedListingAndConflict(prisma, { organizationId: "org-2" });
-    await expect(svc.resolveConflict("org-1", "u1", "c1", "keep_local")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.resolveConflict("org-1", "u1", "c1", "keep_local")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("400s when the conflict is already resolved", async () => {
     const { svc, prisma } = makeSvc();
     seedListingAndConflict(prisma, { status: "resolved", resolution: "local_wins" });
-    await expect(svc.resolveConflict("org-1", "u1", "c1", "keep_local")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.resolveConflict("org-1", "u1", "c1", "keep_local")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("400s on an invalid choice", async () => {
     const { svc, prisma } = makeSvc();
     seedListingAndConflict(prisma);
-    await expect(svc.resolveConflict("org-1", "u1", "c1", "merge_magic")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.resolveConflict("org-1", "u1", "c1", "merge_magic")).rejects.toBeInstanceOf(ApiException);
   });
 
   // ---------- CP1: per-field resolution ----------
@@ -219,7 +220,7 @@ describe("CommerceService.resolveConflict", () => {
     ).rejects.toThrow(/description/);
     await expect(
       svc.resolveConflict("org-1", "u1", "c1", "per_field", { name: "remote", priceMinor: "local", stockQuantity: "remote" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     expect(prisma.syncConflict.rows[0].status).toBe("open");
   });
 
@@ -238,7 +239,7 @@ describe("CommerceService.resolveConflict", () => {
     const { svc, prisma } = makeSvc();
     seedListingAndConflict(prisma); // legacy row — no fieldDiffs
     await expect(svc.resolveConflict("org-1", "u1", "c1", "per_field", { name: "remote" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -251,8 +252,8 @@ describe("CommerceService listing actions", () => {
     expect(updated.channelPriceMinor).toBe("5000");
     expect(pushLog.filter((l: any) => l.kind === "enqueueProductPush")).toHaveLength(1);
 
-    await expect(svc.updateChannelPrice("org-1", "u1", "l1", { channelPriceMinor: "12.5" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.updateChannelPrice("org-1", "u1", "l1", { channelPriceMinor: "abc" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateChannelPrice("org-1", "u1", "l1", { channelPriceMinor: "12.5" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.updateChannelPrice("org-1", "u1", "l1", { channelPriceMinor: "abc" })).rejects.toBeInstanceOf(ApiException);
 
     // Draft listing: price stored, no push.
     prisma.storeListing.rows[0].publishState = "draft";
@@ -287,10 +288,10 @@ describe("CommerceService listing actions", () => {
   it("sale-schedule: rejects bad dates and end<start, applies boundary on success", async () => {
     const { svc, prisma, pushLog } = makeSvc();
     seedListingAndConflict(prisma);
-    await expect(svc.updateSaleSchedule("org-1", "u1", "l1", { saleStartsAt: "not-a-date" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSaleSchedule("org-1", "u1", "l1", { saleStartsAt: "not-a-date" })).rejects.toBeInstanceOf(ApiException);
     await expect(svc.updateSaleSchedule("org-1", "u1", "l1", {
       saleStartsAt: "2026-11-10T00:00:00.000Z", saleEndsAt: "2026-11-01T00:00:00.000Z",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toBeInstanceOf(ApiException);
     const updated = await svc.updateSaleSchedule("org-1", "u1", "l1", {
       saleStartsAt: "2026-11-01T00:00:00.000Z", saleEndsAt: "2026-11-10T00:00:00.000Z",
     });
@@ -302,7 +303,7 @@ describe("CommerceService listing actions", () => {
     const { svc, prisma } = makeSvc();
     seedListingAndConflict(prisma);
     prisma.storeListing.rows[0].organizationId = "org-2";
-    await expect(svc.publishListing("org-1", "u1", "l1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publishListing("org-1", "u1", "l1")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -334,7 +335,7 @@ describe("CommerceService locations", () => {
   it("refresh refuses non-Shopify stores", async () => {
     const { svc, prisma } = makeSvc();
     prisma.store.rows.push({ id: "s1", organizationId: "org-1", platform: "WOOCOMMERCE", name: "Shop" });
-    await expect(svc.refreshLocations("org-1", "u1", "s1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.refreshLocations("org-1", "u1", "s1")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -346,7 +347,7 @@ describe("CommerceService CP3 weight-unit override (updateSyncMode surface)", ()
     expect(updated.weightUnit).toBe("lb");
     expect(updated.syncMode).toBe("mirror"); // untouched
     expect(audits.some((a: any) => a.action === "store.sync_mode" && a.metadata?.weightUnit === "lb")).toBe(true);
-    await expect(svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: "stone" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: "stone" })).rejects.toBeInstanceOf(ApiException);
     const cleared = await svc.updateSyncMode("org-1", "u1", "s1", { weightUnit: null });
     expect(cleared.weightUnit).toBeNull();
     const mode = await svc.updateSyncMode("org-1", "u1", "s1", { syncMode: "full-manage" });

@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, GoneException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, HttpStatus,} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MediaStore } from "../inbox/media-store";
 import { buildOrgDataBundle } from "../organizations/org-data-export";
+import { ApiException, badRequest, conflict, notFound } from "../i18n/api-exception";
 
 /**
  * AB8 (AX25) — Merchant Data Tools.
@@ -207,19 +208,19 @@ export class DataExportsService {
     const p = this.prisma as any;
     const row = await p.dataExport.findUnique({ where: { id: exportId } }).catch(() => null);
     // Foreign-org rows are indistinguishable from missing ones.
-    if (!row || row.organizationId !== organizationId) throw new NotFoundException("Export not found");
-    if (row.status === "expired") throw new GoneException("This export has expired");
-    if (row.status !== "ready") throw new ConflictException(`Export is not ready for download (status: ${row.status})`);
+    if (!row || row.organizationId !== organizationId) throw notFound("dataTools.exportNotFound");
+    if (row.status === "expired") throw new ApiException("dataTools.thisExportHasExpired", undefined, HttpStatus.GONE);
+    if (row.status !== "ready") throw conflict("dataTools.exportIsNotReadyForDownload", { rowStatus: row.status });
     if (row.expiresAt && new Date(row.expiresAt).getTime() <= Date.now()) {
       await p.dataExport.update({ where: { id: exportId }, data: { status: "expired" } }).catch(() => undefined);
-      throw new GoneException("This export has expired");
+      throw new ApiException("dataTools.thisExportHasExpired", undefined, HttpStatus.GONE);
     }
     if (!row.fileRef) {
       await p.dataExport.update({
         where: { id: exportId },
         data: { status: "expired", error: "Export record has no stored file reference" },
       }).catch(() => undefined);
-      throw new GoneException("The stored export file is missing");
+      throw new ApiException("dataTools.theStoredExportFileIsMissing", undefined, HttpStatus.GONE);
     }
     const bytes = await this.storeFactory().get(row.fileRef);
     if (!bytes) {
@@ -230,7 +231,7 @@ export class DataExportsService {
         where: { id: exportId },
         data: { status: "expired", error: "Stored export file is missing" },
       }).catch(() => undefined);
-      throw new GoneException("The stored export file is missing");
+      throw new ApiException("dataTools.theStoredExportFileIsMissing", undefined, HttpStatus.GONE);
     }
     return {
       bytes,
@@ -276,13 +277,13 @@ export class DataExportsService {
   async verifyBackup(organizationId: string, userId: string, exportId: string, confirmSlug: unknown) {
     const p = this.prisma as any;
     const org = await p.organization?.findUnique({ where: { id: organizationId } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("dataTools.organizationNotFound");
     if (typeof confirmSlug !== "string" || confirmSlug.trim() !== String(org.slug)) {
-      throw new BadRequestException("নিশ্চিত করতে প্রতিষ্ঠানের slug হুবহু লিখুন");
+      throw badRequest("dataTools.slug");
     }
     const row = await p.dataExport.findUnique({ where: { id: exportId } }).catch(() => null);
     // Foreign-org rows are indistinguishable from missing ones (download parity).
-    if (!row || row.organizationId !== organizationId) throw new NotFoundException("Export not found");
+    if (!row || row.organizationId !== organizationId) throw notFound("dataTools.exportNotFound");
 
     const problems: string[] = [];
     const counts: Record<string, { manifest: number; actual: number }> = {};

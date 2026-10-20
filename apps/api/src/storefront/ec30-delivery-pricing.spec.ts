@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { DeliveryPricingService, cartWeightOf, ruleMatches } from "./delivery-pricing.service";
 import { validateDiscount } from "../commerce/discounts";
@@ -447,13 +448,13 @@ describe("EC30 staff CRUD validation", () => {
     const { pricing } = makeServices(prisma);
     await expect(
       pricing.createRule("org-1", "user-1", { chargeMinor: "2500", minWeightGrams: 3000, maxWeightGrams: 1000 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       pricing.createRule("org-1", "user-1", { chargeMinor: "-5" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       pricing.createRule("org-1", "user-1", { chargeMinor: "2500", shippingZoneId: "z-nope" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ApiException);
     const ok: any = await pricing.createRule("org-1", "user-1", {
       chargeMinor: "2500", shippingZoneId: "z-main", minWeightGrams: 0, maxWeightGrams: 1000, priority: 3,
     });
@@ -466,9 +467,9 @@ describe("EC30 staff CRUD validation", () => {
     await pricing.createRule("org-2", "user-9", { chargeMinor: "100" });
     const foreignRule = prisma.shippingRateRule.rows[prisma.shippingRateRule.rows.length - 1];
     await expect(pricing.updateRule("org-1", "user-1", foreignRule.id, { chargeMinor: "200" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(pricing.deletePoint("org-1", "user-1", "pp-foreign"))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("createPoint: blank name → 400; fee defaults to \"0\" and serializes as a string", async () => {
@@ -476,7 +477,7 @@ describe("EC30 staff CRUD validation", () => {
     const { pricing, audit } = makeServices(prisma);
     await expect(
       pricing.createPoint("org-1", "user-1", { name: "  ", address: "ঠিকানা", district: "ঢাকা" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     const out: any = await pricing.createPoint("org-1", "user-1", {
       name: "নতুন পয়েন্ট", address: "বাজার রোড", district: "ঢাকা",
     });
@@ -504,7 +505,7 @@ describe("EC30 StorefrontService.listPublicPickupPoints (checkout picker feed)",
     const prisma = seedWorld(makePrisma());
     prisma.storefrontSetting.rows[0].shopEnabled = false;
     const { svc } = makeServices(prisma);
-    await expect(svc.listPublicPickupPoints("shop-one")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.listPublicPickupPoints("no-such-shop")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.listPublicPickupPoints("shop-one")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.listPublicPickupPoints("no-such-shop")).rejects.toBeInstanceOf(ApiException);
   });
 });

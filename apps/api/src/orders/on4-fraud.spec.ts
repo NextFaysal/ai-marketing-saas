@@ -346,8 +346,8 @@ describe("ON4 hold / release", () => {
     const { prisma, fraud } = makeWorld();
     seedOrder(prisma);
     await expect(fraud.hold("org-1", "actor-1", "o-1", "   ")).rejects.toThrow(/কারণ/);
-    await expect(fraud.hold("org-2", "actor-1", "o-1", "কারণ")).rejects.toThrow(/not found/i);
-    await expect(fraud.release("org-2", "actor-1", "o-1")).rejects.toThrow(/not found/i);
+    await expect(fraud.hold("org-2", "actor-1", "o-1", "কারণ")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg", status: 404 });
+    await expect(fraud.release("org-2", "actor-1", "o-1")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg", status: 404 });
   });
 });
 
@@ -386,7 +386,7 @@ describe("ON4 recordCodCall", () => {
     await expect(fraud.recordCodCall("org-1", "a", "o-nc", "confirmed")).rejects.toThrow("এটি COD অর্ডার নয়");
     await expect(fraud.recordCodCall("org-1", "a", "o-done", "confirmed")).rejects.toThrow(/COD কল রেকর্ড করা যায় না/);
     await expect(fraud.recordCodCall("org-1", "a", "o-1", "maybe")).rejects.toThrow(/কলের ফলাফল/);
-    await expect(fraud.recordCodCall("org-2", "a", "o-1", "confirmed")).rejects.toThrow(/not found/i);
+    await expect(fraud.recordCodCall("org-2", "a", "o-1", "confirmed")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg", status: 404 });
   });
 });
 
@@ -425,7 +425,7 @@ describe("ON4 BlockedPhoneService", () => {
   it("remove is org-scoped (foreign id 404) and audits the key", async () => {
     const { svc, audit } = setup();
     const row: any = await svc.add("org-1", "actor-1", { phone: "01711111111" });
-    await expect(svc.remove("org-2", "actor-1", row.id)).rejects.toThrow(/not found/i);
+    await expect(svc.remove("org-2", "actor-1", row.id)).rejects.toMatchObject({ code: "fraud.blockedPhoneNotFoundInThis" });
     await svc.remove("org-1", "actor-1", row.id);
     await expect(svc.isBlocked("org-1", "01711111111")).resolves.toBe(false);
     expect((audit.log as jest.Mock).mock.calls.some((c) => c[0].action === "orders.blocked_phone_removed")).toBe(true);

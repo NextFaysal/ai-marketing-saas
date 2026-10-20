@@ -219,7 +219,7 @@ describe("P3 tone rewrite", () => {
   it("a changed number refuses the rewrite with BadRequest", async () => {
     const tables = fakePrisma();
     await expect(svc(tables, fakeLlm("দাম মাত্র ১২০০ টাকা!")).toneRewrite("org-1", "agent-1", "conv-1", "দাম ১৫০০ টাকা", "sales"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "inbox.theAiChangedANumberSo" });
   });
 
   it("dev provider refuses honestly instead of faking a rewrite", async () => {
@@ -231,9 +231,9 @@ describe("P3 tone rewrite", () => {
   it("invalid tone and empty text are BadRequest at the service level", async () => {
     const tables = fakePrisma();
     const s = svc(tables, fakeLlm("x"));
-    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "কিছু লেখা", "rude")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "   ", "polite")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "x".repeat(2001), "polite")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "কিছু লেখা", "rude")).rejects.toMatchObject({ code: "inbox.toneMustBePoliteProfessionalOr" });
+    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "   ", "polite")).rejects.toMatchObject({ code: "inbox.theTextIsEmptyWriteSomething" });
+    await expect(s.toneRewrite("org-1", "agent-1", "conv-1", "x".repeat(2001), "polite")).rejects.toMatchObject({ code: "inbox.theTextIsTooLongAt" });
   });
 });
 
@@ -377,7 +377,7 @@ describe("P3 webchat visitor presence", () => {
 
   it("a bad token is a 401 before anything is recorded", async () => {
     const { webchat, updateCalls, presenceCalls } = presenceSetup(new Date());
-    await expect(webchat.visitorPresence("wc_test", { token: "someone-elses-token" })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(webchat.visitorPresence("wc_test", { token: "someone-elses-token" })).rejects.toMatchObject({ code: "inbox.invalidChatSessionToken" });
     expect(updateCalls).toHaveLength(0);
     expect(presenceCalls).toHaveLength(0);
   });

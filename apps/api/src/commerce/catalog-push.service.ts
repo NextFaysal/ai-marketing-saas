@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { SyncOutboxService } from "./sync-outbox.service";
 import { loadPushContent } from "../integrations/commerce/catalog-content";
+import { notFound } from "../i18n";
 
 /**
  * EC3 — catalog push orchestration.
@@ -253,7 +254,7 @@ export class CatalogPushService {
     const listing = await (this.prisma as any).storeListing.findFirst({
       where: { id: listingId, organizationId },
     });
-    if (!listing) throw new NotFoundException("Listing not found in this organization");
+    if (!listing) throw notFound("commerce.listingNotFoundInOrg");
     await (this.prisma as any).storeListing.update({
       where: { id: listing.id },
       data: { publishState: "published" },

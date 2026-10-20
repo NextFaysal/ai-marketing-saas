@@ -1,7 +1,5 @@
 import {
-  BadRequestException,
   Injectable,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { createHash } from "crypto";
@@ -15,6 +13,7 @@ import type {
   ResolveLineDto,
   SaveProfileDto,
 } from "./reconciliation.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC26 — Courier COD Reconciliation.
@@ -103,9 +102,9 @@ export class ReconciliationService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: courierIntegrationId, organizationId: orgId },
     });
-    if (!integration) throw new NotFoundException("Courier integration not found in this organization");
+    if (!integration) throw notFound("reconciliation.courierIntegrationNotFoundInThis");
     if (!(COURIER_PROVIDERS as readonly string[]).includes(integration.provider)) {
-      throw new BadRequestException("এই integration-টি কুরিয়ার অ্যাকাউন্ট নয় — শুধু steadfast, pathao বা redx কুরিয়ারের শিট import করা যাবে");
+      throw badRequest("reconciliation.thisIntegrationIsNotACourier");
     }
     return { integration, provider: integration.provider as string };
   }
@@ -114,12 +113,12 @@ export class ReconciliationService {
     const m = (raw ?? {}) as Record<string, unknown>;
     const req = (key: string): string => {
       const v = typeof m[key] === "string" ? (m[key] as string).trim() : "";
-      if (!v) throw new BadRequestException(`column mapping-এ ${key} আবশ্যক — খালি রাখা যাবে না`);
+      if (!v) throw badRequest("reconciliation.isRequiredInColumnMappingIt", { key: key });
       return v;
     };
     const opt = (key: string): string | undefined => {
       if (m[key] === undefined || m[key] === null) return undefined;
-      if (typeof m[key] !== "string") throw new BadRequestException(`column mapping-এর ${key} অবশ্যই header-এর নাম (string) হতে হবে`);
+      if (typeof m[key] !== "string") throw badRequest("reconciliation.columnMappingSMustBeA", { key: key });
       const v = (m[key] as string).trim();
       return v || undefined;
     };
@@ -173,11 +172,11 @@ export class ReconciliationService {
 
   async readHeaders(csvText: string) {
     if (typeof csvText !== "string" || !csvText.trim()) {
-      throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+      throw badRequest("reconciliation.noHeaderWasFoundInThe");
     }
     const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: "greedy" });
     const headers = ((parsed.meta.fields ?? []) as string[]).map((h) => h.trim()).filter(Boolean);
-    if (!headers.length) throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+    if (!headers.length) throw badRequest("reconciliation.noHeaderWasFoundInThe");
     return { headers };
   }
 
@@ -195,20 +194,20 @@ export class ReconciliationService {
     } else {
       const saved = await this.savedMapping(orgId, dto.courierIntegrationId);
       if (!saved) {
-        throw new BadRequestException("এই কুরিয়ারের জন্য column mapping সেট করা হয়নি — আগে mapping দিন");
+        throw badRequest("reconciliation.columnMappingIsNotSetFor");
       }
       mapping = this.validateMapping(saved);
     }
 
     if (typeof dto.csvText !== "string" || !dto.csvText.trim()) {
-      throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+      throw badRequest("reconciliation.noHeaderWasFoundInThe");
     }
     const fileHash = createHash("sha256").update(dto.csvText).digest("hex");
     if (!dto.force) {
       const prior = await (this.prisma as any).reconciliationImport.findFirst({
         where: { organizationId: orgId, courierIntegrationId: dto.courierIntegrationId, fileHash },
       });
-      if (prior) throw new BadRequestException("এই ফাইলটি আগেই import করা হয়েছে");
+      if (prior) throw badRequest("reconciliation.thisFileHasAlreadyBeenImported");
     }
 
     const parsed = Papa.parse<Record<string, string>>(dto.csvText, {
@@ -217,17 +216,17 @@ export class ReconciliationService {
       transformHeader: (h) => h.trim(),
     });
     const headers = ((parsed.meta.fields ?? []) as string[]).map((h) => h.trim()).filter(Boolean);
-    if (!headers.length) throw new BadRequestException("CSV ফাইলে header পাওয়া যায়নি");
+    if (!headers.length) throw badRequest("reconciliation.noHeaderWasFoundInThe");
     const rows = (parsed.data ?? []).filter(
       (r) => r && Object.values(r).some((v) => String(v ?? "").trim() !== ""),
     );
-    if (rows.length === 0) throw new BadRequestException("CSV ফাইলে কোনো data row নেই");
+    if (rows.length === 0) throw badRequest("reconciliation.thereIsNoDataRowIn");
     if (rows.length > MAX_ROWS) {
-      throw new BadRequestException(`একবারে সর্বোচ্চ ${MAX_ROWS} সারি import করা যাবে`);
+      throw badRequest("reconciliation.atMostRowsCanBeImported", { MAX_ROWS: MAX_ROWS });
     }
     for (const col of [mapping.trackingColumn, mapping.amountColumn, mapping.chargeColumn, mapping.orderRefColumn, mapping.statusColumn]) {
       if (col && !headers.includes(col)) {
-        throw new BadRequestException(`mapping-এর কলাম পাওয়া যায়নি: ${col}`);
+        throw badRequest("reconciliation.theMappingColumnWasNotFound", { col: col });
       }
     }
 
@@ -527,7 +526,7 @@ export class ReconciliationService {
     const row = await (this.prisma as any).reconciliationImport.findFirst({
       where: { id: importId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("Reconciliation import not found in this organization");
+    if (!row) throw notFound("reconciliation.reconciliationImportNotFoundInThis");
     return row;
   }
 
@@ -550,17 +549,17 @@ export class ReconciliationService {
     const line = await (this.prisma as any).reconciliationLine.findFirst({
       where: { id: lineId, organizationId: orgId },
     });
-    if (!line) throw new NotFoundException("Reconciliation line not found in this organization");
+    if (!line) throw notFound("reconciliation.reconciliationLineNotFoundInThis");
     const note = dto.note !== undefined ? dto.note : line.note ?? null;
 
     if (dto.action === "accept_sheet") {
       if (!line.matchedShipmentId || line.sheetAmountMinor == null) {
-        throw new BadRequestException("এই সারিতে matched shipment বা শিটের অ্যামাউন্ট নেই — accept করা যাবে না");
+        throw badRequest("reconciliation.thisRowHasNoMatchedShipment");
       }
       const shipment = await (this.prisma as any).courierShipment.findFirst({
         where: { id: line.matchedShipmentId, organizationId: orgId },
       });
-      if (!shipment) throw new NotFoundException("Matched shipment not found in this organization");
+      if (!shipment) throw notFound("reconciliation.matchedShipmentNotFoundInThis");
       const oldCollectedMinor = shipment.codCollectedMinor != null ? String(shipment.codCollectedMinor) : null;
       const now = new Date();
       await (this.prisma as any).courierShipment.update({
@@ -599,6 +598,6 @@ export class ReconciliationService {
       return serializeLine(updated);
     }
 
-    throw new BadRequestException(`অজানা action: ${dto.action} — "accept_sheet" বা "mark_reviewed" দিন`);
+    throw badRequest("reconciliation.unknownActionGiveAcceptSheetOr", { dtoAction: dto.action });
   }
 }

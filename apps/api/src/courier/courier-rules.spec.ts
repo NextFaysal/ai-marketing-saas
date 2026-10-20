@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CourierRulesService } from "./courier-rules.service";
 
 /**
@@ -107,10 +108,10 @@ describe("CourierRulesService.create validation", () => {
     })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("minWeightGrams") });
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: { minWeightGrams: 0 }, courierAccountId: "int-steadfast",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: { maxWeightGrams: 1.5 }, courierAccountId: "int-steadfast",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects bad districts (non-array, empty string, non-string)", async () => {
@@ -132,20 +133,20 @@ describe("CourierRulesService.create validation", () => {
     })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("minOrderMinor") });
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: { minOrderMinor: "900", maxOrderMinor: "100" }, courierAccountId: "int-steadfast",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: { minOrderMinor: 500 }, courierAccountId: "int-steadfast",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("404s for a foreign or missing courier account", async () => {
     const { prisma, svc } = setup(); await seedAccounts(prisma);
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: {}, courierAccountId: "int-foreign",
-    })).rejects.toBeInstanceOf(NotFoundException);
+    })).rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("org-1", "owner", {
       name: "R", conditions: {}, courierAccountId: "int-missing",
-    })).rejects.toBeInstanceOf(NotFoundException);
+    })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("400s for a non-courier integration (provider meta)", async () => {
@@ -171,8 +172,8 @@ describe("CourierRulesService.create validation", () => {
     const rule = await svc.create("org-1", "owner", { name: "R", conditions: {}, courierAccountId: "int-steadfast" });
     const updated = await svc.update("org-1", "owner", rule.id, { courierAccountId: "int-pathao" });
     expect(updated.provider).toBe("pathao");
-    await expect(svc.update("org-2", "owner", rule.id, { name: "X" })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.remove("org-2", "owner", rule.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.update("org-2", "owner", rule.id, { name: "X" })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.remove("org-2", "owner", rule.id)).rejects.toBeInstanceOf(ApiException);
     await svc.remove("org-1", "owner", rule.id);
     expect(prisma.courierRule.rows).toHaveLength(0);
   });
@@ -307,6 +308,6 @@ describe("CourierRulesService.factsForOrder + suggestion", () => {
       ruleId: null, ruleName: null, provider: null, courierAccountId: null,
       reason: "কোনো সক্রিয় নিয়ম এই অর্ডারের সঙ্গে মেলেনি",
     });
-    await expect(s2.suggestion("org-2", "ord-x")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(s2.suggestion("org-2", "ord-x")).rejects.toBeInstanceOf(ApiException);
   });
 });

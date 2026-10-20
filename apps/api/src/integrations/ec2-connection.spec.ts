@@ -216,7 +216,7 @@ describe("EC2 Shopify GDPR", () => {
     const { shopify } = setup();
     const rawBody = JSON.stringify({ shop_id: 1, shop_domain: "test.myshopify.com" });
     await expect(shopify.handleGdpr("customers/redact", rawBody, "AAAAbad", "wh-2"))
-      .rejects.toThrow("Invalid Shopify webhook signature");
+      .rejects.toMatchObject({ code: "integrations.invalidShopifyWebhookSignature" });
   });
 
   it("CP6: customers/redact erases the resolved local customer; ack shape unchanged", async () => {

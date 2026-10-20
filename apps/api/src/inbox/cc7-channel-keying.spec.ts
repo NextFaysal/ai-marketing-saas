@@ -160,7 +160,7 @@ describe("CC7 Email keying", () => {
     const { email, tables } = buildWorld();
     (email as any).buildImapClient = () => ({ connect: async () => { throw new Error("Invalid login"); }, logout: async () => undefined });
     (email as any).buildTransport = () => ({ verify: async () => true });
-    await expect(email.connect("org-1", "owner-1", mailbox("shop@example.com"))).rejects.toThrow(/IMAP login failed/);
+    await expect(email.connect("org-1", "owner-1", mailbox("shop@example.com"))).rejects.toMatchObject({ code: "inbox.imapLoginFailed" });
     expect(tables.integration.rows).toHaveLength(0);
   });
 

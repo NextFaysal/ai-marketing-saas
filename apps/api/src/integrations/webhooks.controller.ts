@@ -1,10 +1,11 @@
-import { Controller, Headers, Param, Post, Req, UnauthorizedException, BadRequestException } from "@nestjs/common";
+import { Controller, Headers, Param, Post, Req } from "@nestjs/common";
 import { Request } from "express";
 import { PrismaService } from "../prisma/prisma.service";
 import { IntegrationsService } from "./integrations.service";
 import { Public } from "../common/decorators";
 import { verifyWooSignature } from "./webhooks.service";
 import { webhookDispatcher } from "../common/webhook-dispatch";
+import { badRequest, unauthorized } from "../i18n/api-exception";
 
 /**
  * Public webhook endpoint for WooCommerce.
@@ -27,14 +28,14 @@ export class WooWebhooksController {
     @Req() req: Request & { rawBody?: Buffer },
   ) {
     const integration = await this.integrations.getIntegrationById(integrationId);
-    if (!integration) throw new BadRequestException("Unknown integration");
+    if (!integration) throw badRequest("integrations.unknownIntegration");
     const secrets = this.integrations.getSecrets(integration);
     if (!secrets.webhookSecret) {
-      throw new BadRequestException("Webhook secret is not configured for this integration");
+      throw badRequest("integrations.webhookSecretIsNotConfiguredFor");
     }
     const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
     const valid = verifyWooSignature(rawBody, signature, secrets.webhookSecret);
-    if (!valid) throw new UnauthorizedException("Invalid webhook signature");
+    if (!valid) throw unauthorized("integrations.invalidWebhookSignature");
 
     // Idempotency: Woo retries deliveries; the same delivery id must not
     // create duplicate orders/products.

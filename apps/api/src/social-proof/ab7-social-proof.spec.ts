@@ -126,7 +126,7 @@ describe("AB7 (AX17) social-proof — public feed", () => {
   it("unknown slug → 404", async () => {
     const { svc } = seed();
     const err = await svc.getPublicFeed("no-such-shop").catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "socialProof.theShopWasNotFound" });
     expect(err.getStatus()).toBe(404);
   });
 
@@ -313,12 +313,14 @@ describe("AB7 (AX17) social-proof — staff setting", () => {
       { intervalSec: 4 }, { intervalSec: 301 },
       { displaySec: 1 }, { displaySec: 31 },
       { maxPerSession: 0 }, { maxPerSession: 21 },
-      { minTotalMinor: "-5" }, { minTotalMinor: "abc" }, { minTotalMinor: "10.5" }, { minTotalMinor: "" },
-      { enabled: "yes" },
     ];
     for (const dto of bad) {
-      await expect(svc.updateSetting("org-1", "user-1", dto)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(svc.updateSetting("org-1", "user-1", dto)).rejects.toMatchObject({ code: "socialProof.mustBeAnIntegerBetweenAnd" });
     }
+    for (const dto of [{ minTotalMinor: "-5" }, { minTotalMinor: "abc" }, { minTotalMinor: "10.5" }, { minTotalMinor: "" }]) {
+      await expect(svc.updateSetting("org-1", "user-1", dto)).rejects.toMatchObject({ code: "socialProof.theMinimumOrderValueMintotalminorMust" });
+    }
+    await expect(svc.updateSetting("org-1", "user-1", { enabled: "yes" } as any)).rejects.toMatchObject({ code: "socialProof.enabledMustBeTrueOrFalse" });
     // Boundary values are accepted.
     await expect(svc.updateSetting("org-1", "user-1", {
       lookbackHours: 1, intervalSec: 5, displaySec: 2, maxPerSession: 1, minTotalMinor: "0",

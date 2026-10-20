@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { AUTO_CHARGE_CONSENT_METHODS, type AutoChargeConsentDto, type CreateSubscriptionDto } from "./subscriptions.dto";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * OU12 — the honest auto-charge state label. A subscription with
@@ -97,12 +98,12 @@ export class SubscriptionsService {
     const note = dto.autoChargeConsentNote?.trim() || undefined;
     if (dto.autoChargeConsentGiven !== true) {
       if (method || note) {
-        throw new BadRequestException("সম্মতি দেওয়া হয়েছে না বললে সম্মতির পদ্ধতি/নোট রাখা যাবে না");
+        throw badRequest("subscriptions.consentMethodWithoutConsent");
       }
       return { autoChargeConsentAt: null, autoChargeConsentMethod: null, autoChargeConsentNote: null };
     }
     if (!method || !(AUTO_CHARGE_CONSENT_METHODS as readonly string[]).includes(method)) {
-      throw new BadRequestException("সম্মতি রেকর্ড করতে সম্মতির পদ্ধতি আবশ্যক (phone_call | in_person | written | message)");
+      throw badRequest("subscriptions.consentMethodRequired");
     }
     return { autoChargeConsentAt: new Date(), autoChargeConsentMethod: method, autoChargeConsentNote: note ?? null };
   }
@@ -111,7 +112,7 @@ export class SubscriptionsService {
     const row = await this.t("customerSubscription").findFirst({
       where: { id, organizationId },
     });
-    if (!row) throw new NotFoundException("Subscription not found in this organization");
+    if (!row) throw notFound("subscriptions.subscriptionNotFoundInOrg");
     return row;
   }
 
@@ -119,17 +120,17 @@ export class SubscriptionsService {
     const customer = await this.t("customer").findFirst({
       where: { id: dto.customerId, organizationId },
     });
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (!customer) throw notFound("commerce.customerNotFoundInOrg");
     const product = await this.t("product").findFirst({
       where: { id: dto.productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("products.productNotFoundInOrg");
     if (!product.subscriptionEnabled || !(Number(product.subscriptionIntervalDays) > 0)) {
-      throw new BadRequestException("এই পণ্যে সাবস্ক্রিপশন চালু নেই");
+      throw badRequest("subscriptions.productSubscriptionDisabled");
     }
     const qty = dto.qty ?? 1;
     if (!Number.isInteger(qty) || qty < 1) {
-      throw new BadRequestException("পরিমাণ কমপক্ষে ১ হতে হবে");
+      throw badRequest("subscriptions.quantityAtLeastOne");
     }
 
     // Unit-price snapshot: the source order's line price wins when
@@ -140,7 +141,7 @@ export class SubscriptionsService {
       const order = await this.t("order").findFirst({
         where: { id: dto.createdFromOrderId, organizationId },
       });
-      if (!order) throw new NotFoundException("Order not found in this organization");
+      if (!order) throw notFound("commerce.orderNotFoundInOrg");
       const line = await this.t("orderItem")
         .findFirst({ where: { orderId: order.id, productId: product.id } })
         .catch(() => null);
@@ -160,7 +161,7 @@ export class SubscriptionsService {
     let nextRunAt: Date;
     if (dto.startAt) {
       const d = new Date(dto.startAt);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException("শুরুর সময় সঠিক নয়");
+      if (Number.isNaN(d.getTime())) throw badRequest("subscriptions.startTimeInvalid");
       nextRunAt = d;
     } else {
       nextRunAt = new Date(Date.now() + intervalDays * 24 * 3600 * 1000);
@@ -208,7 +209,7 @@ export class SubscriptionsService {
   async setAutoChargeConsent(organizationId: string, actorId: string, id: string, dto: AutoChargeConsentDto) {
     const row = await this.loadOr404(organizationId, id);
     if (row.status === "cancelled") {
-      throw new BadRequestException("বাতিল সাবস্ক্রিপশনে সম্মতি রেকর্ড করা যাবে না");
+      throw badRequest("subscriptions.consentOnCancelledSubscription");
     }
     const consent = this.resolveConsent(dto);
     const updated = await this.t("customerSubscription").update({
@@ -254,7 +255,7 @@ export class SubscriptionsService {
   async pause(organizationId: string, actorId: string, id: string) {
     const row = await this.loadOr404(organizationId, id);
     if (row.status !== "active") {
-      throw new BadRequestException("শুধুমাত্র সক্রিয় সাবস্ক্রিপশন বিরতি দেওয়া যায়");
+      throw badRequest("subscriptions.pauseActiveOnly");
     }
     const updated = await this.t("customerSubscription").update({
       where: { id: row.id }, data: { status: "paused" },
@@ -272,7 +273,7 @@ export class SubscriptionsService {
   async resume(organizationId: string, actorId: string, id: string) {
     const row = await this.loadOr404(organizationId, id);
     if (row.status !== "paused") {
-      throw new BadRequestException("শুধুমাত্র বিরতি দেওয়া সাবস্ক্রিপশন আবার চালু করা যায়");
+      throw badRequest("subscriptions.resumePausedOnly");
     }
     const product = await this.t("product").findFirst({
       where: { id: row.productId, organizationId },
@@ -294,7 +295,7 @@ export class SubscriptionsService {
   async cancel(organizationId: string, actorId: string, id: string) {
     const row = await this.loadOr404(organizationId, id);
     if (row.status === "cancelled") {
-      throw new BadRequestException("সাবস্ক্রিপশনটি ইতিমধ্যে বাতিল করা হয়েছে");
+      throw badRequest("subscriptions.subscriptionAlreadyCancelled");
     }
     const updated = await this.t("customerSubscription").update({
       where: { id: row.id }, data: { status: "cancelled" },

@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrdersService } from "../orders/orders.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC22 — Delivery Ops: the org's OWN riders (staff-operated
@@ -50,8 +51,8 @@ export class DeliveryService {
   async createRider(organizationId: string, actorId: string, dto: { name?: string; phone?: string }) {
     const name = dto.name?.trim();
     const phone = dto.phone?.trim();
-    if (!name) throw new BadRequestException("রাইডারের নাম দরকার");
-    if (!phone) throw new BadRequestException("রাইডারের ফোন নম্বর দরকার");
+    if (!name) throw badRequest("delivery.aRiderNameIsRequired");
+    if (!phone) throw badRequest("delivery.aRiderPhoneNumberIsRequired");
     const rider = await (this.prisma as any).rider.create({
       data: { organizationId, name, phone, active: true },
     });
@@ -66,7 +67,7 @@ export class DeliveryService {
     const rider = await (this.prisma as any).rider.findFirst({
       where: { id: riderId, organizationId },
     });
-    if (!rider) throw new NotFoundException("রাইডার পাওয়া যায়নি");
+    if (!rider) throw notFound("delivery.theRiderWasNotFound");
     return rider;
   }
 
@@ -75,12 +76,12 @@ export class DeliveryService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException("রাইডারের নাম খালি হতে পারে না");
+      if (!name) throw badRequest("delivery.theRiderNameCannotBeEmpty");
       data.name = name;
     }
     if (dto.phone !== undefined) {
       const phone = dto.phone.trim();
-      if (!phone) throw new BadRequestException("রাইডারের ফোন নম্বর খালি হতে পারে না");
+      if (!phone) throw badRequest("delivery.theRiderPhoneNumberCannotBe");
       data.phone = phone;
     }
     if (dto.active !== undefined) data.active = Boolean(dto.active);
@@ -111,15 +112,15 @@ export class DeliveryService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: dto.orderId, organizationId },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("delivery.orderNotFoundInThisOrganization");
     const rider = await this.riderOr404(organizationId, dto.riderId);
-    if (!rider.active) throw new BadRequestException("এই রাইডার সক্রিয় নন — আগে রাইডার সক্রিয় করুন");
+    if (!rider.active) throw badRequest("delivery.thisRiderIsNotActiveActivate");
 
     const existing = await (this.prisma as any).deliveryAssignment.findMany({
       where: { organizationId, orderId: order.id },
     });
     if ((existing as any[]).some((a) => a.status === "assigned" || a.status === "picked_up")) {
-      throw new BadRequestException("এই অর্ডারে ইতিমধ্যে একজন রাইডার সক্রিয় আছেন");
+      throw badRequest("delivery.aRiderIsAlreadyActiveOn");
     }
 
     const assignment = await (this.prisma as any).deliveryAssignment.create({
@@ -140,7 +141,7 @@ export class DeliveryService {
     const assignment = await (this.prisma as any).deliveryAssignment.findFirst({
       where: { id: assignmentId, organizationId },
     });
-    if (!assignment) throw new NotFoundException("ডেলিভারি অ্যাসাইনমেন্ট পাওয়া যায়নি");
+    if (!assignment) throw notFound("delivery.theDeliveryAssignmentWasNotFound");
 
     const from: string = assignment.status;
     const to = dto.status;
@@ -187,12 +188,12 @@ export class DeliveryService {
     if (filters.orderId) where.orderId = filters.orderId;
     if (filters.date) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(filters.date)) {
-        throw new BadRequestException("date অবশ্যই YYYY-MM-DD ফরম্যাটে হতে হবে");
+        throw badRequest("delivery.dateMustBeInYyyyMm");
       }
       // Noon UTC of the requested day is the same Dhaka calendar
       // day (Dhaka is UTC+6), so the Dhaka-day solver anchors right.
       const anchor = new Date(`${filters.date}T12:00:00.000Z`);
-      if (Number.isNaN(anchor.getTime())) throw new BadRequestException("date সঠিক নয়");
+      if (Number.isNaN(anchor.getTime())) throw badRequest("delivery.dateIsNotValid");
       const start = dhakaDayStartUtc(anchor);
       where.assignedAt = { gte: start, lt: new Date(start.getTime() + DAY_MS) };
     }

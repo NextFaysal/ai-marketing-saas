@@ -25,6 +25,7 @@ import { buildCourierPerformance, classifyShipmentStatus } from "./courier-perfo
 import { CourierRulesService } from "./courier-rules.service";
 import { OrderNotificationService } from "../order-notifications/order-notifications.service";
 import { CourierNdrService, isNdrStatus } from "./courier-ndr.service";
+import { ApiException, badRequest, notFound } from "../i18n";
 
 /** Courier failures reach the user as readable errors, never bare 500s. */
 function courierError(e: unknown): Error {
@@ -156,7 +157,7 @@ export class CourierService {
 
   private providerOf(value?: string): Provider {
     const p = (value ?? "steadfast") as Provider;
-    if (!PROVIDERS.includes(p)) throw new BadRequestException(`Unknown courier provider: ${value}`);
+    if (!PROVIDERS.includes(p)) throw badRequest("courier.unknownCourierProvider", { provider: value });
     return p;
   }
 
@@ -248,7 +249,7 @@ export class CourierService {
   private async rawClientFor(organizationId: string, provider: Provider) {
     const integration = await this.integration(organizationId, provider);
     if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
-      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+      throw badRequest("courier.courierProviderNotConnected", { provider: provider });
     }
     const creds = decryptJson<any>(integration.credential.encryptedData);
     return createCourierClient(provider, creds, {
@@ -284,13 +285,13 @@ export class CourierService {
         return courierAdapter(provider, this.buildClient(provider, specific) as any);
       }
       if (specific && !opts.recordedAccount) {
-        throw new BadRequestException(`${provider} অ্যাকাউন্টটি যুক্ত নেই (সংযোগ বিচ্ছিন্ন)। আবার Connect করুন অথবা অন্য অ্যাকাউন্ট বেছে নিন।`);
+        throw badRequest("courier.courierAccountDisconnected", { provider: provider });
       }
       // recordedAccount + row deleted → fall through to primary.
     }
     const integration = await this.integration(organizationId, provider);
     if (!integration || integration.status !== "CONNECTED" || !integration.credential) {
-      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+      throw badRequest("courier.courierProviderNotConnected", { provider: provider });
     }
     return courierAdapter(provider, this.buildClient(provider, integration) as any);
   }
@@ -315,12 +316,10 @@ export class CourierService {
     if (wanted) {
       const row = await this.integrationById(organizationId, provider, wanted);
       if (!row) {
-        throw new BadRequestException(choice.explicitId
-          ? "বেছে নেওয়া কুরিয়ার অ্যাকাউন্টটি পাওয়া যায়নি — অন্য একটি অ্যাকাউন্ট বেছে নিন।"
-          : "কুরিয়ার নিয়মে নির্ধারিত অ্যাকাউন্টটি পাওয়া যায়নি — নিয়মটি ঠিক করুন অথবা অ্যাকাউন্টটি আবার কানেক্ট করুন।");
+        throw badRequest(choice.explicitId ? "courier.chosenAccountNotFound" : "courier.ruleAccountNotFound");
       }
       if (row.status !== "CONNECTED" || !row.credential) {
-        throw new BadRequestException("বেছে নেওয়া কুরিয়ার অ্যাকাউন্টটি সংযোগ বিচ্ছিন্ন — আবার Connect করুন অথবা অন্য অ্যাকাউন্ট বেছে নিন।");
+        throw badRequest("courier.chosenCourierDisconnected");
       }
       return row;
     }
@@ -328,7 +327,7 @@ export class CourierService {
     const connected = rows.filter((r) => r.status === "CONNECTED" && r.credential);
     const account = connected.find((r) => r.isDefault) ?? pickPrimaryCourierAccount(connected);
     if (!account) {
-      throw new BadRequestException(`${provider} যুক্ত নেই। আগে Courier Connect করুন।`);
+      throw badRequest("courier.courierProviderNotConnected", { provider: provider });
     }
     return account;
   }
@@ -407,7 +406,7 @@ export class CourierService {
     const provider = this.providerOf(providerValue);
     const integration = await this.integration(organizationId, provider);
     if (!integration) {
-      throw new NotFoundException("এই কুরিয়ার অ্যাকাউন্টটি যুক্ত নেই — আগে Courier Connect করুন");
+      throw notFound("courier.courierAccountNotConnected");
     }
     const trimmed = typeof template === "string" ? template.trim() : "";
     let value: string | null;
@@ -415,7 +414,7 @@ export class CourierService {
       value = null;
     } else {
       if (!trimmed.includes("{trackingId}")) {
-        throw new BadRequestException("ট্র্যাকিং URL টেমপ্লেটে {trackingId} থাকতে হবে — যেমন https://courier.example/track/{trackingId}");
+        throw badRequest("courier.trackingTemplateNeedsId");
       }
       value = trimmed;
     }
@@ -516,7 +515,7 @@ export class CourierService {
     const provider = this.providerOf(dto.provider);
     try {
       if (provider === "steadfast") {
-        if (!dto.apiKey?.trim() || !dto.secretKey?.trim()) throw new BadRequestException("apiKey and secretKey are required");
+        if (!dto.apiKey?.trim() || !dto.secretKey?.trim()) throw badRequest("courier.apiKeySecretRequired");
         const client = createCourierClient("steadfast", { apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() }) as SteadfastClient;
         await client.getBalance();
         // CC29: keyed by the credential fingerprint (Steadfast's
@@ -526,7 +525,7 @@ export class CourierService {
         await this.saveIntegration(organizationId, provider, { apiKey: dto.apiKey.trim(), secretKey: dto.secretKey.trim() }, key);
       } else if (provider === "pathao") {
         const required = ["clientId", "clientSecret", "username", "password"] as const;
-        for (const field of required) if (!dto[field]?.trim()) throw new BadRequestException(`${field} is required for Pathao`);
+        for (const field of required) if (!dto[field]?.trim()) throw badRequest("courier.fieldRequiredForPathao", { field: field });
         const creds = {
           baseUrl: dto.baseUrl?.trim() || PATHAO_PROD_BASE,
           clientId: dto.clientId!.trim(), clientSecret: dto.clientSecret!.trim(),
@@ -541,7 +540,7 @@ export class CourierService {
         await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, stores, externalAccountId: key } });
         return this.getConnection(organizationId, provider);
       } else if (provider === "redx") {
-        if (!dto.accessToken?.trim()) throw new BadRequestException("accessToken is required for RedX");
+        if (!dto.accessToken?.trim()) throw badRequest("courier.accessTokenRequiredForRedx");
         const baseUrl = dto.baseUrl?.trim() || REDX_DEFAULT_BASE;
         const client = createCourierClient("redx", { baseUrl, accessToken: dto.accessToken.trim() }) as RedxClient;
         const { areas } = await client.verify(); // real areas list from RedX
@@ -558,7 +557,7 @@ export class CourierService {
         // assigned-package-list call: bad credentials fail there
         // and nothing is saved.
         if (!dto.apiKey?.trim() || !dto.apiSecret?.trim() || !dto.userId?.trim()) {
-          throw new BadRequestException("eCourier এর জন্য API Key, API Secret ও User ID তিনটিই দরকার");
+          throw badRequest("courier.ecourierCredentialsRequired");
         }
         const creds = {
           baseUrl: dto.baseUrl?.trim() || ECOURIER_DEFAULT_BASE,
@@ -579,10 +578,10 @@ export class CourierService {
         // connect attempt REFUSES honestly and saves NOTHING:
         // no Integration row, no stored credential, no
         // "connected" state a merchant could mistake for live.
-        throw new BadRequestException(`${PAPERFLY_DEV_NOT_LIVE_MESSAGE} কোনো credential যাচাই বা সংরক্ষণ করা হয়নি।`);
+        throw badRequest("courier.paperflyDevNoCredential", { message: PAPERFLY_DEV_NOT_LIVE_MESSAGE });
       }
     } catch (e) {
-      if (e instanceof BadRequestException) throw e;
+      if (e instanceof BadRequestException || e instanceof ApiException) throw e;
       throw courierError(e);
     }
     await this.audit.log({ organizationId, userId: actorId, action: "courier.connected", entityType: "Integration", metadata: { provider, externalAccountId: courierAccountKey(provider, dto as any) } });
@@ -641,7 +640,7 @@ export class CourierService {
     return client.getCities().catch((e) => { throw courierError(e); });
   }
   async ecourierThanas(organizationId: string, city: string) {
-    if (!city?.trim()) throw new BadRequestException("আগে শহর (City) বেছে নিন");
+    if (!city?.trim()) throw badRequest("courier.chooseCityFirst");
     const client = await this.rawClientFor(organizationId, "ecourier") as EcourierClient;
     return client.getThanas(city.trim()).catch((e) => { throw courierError(e); });
   }
@@ -735,14 +734,14 @@ export class CourierService {
         const cityId = dto.pathao?.cityId;
         const zoneId = dto.pathao?.zoneId;
         if (!cityId || !zoneId) {
-          throw new BadRequestException("Pathao তে চার্জ জানতে প্রাপকের শহর ও জোন বেছে নিতে হবে — price plan API শহর/জোন ছাড়া দাম দিতে পারে না");
+          throw badRequest("courier.pathaoCityZoneForPrice");
         }
-        if (!(weightKg >= 0.5 && weightKg <= 10)) throw new BadRequestException("Pathao তে ওজন ০.৫–১০ কেজির মধ্যে হতে হয়");
+        if (!(weightKg >= 0.5 && weightKg <= 10)) throw badRequest("courier.pathaoWeightRange");
         let storeId = dto.pathao?.storeId;
         if (!storeId) {
           const stores = await c.getStores();
           const first = stores.find((s: any) => s.is_active === 1 || s.is_active === true) ?? stores[0];
-          if (!first) throw new BadRequestException("Pathao অ্যাকাউন্টে কোনো স্টোর পাওয়া যায়নি — আগে Pathao Merchant Panel এ স্টোর তৈরি করুন");
+          if (!first) throw badRequest("courier.pathaoNoStore");
           storeId = Number(first.store_id);
         }
         const plan = await c.pricePlan({
@@ -767,13 +766,13 @@ export class CourierService {
       // redx
       const c = client as RedxClient;
       if (!dto.redx?.deliveryAreaId) {
-        throw new BadRequestException("RedX এ চার্জ জানতে ডেলিভারি এলাকা (Area) বেছে নিতে হবে");
+        throw badRequest("courier.redxAreaForPrice");
       }
-      if (!(weightKg > 0 && weightKg <= 30)) throw new BadRequestException("RedX তে ওজন ০–৩০ কেজির মধ্যে হতে হয়");
+      if (!(weightKg > 0 && weightKg <= 30)) throw badRequest("courier.redxWeightRange");
       let codMajor = 0;
       if (dto.orderId) {
         const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
-        if (!order) throw new NotFoundException("Order not found in this organization");
+        if (!order) throw notFound("commerce.orderNotFoundInOrg");
         codMajor = order.isCod ? Number(BigInt(order.totalMinor)) / 100 : 0;
       }
       const charge = await c.calculateCharge({
@@ -791,7 +790,7 @@ export class CourierService {
         },
       };
     } catch (e) {
-      if (e instanceof BadRequestException || e instanceof NotFoundException) throw e;
+      if (e instanceof BadRequestException || e instanceof NotFoundException || e instanceof ApiException) throw e;
       throw courierError(e);
     }
   }
@@ -817,22 +816,20 @@ export class CourierService {
     // "not connected". (The framework adapter refuses too, as
     // a second line of defence; no shipment is ever created.)
     if (provider === "paperfly") {
-      throw new BadRequestException(PAPERFLY_DEV_NOT_LIVE_MESSAGE);
+      throw badRequest("courier.paperflyDevNotLive");
     }
     const order = await (this.prisma as any).order.findFirst({ where: { id: dto.orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     // CX12a: a practice order must never become a real parcel —
     // refused BEFORE any provider client is built or called.
     if ((order as any).isPractice) {
-      throw new BadRequestException("এটি একটি প্র্যাক্টিস অর্ডার — প্র্যাক্টিস অর্ডারে কুরিয়ার বুকিং করা যায় না");
+      throw badRequest("courier.practiceOrderCourierBlocked");
     }
     // ON4: a review-held order cannot ship unless staff pass the
     // explicit override — which is audited BEFORE proceeding.
     if ((order as any).reviewHold) {
       if (!dto.overrideReviewHold) {
-        throw new BadRequestException(
-          `এই অর্ডারটি পর্যালোচনার জন্য আটকানো আছে (কারণ: ${(order as any).reviewHoldReason ?? "—"}) — আগে অর্ডার থেকে ছাড় দিন, অথবা override নিশ্চিত করে আবার বুক করুন`,
-        );
+        throw badRequest("courier.orderReviewHoldBooking", { reason: (order as any).reviewHoldReason ?? "—" });
       }
       await this.audit.log({
         organizationId, userId: actorId, action: "courier.booking_review_hold_override",
@@ -871,7 +868,7 @@ export class CourierService {
       where: { organizationId, orderId: order.id, provider },
     });
     if (active && !["cancelled", "returned"].includes(active.status)) {
-      throw new BadRequestException(`এই অর্ডারের পার্সেল ${provider} তে ইতিমধ্যে বুক করা আছে (Tracking: ${active.trackingCode}, স্ট্যাটাস: ${active.status})`);
+      throw badRequest("courier.parcelAlreadyBooked", { provider: provider, tracking: active.trackingCode, status: active.status });
     }
     const customer = order.customerId
       ? await (this.prisma as any).customer.findFirst({ where: { id: order.customerId, organizationId } })
@@ -880,7 +877,7 @@ export class CourierService {
     const recipientPhone = dto.recipientPhone?.trim() || customer?.phone || "";
     const recipientAddress = dto.recipientAddress?.trim() ?? "";
     if (!recipientName || !recipientPhone || recipientAddress.length < 8) {
-      throw new BadRequestException("প্রাপকের নাম, ফোন ও পূর্ণ ঠিকানা (কমপক্ষে ৮ অক্ষর) দরকার");
+      throw badRequest("courier.recipientDetailsRequired");
     }
     const items = ((await (this.prisma as any).orderItem?.findMany({ where: { orderId: order.id } })?.catch(() => [])) ?? []) as any[];
     const codMajor = order.isCod ? Number(BigInt(order.totalMinor)) / 100 : 0;
@@ -915,7 +912,7 @@ export class CourierService {
         pathao: dto.pathao, redx: dto.redx, ecourier: dto.ecourier,
       });
     } catch (e) {
-      if (e instanceof BadRequestException) throw e;
+      if (e instanceof BadRequestException || e instanceof ApiException) throw e;
       throw courierError(e);
     }
     const consignmentId = booked.consignmentId;
@@ -1001,8 +998,8 @@ export class CourierService {
   }) {
     const provider = this.providerOf(dto.provider);
     const orderIds = [...new Set((dto.orderIds ?? []).filter(Boolean))];
-    if (orderIds.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
-    if (orderIds.length > 50) throw new BadRequestException("একবারে সর্বোচ্চ ৫০টি অর্ডার বুক করা যায়");
+    if (orderIds.length === 0) throw badRequest("courier.selectAtLeastOneOrder");
+    if (orderIds.length > 50) throw badRequest("courier.bulkBookMax");
     const results: { orderId: string; ok: boolean; skipped?: boolean; shipmentId?: string; trackingCode?: string; status?: string; error?: string }[] = [];
     for (const orderId of orderIds) {
       const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
@@ -1065,8 +1062,8 @@ export class CourierService {
   /** Milestone 53: one shipment's shipping label as a real PDF. */
   async labelPdf(organizationId: string, shipmentId: string): Promise<Buffer> {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
-    if (!shipment) throw new NotFoundException("Shipment not found");
-    if (!shipment.trackingCode && !shipment.consignmentId) throw new BadRequestException("Shipment has no tracking code yet");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
+    if (!shipment.trackingCode && !shipment.consignmentId) throw badRequest("courier.shipmentNoTrackingCode");
     const sender = await this.orgSender(organizationId);
     return buildPdf([this.labelPageFor(shipment, sender)]);
   }
@@ -1079,14 +1076,14 @@ export class CourierService {
   async labelsPdf(organizationId: string, shipmentIds: string[], options?: { maxLabels?: number }): Promise<Buffer> {
     const cap = options?.maxLabels ?? 50;
     const ids = [...new Set((shipmentIds ?? []).filter(Boolean))];
-    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি পার্সেল বেছে নিন");
-    if (ids.length > cap) throw new BadRequestException(cap === 50 ? "একবারে সর্বোচ্চ ৫০টি লেবেল ডাউনলোড করা যায়" : `একবারে সর্বোচ্চ ${cap}টি লেবেল ডাউনলোড করা যায়`);
+    if (ids.length === 0) throw badRequest("courier.selectAtLeastOneParcel");
+    if (ids.length > cap) throw badRequest("courier.labelDownloadCap", { cap });
     const sender = await this.orgSender(organizationId);
     const pages = [];
     for (const id of ids) {
       const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id, organizationId } });
-      if (!shipment) throw new NotFoundException(`Shipment not found: ${id}`);
-      if (!shipment.trackingCode && !shipment.consignmentId) throw new BadRequestException("Shipment has no tracking code yet");
+      if (!shipment) throw notFound("courier.shipmentNotFoundWithId", { id: id });
+      if (!shipment.trackingCode && !shipment.consignmentId) throw badRequest("courier.shipmentNoTrackingCode");
       pages.push(this.labelPageFor(shipment, sender));
     }
     return buildPdf(pages);
@@ -1121,7 +1118,7 @@ export class CourierService {
   /** Milestone 53: per-order invoice as a real PDF (stored order data). */
   async invoicePdf(organizationId: string, orderId: string): Promise<Buffer> {
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const sender = await this.orgSender(organizationId);
     return buildPdf([await this.invoicePageFor(organizationId, order, sender)]);
   }
@@ -1134,13 +1131,13 @@ export class CourierService {
   async invoicesPdf(organizationId: string, orderIds: string[], options?: { template?: PrintTemplateOptions | null; maxOrders?: number }): Promise<Buffer> {
     const cap = options?.maxOrders ?? 50;
     const ids = [...new Set((orderIds ?? []).filter(Boolean))];
-    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
-    if (ids.length > cap) throw new BadRequestException(cap === 50 ? "একবারে সর্বোচ্চ ৫০টি ইনভয়েস ডাউনলোড করা যায়" : `একবারে সর্বোচ্চ ${cap}টি ইনভয়েস ডাউনলোড করা যায়`);
+    if (ids.length === 0) throw badRequest("courier.selectAtLeastOneOrder");
+    if (ids.length > cap) throw badRequest("courier.invoiceDownloadCap", { cap });
     const sender = await this.orgSender(organizationId);
     const pages = [];
     for (const id of ids) {
       const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
-      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      if (!order) throw notFound("courier.orderNotFoundWithId", { id: id });
       pages.push(await this.invoicePageFor(organizationId, order, sender, options?.template ?? null));
     }
     return buildPdf(pages);
@@ -1209,14 +1206,14 @@ export class CourierService {
    * verifications, never below 0. */
   async challansPdf(organizationId: string, orderIds: string[], template?: PrintTemplateOptions | null): Promise<Buffer> {
     const ids = [...new Set((orderIds ?? []).filter(Boolean))];
-    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
-    if (ids.length > 100) throw new BadRequestException("একবারে সর্বোচ্চ ১০০টি চালান তৈরি করা যায়");
+    if (ids.length === 0) throw badRequest("courier.selectAtLeastOneOrder");
+    if (ids.length > 100) throw badRequest("courier.challanBatchMax");
     const sender = await this.orgSender(organizationId);
     const sums = await this.approvedSumsByOrder(organizationId, ids);
     const pages = [];
     for (const id of ids) {
       const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
-      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      if (!order) throw notFound("courier.orderNotFoundWithId", { id: id });
       const { items, customer } = await this.orderCustomerItems(organizationId, order);
       const total = BigInt(order.totalMinor ?? 0);
       const paidRaw = sums.get(String(order.id)) ?? 0n;
@@ -1244,13 +1241,13 @@ export class CourierService {
    * packingSlipPage in pdf.ts for the field-for-field mapping). */
   async packingSlipsPdf(organizationId: string, orderIds: string[], template?: PrintTemplateOptions | null): Promise<Buffer> {
     const ids = [...new Set((orderIds ?? []).filter(Boolean))];
-    if (ids.length === 0) throw new BadRequestException("কমপক্ষে একটি অর্ডার বেছে নিন");
-    if (ids.length > 100) throw new BadRequestException("একবারে সর্বোচ্চ ১০০টি প্যাকিং স্লিপ তৈরি করা যায়");
+    if (ids.length === 0) throw badRequest("courier.selectAtLeastOneOrder");
+    if (ids.length > 100) throw badRequest("courier.packingSlipBatchMax");
     const sender = await this.orgSender(organizationId);
     const pages = [];
     for (const id of ids) {
       const order = await (this.prisma as any).order.findFirst({ where: { id, organizationId } });
-      if (!order) throw new NotFoundException(`Order not found: ${id}`);
+      if (!order) throw notFound("courier.orderNotFoundWithId", { id: id });
       const { items, customer } = await this.orderCustomerItems(organizationId, order);
       pages.push(packingSlipPage({
         orgName: sender.name, orgPhone: sender.phone,
@@ -1279,7 +1276,7 @@ export class CourierService {
   async performance(organizationId: string, daysInput?: number | string | null, now = new Date()) {
     const days = daysInput === undefined || daysInput === null || daysInput === "" ? 30 : Number(daysInput);
     if (!Number.isInteger(days) || days < 1 || days > 365) {
-      throw new BadRequestException("days must be an integer between 1 and 365");
+      throw badRequest("commerce.daysRange");
     }
     const end = new Date(dhakaDayStartUtc(now).getTime() + 86400000);
     const start = new Date(end.getTime() - days * 86400000);
@@ -1305,8 +1302,8 @@ export class CourierService {
 
   async syncShipment(organizationId: string, shipmentId: string) {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
-    if (!shipment) throw new NotFoundException("Shipment not found");
-    if (!shipment.trackingCode) throw new BadRequestException("Shipment has no tracking code yet");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
+    if (!shipment.trackingCode) throw badRequest("courier.shipmentNoTrackingCode");
     const provider = this.providerOf(shipment.provider);
     // CC29: sync through the account the shipment was BOOKED on
     // (its recorded integrationId) — another account's
@@ -1482,12 +1479,10 @@ export class CourierService {
     status?: string; note?: string;
   }) {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
-    if (!shipment) throw new NotFoundException("Shipment not found");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
     const status = String(dto.status ?? "").trim();
     if (!(COURIER_STATUSES as readonly string[]).includes(status)) {
-      throw new BadRequestException(
-        `স্ট্যাটাসটি চেনা যাচ্ছে না — যেকোনো একটি বেছে নিন: ${COURIER_STATUSES.join(", ")}`,
-      );
+      throw badRequest("courier.courierStatusUnknown", { statuses: COURIER_STATUSES.join(", ") });
     }
     const note = dto.note?.trim() ? dto.note.trim().slice(0, 500) : null;
     if (status === shipment.status) {
@@ -1515,7 +1510,7 @@ export class CourierService {
    * shipment detail view (newest first, capped). */
   async listShipmentEvents(organizationId: string, shipmentId: string) {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
-    if (!shipment) throw new NotFoundException("Shipment not found");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
     const delegate = (this.prisma as any).courierShipmentEvent;
     const events = delegate?.findMany
       ? await delegate.findMany({
@@ -1544,14 +1539,14 @@ export class CourierService {
     const parseDay = (v?: string) => {
       if (!v) return null;
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
-      if (!m) throw new BadRequestException("from/to must be YYYY-MM-DD");
+      if (!m) throw badRequest("courier.fromToDateFormat");
       return dayStart(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12)));
     };
     const fromDay = parseDay(range?.from);
     const toDay = parseDay(range?.to);
     if (fromDay) start = fromDay;
     if (toDay) end = new Date(toDay.getTime() + 86400000);
-    if (end.getTime() <= start.getTime()) throw new BadRequestException("to must be on or after from");
+    if (end.getTime() <= start.getTime()) throw badRequest("courier.toBeforeFrom");
 
     const shipments = await (this.prisma as any).courierShipment.findMany({
       where: { organizationId, createdAt: { gte: start, lt: end } },
@@ -1668,9 +1663,9 @@ export class CourierService {
   /** CX6 — tenant-side: the public tracking link for a shipment. */
   async trackingLinkForShipment(organizationId: string, shipmentId: string) {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { id: shipmentId, organizationId } });
-    if (!shipment) throw new NotFoundException("Shipment not found");
+    if (!shipment) throw notFound("courier.shipmentNotFound");
     const token = await this.ensureTrackingToken(organizationId, shipment);
-    if (!token) throw new BadGatewayException("ট্র্যাকিং লিংক তৈরি করা যায়নি — আবার চেষ্টা করুন");
+    if (!token) throw new ApiException("courier.trackingLinkCreateFailed", undefined, 502);
     return { token, link: trackingLinkFor(token) };
   }
 
@@ -1686,7 +1681,7 @@ export class CourierService {
    */
   async publicTracking(token: string) {
     const shipment = await (this.prisma as any).courierShipment.findFirst({ where: { trackingToken: token } });
-    if (!shipment) throw new NotFoundException("এই ট্র্যাকিং লিংকটি পাওয়া যায়নি");
+    if (!shipment) throw notFound("courier.trackingLinkNotFound");
     const org = await (this.prisma as any).organization.findFirst({ where: { id: shipment.organizationId } }).catch(() => null);
     const order = await (this.prisma as any).order.findFirst({ where: { id: shipment.orderId, organizationId: shipment.organizationId }, select: { externalNumber: true } }).catch(() => null);
     // NF9 (FB4): the own-rider's latest fix rides this payload

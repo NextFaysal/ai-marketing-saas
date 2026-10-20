@@ -117,11 +117,11 @@ describe("CN13 ad-set destination validation + save", () => {
     global.fetch = graphFetch().fetchFn as any;
     seedPlan(tables);
     await expect(svc.addAdSet("org", "plan-1", { ...WA_SET, whatsappIntegrationId: undefined })).rejects.toThrow(/never typed in free-hand/);
-    await expect(svc.addAdSet("org", "plan-1", { ...WA_SET, whatsappIntegrationId: "int-nope" })).rejects.toThrow(/not found in this organization/);
+    await expect(svc.addAdSet("org", "plan-1", { ...WA_SET, whatsappIntegrationId: "int-nope" })).rejects.toMatchObject({ code: "campaigns.thatWhatsappConnectionWasNotFound" });
     const off = setup({ waStatus: "DISCONNECTED" });
     global.fetch = graphFetch().fetchFn as any;
     seedPlan(off.tables);
-    await expect(off.svc.addAdSet("org", "plan-1", WA_SET)).rejects.toThrow(/reconnect it/);
+    await expect(off.svc.addAdSet("org", "plan-1", WA_SET)).rejects.toMatchObject({ code: "campaigns.thatWhatsappConnectionIsReconnectIt" });
   });
 
   it("refuses: number attached without the destination, wrong objective, wrong goal, catalog/lead-form conflicts", async () => {

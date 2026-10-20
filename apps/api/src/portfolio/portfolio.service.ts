@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { orgFlagEnabled } from "../common/feature-flags";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * Agency portfolio (Phase L): a cross-organization rollup for the
@@ -89,9 +90,9 @@ export class PortfolioService {
   }
 
   async sendWeeklyDigest(userId: string) {
-    if (!this.email) throw new BadRequestException("Email is not configured in this deployment");
+    if (!this.email) throw badRequest("portfolio.emailIsNotConfiguredInThis");
     const user = await (this.prisma as any).user.findFirst({ where: { id: userId } });
-    if (!user?.email) throw new BadRequestException("User email not found");
+    if (!user?.email) throw badRequest("portfolio.userEmailNotFound");
     const portfolio = await this.portfolioForUser(userId);
     const fmt = (minor: string, currency: string) => `${currency} ${(Number(BigInt(minor)) / 100).toLocaleString("en-US")}`;
     const lines = [

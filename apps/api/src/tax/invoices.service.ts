@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { notFound } from "../i18n/api-exception";
 
 /**
  * EC23: BD fiscal year (Jul–Jun) for a date, judged in Asia/Dhaka.
@@ -29,7 +30,7 @@ export class InvoicesService {
     const order = await (db as any).order.findFirst({
       where: { id: orderId, organizationId: orgId },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("tax.orderNotFoundInThisOrganization");
     return order;
   }
 
@@ -88,7 +89,7 @@ export class InvoicesService {
       where: { id: orderId, organizationId: orgId },
       include: { customer: true, items: true, store: true },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("tax.orderNotFoundInThisOrganization");
     const settingTable = (this.prisma as any).taxSetting;
     const setting = settingTable?.findFirst
       ? await settingTable.findFirst({ where: { organizationId: orgId } }).catch(() => null)

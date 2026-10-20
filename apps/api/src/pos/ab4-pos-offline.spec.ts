@@ -328,7 +328,7 @@ describe("AB4 POS offline sync — classification", () => {
     await expect(s.offline.discard("org-1", "staff-1", synced.id, {}))
       .rejects.toThrow("সিঙ্ক হয়ে গেছে — বাদ দেওয়া যাবে না");
     // Repost is conflict-only; foreign rows 404.
-    await expect(s.offline.repost("org-1", "staff-1", synced.id, {})).rejects.toThrow(BadRequestException);
+    await expect(s.offline.repost("org-1", "staff-1", synced.id, {})).rejects.toMatchObject({ code: "pos.conflict" });
     await expect(s.offline.discard("org-2", "staff-1", synced.id, {})).rejects.toThrow("পাওয়া যায়নি");
   });
 

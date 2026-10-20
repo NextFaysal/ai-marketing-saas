@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { HttpException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmFactory, providerForOrg } from "./llm/llm.factory";
 import { ToolsService } from "./tools.service";
@@ -10,6 +10,7 @@ import type { Role } from "@repo/db";
 import { followUpSuggestions } from "./suggestions";
 import { estimateTokens, chunkTextByWords, LlmMessage, LlmProvider, LlmResult } from "./llm/llm.types";
 import { formatMinor } from "@repo/contracts";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
 
 const GROUNDED_SYSTEM = `You are the AI assistant inside an ecommerce marketing SaaS.
 Rules you must follow:
@@ -200,15 +201,15 @@ export class ChatService {
     const data: Record<string, unknown> = {};
     if (patch.title !== undefined) {
       const title = patch.title.trim();
-      if (!title) throw new BadRequestException("Title cannot be empty");
+      if (!title) throw badRequest("ai.titleCannotBeEmpty");
       data.title = title.slice(0, 120);
     }
     if (patch.pinned !== undefined) data.pinnedAt = patch.pinned ? new Date() : null;
     if (patch.persona !== undefined) {
-      if (!PERSONA_IDS.includes(patch.persona)) throw new BadRequestException(`persona must be one of: ${PERSONA_IDS.join(", ")}`);
+      if (!PERSONA_IDS.includes(patch.persona)) throw badRequest("ai.personaMustBeOneOf", { p1: PERSONA_IDS.join(", ") });
       data.persona = patch.persona;
     }
-    if (Object.keys(data).length === 0) throw new BadRequestException("Nothing to update: send title, pinned and/or persona");
+    if (Object.keys(data).length === 0) throw badRequest("ai.nothingToUpdateSendTitlePinned");
     return (this.prisma as any).aIConversation.update({ where: { id: conversationId }, data });
   }
 
@@ -260,7 +261,7 @@ export class ChatService {
     const conv = await (this.prisma as any).aIConversation.findFirst({
       where: { id: conversationId, organizationId, userId },
     });
-    if (!conv) throw new NotFoundException("Conversation not found");
+    if (!conv) throw notFound("ai.conversationNotFound");
     return conv;
   }
 
@@ -275,7 +276,7 @@ export class ChatService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "ai.aiFeaturesTemporarilyPausedPlatformWide" : "ai.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -284,7 +285,7 @@ export class ChatService {
       where: { organizationId, feature: "chat", createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(`Daily AI message limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`, 429);
+      throw new ApiException("ai.dailyAiMessageLimitReachedFor", { limit: limit }, 429);
     }
   }
 

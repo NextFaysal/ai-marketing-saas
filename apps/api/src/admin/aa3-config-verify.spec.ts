@@ -120,7 +120,7 @@ describe("AA3 — Meta probe (true credential proof)", () => {
     const audit = recordingAudit();
     const svc = new AdminService(prisma, audit as any);
     await expect(svc.updatePlatformConfig(actor, "meta", { appId: "123456", appSecret: "wrong" }))
-      .rejects.toThrow(/NOT saved: Invalid Client Secret/);
+      .rejects.toMatchObject({ code: "admin.metaAppVerificationFailedTheSetting" });
     expect(prisma.rows.find((r: any) => r.key === "metaAppConfig")).toBeUndefined();
     expect(audit.calls.some((c) => c.action === "admin.platform_config_verify_failed")).toBe(true);
   });
@@ -155,7 +155,7 @@ describe("AA3 — bKash probe (true credential proof)", () => {
     const svc = new AdminService(prisma, audit as any);
     await expect(svc.updatePlatformConfig(actor, "bkash", {
       appKey: "k", username: "u", appSecret: "bad", password: "bad", sandbox: true,
-    })).rejects.toThrow(/NOT saved: Invalid merchant credential/);
+    })).rejects.toMatchObject({ code: "admin.bkashVerificationFailedTheSettingWas" });
     expect(prisma.rows.find((r: any) => r.key === "bkashConfig")).toBeUndefined();
     expect(audit.calls.some((c) => c.action === "admin.platform_config_verify_failed")).toBe(true);
     const out: any = await svc.testBkash();

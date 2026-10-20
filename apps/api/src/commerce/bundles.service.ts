@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import type { BundleItemInput } from "./ec29-bundles";
 import type { BundleDto } from "./commerce.dto";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC29 — staff Bundles CRUD + the public/storefront read models.
@@ -138,32 +139,32 @@ export class BundlesService {
   async validateSlots(orgId: string, bundleId: string | null, rawSlots: unknown): Promise<any[]> {
     void bundleId;
     if (!Array.isArray(rawSlots)) {
-      throw new BadRequestException("বান্ডলের স্লটের তালিকা দিতে হবে");
+      throw badRequest("commerce.bundleSlotsRequired");
     }
     if (rawSlots.length > 6) {
-      throw new BadRequestException("বান্ডলে সর্বোচ্চ ৬টি স্লট থাকতে পারবে");
+      throw badRequest("commerce.bundleSlotsMax");
     }
     const out: any[] = [];
     for (let i = 0; i < rawSlots.length; i++) {
       const entry: any = (rawSlots as any[])[i] ?? {};
       const label = typeof entry.label === "string" ? entry.label.trim() : "";
-      if (!label) throw new BadRequestException("প্রতিটি স্লটের লেবেল আবশ্যক");
+      if (!label) throw badRequest("commerce.slotLabelRequired");
       if (label.length > 120) {
-        throw new BadRequestException("স্লটের লেবেল সর্বোচ্চ ১২০ অক্ষরের হতে পারবে");
+        throw badRequest("commerce.slotLabelTooLong");
       }
       const chooseQty = entry.chooseQty;
       if (!Number.isInteger(chooseQty) || chooseQty < 1 || chooseQty > 20) {
-        throw new BadRequestException(`"${label}" স্লটে বেছে নেওয়ার সংখ্যা ১–২০ হতে হবে`);
+        throw badRequest("commerce.slotChooseQtyRange", { label: label });
       }
       const sourceType = entry.sourceType;
       if (sourceType !== "category" && sourceType !== "products") {
-        throw new BadRequestException(`"${label}" স্লটের ধরন সঠিক নয়`);
+        throw badRequest("commerce.slotTypeInvalid", { label: label });
       }
       let sourceRef: any;
       if (sourceType === "category") {
         const categoryId = entry.sourceRef?.categoryId;
         if (typeof categoryId !== "string" || !categoryId) {
-          throw new BadRequestException(`"${label}" স্লটের জন্য ক্যাটাগরি বেছে নিন`);
+          throw badRequest("commerce.slotCategoryRequired", { label: label });
         }
         const catTable = (this.prisma as any).category ?? (this.prisma as any).productCategory;
         const cat = catTable?.findFirst
@@ -172,18 +173,18 @@ export class BundlesService {
               .catch(() => null)
           : null;
         if (!cat) {
-          throw new BadRequestException(`"${label}" স্লটের ক্যাটাগরি পাওয়া যায়নি (এই সংস্থার নয়)`);
+          throw badRequest("commerce.slotCategoryNotFound", { label: label });
         }
         sourceRef = { categoryId };
       } else {
         const rawIds = entry.sourceRef?.productIds;
         if (!Array.isArray(rawIds) || rawIds.length < 1 || rawIds.length > 50) {
-          throw new BadRequestException(`"${label}" স্লটে ১–৫০টি পণ্য দিতে হবে`);
+          throw badRequest("commerce.slotProductCountRange", { label: label });
         }
         const productIds: string[] = [];
         for (const pid of rawIds) {
           if (typeof pid !== "string" || !pid) {
-            throw new BadRequestException(`"${label}" স্লটের প্রতিটি পণ্যের আইডি দিতে হবে`);
+            throw badRequest("commerce.slotProductIdRequired", { label: label });
           }
           if (!productIds.includes(pid)) productIds.push(pid);
         }
@@ -192,7 +193,7 @@ export class BundlesService {
             .findFirst({ where: { id: pid, organizationId: orgId } })
             .catch(() => null);
           if (!product) {
-            throw new BadRequestException(`"${label}" স্লটের পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${pid}`);
+            throw badRequest("commerce.slotProductNotFound", { label: label, productId: pid });
           }
         }
         sourceRef = { productIds };
@@ -247,14 +248,12 @@ export class BundlesService {
     const hasPicks = Array.isArray(picks) ? picks.length > 0 : picks != null;
     if (slots.length === 0) {
       if (hasPicks) {
-        throw new BadRequestException("এই বান্ডলে কোনো স্লট নেই — এতে পিক দেওয়া যাবে না");
+        throw badRequest("commerce.bundleNoSlotsForPicks");
       }
       return [];
     }
     if (!Array.isArray(picks) || picks.length === 0) {
-      throw new BadRequestException(
-        `বান্ডলের "${slots[0].label}" স্লটের জন্য পণ্য বেছে নিন`,
-      );
+      throw badRequest("commerce.bundleSlotPickRequired", { label: slots[0].label });
     }
     const slotById = new Map<string, any>(slots.map((s: any) => [String(s.id), s]));
     const bySlot = new Map<string, any[]>();
@@ -262,11 +261,11 @@ export class BundlesService {
       const slotId = raw?.slotId;
       const productId = raw?.productId;
       if (typeof slotId !== "string" || !slotId || typeof productId !== "string" || !productId) {
-        throw new BadRequestException("প্রতিটি পিকের স্লট ও পণ্যের আইডি দিতে হবে");
+        throw badRequest("commerce.pickSlotAndProductRequired");
       }
       const slot = slotById.get(slotId);
       if (!slot) {
-        throw new BadRequestException("পিকে অজানা স্লট দেওয়া হয়েছে — এই বান্ডলে সেই স্লট নেই");
+        throw badRequest("commerce.pickUnknownSlot");
       }
       const list = bySlot.get(slotId) ?? [];
       list.push({ slotId, productId });
@@ -276,14 +275,12 @@ export class BundlesService {
     for (const slot of slots) {
       const list = bySlot.get(String(slot.id)) ?? [];
       if (list.length !== Number(slot.chooseQty ?? 1)) {
-        throw new BadRequestException(
-          `"${slot.label}" স্লট থেকে ঠিক ${Number(slot.chooseQty ?? 1)}টি পণ্য বেছে নিন`,
-        );
+        throw badRequest("commerce.slotExactPickCount", { label: slot.label, count: Number(slot.chooseQty ?? 1) });
       }
       const seen = new Set<string>();
       for (const pick of list) {
         if (seen.has(pick.productId)) {
-          throw new BadRequestException(`"${slot.label}" স্লটে একই পণ্য দুবার বেছে নেওয়া যাবে না`);
+          throw badRequest("commerce.slotDuplicatePick", { label: slot.label });
         }
         seen.add(pick.productId);
       }
@@ -293,9 +290,7 @@ export class BundlesService {
       const poolIds = new Set(pool.map((p: any) => String(p.id)));
       for (const pick of list) {
         if (!poolIds.has(pick.productId)) {
-          throw new BadRequestException(
-            `"${slot.label}" স্লটে এই পণ্যটি বেছে নেওয়া যাবে না (পণ্যটি পাওয়া যাচ্ছে না বা সক্রিয় নয়)`,
-          );
+          throw badRequest("commerce.slotPickNotAllowed", { label: slot.label });
         }
         normalized.push(pick);
       }
@@ -341,7 +336,7 @@ export class BundlesService {
 
   private async loadOr404(orgId: string, id: string): Promise<any> {
     const row = await this.table().findFirst({ where: { id, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Bundle not found in this organization");
+    if (!row) throw notFound("commerce.bundleNotFoundInOrg");
     return row;
   }
 
@@ -353,42 +348,42 @@ export class BundlesService {
    */
   async validateItems(orgId: string, raw: unknown): Promise<BundleItemInput[]> {
     if (!Array.isArray(raw)) {
-      throw new BadRequestException("বান্ডলে পণ্যের তালিকা দিতে হবে");
+      throw badRequest("commerce.bundleProductsRequired");
     }
     if (raw.length < 2) {
-      throw new BadRequestException("বান্ডলে কমপক্ষে ২টি পণ্য থাকতে হবে");
+      throw badRequest("commerce.bundleMinProducts");
     }
     if (raw.length > 10) {
-      throw new BadRequestException("বান্ডলে সর্বোচ্চ ১০টি পণ্য থাকতে পারবে");
+      throw badRequest("commerce.bundleMaxProducts");
     }
     const seen = new Set<string>();
     const out: BundleItemInput[] = [];
     for (const entry of raw as any[]) {
       const productId = entry?.productId;
       if (typeof productId !== "string" || !productId) {
-        throw new BadRequestException("বান্ডলের প্রতিটি পণ্যের আইডি দিতে হবে");
+        throw badRequest("commerce.bundleProductIdRequired");
       }
       const qty = entry?.qty;
       if (!Number.isInteger(qty) || qty < 1 || qty > 99) {
-        throw new BadRequestException("বান্ডলের প্রতিটি পণ্যের পরিমাণ ১–৯৯ হতে হবে");
+        throw badRequest("commerce.bundleProductQtyRange");
       }
       let variantSku: string | null = null;
       if (entry?.variantSku !== null && entry?.variantSku !== undefined && entry?.variantSku !== "") {
         if (typeof entry.variantSku !== "string" || entry.variantSku.length > 100) {
-          throw new BadRequestException("বান্ডলের ভ্যারিয়েন্ট SKU সঠিক নয়");
+          throw badRequest("commerce.bundleVariantSkuInvalid");
         }
         variantSku = entry.variantSku;
       }
       const pairKey = `${productId}::${variantSku ?? ""}`;
       if (seen.has(pairKey)) {
-        throw new BadRequestException("একই পণ্য/ভ্যারিয়েন্ট বান্ডলে দুবার দেওয়া যাবে না");
+        throw badRequest("commerce.bundleDuplicateProduct");
       }
       seen.add(pairKey);
       const product = await (this.prisma as any).product.findFirst({
         where: { id: productId, organizationId: orgId },
       });
       if (!product) {
-        throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${productId}`);
+        throw badRequest("commerce.productNotOfOrg", { productId });
       }
       if (variantSku) {
         const variantTable = (this.prisma as any).productVariant;
@@ -398,7 +393,7 @@ export class BundlesService {
               .catch(() => null)
           : null;
         if (!variant) {
-          throw new BadRequestException("বান্ডলের ভ্যারিয়েন্ট SKU পাওয়া যায়নি");
+          throw badRequest("commerce.bundleVariantSkuNotFound");
         }
       }
       out.push({ productId, variantSku, qty });
@@ -467,7 +462,7 @@ export class BundlesService {
   private parseBundlePrice(raw: unknown): bigint {
     const s = raw === null || raw === undefined ? "" : String(raw).trim();
     if (!/^\d+$/.test(s) || BigInt(s) <= 0n) {
-      throw new BadRequestException("বান্ডলের দাম সঠিক ধনাত্মক সংখ্যা হতে হবে");
+      throw badRequest("commerce.bundlePriceInvalid");
     }
     return BigInt(s);
   }
@@ -490,7 +485,7 @@ export class BundlesService {
 
   async create(orgId: string, actorId: string, dto: BundleDto) {
     const name = String(dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("বান্ডলের নাম আবশ্যক");
+    if (!name) throw badRequest("commerce.bundleNameRequired");
     const bundlePriceMinor = this.parseBundlePrice(dto.bundlePriceMinor);
     const items = await this.validateItems(orgId, dto.items);
     // AB5 (AX8): slots present (incl. []) are validated BEFORE
@@ -524,7 +519,7 @@ export class BundlesService {
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("বান্ডলের নাম আবশ্যক");
+      if (!name) throw badRequest("commerce.bundleNameRequired");
       data.name = name;
     }
     if (dto.description !== undefined) data.description = dto.description;

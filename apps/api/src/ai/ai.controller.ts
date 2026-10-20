@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpException, NotFoundException, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ReportsService, ReportType, ReportLanguage } from "./reports.service";
 import { ChatService } from "./chat.service";
@@ -18,6 +18,7 @@ import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
 
 import { GrowthCopilotService } from "./growth-copilot.service";
+import { ApiException, badRequest, notFound } from "../i18n/api-exception";
 
 @PermissionArea("ai")
 @Controller("organizations/:organizationId/ai")
@@ -173,9 +174,9 @@ export class AiController {
   @Post("proposals/:proposalId/approval-link") @UseGuards(RolesGuard) @Roles("OWNER", "ADMIN", "MARKETING_MANAGER")
   async approvalLink(@Param("organizationId") orgId: string, @Param("proposalId") proposalId: string, @Req() req: any) {
     const secret = approvalLinkSecret();
-    if (!secret) throw new BadRequestException("অনুমোদন লিংক চালু নেই — সার্ভারে ASSISTANT_LINK_SECRET (বা INTERNAL_JOB_SECRET) সেট করা হয়নি।");
+    if (!secret) throw badRequest("ai.theApprovalLinkIsNotEnabled");
     const row = await this.proposals.list(orgId);
-    if (!(row as any[]).some((r) => r.id === proposalId)) throw new NotFoundException("Proposal not found");
+    if (!(row as any[]).some((r) => r.id === proposalId)) throw notFound("ai.proposalNotFound");
     const { token, expiresAt } = mintApprovalToken(secret, proposalId);
     const proto = (req?.headers?.["x-forwarded-proto"] as string) || req?.protocol || "https";
     const host = req?.headers?.host as string;
@@ -202,7 +203,7 @@ export class AiController {
   @Post("chat/attachments")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: ATTACHMENT_MAX_BYTES } }))
   async chatAttachment(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new HttpException("কোনো ফাইল পাওয়া যায়নি", 400);
+    if (!file) throw new ApiException("ai.noFileWasFound", undefined, 400);
     return processChatAttachment(orgId, user.userId, file, this.vision);
   }
 

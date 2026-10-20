@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { SocialService, type MediaFileStream } from "./social.service";
 import { SocialOAuthService } from "./social-oauth.service";
@@ -24,6 +24,7 @@ import { buildMonthlyReportCsv, buildMonthlyReportPdf } from "./social-insights.
 import { CurrentUser, AuthUser, Public, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"];
 
@@ -623,7 +624,7 @@ export class SocialController {
       total += buf.length;
       if (total > 5_000_000) {
         (req as unknown as { destroy?: () => void }).destroy?.();
-        throw new BadRequestException("CSV ফাইলটি অনেক বড় — সর্বোচ্চ ৫ MB-এর মধ্যে রাখুন।");
+        throw badRequest("social.theCsvFileIsTooLarge");
       }
       chunks.push(buf);
     }
@@ -825,7 +826,7 @@ export class PublicMediaController {
     // including 256 MB videos — so it streams with Range support
     // instead of buffering the whole object into memory.
     const file = await this.social.resolvePublicMediaStream(token, range);
-    if (!file) throw new NotFoundException("Media not found");
+    if (!file) throw notFound("social.mediaNotFound");
     sendMediaStream(res, file);
   }
 }
@@ -854,7 +855,7 @@ export class PublicSocialLinkController {
     @Res() res: Response,
   ) {
     const result = await this.links.recordClick(token, userAgent ?? null);
-    if (!result || !result.url) throw new NotFoundException("Link not found");
+    if (!result || !result.url) throw notFound("social.linkNotFound");
     return res.redirect(302, result.url);
   }
 

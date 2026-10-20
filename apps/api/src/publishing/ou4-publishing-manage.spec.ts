@@ -131,12 +131,12 @@ describe("OU4 PublishingService — TikTok status mapping", () => {
 describe("OU4 PublishingService — honest config failures", () => {
   it("a missing ad account throws the accountSecrets error", async () => {
     const svc = new PublishingService(prismaMock(), audit);
-    await expect(svc.crossPlatformCampaignStatus("org", "acc-nope", "google", "555")).rejects.toThrow(/Ad account not found/);
-    await expect(svc.crossPlatformSetCampaignStatus("org", "u1", "acc-nope", "tiktok", "777", "PAUSED")).rejects.toThrow(/Ad account not found/);
+    await expect(svc.crossPlatformCampaignStatus("org", "acc-nope", "google", "555")).rejects.toMatchObject({ code: "publishing.adAccountNotFound" });
+    await expect(svc.crossPlatformSetCampaignStatus("org", "u1", "acc-nope", "tiktok", "777", "PAUSED")).rejects.toMatchObject({ code: "publishing.adAccountNotFound" });
   });
 
   it("an unsupported platform is refused", async () => {
     const svc = new PublishingService(prismaMock(), audit);
-    await expect(svc.crossPlatformCampaignStatus("org", "acc-g", "meta", "555")).rejects.toThrow(/Unsupported/);
+    await expect(svc.crossPlatformCampaignStatus("org", "acc-g", "meta", "555")).rejects.toMatchObject({ code: "publishing.unsupportedCrossPlatformStatusPlatformGoogle" });
   });
 });

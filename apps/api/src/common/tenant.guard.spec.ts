@@ -1,4 +1,5 @@
 import { TenantGuard, isArchivedOwnerPath, isOrgSecurityBypassPath } from "./tenant.guard";
+import { ApiException } from "../i18n";
 import { ForbiddenException } from "@nestjs/common";
 
 function ctxWith(membership: any, userId = "user-1", orgId = "org-1") {
@@ -14,12 +15,12 @@ describe("TenantGuard - tenant isolation", () => {
   it("blocks a user with no membership in the organization", async () => {
     const { ctx, prisma } = ctxWith(null);
     const guard = new TenantGuard(prisma);
-    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ code: "common.noOrgAccess", status: 403 });
   });
   it("blocks a SUSPENDED membership", async () => {
     const { ctx, prisma } = ctxWith({ status: "SUSPENDED", role: "OWNER" });
     const guard = new TenantGuard(prisma);
-    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ code: "common.noOrgAccess", status: 403 });
   });
   it("allows an ACTIVE member and attaches the membership", async () => {
     const { ctx, prisma, req } = ctxWith({ status: "ACTIVE", role: "ADMIN" });
@@ -32,7 +33,7 @@ describe("TenantGuard - tenant isolation", () => {
     // findUnique is keyed by userId+organizationId, so org-2 returns null in a real DB.
     const { ctx, prisma } = ctxWith(null, "user-1", "org-2");
     const guard = new TenantGuard(prisma);
-    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toMatchObject({ code: "common.noOrgAccess", status: 403 });
   });
 });
 
@@ -58,12 +59,12 @@ describe("TenantGuard — ORG3 archived organizations", () => {
 
   it("blocks a non-owner member entirely while archived", async () => {
     const { ctx, prisma } = archivedCtx(admin, ARCHIVED, "/organizations/org-1/members");
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toThrow(/archived by its owner/);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ catalogCode: "common.orgArchivedMember" });
   });
 
   it("blocks the owner outside the lifecycle/export allowlist", async () => {
     const { ctx, prisma } = archivedCtx(owner, ARCHIVED, "/organizations/org-1/products", "POST");
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toThrow(/restore it to continue/);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ catalogCode: "common.orgArchivedOwner" });
   });
 
   it("lets the owner restore", async () => {
@@ -90,7 +91,7 @@ describe("TenantGuard — ORG3 archived organizations", () => {
 
   it("platform suspension still wins over the archived branch", async () => {
     const { ctx, prisma } = archivedCtx(owner, { status: "SUSPENDED", archivedAt: new Date() }, "/organizations/org-1/restore", "POST");
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toThrow(/suspended by the platform team/);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.orgStatusBlocked", params: { status: "suspended" } });
   });
 
   it("isArchivedOwnerPath: allowlist shape", () => {

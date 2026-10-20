@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrderPushService } from "../commerce/order-push.service";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { OrderNotificationService } from "../order-notifications/order-notifications.service";
 import { computeSlaStage, SLA_DEFAULTS } from "./sla";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export interface FulfillmentItemLine { orderItemId: string; quantity: number; packed?: boolean }
 
@@ -35,7 +36,7 @@ export class FulfillmentService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId }, include: { items: true },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("fulfillment.orderNotFoundInThisOrganization");
     return order;
   }
 
@@ -71,7 +72,7 @@ export class FulfillmentService {
       shipment = await (this.prisma as any).courierShipment.findFirst({
         where: { id: dto.courierShipmentId, organizationId, orderId: order.id },
       });
-      if (!shipment) throw new NotFoundException("Courier shipment not found for this order");
+      if (!shipment) throw notFound("fulfillment.courierShipmentNotFoundForThis");
     }
     const remaining = await this.remainingFor(organizationId, order);
     let lines: FulfillmentItemLine[];
@@ -82,12 +83,12 @@ export class FulfillmentService {
         .filter(([, qty]) => qty > 0)
         .map(([orderItemId, quantity]) => ({ orderItemId, quantity, packed: false }));
     }
-    if (!lines.length) throw new BadRequestException("এই অর্ডারের সব আইটেম আগেই ফুলফিল করা হয়েছে");
+    if (!lines.length) throw badRequest("fulfillment.allItemsOfThisOrderHave");
     for (const line of lines) {
       const rem = remaining.get(line.orderItemId);
-      if (rem === undefined) throw new BadRequestException("অর্ডারে এই আইটেমটি নেই");
+      if (rem === undefined) throw badRequest("fulfillment.thisItemIsNotInThe");
       if (!(line.quantity > 0) || line.quantity > rem) {
-        throw new BadRequestException(`আইটেমের পরিমাণ বাকি পরিমাণের (${rem}) বেশি হতে পারবে না`);
+        throw badRequest("fulfillment.theItemQuantityCannotExceedThe", { rem: rem });
       }
     }
     const fulfillment = await (this.prisma as any).fulfillment.create({
@@ -141,14 +142,14 @@ export class FulfillmentService {
     courierProvider?: string;
   }) {
     const f = await (this.prisma as any).fulfillment.findFirst({ where: { id: fulfillmentId, organizationId } });
-    if (!f) throw new NotFoundException("Fulfillment not found in this organization");
+    if (!f) throw notFound("fulfillment.fulfillmentNotFoundInThisOrganization");
     // ON5: capture the status BEFORE the update — after it,
     // nothing may be trusted to still hold the old status.
     const statusBefore = f.status;
     const data: Record<string, any> = {};
     if (dto.status !== undefined) {
       if (!(FULFILLMENT_STATUSES as readonly string[]).includes(dto.status)) {
-        throw new BadRequestException(`status অবশ্যই এর একটি হতে হবে: ${FULFILLMENT_STATUSES.join(", ")}`);
+        throw badRequest("fulfillment.statusMustBeOneOf", { p1: FULFILLMENT_STATUSES.join(", ") });
       }
       data.status = dto.status;
     }
@@ -388,7 +389,7 @@ export class FulfillmentService {
 
   /** Printable handover manifest for one courier + Dhaka day. */
   async manifest(organizationId: string, courierProvider: string, dateStr?: string) {
-    if (!courierProvider) throw new BadRequestException("courier (provider) দরকার");
+    if (!courierProvider) throw badRequest("fulfillment.courierProviderIsRequired");
     const day = dateStr ? new Date(`${dateStr}T00:00:00Z`) : new Date();
     const start = dhakaDayStartUtc(day);
     const end = new Date(start.getTime() + 24 * 3600 * 1000);

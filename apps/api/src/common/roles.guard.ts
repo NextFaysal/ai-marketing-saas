@@ -4,6 +4,7 @@ import { PERMISSION_AREA_KEY, ROLES_KEY } from "./decorators";
 import { hasRoleAtLeast } from "./permissions";
 import { normalizeOverrides } from "./permission-catalog";
 import { Role } from "@repo/db";
+import { forbidden } from "../i18n";
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -24,7 +25,7 @@ export class RolesGuard implements CanActivate {
       ? normalizeOverrides(req.membership?.permissionOverrides)
       : null;
     if (area && overrides?.denies.includes(area)) {
-      throw new ForbiddenException("This area has been closed for your account by a custom access rule");
+      throw forbidden("common.areaClosedByCustomRule");
     }
 
     // GB6 (GC16): a member assigned a CustomRole reaches exactly
@@ -42,12 +43,12 @@ export class RolesGuard implements CanActivate {
       const ownerOnlyGate = required?.length === 1 && required[0] === "OWNER";
       if (!ownerOnlyGate) {
         if (customAreas.includes(area) || overrides?.grants.includes(area)) return true;
-        throw new ForbiddenException("Your custom role does not include this area");
+        throw forbidden("common.customRoleLacksArea");
       }
     }
 
     if (!required?.length) return true;
-    if (!role) throw new ForbiddenException("Organization membership required");
+    if (!role) throw forbidden("common.orgMembershipRequired");
     const rolePass = required.some((r) => hasRoleAtLeast(role, r as Role));
     if (rolePass) return true;
 
@@ -56,6 +57,6 @@ export class RolesGuard implements CanActivate {
     // Untagged endpoints keep pure role behavior.
     const ownerOnlyGate = required.length === 1 && required[0] === "OWNER";
     if (area && overrides && !ownerOnlyGate && overrides.grants.includes(area)) return true;
-    throw new ForbiddenException("Insufficient role for this action");
+    throw forbidden("common.insufficientRole");
   }
 }

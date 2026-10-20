@@ -148,7 +148,7 @@ describe("Milestone 41 — growth ops", () => {
 
   it("campaign validates audience and empty audiences", async () => {
     const svc = new AdminService(makePrisma(), AUDIT);
-    await expect(svc.sendCampaign(ADMIN, { subject: "Hi", body: "B", audience: "plan_AGENCY" })).rejects.toThrow(/No recipients/);
+    await expect(svc.sendCampaign(ADMIN, { subject: "Hi", body: "B", audience: "plan_AGENCY" })).rejects.toMatchObject({ code: "admin.noRecipientsMatchThisAudience" });
   });
 
   it("changelog CRUD + public list shows published only", async () => {

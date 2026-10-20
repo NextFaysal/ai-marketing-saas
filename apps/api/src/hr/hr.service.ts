@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AccountingService, toBig } from "../accounting/accounting.service";
@@ -8,6 +8,7 @@ import type {
   CorrectAttendanceDto, CreateLeaveDto, GeneratePayrollDto, SetSalaryProfileDto,
   SetShiftPatternsDto, UpdateHrSettingDto, UpdatePayrollLineDto,
 } from "./hr.dto";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 /**
  * NF11 (FB4) — HR lite: salary profiles, attendance, shift
@@ -145,7 +146,7 @@ export class HrService {
       where: { organizationId: orgId, userId },
       include: { user: true },
     });
-    if (!m) throw new ForbiddenException("আপনি এই organization-এর সদস্য নন");
+    if (!m) throw forbidden("hr.youAreNotAMemberOf");
     return m;
   }
 
@@ -154,7 +155,7 @@ export class HrService {
       where: { id: membershipId, organizationId: orgId },
       include: { user: true },
     });
-    if (!m) throw new NotFoundException("সদস্যটি পাওয়া যায়নি");
+    if (!m) throw notFound("hr.theMemberWasNotFound");
     return m;
   }
 
@@ -193,12 +194,12 @@ export class HrService {
     const unpaid = dto?.unpaidLeaveRule !== undefined ? String(dto.unpaidLeaveRule) : undefined;
     const commission = dto?.commissionRule !== undefined ? String(dto.commissionRule) : undefined;
     if (unpaid !== undefined && !(UNPAID_LEAVE_RULES as readonly string[]).includes(unpaid)) {
-      throw new BadRequestException(`unpaidLeaveRule শুধু এই মানগুলোর একটি হতে পারে: ${UNPAID_LEAVE_RULES.join(", ")}`);
+      throw badRequest("hr.unpaidleaveruleCanOnlyBeOneOf", { p1: UNPAID_LEAVE_RULES.join(", ") });
     }
     if (commission !== undefined && !(COMMISSION_RULES as readonly string[]).includes(commission)) {
-      throw new BadRequestException(`commissionRule শুধু এই মানগুলোর একটি হতে পারে: ${COMMISSION_RULES.join(", ")}`);
+      throw badRequest("hr.commissionruleCanOnlyBeOneOf", { p1: COMMISSION_RULES.join(", ") });
     }
-    if (unpaid === undefined && commission === undefined) throw new BadRequestException("কমপক্ষে একটি নিয়ম পাঠান");
+    if (unpaid === undefined && commission === undefined) throw badRequest("hr.sendAtLeastOneRule");
     const s = await this.ensureSetting(orgId);
     const data: Record<string, any> = {};
     if (unpaid !== undefined) data.unpaidLeaveRule = unpaid;
@@ -238,8 +239,8 @@ export class HrService {
   async setSalaryProfile(orgId: string, actorId: string, membershipId: string, dto: SetSalaryProfileDto) {
     const member = await this.membershipById(orgId, membershipId);
     const base = toBig(dto?.baseSalaryMinor as any);
-    if (base <= 0n) throw new BadRequestException("মূল বেতন ধনাত্মক পরিমাণে দিন (minor units)");
-    if (!isValidYmd(dto?.effectiveFrom)) throw new BadRequestException("effectiveFrom YYYY-MM-DD আকারে দিন");
+    if (base <= 0n) throw badRequest("hr.giveTheBaseSalaryAsA");
+    if (!isValidYmd(dto?.effectiveFrom)) throw badRequest("hr.giveEffectivefromInYyyyMmDd");
     const payoutNote = dto?.payoutNote === undefined ? undefined : (dto.payoutNote === null ? null : String(dto.payoutNote).slice(0, 300));
     const existing = await this.t("staffSalaryProfile").findFirst({ where: { membershipId: member.id } });
     const data: Record<string, any> = {
@@ -279,13 +280,13 @@ export class HrService {
 
   async checkIn(orgId: string, userId: string) {
     const member = await this.membershipOf(orgId, userId);
-    if (member.status !== "ACTIVE") throw new ForbiddenException("শুধু সক্রিয় সদস্যরাই হাজিরা দিতে পারবেন");
+    if (member.status !== "ACTIVE") throw forbidden("hr.onlyActiveMembersCanGiveAttendance");
     const tz = await this.orgTz(orgId);
     const today = localParts(tz, new Date()).ymd;
     const existing = await this.t("attendanceRecord").findFirst({
       where: { organizationId: orgId, membershipId: member.id, date: today },
     });
-    if (existing?.checkInAt) throw new BadRequestException("আজ ইতিমধ্যে চেক-ইন করা হয়েছে");
+    if (existing?.checkInAt) throw badRequest("hr.alreadyCheckedInToday");
     const now = new Date();
     const row = existing
       ? await this.t("attendanceRecord").update({ where: { id: existing.id }, data: { checkInAt: now } })
@@ -302,8 +303,8 @@ export class HrService {
     const existing = await this.t("attendanceRecord").findFirst({
       where: { organizationId: orgId, membershipId: member.id, date: today },
     });
-    if (!existing?.checkInAt) throw new BadRequestException("আজ এখনো চেক-ইন করা হয়নি");
-    if (existing.checkOutAt) throw new BadRequestException("আজ ইতিমধ্যে চেক-আউট করা হয়েছে");
+    if (!existing?.checkInAt) throw badRequest("hr.notCheckedInYetToday");
+    if (existing.checkOutAt) throw badRequest("hr.alreadyCheckedOutToday");
     const row = await this.t("attendanceRecord").update({
       where: { id: existing.id }, data: { checkOutAt: new Date() },
     });
@@ -314,7 +315,7 @@ export class HrService {
     const member = await this.membershipOf(orgId, userId);
     const where: any = { organizationId: orgId, membershipId: member.id };
     if (month) {
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new BadRequestException("মাস YYYY-MM আকারে দিন");
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw badRequest("hr.giveTheMonthInYyyyMm");
       where.date = { gte: `${month}-01`, lt: `${month}-99` };
     }
     const rows = await this.t("attendanceRecord").findMany({ where, orderBy: { date: "desc" } });
@@ -324,7 +325,7 @@ export class HrService {
   async listAttendance(orgId: string, date?: string) {
     const tz = await this.orgTz(orgId);
     const day = date ?? localParts(tz, new Date()).ymd;
-    if (!isValidYmd(day)) throw new BadRequestException("তারিখ YYYY-MM-DD আকারে দিন");
+    if (!isValidYmd(day)) throw badRequest("hr.giveTheDateInYyyyMm");
     const [rows, members] = await Promise.all([
       this.t("attendanceRecord").findMany({ where: { organizationId: orgId, date: day } }),
       this.t("membership").findMany({ where: { organizationId: orgId }, include: { user: true } }),
@@ -340,19 +341,19 @@ export class HrService {
    * call, not the swallow-wrapper) + correctionNote stored. */
   async correctAttendance(orgId: string, actorId: string, dto: CorrectAttendanceDto) {
     const note = String(dto?.correctionNote ?? "").trim();
-    if (!note) throw new BadRequestException("সংশোধনের কারণ (correctionNote) আবশ্যক");
-    if (!dto?.membershipId) throw new BadRequestException("membershipId আবশ্যক");
-    if (!isValidYmd(dto?.date)) throw new BadRequestException("তারিখ YYYY-MM-DD আকারে দিন");
+    if (!note) throw badRequest("hr.aCorrectionReasonCorrectionnoteIsRequired");
+    if (!dto?.membershipId) throw badRequest("hr.membershipidIsRequired");
+    if (!isValidYmd(dto?.date)) throw badRequest("hr.giveTheDateInYyyyMm");
     const member = await this.membershipById(orgId, String(dto.membershipId));
     const parseTime = (v: string | null | undefined, label: string): Date | null => {
       if (v === undefined || v === null || v === "") return null;
       const d = new Date(v);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException(`${label} সঠিক সময় নয়`);
+      if (Number.isNaN(d.getTime())) throw badRequest("hr.isNotAValidTime", { label: label });
       return d;
     };
     const checkInAt = parseTime(dto.checkInAt, "checkInAt");
     const checkOutAt = parseTime(dto.checkOutAt, "checkOutAt");
-    if (checkInAt && checkOutAt && checkOutAt < checkInAt) throw new BadRequestException("চেক-আউট চেক-ইনের আগে হতে পারে না");
+    if (checkInAt && checkOutAt && checkOutAt < checkInAt) throw badRequest("hr.checkOutCannotBeBeforeCheck");
     const existing = await this.t("attendanceRecord").findFirst({
       where: { organizationId: orgId, membershipId: member.id, date: dto.date },
     });
@@ -397,12 +398,12 @@ export class HrService {
   async setShiftPatterns(orgId: string, actorId: string, membershipId: string, dto: SetShiftPatternsDto) {
     const member = await this.membershipById(orgId, membershipId);
     const patterns = dto?.patterns ?? [];
-    if (!Array.isArray(patterns) || patterns.length > 21) throw new BadRequestException("শিফট প্যাটার্ন সর্বোচ্চ ২১টি হতে পারে");
+    if (!Array.isArray(patterns) || patterns.length > 21) throw badRequest("hr.thereCanBeAtMost21");
     for (const p of patterns) {
       const wd = Number(p?.weekday), s = Number(p?.startMinute), e = Number(p?.endMinute);
-      if (!Number.isInteger(wd) || wd < 0 || wd > 6) throw new BadRequestException("weekday ০–৬ এর মধ্যে হতে হবে (০ = রবিবার)");
+      if (!Number.isInteger(wd) || wd < 0 || wd > 6) throw badRequest("hr.weekdayMustBeBetween0And");
       if (!Number.isInteger(s) || !Number.isInteger(e) || s < 0 || e > 1440 || e <= s) {
-        throw new BadRequestException("শিফটের সময় সঠিক নয় — শেষ সময় শুরুর পরে হতে হবে (মিনিটে, ০–১৪৪০)");
+        throw badRequest("hr.theShiftTimeIsNotValid");
       }
     }
     await this.t("staffShiftPattern").deleteMany({ where: { organizationId: orgId, membershipId: member.id } });
@@ -435,12 +436,12 @@ export class HrService {
 
   async createLeave(orgId: string, userId: string, dto: CreateLeaveDto) {
     const member = await this.membershipOf(orgId, userId);
-    if (!isValidYmd(dto?.fromDate) || !isValidYmd(dto?.toDate)) throw new BadRequestException("ছুটির তারিখ YYYY-MM-DD আকারে দিন");
-    if (String(dto.toDate) < String(dto.fromDate)) throw new BadRequestException("শেষের তারিখ শুরুর তারিখের আগে হতে পারে না");
+    if (!isValidYmd(dto?.fromDate) || !isValidYmd(dto?.toDate)) throw badRequest("hr.giveTheLeaveDatesInYyyy");
+    if (String(dto.toDate) < String(dto.fromDate)) throw badRequest("hr.theEndDateCannotBeBefore");
     const days = overlapDays(String(dto.fromDate), String(dto.toDate), String(dto.fromDate), String(dto.toDate));
-    if (days < 1 || days > 366) throw new BadRequestException("ছুটির মেয়াদ ১–৩৬৬ দিনের মধ্যে হতে হবে");
+    if (days < 1 || days > 366) throw badRequest("hr.theLeaveDurationMustBeBetween");
     const paid = String(dto?.paid ?? "");
-    if (paid !== "paid" && paid !== "unpaid") throw new BadRequestException("ছুটির ধরন paid অথবা unpaid হতে হবে");
+    if (paid !== "paid" && paid !== "unpaid") throw badRequest("hr.theLeaveTypeMustBePaid");
     const row = await this.t("leaveRequest").create({
       data: {
         organizationId: orgId, membershipId: String(member.id),
@@ -473,10 +474,10 @@ export class HrService {
   /** State machine: pending → approved | rejected ONLY. A
    * decided request can never be re-decided. */
   async decideLeave(orgId: string, actorId: string, leaveId: string, decision: string) {
-    if (decision !== "approved" && decision !== "rejected") throw new BadRequestException("সিদ্ধান্ত approved অথবা rejected হতে হবে");
+    if (decision !== "approved" && decision !== "rejected") throw badRequest("hr.theDecisionMustBeApprovedOr");
     const row = await this.t("leaveRequest").findFirst({ where: { id: leaveId, organizationId: orgId } });
-    if (!row) throw new NotFoundException("ছুটির আবেদনটি পাওয়া যায়নি");
-    if (row.status !== "pending") throw new BadRequestException("এই আবেদনের সিদ্ধান্ত ইতিমধ্যে নেওয়া হয়েছে — পুনরায় সিদ্ধান্ত দেওয়া যাবে না");
+    if (!row) throw notFound("hr.theLeaveApplicationWasNotFound");
+    if (row.status !== "pending") throw badRequest("hr.aDecisionHasAlreadyBeenTaken");
     const updated = await this.t("leaveRequest").update({
       where: { id: row.id },
       data: { status: decision, decidedBy: actorId, decidedAt: new Date() },
@@ -516,11 +517,11 @@ export class HrService {
 
   async generateRun(orgId: string, actorId: string, dto: GeneratePayrollDto) {
     const year = Number(dto?.year), month = Number(dto?.month);
-    if (!Number.isInteger(year) || year < 2020 || year > 2100) throw new BadRequestException("বছর সঠিক নয়");
-    if (!Number.isInteger(month) || month < 1 || month > 12) throw new BadRequestException("মাস ১–১২ এর মধ্যে হতে হবে");
+    if (!Number.isInteger(year) || year < 2020 || year > 2100) throw badRequest("hr.theYearIsNotValid");
+    if (!Number.isInteger(month) || month < 1 || month > 12) throw badRequest("hr.theMonthMustBeBetween1");
     const setting = await this.ensureSetting(orgId);
-    if (String(setting.unpaidLeaveRule) !== "per_calendar_day") throw new BadRequestException("অজানা unpaidLeaveRule — রান তৈরি করা যাবে না");
-    if (String(setting.commissionRule) !== "recorded_order_commission") throw new BadRequestException("অজানা commissionRule — রান তৈরি করা যাবে না");
+    if (String(setting.unpaidLeaveRule) !== "per_calendar_day") throw badRequest("hr.unknownUnpaidleaveruleTheRunCannotBe");
+    if (String(setting.commissionRule) !== "recorded_order_commission") throw badRequest("hr.unknownCommissionruleTheRunCannotBe");
     const tz = await this.orgTz(orgId);
     const dim = daysInMonthOf(year, month);
     const monthStart = ymdOf(year, month, 1);
@@ -528,7 +529,7 @@ export class HrService {
 
     const existing = await this.t("payrollRun").findFirst({ where: { organizationId: orgId, year, month } });
     if (existing && existing.status === "paid") {
-      throw new BadRequestException("এই মাসের পে-রোল রান ইতিমধ্যে পরিশোধিত (paid) — paid রান বদলানো যায় না");
+      throw badRequest("hr.thisMonthSPayrollRunIs");
     }
 
     const [members, profiles, leaves, orders] = await Promise.all([
@@ -623,7 +624,7 @@ export class HrService {
 
   async getRun(orgId: string, runId: string) {
     const run = await this.t("payrollRun").findFirst({ where: { id: runId, organizationId: orgId } });
-    if (!run) throw new NotFoundException("পে-রোল রানটি পাওয়া যায়নি");
+    if (!run) throw notFound("hr.thePayrollRunWasNotFound");
     const [lines, members] = await Promise.all([
       this.t("payrollLine").findMany({ where: { runId: run.id } }),
       this.t("membership").findMany({ where: { organizationId: orgId }, include: { user: true } }),
@@ -637,20 +638,20 @@ export class HrService {
    * lines — প্রতিটিতে label + note আবশ্যক। Audit-logged. */
   async updateLineAdjustments(orgId: string, actorId: string, runId: string, lineId: string, dto: UpdatePayrollLineDto) {
     const run = await this.t("payrollRun").findFirst({ where: { id: runId, organizationId: orgId } });
-    if (!run) throw new NotFoundException("পে-রোল রানটি পাওয়া যায়নি");
-    if (run.status !== "draft") throw new BadRequestException("paid রান বদলানো যায় না — রানটি ইতিমধ্যে পরিশোধিত");
+    if (!run) throw notFound("hr.thePayrollRunWasNotFound");
+    if (run.status !== "draft") throw badRequest("hr.aPaidRunCannotBeChanged");
     const line = await this.t("payrollLine").findFirst({ where: { id: lineId, runId: run.id } });
-    if (!line) throw new NotFoundException("পে-রোল লাইনটি পাওয়া যায়নি");
+    if (!line) throw notFound("hr.thePayrollLineWasNotFound");
     const raw = dto?.adjustments ?? [];
-    if (!Array.isArray(raw) || raw.length > 20) throw new BadRequestException("adjustments সর্বোচ্চ ২০টি হতে পারে");
+    if (!Array.isArray(raw) || raw.length > 20) throw badRequest("hr.thereCanBeAtMost20");
     const adjustments: Adjustment[] = [];
     for (const a of raw) {
       const label = String(a?.label ?? "").trim();
       const note = String(a?.note ?? "").trim();
       const amount = toBig(a?.amountMinor as any);
-      if (!label) throw new BadRequestException("প্রতিটি adjustment-এ label আবশ্যক");
-      if (!note) throw new BadRequestException("প্রতিটি adjustment-এ note আবশ্যক — কারণ ছাড়া ম্যানুয়াল লাইন যোগ করা যাবে না");
-      if (amount === 0n) throw new BadRequestException("adjustment-এর পরিমাণ ০ হতে পারে না");
+      if (!label) throw badRequest("hr.aLabelIsRequiredInEvery");
+      if (!note) throw badRequest("hr.aNoteIsRequiredInEvery");
+      if (amount === 0n) throw badRequest("hr.theAdjustmentAmountCannotBe0");
       adjustments.push({ label: label.slice(0, 120), amountMinor: amount, note: note.slice(0, 500) });
     }
     const total = lineTotal(toBig(line.baseMinor), toBig(line.deductionMinor), toBig(line.commissionMinor), adjustments);
@@ -673,8 +674,8 @@ export class HrService {
    * the total is positive (failure-isolated, reported). */
   async markPaid(orgId: string, actorId: string, runId: string) {
     const run = await this.t("payrollRun").findFirst({ where: { id: runId, organizationId: orgId } });
-    if (!run) throw new NotFoundException("পে-রোল রানটি পাওয়া যায়নি");
-    if (run.status !== "draft") throw new BadRequestException("রানটি ইতিমধ্যে paid — পুনরায় পরিশোধের রেকর্ড করা যাবে না");
+    if (!run) throw notFound("hr.thePayrollRunWasNotFound");
+    if (run.status !== "draft") throw badRequest("hr.theRunIsAlreadyPaidA");
     const paidAt = new Date();
     let updated = await this.t("payrollRun").update({
       where: { id: run.id }, data: { status: "paid", paidBy: actorId, paidAt },
@@ -719,11 +720,11 @@ export class HrService {
    * numbers the run shows. Never recomputed differently. */
   async payslipData(orgId: string, lineId: string, requester: { userId: string; admin: boolean }) {
     const line = await this.t("payrollLine").findFirst({ where: { id: lineId, organizationId: orgId } });
-    if (!line) throw new NotFoundException("পে-স্লিপটি পাওয়া যায়নি");
+    if (!line) throw notFound("hr.thePaySlipWasNotFound");
     if (!requester.admin) {
       const member = await this.membershipOf(orgId, requester.userId);
       if (String(line.membershipId) !== String(member.id)) {
-        throw new ForbiddenException("আপনি শুধু নিজের পে-স্লিপ দেখতে পারবেন");
+        throw forbidden("hr.youCanOnlyViewYourOwn");
       }
     }
     const [run, memberRow, org] = await Promise.all([
@@ -731,7 +732,7 @@ export class HrService {
       this.t("membership").findFirst({ where: { id: line.membershipId, organizationId: orgId }, include: { user: true } }),
       this.t("organization").findFirst({ where: { id: orgId } }).catch(() => null),
     ]);
-    if (!run || !memberRow) throw new NotFoundException("পে-স্লিপের তথ্য পাওয়া যায়নি");
+    if (!run || !memberRow) throw notFound("hr.thePaySlipInformationWasNot");
     const profile = await this.t("staffSalaryProfile").findFirst({ where: { membershipId: line.membershipId } });
     return {
       organizationName: org?.name ?? null,

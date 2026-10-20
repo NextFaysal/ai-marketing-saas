@@ -6,6 +6,7 @@ import { IS_PUBLIC_KEY } from "./decorators";
 import { PrismaService } from "../prisma/prisma.service";
 import { hasScope, requiredGrant } from "./api-key-scopes";
 import { readEmailVerificationGate, verificationRequiredFor } from "../auth/verification.service";
+import { forbidden, unauthorized } from "../i18n";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -36,7 +37,7 @@ export class JwtAuthGuard implements CanActivate {
             // route. Legacy keys (empty list) keep full access.
             const grant = requiredGrant(String((req as any).method ?? "GET"), url);
             if (!hasScope((row as any).scopes, grant)) {
-              throw new ForbiddenException(`This API key lacks the required scope: ${grant}`);
+              throw forbidden("common.apiKeyLacksScope", { grant: grant });
             }
             req.user = {
               userId: creator.id, email: creator.email, isSuperAdmin: !!creator.isSuperAdmin,
@@ -50,7 +51,7 @@ export class JwtAuthGuard implements CanActivate {
           }
         }
       }
-      throw new UnauthorizedException("Missing or invalid Authorization header");
+      throw unauthorized("common.missingAuthHeader");
     }
     let payload: any;
     try {
@@ -65,7 +66,7 @@ export class JwtAuthGuard implements CanActivate {
         viewAs: payload.viewAs ?? undefined,
       };
     } catch {
-      throw new UnauthorizedException("Invalid or expired token");
+      throw unauthorized("common.invalidToken");
     }
     // GB6 (GC16): server-side session check for tokens carrying
     // a `sid` claim. A session row that is GONE (null) or revoked
@@ -80,7 +81,7 @@ export class JwtAuthGuard implements CanActivate {
         row = await (this.prisma as any).userSession?.findUnique({ where: { id: payload.sid } });
       } catch { row = undefined; }
       if (row === null || row?.revokedAt) {
-        throw new UnauthorizedException("Session has been revoked");
+        throw unauthorized("common.sessionRevoked");
       }
       if (row && (!row.lastSeenAt || Date.now() - new Date(row.lastSeenAt).getTime() > 60000)) {
         void (this.prisma as any).userSession.update({

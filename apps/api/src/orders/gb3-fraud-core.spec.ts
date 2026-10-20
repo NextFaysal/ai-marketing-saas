@@ -231,7 +231,7 @@ describe("GB3 IdentifierListsService", () => {
     await expect(identifiers.add("org-1", "a", "blocked", { kind: "email", value: "nope" }))
       .rejects.toThrow("ইমেইল ঠিকানাটি সঠিক নয়");
     const row: any = await identifiers.add("org-1", "a", "blocked", { kind: "phone", value: PHONE });
-    await expect(identifiers.remove("org-2", "a", "blocked", row.id)).rejects.toThrow(/not found/i);
+    await expect(identifiers.remove("org-2", "a", "blocked", row.id)).rejects.toMatchObject({ code: "fraud.identifierNotFoundInThisOrganization" });
     await identifiers.remove("org-1", "a", "blocked", row.id);
     await expect(identifiers.isBlocked("org-1", { phoneKey: PHONE_KEY })).resolves.toEqual({ blocked: false, kind: null });
   });
@@ -510,7 +510,7 @@ describe("GB3 FraudRulesService CRUD + validation", () => {
     expect(listed[0].hitCount).toBe(2);
     const hits = await rules.listHitsForOrder("org-1", "o-9");
     expect(hits).toHaveLength(1);
-    await expect(rules.update("org-2", "a", row.id, { enabled: false })).rejects.toThrow(/not found/i);
+    await expect(rules.update("org-2", "a", row.id, { enabled: false })).rejects.toMatchObject({ code: "fraud.fraudRuleNotFoundInThis" });
     const updated: any = await rules.update("org-1", "a", row.id, { enabled: false });
     expect(updated.enabled).toBe(false);
     await rules.delete("org-1", "a", row.id);

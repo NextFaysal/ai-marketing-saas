@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditService } from "../../audit/audit.service";
@@ -6,6 +6,7 @@ import { encryptJson, decryptJson } from "../../integrations/crypto";
 import { InboxService } from "../inbox.service";
 import { MessagingService } from "../../messaging/messaging.service";
 import type { ChannelAdapter, VerifiedChannelAccount } from "./channel-adapter";
+import { badRequest, notFound } from "../../i18n/api-exception";
 
 /** Telegram Bot API client (official API, bot accounts only —
  * Telegram does not offer user-account automation). All calls go
@@ -21,7 +22,7 @@ export class TelegramClient {
     });
     const json = (await res.json().catch(() => null)) as any;
     if (!res.ok || !json?.ok) {
-      throw new BadRequestException(`Telegram: ${json?.description ?? `HTTP ${res.status}`}`);
+      throw badRequest("inbox.telegram", { p1: json?.description ?? `HTTP ${res.status}` });
     }
     return json.result as T;
   }
@@ -35,7 +36,7 @@ export class TelegramClient {
     const res = await fetch(`https://api.telegram.org/bot${this.botToken}/${method}`, { method: "POST", body: form });
     const json = (await res.json().catch(() => null)) as any;
     if (!res.ok || !json?.ok) {
-      throw new BadRequestException(`Telegram: ${json?.description ?? `HTTP ${res.status}`}`);
+      throw badRequest("inbox.telegram", { p1: json?.description ?? `HTTP ${res.status}` });
     }
     return json.result as T;
   }
@@ -73,7 +74,7 @@ export class TelegramClient {
 export class TelegramAdapter implements ChannelAdapter {
   readonly channel = "telegram";
   async verifyCredentials(credentials: Record<string, any>): Promise<VerifiedChannelAccount> {
-    if (!credentials.botToken) throw new BadRequestException("A Telegram bot token is required");
+    if (!credentials.botToken) throw badRequest("inbox.aTelegramBotTokenIsRequired");
     const me = await new TelegramClient(String(credentials.botToken)).getMe();
     return { externalAccountId: String(me.id), displayName: me.username ? `@${me.username}` : (me.first_name ?? "Telegram bot") };
   }
@@ -243,12 +244,12 @@ export class TelegramService implements OnModuleInit {
     const integration = await (this.prisma as any).integration.findUnique({
       where: { id: integrationId }, include: { credential: true },
     });
-    if (!integration?.credential || integration.provider !== "telegram") throw new NotFoundException("Integration not found");
+    if (!integration?.credential || integration.provider !== "telegram") throw notFound("inbox.integrationNotFound");
     const secrets = decryptJson<TelegramSecrets>(integration.credential.encryptedData);
     const expected = Buffer.from(secrets.webhookSecret ?? "");
     const given = Buffer.from(secretHeader ?? "");
     if (expected.length === 0 || given.length !== expected.length || !timingSafeEqual(given, expected)) {
-      throw new BadRequestException("Invalid webhook secret");
+      throw badRequest("inbox.invalidWebhookSecret");
     }
     const message = update?.message;
     if (!message?.chat?.id || typeof message.text !== "string") return { ignored: true };

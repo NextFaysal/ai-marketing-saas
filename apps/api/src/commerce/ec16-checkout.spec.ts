@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { DiscountsService } from "./discounts.service";
 import { PromotionsService } from "./promotions.service";
 import { validateDiscount } from "./discounts";
@@ -188,7 +189,7 @@ describe("EC16 evaluateCheckout — stacking order", () => {
     const { promotions } = makeServices(prisma);
     await expect(
       promotions.evaluateCheckout("org-1", { lines: LINE_2X, couponCode: "NOPE" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     const ev = await promotions.evaluateCheckout("org-1", { lines: LINE_2X, couponCode: "SHIPFREE" });
     expect(ev.couponFreeShipping).toBe(true);
     expect(ev.couponDiscountMinor).toBe(0n);
@@ -333,7 +334,7 @@ describe("EC16 promotion CRUD + preview", () => {
       config: { scope: "category", categoryId: "cat-1", tiers: [{ minQty: 2, percentOff: 5 }] },
     } as any);
     expect(created.promotion.id).toBeTruthy();
-    await expect(promotions.getOne("org-2", created.promotion.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(promotions.getOne("org-2", created.promotion.id)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("preview prices from REAL product rows and refuses unknown products", async () => {
@@ -352,7 +353,7 @@ describe("EC16 promotion CRUD + preview", () => {
     expect(res.merchandiseTotalMinor).toBe("90000");
     await expect(
       promotions.preview("org-1", { items: [{ productId: "ghost", quantity: 1 }] } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 });
 

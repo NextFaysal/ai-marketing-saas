@@ -99,7 +99,7 @@ describe("RB4 presignCreativeUpload", () => {
     const { service } = makeService({ mode: "local" });
     await expect(
       service.presignCreativeUpload("org-1", "user-1", { kind: "image", contentType: "image/png", sizeBytes: 10 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "creatives.directFileUploadIsNotOn" });
   });
 
   it("refuses when the creative_library flag is off", async () => {
@@ -161,7 +161,7 @@ describe("RB4 completeCreativeUpload", () => {
         key: QKEY, kind: "image", contentType: "image/png", sizeBytes: MP4_HEAD.length,
         adAccountId: "acct-1", name: "Fake",
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "creatives.theUploadedFileSRealFormat" });
     expect(assets).toHaveLength(0);
     expect(calls.some((c) => c.op === "copy")).toBe(false);
     expect(objects.has(`public:${QKEY}`)).toBe(false);
@@ -175,7 +175,7 @@ describe("RB4 completeCreativeUpload", () => {
         key: QKEY, kind: "image", contentType: "image/png", sizeBytes: PNG_1PX.length + 5,
         adAccountId: "acct-1", name: "Wrong size",
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "creatives.theUploadedFileSSizeDoes" });
     expect(assets).toHaveLength(0);
     expect(objects.has(`public:${QKEY}`)).toBe(false);
   });
@@ -189,7 +189,7 @@ describe("RB4 completeCreativeUpload", () => {
         key: other, kind: "image", contentType: "image/png", sizeBytes: PNG_1PX.length,
         adAccountId: "acct-1", name: "Not mine",
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "creatives.theUploadKeyIsNotValid" });
     expect(assets).toHaveLength(0);
     expect(objects.has(`public:${other}`)).toBe(true);
   });
@@ -201,6 +201,6 @@ describe("RB4 completeCreativeUpload", () => {
         key: QKEY, kind: "image", contentType: "image/png", sizeBytes: 10,
         adAccountId: "acct-1", name: "Ghost",
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "creatives.theUploadedFileWasNotFound" });
   });
 });

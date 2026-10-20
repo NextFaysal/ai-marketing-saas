@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { toCsv } from "../imports/csv";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * GC12 — Payment Ops (staff reads over TenantPaymentTransaction,
@@ -35,12 +36,12 @@ function dhakaDayBounds(day: string): { start: Date; end: Date } {
 
 function parseDay(value: string, label: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন`);
+    throw badRequest("connections.dateFormatYmd", { label: label });
   }
   const [y, m, d] = value.split("-").map(Number);
   const probe = new Date(Date.UTC(y, m - 1, d));
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
-    throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন`);
+    throw badRequest("connections.dateFormatYmd", { label: label });
   }
   return value;
 }
@@ -57,7 +58,7 @@ export function paymentRange(from?: string, to?: string, now: Date = new Date())
     fromDay = fmtDhakaDay(new Date(toStart.getTime() - 29 * DAY_MS));
   }
   if (fromDay > toDay) {
-    throw new BadRequestException("শুরুর তারিখ (from) শেষ তারিখের (to) পরে হতে পারবে না");
+    throw badRequest("connections.fromAfterToDates");
   }
   return { from: fromDay, to: toDay, start: dhakaDayBounds(fromDay).start, end: dhakaDayBounds(toDay).end };
 }
@@ -143,7 +144,7 @@ export class PaymentOpsService {
     try {
       txn = await this.t("tenantPaymentTransaction").findFirst({ where: { id: attemptId, organizationId } });
     } catch { txn = null; }
-    if (!txn) throw new NotFoundException("Payment attempt not found");
+    if (!txn) throw notFound("connections.paymentAttemptNotFound");
     const numbers = await this.orderNumbers(organizationId, [String(txn.orderId)]);
     return {
       ...this.attemptView(txn, numbers.get(String(txn.orderId)) ?? null, now),

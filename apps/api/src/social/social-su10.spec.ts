@@ -308,7 +308,7 @@ describe("SU10 Meta check-health", () => {
     const db = fakeDb(); seedOrg(db);
     const { fetchFn } = okFetch();
     const { health } = services(db, fetchFn);
-    await expect(health.checkAccountHealth(ORG, OWNER, "no-such-account")).rejects.toThrow("not found");
+    await expect(health.checkAccountHealth(ORG, OWNER, "no-such-account")).rejects.toMatchObject({ code: "social.socialAccountNotFoundInThis" });
   });
 });
 
@@ -488,13 +488,13 @@ describe("SU10 retry", () => {
     for (const post of [draft, published]) {
       let caught: any = null;
       try { await health.retryPost(ORG, OWNER, post.id); } catch (e) { caught = e; }
-      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(caught).toMatchObject({ code: "social.onlyFailedPostsCanBeRetried" });
       expect(caught.getStatus()).toBe(400);
       expect(caught.message).toContain("শুধু Failed পোস্টই");
       expect(storedPost(db, post.id).status).toBe(post.status);
     }
     expect(fn).not.toHaveBeenCalled();
-    await expect(health.retryPost(ORG, OWNER, "no-such-post")).rejects.toThrow("not found");
+    await expect(health.retryPost(ORG, OWNER, "no-such-post")).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 
   it("exhausted attempts (≥ MAX): reset to 0 WITH audit, then publishNow publishes", async () => {

@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CommerceAnalyticsService, OPEN_ORDER_STATUSES } from "./commerce-analytics.service";
 
 // Fixed clock: 2026-10-13T10:00Z = 16:00 Dhaka.
@@ -173,8 +174,8 @@ describe("EC11 storesAnalytics", () => {
 
   it("rejects an out-of-range days value", async () => {
     const svc = new CommerceAnalyticsService(analyticsFixture());
-    await expect(svc.storesAnalytics("org-1", 0, NOW)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.storesAnalytics("org-1", 366, NOW)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.storesAnalytics("org-1", 0, NOW)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.storesAnalytics("org-1", 366, NOW)).rejects.toBeInstanceOf(ApiException);
   });
 });
 

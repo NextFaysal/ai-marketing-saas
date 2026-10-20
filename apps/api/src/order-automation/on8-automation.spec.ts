@@ -477,6 +477,6 @@ describe("ON8 timeline integration", () => {
     expect(entry!.title).toBe("আমার নিয়ম");
     expect(entry!.detail).toContain("add_tag");
     // Foreign org still 404s.
-    await expect(insights.timeline("org-2", "o1")).rejects.toThrow(/not found/i);
+    await expect(insights.timeline("org-2", "o1")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 });

@@ -82,7 +82,7 @@ describe("CompetitorsService", () => {
   it("manual observations without a source URL are rejected (evidence is mandatory)", async () => {
     const svc = new CompetitorsService(fakePrisma() as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", { name: "Rival" });
-    await expect(svc.addObservation("org-1", competitor.id, { productName: "X", price: "100", sourceUrl: "" })).rejects.toThrow("evidence");
+    await expect(svc.addObservation("org-1", competitor.id, { productName: "X", price: "100", sourceUrl: "" })).rejects.toMatchObject({ code: "competitors.aSourceUrlIsRequiredAs" });
   });
 
   it("priceComparison matches by name, reports the diff, and admits gaps honestly", async () => {
@@ -130,7 +130,7 @@ describe("CompetitorsService", () => {
   it("generating insights with zero collected evidence is refused, not faked", async () => {
     const svc = new CompetitorsService(fakePrisma() as any, auditStub, devLlm);
     const competitor = await svc.create("org-1", "u", { name: "Empty Rival" });
-    await expect(svc.generateInsights("org-1", "u", competitor.id)).rejects.toThrow("never generated without evidence");
+    await expect(svc.generateInsights("org-1", "u", competitor.id)).rejects.toMatchObject({ code: "competitors.noCompetitorEvidenceCollectedYetSync" });
   });
 
   it("listAds identifies winning ads running for 14+ days", async () => {

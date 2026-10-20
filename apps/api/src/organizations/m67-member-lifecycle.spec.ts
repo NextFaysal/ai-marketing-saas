@@ -89,8 +89,8 @@ describe("M67 member lifecycle", () => {
     expect(out).toMatchObject({ ok: true, role: "ADMIN", from: "SUPPORT_AGENT" });
     expect(memberships.find((m) => m.id === "m-agent")!.role).toBe("ADMIN");
     expect(audit.calls.map((c) => c.action)).toContain("org.member_role_updated");
-    await expect(svc.updateMemberRole("org-1", "owner-1", "agent-1", "OWNER")).rejects.toThrow(/cannot be assigned/);
-    await expect(svc.updateMemberRole("org-1", "agent-1", "owner-1", "VIEWER")).rejects.toThrow(/owner's role cannot be changed/);
+    await expect(svc.updateMemberRole("org-1", "owner-1", "agent-1", "OWNER")).rejects.toMatchObject({ code: "organizations.roleNotAssignable", status: 400 });
+    await expect(svc.updateMemberRole("org-1", "agent-1", "owner-1", "VIEWER")).rejects.toMatchObject({ code: "organizations.ownerRoleImmutable", status: 400 });
   });
 
   it("suspend hands open conversations back to the pool and marks the agent away; closed ones stay", async () => {
@@ -108,8 +108,8 @@ describe("M67 member lifecycle", () => {
 
   it("the owner cannot be suspended and nobody can suspend themselves", async () => {
     const { svc } = setup();
-    await expect(svc.setMemberStatus("org-1", "agent-1", "owner-1", "SUSPENDED")).rejects.toThrow(/owner cannot be suspended/);
-    await expect(svc.setMemberStatus("org-1", "agent-1", "agent-1", "SUSPENDED")).rejects.toThrow(/your own status/);
+    await expect(svc.setMemberStatus("org-1", "agent-1", "owner-1", "SUSPENDED")).rejects.toMatchObject({ code: "organizations.ownerNotSuspendable", status: 400 });
+    await expect(svc.setMemberStatus("org-1", "agent-1", "agent-1", "SUSPENDED")).rejects.toMatchObject({ code: "organizations.cannotChangeOwnStatus", status: 400 });
   });
 
   it("removal hands over conversations and wipes roster residue", async () => {
@@ -119,7 +119,7 @@ describe("M67 member lifecycle", () => {
     expect(memberships.some((m) => m.id === "m-agent")).toBe(false);
     expect(db.inboxTeamMember.rows).toHaveLength(0);
     expect(db.agentState.rows).toHaveLength(0);
-    await expect(svc.removeMember("org-1", "agent-1", "owner-1")).rejects.toThrow(/owner cannot be removed/);
+    await expect(svc.removeMember("org-1", "agent-1", "owner-1")).rejects.toMatchObject({ code: "organizations.ownerCannotBeRemoved", status: 400 });
   });
 
   it("seat usage reports limit, used and pending from real rows", async () => {

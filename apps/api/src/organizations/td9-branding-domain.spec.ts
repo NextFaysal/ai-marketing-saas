@@ -111,9 +111,7 @@ describe("TD9 branding-path domain change", () => {
     "refuses the platform domain %s on this path too, resetting nothing",
     async (domain) => {
       const { service, settings, orgs } = makeService();
-      await expect(service.updateBranding("org-1", "u-1", { customDomain: domain })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(service.updateBranding("org-1", "u-1", { customDomain: domain })).rejects.toMatchObject({ code: "common.platformDomainNotAllowed", status: 400 });
       expect(orgs.rows[0].customDomain).toBe("old.example.com");
       expect(settings.rows[0].domainVerifyToken).toBe("tok-abc");
       expect(settings.rows[0].domainVerifiedAt).toEqual(VERIFIED_AT);

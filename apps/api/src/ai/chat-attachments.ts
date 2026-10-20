@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { extractKnowledgeText, fileExtension } from "../knowledge/extract";
 import type { VisionResult } from "./vision.service";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * AP2 chat attachments — turn an uploaded file into the text the
@@ -68,8 +69,8 @@ export async function processChatAttachment(
   const name = safeName(file.originalname);
   const ext = fileExtension(name);
   const bytes = file.buffer;
-  if (!bytes || bytes.length === 0) throw new BadRequestException("ফাইলটি খালি");
-  if (bytes.length > ATTACHMENT_MAX_BYTES) throw new BadRequestException("ফাইলটি 10MB-এর বেশি বড়");
+  if (!bytes || bytes.length === 0) throw badRequest("ai.theFileIsEmpty");
+  if (bytes.length > ATTACHMENT_MAX_BYTES) throw badRequest("ai.theFileIsLargerThan10mb");
 
   // Images → vision description.
   const imageMime = IMAGE_MIME_BY_EXT[ext];
@@ -86,7 +87,7 @@ export async function processChatAttachment(
       throw new BadRequestException(result.reason);
     }
     const { text, truncated } = capText(result.text);
-    if (!text) throw new BadRequestException("ছবিটি থেকে কোনো বর্ণনা পাওয়া যায়নি");
+    if (!text) throw badRequest("ai.noDescriptionCouldBeObtainedFrom");
     return { name, kind: "image", text, truncated };
   }
 
@@ -96,10 +97,10 @@ export async function processChatAttachment(
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
-      throw new BadRequestException("CSV ফাইলটি পাঠযোগ্য টেক্সট (UTF-8) নয়");
+      throw badRequest("ai.csvUtf8");
     }
     const capped = capText(text);
-    if (!capped.text) throw new BadRequestException("CSV ফাইল থেকে কোনো লেখা পাওয়া যায়নি");
+    if (!capped.text) throw badRequest("ai.csv");
     return { name, kind: "file", text: capped.text, truncated: capped.truncated };
   }
 
@@ -107,6 +108,6 @@ export async function processChatAttachment(
   // unsupported types, magic mismatches, scanned PDFs, empties).
   const extracted = await extractKnowledgeText(name, bytes);
   const capped = capText(extracted);
-  if (!capped.text) throw new BadRequestException("ফাইল থেকে কোনো লেখা পাওয়া যায়নি");
+  if (!capped.text) throw badRequest("ai.noTextWasFoundInThe");
   return { name, kind: "file", text: capped.text, truncated: capped.truncated };
 }

@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 
 function makeFakeTable() {
@@ -145,6 +146,6 @@ describe("StorefrontService NDR Recovery", () => {
         action: "reschedule",
         rescheduleDate: "2026-10-20",
       }),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ApiException);
   });
 });

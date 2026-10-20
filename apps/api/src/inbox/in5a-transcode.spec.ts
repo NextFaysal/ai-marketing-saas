@@ -128,7 +128,7 @@ describe("sendMediaReply integration (IN5a in the send path)", () => {
     const svc = new InboxService(prisma as any, auditStub, llmStub);
     await expect(svc.sendMediaReply("org-1", "user-1", "conv-wa", {
       dataBase64: webm.toString("base64"), fileName: "voice.webm", contentType: "audio/webm",
-    })).rejects.toThrow(/Media was NOT sent: No connected whatsapp integration/);
+    })).rejects.toMatchObject({ code: "inbox.mediaWasNotSent" });
     expect(msgRows).toHaveLength(1);
     expect(msgRows[0].status).toBe("failed"); // honest failure stands
     expect(msgRows[0].mediaContentType).toBe("audio/ogg"); // …but what WOULD be sent is the transcoded file

@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import {
   FfmpegTemplateVideoProvider, VIDEO_GENERATION_PROVIDER,
   VideoRenderError, type VideoGenerationProvider,
 } from "./ffmpeg-video.provider";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const VIDEO_TEMPLATES = ["showcase", "offer"] as const;
 export const VIDEO_LANGUAGES = ["bn", "en"] as const;
@@ -85,13 +86,13 @@ export class VideoStudioService {
 
   private async getProjectOrThrow(organizationId: string, projectId: string) {
     const row = await this.db().videoProject.findFirst({ where: { id: projectId, organizationId } });
-    if (!row) throw new NotFoundException("ভিডিও প্রজেক্টটি পাওয়া যায়নি");
+    if (!row) throw notFound("videoStudio.theVideoProjectWasNotFound");
     return row;
   }
 
   private async getProductOrThrow(organizationId: string, productId: string) {
     const row = await this.db().product.findFirst({ where: { id: productId, organizationId } });
-    if (!row) throw new NotFoundException("Product not found in this organization");
+    if (!row) throw notFound("videoStudio.productNotFoundInThisOrganization");
     return row;
   }
 
@@ -144,15 +145,15 @@ export class VideoStudioService {
     dto: { productId?: string; template?: string; language?: string; offerText?: string },
   ) {
     const productId = String(dto.productId ?? "").trim();
-    if (!productId) throw new BadRequestException("productId আবশ্যক");
+    if (!productId) throw badRequest("videoStudio.productidIsRequired");
     const product = await this.getProductOrThrow(organizationId, productId);
     const template = dto.template?.trim() || "showcase";
     if (!(VIDEO_TEMPLATES as readonly string[]).includes(template)) {
-      throw new BadRequestException(`template হতে হবে: ${VIDEO_TEMPLATES.join(" | ")}`);
+      throw badRequest("videoStudio.templateMustBe", { p1: VIDEO_TEMPLATES.join(" | ") });
     }
     const language = dto.language?.trim() || "bn";
     if (!(VIDEO_LANGUAGES as readonly string[]).includes(language)) {
-      throw new BadRequestException(`language হতে হবে: ${VIDEO_LANGUAGES.join(" | ")}`);
+      throw badRequest("videoStudio.languageMustBe", { p1: VIDEO_LANGUAGES.join(" | ") });
     }
     const offerText = dto.offerText?.trim() ? dto.offerText.trim().slice(0, 200) : null;
     const row = await this.db().videoProject.create({
@@ -389,10 +390,10 @@ export class VideoStudioService {
     const project = await this.getProjectOrThrow(organizationId, projectId);
     if (project.socialPostId) return this.serializeOne(organizationId, project);
     if (project.status !== "ready" || !project.mediaAssetId) {
-      throw new BadRequestException("শুধু ready অবস্থার ভিডিও Publish করা যাবে — আগে Render শেষ হতে দিন");
+      throw badRequest("videoStudio.onlyAReadyVideoCanBe");
     }
     if (!this.social) {
-      throw new BadRequestException("Social service এই deployment-এ পাওয়া যাচ্ছে না");
+      throw badRequest("videoStudio.theSocialServiceIsNotAvailable");
     }
     let socialAccountId = dto.socialAccountId?.trim() || "";
     if (!socialAccountId) {
@@ -400,7 +401,7 @@ export class VideoStudioService {
         where: { organizationId, status: "connected" }, orderBy: { createdAt: "asc" },
       }).catch(() => null);
       if (!account) {
-        throw new BadRequestException("কোনো connected Social অ্যাকাউন্ট পাওয়া যায়নি — আগে Connect Center থেকে একটি অ্যাকাউন্ট যুক্ত করুন");
+        throw badRequest("videoStudio.noConnectedSocialAccountWasFound");
       }
       socialAccountId = account.id;
     }

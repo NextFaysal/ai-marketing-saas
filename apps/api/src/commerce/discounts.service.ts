@@ -14,6 +14,7 @@ import { decryptJson } from "../integrations/crypto";
 import { WooClient } from "../integrations/woocommerce/woo.client";
 import { resolveShopifyClient } from "../integrations/commerce/shopify-catalog";
 import { errMsg, markDiscountSync } from "../integrations/commerce/discount-content";
+import { badRequest, conflict, notFound } from "../i18n";
 
 export interface DiscountDto {
   code?: string;
@@ -56,13 +57,13 @@ function validateKindValue(kind: string, value: number | undefined): number {
   if (kind === "free_shipping") return 0;
   if (kind === "percent") {
     if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 90) {
-      throw new BadRequestException("শতাংশ ডিসকাউন্টের মান 1 থেকে 90-এর মধ্যে হতে হবে");
+      throw badRequest("commerce.discountPercentRange");
     }
     return value as number;
   }
   // fixed
   if (!Number.isInteger(value) || (value as number) < 1) {
-    throw new BadRequestException("নির্দিষ্ট পরিমাণ ডিসকাউন্টের মান কমপক্ষে 1 হতে হবে");
+    throw badRequest("commerce.discountFixedMin");
   }
   return value as number;
 }
@@ -163,9 +164,7 @@ export class DiscountsService {
           where: { id: pid, organizationId: orgId },
         });
         if (!p) {
-          throw new BadRequestException(
-            `বাদ দেওয়া পণ্য তালিকায় অজানা পণ্য আছে (${pid}) — আগে যাচাই করে নিন`,
-          );
+          throw badRequest("commerce.excludedProductUnknown", { productId: pid });
         }
       }
     }
@@ -176,9 +175,7 @@ export class DiscountsService {
           ? await categoryTable.findFirst({ where: { id: cid, organizationId: orgId } })
           : null;
         if (!c) {
-          throw new BadRequestException(
-            `বাদ দেওয়া ক্যাটাগরি তালিকায় অজানা ক্যাটাগরি আছে (${cid}) — আগে যাচাই করে নিন`,
-          );
+          throw badRequest("commerce.excludedCategoryUnknown", { categoryId: cid });
         }
       }
     }
@@ -213,7 +210,7 @@ export class DiscountsService {
 
   private async loadOr404(orgId: string, id: string): Promise<any> {
     const row = await this.table().findFirst({ where: { id, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Discount not found in this organization");
+    if (!row) throw notFound("commerce.discountNotFoundInOrg");
     return row;
   }
 
@@ -232,14 +229,14 @@ export class DiscountsService {
 
   async create(orgId: string, actorId: string, dto: DiscountDto) {
     const code = normalizeDiscountCode(dto.code ?? "");
-    if (!code) throw new BadRequestException("কুপন কোড আবশ্যক");
+    if (!code) throw badRequest("commerce.couponCodeRequired");
     const kind = dto.kind ?? "";
-    if (!KINDS.includes(kind)) throw new BadRequestException("ডিসকাউন্টের ধরন সঠিক নয়");
+    if (!KINDS.includes(kind)) throw badRequest("commerce.discountTypeInvalid");
     const value = validateKindValue(kind, dto.value);
     const scopeType = dto.scopeType ?? "all";
-    if (!SCOPE_TYPES.includes(scopeType)) throw new BadRequestException("ডিসকাউন্টের scope সঠিক নয়");
+    if (!SCOPE_TYPES.includes(scopeType)) throw badRequest("commerce.discountScopeInvalid");
     const dup = await this.table().findFirst({ where: { organizationId: orgId, code } });
-    if (dup) throw new ConflictException("এই কোডে ইতিমধ্যে একটি ডিসকাউন্ট আছে");
+    if (dup) throw conflict("commerce.discountCodeExists");
     await this.validateExclusionIds(orgId, dto.excludedProductIds, dto.excludedCategoryIds);
     const discount = await this.table().create({
       data: {
@@ -287,16 +284,16 @@ export class DiscountsService {
     const data: Record<string, any> = {};
     if (dto.code !== undefined) {
       const code = normalizeDiscountCode(dto.code ?? "");
-      if (!code) throw new BadRequestException("কুপন কোড আবশ্যক");
+      if (!code) throw badRequest("commerce.couponCodeRequired");
       if (code !== existing.code) {
         const dup = await this.table().findFirst({ where: { organizationId: orgId, code } });
-        if (dup && dup.id !== id) throw new ConflictException("এই কোডে ইতিমধ্যে একটি ডিসকাউন্ট আছে");
+        if (dup && dup.id !== id) throw conflict("commerce.discountCodeExists");
       }
       data.code = code;
     }
     if (dto.kind !== undefined || dto.value !== undefined) {
       const kind = dto.kind ?? existing.kind;
-      if (!KINDS.includes(kind)) throw new BadRequestException("ডিসকাউন্টের ধরন সঠিক নয়");
+      if (!KINDS.includes(kind)) throw badRequest("commerce.discountTypeInvalid");
       data.kind = kind;
       data.value = validateKindValue(kind, dto.value !== undefined ? dto.value : existing.value);
     }
@@ -305,7 +302,7 @@ export class DiscountsService {
         dto.minOrderMinor === null || dto.minOrderMinor === "" ? null : BigInt(dto.minOrderMinor);
     }
     if (dto.scopeType !== undefined) {
-      if (!SCOPE_TYPES.includes(dto.scopeType)) throw new BadRequestException("ডিসকাউন্টের scope সঠিক নয়");
+      if (!SCOPE_TYPES.includes(dto.scopeType)) throw badRequest("commerce.discountScopeInvalid");
       data.scopeType = dto.scopeType;
     }
     if (dto.scopeIds !== undefined) data.scopeIds = dto.scopeIds;
@@ -429,7 +426,7 @@ export class DiscountsService {
     const store = await (this.prisma as any).store.findFirst({
       where: { id: storeId, organizationId: orgId },
     });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     const provider = platformKeyForStore(store.platform);
 
     const integrationTable = (this.prisma as any).integration;
@@ -447,7 +444,7 @@ export class DiscountsService {
       });
     }
     if (!integration) {
-      throw new BadRequestException("এই স্টোরের কোনো সক্রিয় integration পাওয়া যায়নি");
+      throw badRequest("commerce.storeNoActiveIntegration");
     }
 
     let fetched = 0;
@@ -463,7 +460,7 @@ export class DiscountsService {
         try { creds = decryptJson<any>(encrypted); } catch { creds = null; }
       }
       if (!creds?.consumerKey || !creds?.consumerSecret) {
-        throw new BadRequestException("woo_credentials_missing");
+        throw badRequest("commerce.wooCredentialsMissing");
       }
       const client = new WooClient(store.url, {
         consumerKey: creds.consumerKey, consumerSecret: creds.consumerSecret,
@@ -524,7 +521,7 @@ export class DiscountsService {
         after = conn.pageInfo.endCursor;
       }
     } else {
-      throw new BadRequestException("এই স্টোরের platform থেকে ডিসকাউন্ট টানা যায় না");
+      throw badRequest("commerce.storeDiscountPullUnsupported");
     }
 
     await this.audit?.log({
@@ -548,14 +545,14 @@ export class DiscountsService {
   ) {
     const count = dto.count;
     if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > 500) {
-      throw new BadRequestException("count 1 থেকে 500-এর মধ্যে হতে হবে");
+      throw badRequest("commerce.countRange");
     }
     const prefix = normalizeDiscountCode(dto.prefix ?? "").replace(/[^A-Z0-9-]/g, "");
     if (!prefix || prefix.length > 16) {
-      throw new BadRequestException("prefix সঠিক নয় (সর্বোচ্চ 16 অক্ষর)");
+      throw badRequest("commerce.prefixInvalid");
     }
     const kind = dto.kind ?? "";
-    if (!KINDS.includes(kind)) throw new BadRequestException("ডিসকাউন্টের ধরন সঠিক নয়");
+    if (!KINDS.includes(kind)) throw badRequest("commerce.discountTypeInvalid");
     const value = validateKindValue(kind, dto.value);
     const minOrderMinor =
       dto.minOrderMinor !== undefined && dto.minOrderMinor !== null && dto.minOrderMinor !== ""

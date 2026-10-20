@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { decryptJson } from "../integrations/crypto";
 import { verifyTotp } from "../common/totp";
+import { forbidden } from "../i18n";
 
 /**
  * CC23 (Connect Center Next) — TOTP step-up for sensitive
@@ -42,14 +43,14 @@ export class StepUpService {
     if (!user?.totpEnabled || !user?.totpSecretEncrypted) return "not_enabled";
     const code = String(totpCode ?? "").trim();
     if (!code) {
-      throw new ForbiddenException("এই কাজটি সংবেদনশীল — আপনার Authenticator অ্যাপের ৬-সংখ্যার TOTP কোডটি দিন। (Settings → Two-Factor-এ কোড চালু করা আছে।)");
+      throw forbidden("connections.stepUpTotpRequired");
     }
     let secret: string | null = null;
     try {
       secret = (decryptJson(user.totpSecretEncrypted) as { secret?: string })?.secret ?? null;
     } catch { secret = null; }
     if (!secret || !this.verify(secret, code)) {
-      throw new ForbiddenException("TOTP কোডটি সঠিক নয় — Authenticator অ্যাপের বর্তমান কোডটি দিয়ে আবার চেষ্টা করুন। কিছুই পরিবর্তন হয়নি।");
+      throw forbidden("connections.stepUpTotpWrong");
     }
     return "verified";
   }

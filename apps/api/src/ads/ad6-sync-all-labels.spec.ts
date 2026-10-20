@@ -199,7 +199,7 @@ describe("AD6 sync-all: result matrix + failure isolation + one audit", () => {
       ["acct-E", "skipped_no_connection"],
     ]);
     // The failure carries the sync's verbatim wrapped message.
-    expect(out.results[1].error).toBe("Meta insights sync failed: Meta rate limited");
+    expect(out.results[1].error).toBe("Meta insights sync ব্যর্থ হয়েছে: Meta rate limited");
     expect(out).toMatchObject({ total: 5, success: 1, failed: 1, skipped: 3 });
     // Sequential: the platform calls happen strictly in account
     // order — each account's sync is awaited before the next starts.
@@ -262,7 +262,7 @@ describe("AD6 labels via the AD5 settings endpoint", () => {
   it("foreign-org account → 404; empty DTO returns current values without writing", async () => {
     const db = makeDb({ adAccount: [metaAccountRow({ label: "আমার", syncDisabled: true })] });
     const svc = makeService(db);
-    await expect(svc.updateAccountSettings("org-2", ACTOR, "acct-1", { label: "x" })).rejects.toThrow(/not found/i);
+    await expect(svc.updateAccountSettings("org-2", ACTOR, "acct-1", { label: "x" })).rejects.toMatchObject({ code: "ads.adAccountNotFoundInThis" });
     const auditsBefore = db.auditLog.rows.length;
     const out = await svc.updateAccountSettings(ORG, ACTOR, "acct-1", {});
     expect(out).toEqual({ id: "acct-1", syncDisabled: true, label: "আমার" });

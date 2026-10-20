@@ -181,7 +181,7 @@ describe("SA-B24 authorisation (SUPER only)", () => {
     const guard = new SuperAdminGuard(guardPrisma(), { getAllAndOverride: () => ["SUPER"] } as any);
     await expect(
       guard.canActivate(ctxFor({ user: { userId: "tenant-owner", tv: 0 }, headers: {}, method: "GET", url: "/admin/ai/oversight" })),
-    ).rejects.toThrow(/Platform admin access required/);
+    ).rejects.toMatchObject({ code: "common.platformAdminRequired" });
   });
 
   it("a SUPPORT admin is refused on the SUPER tier", async () => {

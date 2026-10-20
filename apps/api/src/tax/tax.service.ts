@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import type { UpdateTaxSettingsDto } from "./tax.dto";
+import { badRequest } from "../i18n/api-exception";
 
 /** The shape returned when an org has never saved tax settings:
  * tax OFF (defaultVatBps null), prices include VAT (schema default). */
@@ -50,7 +51,7 @@ export class TaxService {
     if (dto.defaultVatBps !== undefined && dto.defaultVatBps !== null) {
       const v = dto.defaultVatBps;
       if (!Number.isInteger(v) || v < 0 || v > 10000) {
-        throw new BadRequestException("ডিফল্ট VAT হার 0–10000 basis points-এর মধ্যে হতে হবে (1500 = 15%)");
+        throw badRequest("tax.theDefaultVatRateMustBe");
       }
     }
     const clean = (v: string | null | undefined): string | null => {

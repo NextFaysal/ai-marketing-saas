@@ -90,7 +90,7 @@ describe("M71 team leads", () => {
 
   it("the lead sets their own team's roster; a non-lead agent cannot", async () => {
     const { svc } = world();
-    await expect(svc.setTeamMembers("org", "outsider", "team-a", [{ userId: "mate" }])).rejects.toThrow(/lead or an organization manager/);
+    await expect(svc.setTeamMembers("org", "outsider", "team-a", [{ userId: "mate" }])).rejects.toMatchObject({ code: "inbox.onlyTheTeamSLeadOr2" });
     const out = await svc.setTeamMembers("org", "lead", "team-a", [{ userId: "lead" }, { userId: "mate", capacity: 5 }]);
     const teamA = (out as any[]).find((t) => t.id === "team-a");
     expect(teamA.members).toHaveLength(2);
@@ -99,7 +99,7 @@ describe("M71 team leads", () => {
 
   it("setting a lead requires an org member; clearing works", async () => {
     const { svc } = world();
-    await expect(svc.updateTeam("org", "boss", "team-a", { leadUserId: "ghost" })).rejects.toThrow(/must be a member/);
+    await expect(svc.updateTeam("org", "boss", "team-a", { leadUserId: "ghost" })).rejects.toMatchObject({ code: "inbox.theLeadMustBeAMember" });
     const row: any = await svc.updateTeam("org", "boss", "team-a", { leadUserId: "mate" });
     expect(row.leadUserId).toBe("mate");
     const cleared: any = await svc.updateTeam("org", "boss", "team-a", { leadUserId: null });
@@ -120,7 +120,7 @@ describe("M71 team leads", () => {
 
   it("a scoped report counts only the team's conversations, and only for the lead/managers", async () => {
     const { svc } = world();
-    await expect(svc.getTeamReport("org", 7, "outsider", "team-a")).rejects.toThrow(/lead or an organization manager/);
+    await expect(svc.getTeamReport("org", 7, "outsider", "team-a")).rejects.toMatchObject({ code: "inbox.onlyTheTeamSLeadOr" });
     const scoped: any = await svc.getTeamReport("org", 7, "lead", "team-a");
     expect(scoped.scopedTeamId).toBe("team-a");
     expect(scoped.opened).toBe(2);         // outsider's conversation is out of scope
@@ -129,7 +129,7 @@ describe("M71 team leads", () => {
 
   it("a scoped scorecard lists only roster members", async () => {
     const { svc } = world();
-    await expect(svc.teamScorecard("org", 7, { actorId: "outsider", teamId: "team-a" })).rejects.toThrow(/lead or an organization manager/);
+    await expect(svc.teamScorecard("org", 7, { actorId: "outsider", teamId: "team-a" })).rejects.toMatchObject({ code: "inbox.onlyTheTeamSLeadOr" });
     const card: any = await svc.teamScorecard("org", 7, { actorId: "lead", teamId: "team-a" });
     expect(card.scopedTeamName).toBe("Sales");
     expect(card.agents.map((a: any) => a.userId).sort()).toEqual(["lead", "mate"]);

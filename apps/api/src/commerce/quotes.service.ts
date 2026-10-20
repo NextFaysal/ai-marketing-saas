@@ -14,6 +14,7 @@ import { tenantSmsFromRow } from "../messaging/sender-config";
 import { normalizeBdPhone } from "../orders/phone-utils";
 import { webBaseUrl } from "../courier/tracking-token";
 import type { QuoteDto, UpdateQuoteDto } from "./commerce.dto";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB5 (AX7) — staff-issued price QUOTES.
@@ -50,7 +51,7 @@ function toBig(v: unknown): bigint {
 function parseMoney(raw: unknown, fieldLabel: string): bigint {
   const s = raw === null || raw === undefined ? "" : String(raw).trim();
   if (!/^\d+$/.test(s)) {
-    throw new BadRequestException(`${fieldLabel} সঠিক নয় — অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে`);
+    throw badRequest("commerce.amountFieldInvalid", { label: fieldLabel });
   }
   return BigInt(s);
 }
@@ -115,25 +116,25 @@ export class QuotesService {
    * name/sku snapshots the quote will forever carry. */
   private async validateLines(orgId: string, raw: unknown): Promise<any[]> {
     if (!Array.isArray(raw) || raw.length === 0) {
-      throw new BadRequestException("কোটে কমপক্ষে একটি পণ্যের লাইন দিতে হবে");
+      throw badRequest("commerce.quoteNeedsLine");
     }
     if (raw.length > 100) {
-      throw new BadRequestException("কোটে সর্বোচ্চ ১০০টি লাইন দেওয়া যাবে");
+      throw badRequest("commerce.quoteMaxLines");
     }
     const out: any[] = [];
     for (const entry of raw as any[]) {
       const productId = String(entry?.productId ?? "").trim();
-      if (!productId) throw new BadRequestException("কোটের প্রতিটি লাইনে পণ্যের আইডি দিতে হবে");
+      if (!productId) throw badRequest("commerce.quoteLineProductIdRequired");
       const qty = Number(entry?.qty);
       if (!Number.isInteger(qty) || qty < 1 || qty > 999) {
-        throw new BadRequestException("কোটের প্রতিটি লাইনের পরিমাণ ১–৯৯৯ হতে হবে");
+        throw badRequest("commerce.quoteLineQtyRange");
       }
       const unitPriceMinor = parseMoney(entry?.unitPriceMinor, "লাইনের দাম");
       const product = await this.t("product").findFirst({
         where: { id: productId, organizationId: orgId },
       });
       if (!product) {
-        throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${productId}`);
+        throw badRequest("commerce.productNotOfOrg", { productId });
       }
       let variant: any = null;
       let variantId: string | null = null;
@@ -142,7 +143,7 @@ export class QuotesService {
         variant = await this.t("productVariant").findFirst({
           where: { id: variantId, productId },
         });
-        if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        if (!variant) throw badRequest("commerce.variantNotOfProduct");
       }
       out.push({
         productId,
@@ -166,13 +167,13 @@ export class QuotesService {
       const customer = await this.t("customer").findFirst({
         where: { id: String(dto.customerId), organizationId: orgId },
       });
-      if (!customer) throw new BadRequestException("কাস্টমার পাওয়া যায়নি (এই সংস্থার নয়)");
+      if (!customer) throw badRequest("commerce.customerNotOfOrg");
       return { customerId: String(dto.customerId), walkinName: null, walkinPhone: null };
     }
     const walkinName = dto.walkinName?.trim() ? dto.walkinName.trim() : null;
     const walkinPhone = dto.walkinPhone?.trim() ? dto.walkinPhone.trim() : null;
     if (!walkinName && !walkinPhone) {
-      throw new BadRequestException("কোটের জন্য কাস্টমার বেছে নিন অথবা ওয়াক-ইন ক্রেতার নাম/ফোন দিন");
+      throw badRequest("commerce.quoteCustomerOrWalkinRequired");
     }
     return { customerId: null, walkinName, walkinPhone };
   }
@@ -180,8 +181,8 @@ export class QuotesService {
   private parseExpires(raw: unknown): Date | null {
     if (raw === undefined || raw === null || raw === "") return null;
     const d = new Date(String(raw));
-    if (Number.isNaN(d.getTime())) throw new BadRequestException("মেয়াদের তারিখটি সঠিক নয়");
-    if (d.getTime() <= Date.now()) throw new BadRequestException("কোটের মেয়াদ ভবিষ্যতের তারিখ হতে হবে");
+    if (Number.isNaN(d.getTime())) throw badRequest("commerce.expiryDateInvalid");
+    if (d.getTime() <= Date.now()) throw badRequest("commerce.quoteExpiryMustBeFuture");
     return d;
   }
 
@@ -254,7 +255,7 @@ export class QuotesService {
     const row = await this.t("quote").findFirst({
       where: { id, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("কোটটি পাওয়া যায়নি");
+    if (!row) throw notFound("commerce.quoteNotFound");
     return this.applyLazyExpiry(row);
   }
 
@@ -307,7 +308,7 @@ export class QuotesService {
   async updateQuote(orgId: string, actorId: string, id: string, dto: UpdateQuoteDto) {
     const existing = await this.loadOr404(orgId, id);
     if (existing.status !== "draft") {
-      throw new BadRequestException("শুধু খসড়া (draft) অবস্থার কোট সম্পাদনা করা যাবে");
+      throw badRequest("commerce.quoteEditDraftOnly");
     }
     const data: Record<string, any> = {};
     if (dto?.lines !== undefined) data.lines = await this.validateLines(orgId, dto.lines);
@@ -341,7 +342,7 @@ export class QuotesService {
   async cancelQuote(orgId: string, actorId: string, id: string) {
     const existing = await this.loadOr404(orgId, id);
     if (existing.status !== "draft" && existing.status !== "sent") {
-      throw new BadRequestException("শুধু খসড়া বা পাঠানো অবস্থার কোট বাতিল করা যাবে");
+      throw badRequest("commerce.quoteCancelStates");
     }
     const updated = await this.t("quote").update({
       where: { id },
@@ -432,7 +433,7 @@ export class QuotesService {
   async sendQuote(orgId: string, actorId: string, id: string) {
     const quote = await this.loadOr404(orgId, id);
     if (quote.status !== "draft" && quote.status !== "sent") {
-      throw new BadRequestException("শুধু খসড়া বা পাঠানো অবস্থার কোট পাঠানো যাবে");
+      throw badRequest("commerce.quoteSendStates");
     }
     // A fresh token per send — re-sending ROTATES it and the
     // old link dies. Only the SHA-256 hash is stored.
@@ -485,11 +486,11 @@ export class QuotesService {
 
   private async findByToken(token: string): Promise<any> {
     const t = String(token ?? "").trim();
-    if (!t) throw new NotFoundException("কোটটি পাওয়া যায়নি");
+    if (!t) throw notFound("commerce.quoteNotFound");
     const row = await this.t("quote").findFirst({
       where: { publicTokenHash: hashQuoteToken(t) },
     });
-    if (!row) throw new NotFoundException("কোটটি পাওয়া যায়নি");
+    if (!row) throw notFound("commerce.quoteNotFound");
     return this.applyLazyExpiry(row);
   }
 
@@ -537,7 +538,7 @@ export class QuotesService {
       return this.publicPayload(row);
     }
     if (row.status !== "sent") {
-      throw new BadRequestException("এই কোটটিতে এখন উত্তর দেওয়া যাবে না");
+      throw badRequest("commerce.quoteRespondBlocked");
     }
     const updated = await this.t("quote").update({
       where: { id: row.id },
@@ -587,10 +588,10 @@ export class QuotesService {
   async buildConversionInput(orgId: string, id: string) {
     const quote = await this.loadOr404(orgId, id);
     if (quote.convertedOrderId) {
-      throw new BadRequestException("এই কোটটি ইতিমধ্যে অর্ডারে রূপান্তরিত হয়েছে");
+      throw badRequest("commerce.quoteAlreadyConverted");
     }
     if (quote.status !== "accepted") {
-      throw new BadRequestException("শুধু গৃহীত (accepted) কোটই অর্ডারে রূপান্তর করা যাবে");
+      throw badRequest("commerce.quoteConvertAcceptedOnly");
     }
     let phone: string | null = null;
     let name: string | null = null;
@@ -601,18 +602,14 @@ export class QuotesService {
       phone = customer?.phone?.trim() ? String(customer.phone).trim() : null;
       name = customer ? CUSTOMER_NAME(customer) : null;
       if (!phone) {
-        throw new BadRequestException(
-          "কোটের কাস্টমারের ফোন নম্বর নেই — আগে কাস্টমারের প্রোফাইলে ফোন যোগ করুন, অথবা ওয়াক-ইন তথ্য দিয়ে কোটটি তৈরি করুন",
-        );
+        throw badRequest("commerce.quoteCustomerNoPhone");
       }
     } else if (quote.walkinPhone?.trim()) {
       phone = String(quote.walkinPhone).trim();
       name = quote.walkinName?.trim() ? String(quote.walkinName).trim() : null;
     }
     if (!phone) {
-      throw new BadRequestException(
-        "কোটে কোনো ফোন নম্বর নেই — অর্ডার তৈরি করতে ক্রেতার ফোন নম্বর আবশ্যক",
-      );
+      throw badRequest("commerce.quoteNoPhoneForOrder");
     }
     const lines = Array.isArray(quote.lines) ? quote.lines : [];
     const items = lines.map((l: any) => ({

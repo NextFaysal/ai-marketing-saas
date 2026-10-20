@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "../integrations/integrations.service";
@@ -6,6 +6,7 @@ import { parseProductsCsv, parseOrdersCsv, CsvRowError, ParseResult, ParsedProdu
 import { parseProductsXlsx } from "./xlsx";
 import { ImportProductsCsvDto, ImportProductsXlsxDto } from "./imports.dto";
 import { refreshProductSearchVector } from "../products/search-vector";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const XLSX_UNREADABLE = "Excel ফাইলটি পড়া যায়নি — সঠিক .xlsx ফাইল আপলোড করুন";
 
@@ -306,7 +307,7 @@ export class ImportsService {
    * repeat buyers converge on one customer record.
    */
   async importOrders(organizationId: string, actorId: string, dto: ImportProductsCsvDto) {
-    if (!this.integrations) throw new BadRequestException("Order import is not available in this deployment");
+    if (!this.integrations) throw badRequest("imports.orderImportIsNotAvailableIn");
     const job = await (this.prisma as any).importJob.create({
       data: { organizationId, kind: "orders", status: "PENDING", fileName: dto.fileName ?? null, createdById: actorId },
     });
@@ -371,7 +372,7 @@ export class ImportsService {
 
   async getJob(organizationId: string, jobId: string) {
     const job = await (this.prisma as any).importJob.findFirst({ where: { id: jobId, organizationId } });
-    if (!job) throw new NotFoundException("Import job not found in this organization");
+    if (!job) throw notFound("imports.importJobNotFoundInThis");
     return job;
   }
 }

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { parseCsv } from "../social/social-csv";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC25 (Connect Center Next) — settlement reconciliation.
@@ -65,14 +66,14 @@ function detectShape(provider: string, headers: string[]): CsvShape {
   // carries one.
   const bkashRef = pick("trxid", "paymentid", "payment_id");
   if (bkashRef) {
-    if (!amountHeader) throw new BadRequestException("ফাইলে পরিমাণের (Amount) কলাম পাওয়া যায়নি — এটি চেনা bKash statement আকারের নয়।");
-    if (provider !== "bkash") throw new BadRequestException("এই ফাইলটি bKash statement আকারের (TrxID কলাম আছে), কিন্তু import-টি অন্য প্রোভাইডারের জন্য ঘোষণা করা হয়েছে।");
+    if (!amountHeader) throw badRequest("connections.bkashStatementNoAmount");
+    if (provider !== "bkash") throw badRequest("connections.bkashStatementWrongProvider");
     return { shape: "bkash", refHeader: bkashRef, amountHeader, currencyHeader, statusHeader };
   }
   const sslRef = pick("tranid", "banktranid");
   if (sslRef) {
-    if (!amountHeader) throw new BadRequestException("ফাইলে পরিমাণের (Amount) কলাম পাওয়া যায়নি — এটি চেনা SSLCommerz settlement আকারের নয়।");
-    if (provider !== "sslcommerz") throw new BadRequestException("এই ফাইলটি SSLCommerz settlement আকারের (Tran ID কলাম আছে), কিন্তু import-টি অন্য প্রোভাইডারের জন্য ঘোষণা করা হয়েছে।");
+    if (!amountHeader) throw badRequest("connections.sslSettlementNoAmount");
+    if (provider !== "sslcommerz") throw badRequest("connections.sslSettlementWrongProvider");
     return { shape: "sslcommerz", refHeader: sslRef, amountHeader, currencyHeader, statusHeader };
   }
   // Ambiguous: a lone "Transaction ID" is read as the declared
@@ -81,7 +82,7 @@ function detectShape(provider: string, headers: string[]): CsvShape {
   if (genericRef && amountHeader) {
     return { shape: provider as "sslcommerz" | "bkash", refHeader: genericRef, amountHeader, currencyHeader, statusHeader };
   }
-  throw new BadRequestException("ফাইলের কলামগুলো চেনা কোনো settlement আকারের সঙ্গে মিলছে না — SSLCommerz ফাইলে Tran ID + Amount, bKash ফাইলে TrxID + Amount কলাম থাকতে হয়। কোনো সারিই import হয়নি।");
+  throw badRequest("connections.settlementShapeUnknown");
 }
 
 function parseAmountMinor(raw: string): bigint | null {
@@ -144,16 +145,16 @@ export class SettlementsService {
   }) {
     const provider = String(dto?.provider ?? "").trim().toLowerCase();
     if (provider !== "sslcommerz" && provider !== "bkash") {
-      throw new BadRequestException("provider must be sslcommerz | bkash");
+      throw badRequest("connections.providerSslOrBkash");
     }
     const source = dto?.source === "platform" ? "platform" : "own";
     const periodLabel = String(dto?.periodLabel ?? "").trim();
-    if (!periodLabel) throw new BadRequestException("periodLabel (সময়কালের বিবরণ) প্রয়োজন।");
+    if (!periodLabel) throw badRequest("connections.periodLabelRequired");
     const fileName = String(dto?.fileName ?? "").trim() || "settlement.csv";
     const parseDate = (raw?: string): Date | null => {
       if (!raw || !String(raw).trim()) return null;
       const d = new Date(String(raw).trim());
-      if (Number.isNaN(d.getTime())) throw new BadRequestException(`তারিখ বোঝা যায়নি: ${raw}`);
+      if (Number.isNaN(d.getTime())) throw badRequest("connections.dateNotUnderstood", { raw: raw });
       return d;
     };
     const periodFrom = parseDate(dto?.periodFrom);
@@ -161,7 +162,7 @@ export class SettlementsService {
 
     const parsed = parseCsv(String(dto?.csv ?? ""));
     if (!parsed.headers.length || !parsed.rows.length) {
-      throw new BadRequestException("ফাইলটিতে কোনো ডেটা সারি নেই — খালি ফাইল import করা হয়নি।");
+      throw badRequest("connections.settlementFileEmpty");
     }
     // Throws the honest shape error when neither shape matches
     // — BEFORE anything is stored.
@@ -244,7 +245,7 @@ export class SettlementsService {
   async getImport(organizationId: string, importId: string) {
     const p: any = this.prisma as any;
     const imp = await p.settlementImport.findFirst({ where: { id: importId, organizationId } }).catch(() => null);
-    if (!imp) throw new NotFoundException("Settlement import not found");
+    if (!imp) throw notFound("connections.settlementImportNotFound");
     let rows: any[] = [];
     try {
       rows = await p.settlementRow.findMany({ where: { importId: imp.id }, orderBy: { createdAt: "asc" }, take: 5000 });

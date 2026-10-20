@@ -280,7 +280,7 @@ describe("NF7 (b) ledger balance is derived — grants + debits + reversal", () 
   it("manual grant without a reason is refused and writes nothing", async () => {
     const ctx = setup();
     await expect(ctx.credit.grantManual(ORG, "staff-1", "cust-a", { amountMinor: "1000", note: "  " }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "membership.aReasonForGivingCreditNote" });
     expect(ctx.rows.creditEntries).toHaveLength(0);
   });
 });
@@ -339,7 +339,7 @@ describe("NF7 (d) refund-to-credit — hidden/refused OFF, exactly-once ON", () 
     const ctx = setup();
     const order = addOrder(ctx, { status: "delivered", totalMinor: 20000n, storeId: "store-1" });
     await expect(ctx.credit.refundToCredit(ORG, "staff-1", order.id, { amountMinor: "5000", refundKey: "rf-1" }))
-      .rejects.toBeInstanceOf(ForbiddenException);
+      .rejects.toMatchObject({ code: "membership.refundToStoreCreditIsNot" });
     expect(ctx.rows.creditEntries).toHaveLength(0);
     expect(order.refundedMinor).toBe(0n);
     expect(await ctx.credit.refundToCreditEnabledForOrder(ORG, order)).toBe(false);
@@ -363,17 +363,17 @@ describe("NF7 (d) refund-to-credit — hidden/refused OFF, exactly-once ON", () 
     expect(order.refundedMinor).toBe(8000n);
     // Beyond the refundable remainder is refused.
     await expect(ctx.credit.refundToCredit(ORG, "staff-1", order.id, { amountMinor: "99999", refundKey: "rf-3" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "membership.theRefundAmountCannotExceedThe" });
   });
 
   it("native order (no store): gate reads any-store opt-in; missing refundKey refused", async () => {
     const ctx = setup();
     const order = addOrder(ctx, { status: "delivered", totalMinor: 10000n, storeId: null });
     await expect(ctx.credit.refundToCredit(ORG, "staff-1", order.id, { amountMinor: "1000", refundKey: "rf-x" }))
-      .rejects.toBeInstanceOf(ForbiddenException);
+      .rejects.toMatchObject({ code: "membership.refundToStoreCreditIsNot" });
     ctx.rows.stores[0].refundToCreditEnabled = true;
     await expect(ctx.credit.refundToCredit(ORG, "staff-1", order.id, { amountMinor: "1000", refundKey: "" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "membership.refundkeyIsRequiredThisKeyIs" });
     const ok = await ctx.credit.refundToCredit(ORG, "staff-1", order.id, { amountMinor: "1000", refundKey: "rf-x" });
     expect(ok.entry.reason).toBe("refund_credit");
   });
@@ -385,13 +385,13 @@ describe("NF7 (e)+(f) org isolation and cross-customer isolation", () => {
   it("another org's customer is invisible: grant/tier/refund all 404, balances never leak", async () => {
     const ctx = setup();
     await expect(ctx.credit.grantManual(ORG, "staff-1", "cust-x", { amountMinor: "1000", note: "x" }))
-      .rejects.toBeInstanceOf(NotFoundException);
-    await expect(ctx.membership.recomputeCustomer(ORG, "cust-x")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(ctx.credit.getCustomerCredit(ORG, "cust-x")).rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "membership.theCustomerWasNotFound" });
+    await expect(ctx.membership.recomputeCustomer(ORG, "cust-x")).rejects.toMatchObject({ code: "membership.theCustomerWasNotFound" });
+    await expect(ctx.credit.getCustomerCredit(ORG, "cust-x")).rejects.toMatchObject({ code: "membership.theCustomerWasNotFound" });
     // An org-2 order cannot be refunded-to-credit from org-1.
     const foreign = addOrder(ctx, { organizationId: ORG2, customerId: "cust-x", status: "delivered", totalMinor: 5000n });
     await expect(ctx.credit.refundToCredit(ORG, "staff-1", foreign.id, { amountMinor: "1000", refundKey: "rf-f" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "membership.theOrderWasNotFound" });
     expect(ctx.rows.creditEntries).toHaveLength(0);
   });
 

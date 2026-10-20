@@ -136,7 +136,7 @@ describe("CN6 audience studio sources", () => {
 
   it("an empty source refuses creation honestly and the catalogue says why", async () => {
     const { svc } = setup();
-    await expect(svc.createCustom("org", "u1", { adAccountId: "acc-1", name: "Buyers", source: "buyers" })).rejects.toThrow(/No contacts/);
+    await expect(svc.createCustom("org", "u1", { adAccountId: "acc-1", name: "Buyers", source: "buyers" })).rejects.toMatchObject({ code: "audiences.noContactsWithAnEmailOr" });
     const cat = await svc.sourceCatalog("org");
     const buyers = cat.find((c) => c.key === "buyers");
     expect(buyers?.available).toBe(false);

@@ -250,18 +250,18 @@ describe("EC14 FeedsService", () => {
     const row = prisma.productFeed.rows.find((r: any) => r.id === feed.id);
     expect(row.lastGeneratedAt).toBeInstanceOf(Date);
 
-    await expect(svc.serveByToken(feed.token, "csv")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.serveByToken("no-such-token", "xml")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getOne("org-2", feed.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.serveByToken(feed.token, "csv")).rejects.toMatchObject({ code: "feeds.feedNotFound" });
+    await expect(svc.serveByToken("no-such-token", "xml")).rejects.toMatchObject({ code: "feeds.feedNotFound" });
+    await expect(svc.getOne("org-2", feed.id)).rejects.toMatchObject({ code: "feeds.feedNotFoundInThisOrganization" });
 
     const rotated = await svc.rotateToken("org-1", "u1", feed.id);
     expect(rotated.feed.token).not.toBe(feed.token);
-    await expect(svc.serveByToken(feed.token, "xml")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.serveByToken(feed.token, "xml")).rejects.toMatchObject({ code: "feeds.feedNotFound" });
     const served2 = await svc.serveByToken(rotated.feed.token, "xml");
     expect(served2.body).toContain("WAL-1");
 
     await svc.setActive("org-1", "u1", feed.id, false);
-    await expect(svc.serveByToken(rotated.feed.token, "xml")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.serveByToken(rotated.feed.token, "xml")).rejects.toMatchObject({ code: "feeds.feedNotFound" });
   });
 
   it("preview shows the first items, counts and warnings (meta category)", async () => {

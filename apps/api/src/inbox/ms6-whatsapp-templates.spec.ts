@@ -237,7 +237,7 @@ describe("MS6 WABA id setting", () => {
 
   it("updateWhatsAppWabaId 404s honestly when no WhatsApp integration is connected", async () => {
     const { svc } = buildInbox({ withIntegration: false });
-    await expect(svc.updateWhatsAppWabaId("org-1", "owner", "WABA1")).rejects.toThrow(/No connected WhatsApp integration/);
+    await expect(svc.updateWhatsAppWabaId("org-1", "owner", "WABA1")).rejects.toMatchObject({ code: "inbox.noConnectedWhatsappIntegrationForThis" });
   });
 
   it("connectMessaging stores wabaId for whatsapp only; listMessagingIntegrations exposes it (never the token)", async () => {
@@ -457,19 +457,19 @@ describe("MS6 messaging rich broadcasts", () => {
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "m", channel: "email", subject: "s", body: "b", audienceType: "customers",
       templateComponents: { headerMediaUrl: "https://img.example/h.png" },
-    })).rejects.toThrow(/only allowed for WhatsApp/);
+    })).rejects.toMatchObject({ code: "messaging.templateComponentsIsOnlyAllowedForWhatsApp" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "m", channel: "whatsapp", whatsappTemplateId: "wa-1", audienceType: "customers",
       templateComponents: { headerMediaUrl: "ftp://img.example/h.png" },
-    })).rejects.toThrow(/headerMediaUrl must be an http\(s\) URL/);
+    })).rejects.toMatchObject({ code: "messaging.templateComponentsHeaderMediaUrlMustBeAnHttp" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "m", channel: "whatsapp", whatsappTemplateId: "wa-1", audienceType: "customers",
       templateComponents: { buttonParams: [{ index: -1, subType: "url" }] },
-    })).rejects.toThrow(/index must be an integer/);
+    })).rejects.toMatchObject({ code: "messaging.templateComponentsButtonParamsIndexMustBeAn" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "m", channel: "whatsapp", whatsappTemplateId: "wa-1", audienceType: "customers",
       templateComponents: { buttonParams: [{ index: 0, subType: "call" as any }] },
-    })).rejects.toThrow(/subType must be/);
+    })).rejects.toMatchObject({ code: "messaging.templateComponentsButtonParamsSubTypeMustBeUrl" });
   });
 
   it("the sender maps stored templateComponents per recipient ({name}/{key} substitution) into the Meta send body", async () => {

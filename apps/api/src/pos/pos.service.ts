@@ -1,5 +1,4 @@
-import {
-  BadRequestException, Injectable, Logger, NotFoundException, Optional,
+import { Injectable, Logger, Optional,
 } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +14,7 @@ import type { PromotionLine } from "../commerce/promotions";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { IdempotencyService } from "../fraud/idempotency.service";
 import type { CreatePosSaleDto } from "./pos.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -234,7 +234,7 @@ export class PosService {
       duplicate = rows.find((r: any) => r.trxId === reference && r.status === "approved") ?? null;
     }
     if (duplicate) {
-      throw new BadRequestException("This transaction reference has already been recorded as a verified payment");
+      throw badRequest("pos.thisTransactionReferenceHasAlreadyBeen");
     }
   }
 
@@ -256,11 +256,11 @@ export class PosService {
       if (replay != null) return replay;
     }
     if (!Array.isArray(dto?.items) || dto.items.length === 0) {
-      throw new BadRequestException("কমপক্ষে একটি পণ্য যোগ করুন");
+      throw badRequest("pos.addAtLeastOneProduct");
     }
     const mode = dto.payment?.mode;
     if (mode !== "paid" && mode !== "due") {
-      throw new BadRequestException("পেমেন্টের ধরন পাঠান — paid (নগদ) অথবা due (বাকি)");
+      throw badRequest("pos.sendThePaymentTypePaidCash");
     }
     const method = dto.payment.method ?? "cash";
     const reference = dto.payment.reference?.trim() ? dto.payment.reference.trim() : null;
@@ -272,7 +272,7 @@ export class PosService {
     for (const item of dto.items) {
       const quantity = Number(item?.quantity);
       if (!item?.productId || !Number.isInteger(quantity) || quantity <= 0) {
-        throw new BadRequestException("প্রতিটি পণ্যের পরিমাণ ধনাত্মক সংখ্যা হতে হবে");
+        throw badRequest("pos.eachProductSQuantityMustBe");
       }
       const key = `${item.productId}::${item.variantId ?? ""}`;
       const prev = aggregated.get(key);
@@ -292,13 +292,13 @@ export class PosService {
       const product = await this.t("product").findFirst({
         where: { id: line.productId, organizationId, status: "ACTIVE" },
       });
-      if (!product) throw new BadRequestException("পণ্যটি পাওয়া যায়নি বা বন্ধ আছে");
+      if (!product) throw badRequest("pos.theProductWasNotFoundOr");
       let variant: any = null;
       if (line.variantId) {
         variant = await this.t("productVariant").findFirst({
           where: { id: line.variantId, productId: product.id },
         });
-        if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        if (!variant) throw badRequest("pos.theVariantDoesNotBelongTo");
       }
       // AB4 (AX6): opts.forceStock skips ONLY this per-line
       // quantity refusal (offline-sync repost with merchant
@@ -308,9 +308,7 @@ export class PosService {
       if (!product.preorderEnabled && !opts?.forceStock) {
         const stock = variant ? variant.stockQuantity : product.stockQuantity;
         if (stock !== null && stock !== undefined && line.quantity > Number(stock)) {
-          throw new BadRequestException(
-            `দুঃখিত, "${product.name}"-এর স্টকে মাত্র ${stock}টি আছে — এর বেশি অর্ডার করা যাবে না`,
-          );
+          throw badRequest("pos.sorryHasOnlyInStockMore", { productName: product.name, stock: stock });
         }
       }
       const unitPriceMinor = variant?.priceMinor !== null && variant?.priceMinor !== undefined
@@ -402,7 +400,7 @@ export class PosService {
     let giftCardInput: { giftCardId: string; balanceMinor: bigint; codeLast4: string } | null = null;
     if (dto.giftCardCode?.trim()) {
       if (!this.giftCards) {
-        throw new BadRequestException("গিফট কার্ড সুবিধা এই দোকানে নেই");
+        throw badRequest("pos.theGiftCardFacilityIsNot");
       }
       const cartHasGiftCardProduct = resolved.some((l) => !!l.product.isGiftCard);
       const snap = await this.giftCards.resolveForCheckout(organizationId, dto.giftCardCode, {
@@ -463,7 +461,7 @@ export class PosService {
     const order = await this.t("order").findFirst({
       where: { organizationId, source: "pos", externalId },
     });
-    if (!order) throw new NotFoundException("Order was recorded but could not be reloaded");
+    if (!order) throw notFound("pos.orderWasRecordedButCouldNot");
 
     // EC16 stamps (promotion/coupon/referral split + EC23 tax
     // breakdown) — failure-isolated inside stampOrder. Gift

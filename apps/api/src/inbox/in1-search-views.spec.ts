@@ -164,7 +164,7 @@ describe("IN1a searchMessages", () => {
   });
   it("refuses a too-short query in Bengali and respects the limit", async () => {
     const s = svc(fakePrisma());
-    await expect(s.searchMessages("org-1", "ক")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.searchMessages("org-1", "ক")).rejects.toMatchObject({ code: "inbox.typeAtLeast2CharactersTo" });
     const { results } = await s.searchMessages("org-1", "ডেলিভারি চার্জ", { limit: 1 });
     expect(results).toHaveLength(1);
   });
@@ -238,8 +238,8 @@ describe("IN1c saved views", () => {
     expect(forOther.map((v: any) => v.id)).toEqual([shared.id]);
     expect(forOther[0].mine).toBe(false);
     // Non-creator cannot edit or delete the shared view.
-    await expect(s.updateSavedView("org-1", "user-2", shared.id, { name: "হ্যাক" })).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(s.deleteSavedView("org-1", "user-2", shared.id)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(s.updateSavedView("org-1", "user-2", shared.id, { name: "হ্যাক" })).rejects.toMatchObject({ code: "inbox.onlyTheViewSOwnerCan" });
+    await expect(s.deleteSavedView("org-1", "user-2", shared.id)).rejects.toMatchObject({ code: "inbox.onlyTheViewSOwnerCan2" });
     // The creator can.
     const renamed = await s.updateSavedView("org-1", "user-1", shared.id, { name: "টিম ভিউ ২" });
     expect(renamed.name).toBe("টিম ভিউ ২");
@@ -250,6 +250,6 @@ describe("IN1c saved views", () => {
   });
   it("rejects an empty view name", async () => {
     const s = svc(fakePrisma());
-    await expect(s.createSavedView("org-1", "user-1", { name: "  ", filters: {} })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(s.createSavedView("org-1", "user-1", { name: "  ", filters: {} })).rejects.toMatchObject({ code: "inbox.giveTheViewAName" });
   });
 });

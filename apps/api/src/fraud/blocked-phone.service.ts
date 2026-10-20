@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { bdPhoneMatchKey, normalizeBdPhone } from "../orders/phone-utils";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * ON4 — org phone blocklist (BlockedPhone). Stored rows keep
@@ -55,16 +56,16 @@ export class BlockedPhoneService {
   async add(orgId: string, actorId: string, dto: { phone?: string; reason?: string }) {
     const canonical = normalizeBdPhone(dto?.phone ?? "");
     if (!canonical) {
-      throw new BadRequestException("ফোন নম্বরটি সঠিক বাংলাদেশি মোবাইল নম্বর নয়");
+      throw badRequest("fraud.thePhoneNumberIsNotA");
     }
     const phoneKey = bdPhoneMatchKey(canonical)!;
     const table = this.table();
-    if (!table?.create) throw new BadRequestException("ব্লকলিস্ট সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!table?.create) throw badRequest("fraud.theBlocklistFacilityIsNotAvailable");
     const existing = table.findFirst
       ? await table.findFirst({ where: { organizationId: orgId, phoneKey } }).catch(() => null)
       : null;
     if (existing) {
-      throw new BadRequestException("এই নম্বরটি ইতিমধ্যে ব্লকলিস্টে আছে");
+      throw badRequest("fraud.thisNumberIsAlreadyOnThe");
     }
     let row: any;
     try {
@@ -80,7 +81,7 @@ export class BlockedPhoneService {
     } catch (e: any) {
       // Unique (organizationId, phoneKey) race → the duplicate message.
       if (String(e?.code ?? "").includes("P2002") || /unique/i.test(String(e?.message ?? ""))) {
-        throw new BadRequestException("এই নম্বরটি ইতিমধ্যে ব্লকলিস্টে আছে");
+        throw badRequest("fraud.thisNumberIsAlreadyOnThe");
       }
       throw e;
     }
@@ -96,7 +97,7 @@ export class BlockedPhoneService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id, organizationId: orgId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Blocked phone not found in this organization");
+    if (!row) throw notFound("fraud.blockedPhoneNotFoundInThis");
     await table.delete({ where: { id: row.id } });
     await this.audit?.log({
       organizationId: orgId, userId: actorId, action: "orders.blocked_phone_removed",

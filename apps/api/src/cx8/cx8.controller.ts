@@ -1,4 +1,4 @@
-import { ArgumentsHost, BadRequestException, Body, Catch, Controller, ExceptionFilter, Param, Post, UploadedFile, UseFilters, UseGuards, UseInterceptors } from "@nestjs/common";
+import { ArgumentsHost, Body, Catch, Controller, ExceptionFilter, Param, Post, UploadedFile, UseFilters, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { MulterError } from "multer";
 import { LabelScanService, MAX_LABEL_SCAN_BYTES } from "./label-scan.service";
@@ -6,6 +6,7 @@ import { ProductRecognitionService } from "./product-recognition.service";
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest } from "../i18n/api-exception";
 
 const STAFF_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
 
@@ -16,7 +17,7 @@ const STAFF_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER", "SUPPORT_AGENT"];
 export class Cx8MulterErrorFilter implements ExceptionFilter {
   catch(exception: MulterError, _host: ArgumentsHost) {
     if (exception.code === "LIMIT_FILE_SIZE") {
-      throw new BadRequestException("ছবি অনেক বড় — সর্বোচ্চ ৮MB আপলোড করা যাবে");
+      throw badRequest("cx8.theImageIsTooLargeAt");
     }
     throw exception;
   }

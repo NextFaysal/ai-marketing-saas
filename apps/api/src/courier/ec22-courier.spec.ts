@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.DISABLE_SCHEDULER = "true";
 
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CourierService } from "./courier.service";
 import { CourierRulesService } from "./courier-rules.service";
 
@@ -160,14 +161,14 @@ describe("EC22 setTrackingTemplate + getConnection id/template", () => {
     const { tables, svc } = setup();
     tables.integration.rows.push({ id: "int-1", organizationId: "org-1", provider: "steadfast", status: "CONNECTED" });
     await expect(svc.setTrackingTemplate("org-1", "owner", "steadfast", "https://track.example/plain"))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     expect(tables.integration.rows[0].trackingUrlTemplate).toBeUndefined();
   });
 
   it("404s when the provider integration does not exist", async () => {
     const { svc } = setup();
     await expect(svc.setTrackingTemplate("org-1", "owner", "pathao", "https://t/{trackingId}"))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("sets a trimmed template, audits, and clears with null / whitespace", async () => {

@@ -130,7 +130,7 @@ describe("EC11 ProposalsService — price change", () => {
 
   it("invalid / non-positive prices are refused at propose time", async () => {
     const { svc } = setup();
-    await expect(svc.propose("org-1", "u1", { type: "propose_price_change", productId: "prod-1", newPrice: "abc" })).rejects.toThrow(/Invalid newPrice/);
+    await expect(svc.propose("org-1", "u1", { type: "propose_price_change", productId: "prod-1", newPrice: "abc" })).rejects.toMatchObject({ code: "ai.invalidNewprice" });
     await expect(svc.propose("org-1", "u1", { type: "propose_price_change", productId: "prod-1", newPrice: "0" })).rejects.toThrow(/বেশি/);
   });
 });
@@ -254,9 +254,9 @@ describe("EC11 ProposalsService — product copy", () => {
 describe("EC11 ProposalsService — foreign-org targets are 404", () => {
   it("foreign product / listing ids are refused at propose time", async () => {
     const { svc } = setup({ llm: "real" });
-    await expect(svc.propose("org-1", "u1", { type: "propose_price_change", productId: "prod-foreign", newPrice: "100.00" })).rejects.toThrow(/not found/i);
-    await expect(svc.propose("org-1", "u1", { type: "propose_stock_adjust", productId: "prod-foreign", newQuantity: 1 })).rejects.toThrow(/not found/i);
-    await expect(svc.propose("org-1", "u1", { type: "propose_listing_publish", listingId: "list-foreign" })).rejects.toThrow(/not found/i);
-    await expect(svc.propose("org-1", "u1", { type: "propose_product_copy", productId: "prod-foreign" })).rejects.toThrow(/not found/i);
+    await expect(svc.propose("org-1", "u1", { type: "propose_price_change", productId: "prod-foreign", newPrice: "100.00" })).rejects.toMatchObject({ code: "ai.productNotFoundInThisOrganization" });
+    await expect(svc.propose("org-1", "u1", { type: "propose_stock_adjust", productId: "prod-foreign", newQuantity: 1 })).rejects.toMatchObject({ code: "ai.productNotFoundInThisOrganization" });
+    await expect(svc.propose("org-1", "u1", { type: "propose_listing_publish", listingId: "list-foreign" })).rejects.toMatchObject({ code: "ai.listingNotFoundInThisOrganization" });
+    await expect(svc.propose("org-1", "u1", { type: "propose_product_copy", productId: "prod-foreign" })).rejects.toMatchObject({ code: "ai.productNotFoundInThisOrganization" });
   });
 });

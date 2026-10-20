@@ -193,7 +193,7 @@ describe("AB8 builder — manifest, legacy shape, extensions", () => {
 
   it("throws NotFound for a missing org (admin semantics preserved)", async () => {
     const p = builderPrisma();
-    await expect(buildOrgDataBundle(p, "org-nope", { exportedBy: "x@y.test" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(buildOrgDataBundle(p, "org-nope", { exportedBy: "x@y.test" })).rejects.toMatchObject({ code: "common.orgNotFound" });
   });
 
   it("pages a table by id cursor in 1000-row chunks", async () => {
@@ -308,7 +308,7 @@ describe("AB8 DataExportsService — create / generate / download", () => {
     const { svc } = makeService(p);
     const out: any = await svc.generate("exp-bad");
     expect(out.status).toBe("failed");
-    expect(out.error).toContain("Organization not found");
+    expect(out.error).toContain("অর্গানাইজেশনটি পাওয়া যায়নি");
     expect(out.error.length).toBeLessThanOrEqual(500);
     await expect(svc.generate("exp-ghost")).resolves.toBeNull();
   });
@@ -327,8 +327,8 @@ describe("AB8 DataExportsService — create / generate / download", () => {
     const p = servicePrisma();
     const { svc } = makeService(p);
     const row: any = await svc.createExport(ORG_ID, "u-1", "manual");
-    await expect(svc.download("org-2", row.id)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.download(ORG_ID, "exp-nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.download("org-2", row.id)).rejects.toMatchObject({ code: "dataTools.exportNotFound" });
+    await expect(svc.download(ORG_ID, "exp-nope")).rejects.toMatchObject({ code: "dataTools.exportNotFound" });
   });
 
   it("an export past its expiry is marked expired and answers 410", async () => {
@@ -338,7 +338,7 @@ describe("AB8 DataExportsService — create / generate / download", () => {
     });
     const { svc, store } = makeService(p);
     store.files.set("data-exports/org-1/exp-old.json", Buffer.from("{}"));
-    await expect(svc.download(ORG_ID, "exp-old")).rejects.toBeInstanceOf(GoneException);
+    await expect(svc.download(ORG_ID, "exp-old")).rejects.toMatchObject({ code: "dataTools.thisExportHasExpired" });
     expect(p.dataExport.rows[0].status).toBe("expired");
   });
 
@@ -348,7 +348,7 @@ describe("AB8 DataExportsService — create / generate / download", () => {
       dataExport: [{ id: "exp-lost", organizationId: ORG_ID, requestedById: "u-1", kind: "manual", status: "ready", fileRef: "data-exports/org-1/exp-lost.json", sizeBytes: 10, expiresAt: future, createdAt: new Date() }],
     });
     const { svc } = makeService(p);
-    await expect(svc.download(ORG_ID, "exp-lost")).rejects.toBeInstanceOf(GoneException);
+    await expect(svc.download(ORG_ID, "exp-lost")).rejects.toMatchObject({ code: "dataTools.theStoredExportFileIsMissing" });
     expect(p.dataExport.rows[0].status).toBe("expired");
     expect(p.dataExport.rows[0].error).toContain("missing");
   });

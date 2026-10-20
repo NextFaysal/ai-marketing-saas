@@ -164,7 +164,7 @@ describe("EC12 Woo wc-auth callback", () => {
     seedStore(prisma);
     seedAttempt(prisma, { expiresAt: new Date(Date.now() - 60 * 1000) });
     const { wooAuth } = build(prisma);
-    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toThrow(/expired/);
+    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toMatchObject({ code: "integrations.thisWcAuthAttemptHasExpired" });
     expect(prisma.wcAuthAttempt.rows[0].status).toBe("failed");
     expect(prisma.wcAuthAttempt.rows[0].failureReason).toBe("expired");
     expect(prisma.integration.rows).toHaveLength(0);
@@ -179,7 +179,7 @@ describe("EC12 Woo wc-auth callback", () => {
     seedAttempt(prisma);
     const { wooAuth } = build(prisma);
     await expect(wooAuth.handleCallback({ ...callbackPayload, user_id: "no-such-attempt" }))
-      .rejects.toThrow(/Unknown wc-auth attempt/);
+      .rejects.toMatchObject({ code: "integrations.unknownWcAuthAttempt" });
     expect(prisma.wcAuthAttempt.rows[0].status).toBe("pending");
     expect(prisma.integration.rows).toHaveLength(0);
     expect(prisma.integrationCredential.rows).toHaveLength(0);
@@ -194,7 +194,7 @@ describe("EC12 Woo wc-auth callback", () => {
     const { wooAuth } = build(prisma);
     const out: any = await wooAuth.handleCallback({ ...callbackPayload });
     expect(out.connected).toBe(true);
-    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toThrow(/already been used/);
+    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toMatchObject({ code: "integrations.thisWcAuthAttemptHasAlready" });
     expect(prisma.integration.rows).toHaveLength(1);
     expect(prisma.integrationCredential.rows).toHaveLength(1);
   });
@@ -206,9 +206,9 @@ describe("EC12 Woo wc-auth callback", () => {
     seedStore(prisma);
     seedAttempt(prisma);
     const { wooAuth } = build(prisma);
-    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toThrow(/WooCommerce connection failed/);
+    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toMatchObject({ code: "integrations.woocommerceConnectionFailed" });
     expect(prisma.wcAuthAttempt.rows[0].status).toBe("failed");
-    expect(prisma.wcAuthAttempt.rows[0].failureReason).toMatch(/WooCommerce connection failed/);
+    expect(prisma.wcAuthAttempt.rows[0].failureReason).toMatch(/WooCommerce connection ব্যর্থ হয়েছে/);
     expect(prisma.integration.rows).toHaveLength(0);
     expect(prisma.integrationCredential.rows).toHaveLength(0);
   });
@@ -221,7 +221,7 @@ describe("EC12 Woo wc-auth callback", () => {
     seedAttempt(prisma);
     prisma.store.rows[0].url = "https://other-shop.example.com";
     const { wooAuth } = build(prisma);
-    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toThrow(/no longer matches/);
+    await expect(wooAuth.handleCallback({ ...callbackPayload })).rejects.toMatchObject({ code: "integrations.storeNoLongerMatchesTheWc" });
     expect(prisma.wcAuthAttempt.rows[0].status).toBe("failed");
     expect(prisma.wcAuthAttempt.rows[0].failureReason).toBe("store_mismatch");
     expect(prisma.integration.rows).toHaveLength(0);

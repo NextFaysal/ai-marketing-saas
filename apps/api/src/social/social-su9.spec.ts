@@ -267,8 +267,8 @@ describe("SU9 notes", () => {
     const other = seedPost(db, account.id);
     const { social } = services(db);
     const note = await social.createPostNote(ORG, MM, post.id, { body: "নোট" });
-    await expect(social.createPostNote(ORG, MM, "no-such-post", { body: "x" })).rejects.toThrow("not found");
-    await expect(social.deletePostNote(ORG, OWNER, other.id, note.id)).rejects.toThrow("not found");
+    await expect(social.createPostNote(ORG, MM, "no-such-post", { body: "x" })).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
+    await expect(social.deletePostNote(ORG, OWNER, other.id, note.id)).rejects.toMatchObject({ code: "social.socialPostNoteNotFoundIn" });
   });
 
   it("notes never touch the post row / publish fields", async () => {
@@ -408,7 +408,7 @@ describe("SU9 versions", () => {
     const { social } = services(db);
     const post = await social.createPost(ORG, MM, { socialAccountId: account.id, caption: "খসড়া" });
     const v1 = versionsOf(db, post.id)[0];
-    await expect(social.restorePostVersion(ORG, MM, post.id, "no-such-version")).rejects.toThrow("not found");
+    await expect(social.restorePostVersion(ORG, MM, post.id, "no-such-version")).rejects.toMatchObject({ code: "social.socialPostVersionNotFoundIn" });
     for (const status of ["published", "scheduled", "publishing"]) {
       stored(db, post.id).status = status;
       await expect(social.restorePostVersion(ORG, MM, post.id, v1.id)).rejects.toThrow("শুধু Draft পোস্টে");

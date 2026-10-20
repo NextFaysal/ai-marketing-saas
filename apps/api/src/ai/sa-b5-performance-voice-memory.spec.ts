@@ -478,7 +478,7 @@ describe("SA-B5 P8a: brand voice learning", () => {
     expect(row2.pendingTraits).toBeNull();
     customer = await brain.getContext(A, { audience: "customer" });
     expect(customer.styleInstructions).toContain("Tone: formal");
-    await expect(voice.dismissSuggestion(A, "owner-1")).rejects.toThrow(/Nothing to dismiss/);
+    await expect(voice.dismissSuggestion(A, "owner-1")).rejects.toMatchObject({ code: "ai.nothingToDismissTheActiveProfile" });
   });
 });
 

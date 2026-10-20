@@ -156,7 +156,7 @@ describe("M13 settings", () => {
     await svc.updateSettings("org-1", "owner", { autoReplyMode: "draft", confidenceThreshold: 80 });
     expect((await svc.getSettings("org-1")).autoReplyMode).toBe("draft");
     await expect(svc.updateSettings("org-1", "owner", { autoReplyMode: "yolo" as any })).rejects.toThrow("off | draft | auto");
-    await expect(svc.updateSettings("org-1", "owner", { perIntent: { price: "turbo" as any } })).rejects.toThrow("Invalid mode");
+    await expect(svc.updateSettings("org-1", "owner", { perIntent: { price: "turbo" as any } })).rejects.toMatchObject({ code: "inbox.invalidModeFor" });
   });
 });
 
@@ -262,7 +262,7 @@ describe("M13 COD confirmation flow", () => {
     const order = await svc.requestCodConfirmation("org-1", "agent-1", "conv-1", "o1");
     expect(order.codConfirmationStatus).toBe("awaiting");
     expect(tables.channelMessage.rows.filter((m: any) => m.direction === "out")).toHaveLength(1);
-    await expect(svc.requestCodConfirmation("org-1", "agent-1", "conv-1", "o1")).rejects.toThrow("already awaiting");
+    await expect(svc.requestCodConfirmation("org-1", "agent-1", "conv-1", "o1")).rejects.toMatchObject({ code: "inbox.aConfirmationRequestIsAlreadyAwaiting" });
   });
   it("a customer's হ্যাঁ confirms the order, writes a note, and no auto-reply fires", async () => {
     const { tables, svc } = setup();

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SyncOutboxService } from "./sync-outbox.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC5 — order push orchestration (the CatalogPushService sibling).
@@ -105,14 +106,11 @@ export class OrderPushService {
 
   async enqueueNote(organizationId: string, orderId: string, note: string) {
     const order = await this.loadOrder(organizationId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const resolved = await this.resolve(organizationId, order);
     if ("reason" in resolved) {
-      throw new BadRequestException(
-        resolved.reason === "sync_mode_mirror"
-          ? "এই স্টোরটি mirror মোডে আছে — স্টোরে নোট পাঠাতে sync mode co-manage বা full-manage করুন"
-          : `স্টোরে নোট পাঠানো যাচ্ছে না: ${resolved.reason}`,
-      );
+      if (resolved.reason === "sync_mode_mirror") throw badRequest("commerce.storeNoteMirrorBlocked");
+      throw badRequest("commerce.storeNotePushFailed", { reason: resolved.reason });
     }
     const row = await this.enqueue(organizationId, resolved.store, order, "push_order_note", { note });
     return { enqueued: 1, outboxId: row?.id };
@@ -170,22 +168,22 @@ export class OrderPushService {
    */
   async createStoreDraft(organizationId: string, actorId: string, orderId: string, storeId?: string) {
     const order = await this.loadOrder(organizationId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     if (order.storeDraftId || (order.storeId && (order.source === "woocommerce" || order.source === "shopify"))) {
-      throw new BadRequestException("এই অর্ডারটি ইতিমধ্যে স্টোরে আছে — আবার draft তৈরি করা যাবে না");
+      throw badRequest("commerce.orderAlreadyInStore");
     }
     let store: any = null;
     if (storeId || order.storeId) {
       store = await this.loadStore(organizationId, storeId ?? order.storeId);
-      if (!store) throw new NotFoundException("Store not found in this organization");
+      if (!store) throw notFound("commerce.storeNotFoundInOrg");
       if (!OrderPushService.orderEligible(store)) {
-        throw new BadRequestException("এই স্টোরটি mirror মোডে আছে — draft তৈরি করতে sync mode co-manage বা full-manage করুন");
+        throw badRequest("commerce.mirrorModeDraftBlocked");
       }
     } else {
       const stores: any[] = (await (this.prisma as any).store.findMany({ where: { organizationId } }).catch(() => [])) ?? [];
       const eligible = stores.filter((s: any) => OrderPushService.orderEligible(s));
-      if (eligible.length === 0) throw new BadRequestException("কোনো co-manage/full-manage স্টোর নেই — আগে Integrations থেকে একটি স্টোরের sync mode বদলান");
-      if (eligible.length > 1) throw new BadRequestException("একাধিক স্টোর আছে — কোন স্টোরে draft হবে তা বেছে দিন (storeId পাঠান)");
+      if (eligible.length === 0) throw badRequest("commerce.noCoManageStore");
+      if (eligible.length > 1) throw badRequest("commerce.multipleStoresPickOne");
       store = eligible[0];
     }
     const row = await this.outbox.enqueue({
@@ -198,7 +196,7 @@ export class OrderPushService {
       idempotencyKey: `create_draft_order:${order.id}`,
     });
     if (row?.status === "done") {
-      throw new BadRequestException("এই অর্ডারের draft আগেই তৈরি হয়েছে");
+      throw badRequest("commerce.orderDraftAlreadyCreated");
     }
     await this.outbox.processDue({ organizationId, onlyId: row.id });
     const after = await this.loadOrder(organizationId, orderId);
@@ -209,7 +207,7 @@ export class OrderPushService {
       metadata: { storeId: store.id, status: finalRow?.status ?? null, error: finalRow?.lastError ?? null },
     }).catch(() => undefined);
     if (finalRow?.status !== "done") {
-      throw new BadRequestException(`স্টোরে draft তৈরি ব্যর্থ হয়েছে: ${finalRow?.lastError ?? "unknown_error"}`);
+      throw badRequest("commerce.storeDraftFailed", { detail: finalRow?.lastError ?? "unknown_error" });
     }
     return after;
   }
@@ -217,7 +215,7 @@ export class OrderPushService {
   /** What the orders UI shows in the store-sync panel. */
   async pushState(organizationId: string, orderId: string) {
     const order = await this.loadOrder(organizationId, orderId);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     const store = await this.loadStore(organizationId, order.storeId);
     let recent: any[] = [];
     try {

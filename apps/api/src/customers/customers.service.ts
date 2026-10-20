@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { RiskService } from "../orders/risk.service";
@@ -9,6 +9,7 @@ import { ErasureService } from "./erasure.service";
 import {
   CrmSegmentsService, computeCustomerOrderStats, customerTagsOf, segmentFactsOf, segmentMatches,
 } from "./crm-segments.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export interface CustomerListOptions {
   hasDue?: boolean;
@@ -309,7 +310,7 @@ export class CustomersService {
     creditTermsDays?: number;
   }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (!customer) throw notFound("customers.customerNotFoundInThisOrganization");
     const data: Record<string, unknown> = {};
     if (dto.firstName !== undefined) data.firstName = dto.firstName?.trim() || null;
     if (dto.lastName !== undefined) data.lastName = dto.lastName?.trim() || null;
@@ -328,7 +329,7 @@ export class CustomersService {
           ? await groupTable.findFirst({ where: { id: String(dto.groupId), organizationId } }).catch(() => null)
           : null;
         if (!group) {
-          throw new BadRequestException("কাস্টমার গ্রুপটি পাওয়া যায়নি — এই সংস্থার একটি গ্রুপ বেছে নিন");
+          throw badRequest("customers.theCustomerGroupWasNotFound");
         }
         data.groupId = String(dto.groupId);
       }
@@ -336,7 +337,7 @@ export class CustomersService {
     if (dto.creditTermsDays !== undefined) {
       const terms = Number(dto.creditTermsDays);
       if (!Number.isInteger(terms) || terms < 0 || terms > 90) {
-        throw new BadRequestException("ক্রেডিটের মেয়াদ ০–৯০ দিনের মধ্যে একটি পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("customers.theCreditTermMustBeAn");
       }
       data.creditTermsDays = terms;
     }
@@ -346,7 +347,7 @@ export class CustomersService {
       } else {
         const raw = String(dto.creditLimitMinor).trim();
         if (!/^\d+$/.test(raw)) {
-          throw new BadRequestException("ক্রেডিট লিমিট সঠিক নয় — creditLimitMinor অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে, অথবা লিমিট মুছতে null দিন।");
+          throw badRequest("customers.theCreditLimitIsNotValid");
         }
         data.creditLimitMinor = BigInt(raw);
       }
@@ -357,7 +358,7 @@ export class CustomersService {
         const sanitized = await this.customFields.validateAndSanitize(organizationId, "customer", dto.customFields, { forCreate: false });
         data.customFields = this.customFields.mergeValues(customer.customFields ?? null, sanitized);
       } else if (Object.keys(dto.customFields).length) {
-        throw new BadRequestException("Custom fields are not available in this deployment");
+        throw badRequest("customers.customFieldsAreNotAvailableIn");
       }
     }
     // GB6 (GC15): CRM depth. Each change gets its OWN audit
@@ -373,13 +374,13 @@ export class CustomersService {
         // Wholesale REPLACE with the OrdersService.setTags
         // discipline: array of at most 10 tags, each trimmed
         // 1..30 chars, deduped; anything else is a 400.
-        if (!Array.isArray(dto.tags)) throw new BadRequestException("tags একটি তালিকা (array) হতে হবে");
-        if (dto.tags.length > 10) throw new BadRequestException("সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে");
+        if (!Array.isArray(dto.tags)) throw badRequest("customers.tagsMustBeAListArray");
+        if (dto.tags.length > 10) throw badRequest("customers.atMost10TagsCanBe2");
         const tags: string[] = [];
         for (const raw of dto.tags) {
           const tag = String(raw ?? "").trim();
           if (tag.length < 1 || tag.length > 30) {
-            throw new BadRequestException("প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে");
+            throw badRequest("customers.eachTagMustBe130");
           }
           if (!tags.includes(tag)) tags.push(tag);
         }
@@ -393,7 +394,7 @@ export class CustomersService {
         gb6Audits.push({ action: "customer.notes_updated", metadata: { length: 0 } });
       } else {
         const notes = String(dto.notes);
-        if (notes.length > 10000) throw new BadRequestException("নোট সর্বোচ্চ ১০,০০০ অক্ষরের হতে হবে");
+        if (notes.length > 10000) throw badRequest("customers.theNoteCanBeAtMost");
         data.notes = notes;
         gb6Audits.push({ action: "customer.notes_updated", metadata: { length: notes.length } });
       }
@@ -413,7 +414,7 @@ export class CustomersService {
         data.blockedReason = null;
       } else {
         const reason = String(dto.blockedReason).trim();
-        if (reason.length > 300) throw new BadRequestException("ব্লকের কারণ সর্বোচ্চ ৩০০ অক্ষরের হতে হবে");
+        if (reason.length > 300) throw badRequest("customers.theBlockReasonCanBeAt");
         data.blockedReason = reason || null;
       }
     }
@@ -448,7 +449,7 @@ export class CustomersService {
    */
   async getKhata(organizationId: string, customerId: string, opts?: { overdueOnly?: boolean }) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
-    if (!customer) throw new NotFoundException("এই সংগঠনে কাস্টমার পাওয়া যায়নি।");
+    if (!customer) throw notFound("customers.noCustomerWasFoundInThis");
     const effective = (o: any) => new Date(o.placedAt ?? o.createdAt ?? 0).getTime();
 
     // Page: newest first by effective date (placedAt, createdAt
@@ -543,7 +544,7 @@ export class CustomersService {
 
   async detail(organizationId: string, customerId: string) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
+    if (!customer) throw notFound("customers.customerNotFoundInThisOrganization");
     const orders = await (this.prisma as any).order.findMany({
       where: { organizationId, customerId }, orderBy: { createdAt: "desc" }, take: 50,
     });
@@ -628,12 +629,12 @@ export class CustomersService {
   }
 
   async merge(organizationId: string, actorId: string, dto: { sourceId: string; targetId: string }) {
-    if (dto.sourceId === dto.targetId) throw new BadRequestException("Source and target must differ");
+    if (dto.sourceId === dto.targetId) throw badRequest("customers.sourceAndTargetMustDiffer");
     const source = await (this.prisma as any).customer.findFirst({ where: { id: dto.sourceId, organizationId } });
     const target = await (this.prisma as any).customer.findFirst({ where: { id: dto.targetId, organizationId } });
-    if (!source || !target) throw new NotFoundException("Customer not found in this organization");
-    if (source.mergedIntoId) throw new BadRequestException("Source customer was already merged");
-    if (target.mergedIntoId) throw new BadRequestException("Target customer was itself merged into another record");
+    if (!source || !target) throw notFound("customers.customerNotFoundInThisOrganization");
+    if (source.mergedIntoId) throw badRequest("customers.sourceCustomerWasAlreadyMerged");
+    if (target.mergedIntoId) throw badRequest("customers.targetCustomerWasItselfMergedInto");
     const orders = await (this.prisma as any).order.findMany({ where: { organizationId, customerId: source.id }, take: 1000 });
     for (const o of orders) {
       await (this.prisma as any).order.update({ where: { id: o.id }, data: { customerId: target.id } });
@@ -763,17 +764,17 @@ export class CustomersService {
    */
   async unmerge(organizationId: string, actorId: string, dto: { sourceId: string }) {
     const source = await (this.prisma as any).customer.findFirst({ where: { id: dto.sourceId, organizationId } });
-    if (!source) throw new NotFoundException("Customer not found in this organization");
-    if (!source.mergedIntoId) throw new BadRequestException("এই Customer রেকর্ডটি কারো সাথে মার্জ করা নেই — undo করার কিছু নেই।");
+    if (!source) throw notFound("customers.customerNotFoundInThisOrganization");
+    if (!source.mergedIntoId) throw badRequest("customers.thisCustomerRecordIsNotMerged");
     const mrt = (this.prisma as any).customerMergeRecord;
-    if (!mrt?.findMany) throw new BadRequestException("এই মার্জটি IN2-এর আগের — কোনো merge record নেই, তাই স্বয়ংক্রিয়ভাবে undo করা যাবে না।");
+    if (!mrt?.findMany) throw badRequest("customers.thisMergePredatesIn2ThereIs");
     const records = await mrt.findMany({
       where: { organizationId, sourceCustomerId: source.id }, orderBy: { createdAt: "desc" }, take: 20,
     }).catch(() => []);
     const record = (records as any[]).find((r) => !r.revertedAt && r.targetCustomerId === source.mergedIntoId);
-    if (!record) throw new BadRequestException("এই মার্জটি IN2-এর আগের — কোনো merge record নেই, তাই স্বয়ংক্রিয়ভাবে undo করা যাবে না।");
+    if (!record) throw badRequest("customers.thisMergePredatesIn2ThereIs");
     const target = await (this.prisma as any).customer.findFirst({ where: { id: record.targetCustomerId, organizationId } });
-    if (!target) throw new NotFoundException("Surviving customer not found in this organization");
+    if (!target) throw notFound("customers.survivingCustomerNotFoundInThis");
 
     let ordersRestored = 0;
     for (const oid of (Array.isArray(record.movedOrderIds) ? record.movedOrderIds : [])) {

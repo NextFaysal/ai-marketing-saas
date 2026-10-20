@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
@@ -23,6 +23,7 @@ import {
 } from "./social-comments.dto";
 import { formatMinor } from "@repo/contracts";
 import { aiScheduleBlocks, parseAiSchedule } from "./ai-schedule";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 @Injectable()
 export class SocialCommentsService {
@@ -181,14 +182,14 @@ export class SocialCommentsService {
   private async graphClientFor(organizationId: string, platform: string): Promise<MetaMessagingClient> {
     const providers = this.graphProvidersFor(platform);
     if (!providers.length) {
-      throw new BadRequestException(`Meta Graph comment actions are not available for platform "${platform}" — no Graph comment API path is wired for it, so nothing was sent or changed`);
+      throw badRequest("inbox.metaGraphCommentActionsAreNot", { platform: platform });
     }
     const integration = await this.resolveGraphIntegration(organizationId, platform);
     if (!integration?.credential) {
-      throw new BadRequestException("No connected Meta (Messenger/Instagram) integration for this organization — the comment action cannot reach Meta Graph, so nothing was sent or changed");
+      throw badRequest("inbox.noConnectedMetaMessengerInstagramIntegration");
     }
     const secrets = decryptJson<MessagingSecrets>(integration.credential.encryptedData);
-    if (!secrets?.accessToken) throw new BadRequestException("The connected Meta integration has no access token — the comment action cannot reach Meta Graph, so nothing was sent or changed");
+    if (!secrets?.accessToken) throw badRequest("inbox.theConnectedMetaIntegrationHasNo");
     return this.createGraphClient(secrets);
   }
 
@@ -203,7 +204,7 @@ export class SocialCommentsService {
     const integration = await this.resolveGraphIntegration(organizationId, comment.platform);
     if (!integration?.id) return;
     if (await isMemberConnectionDenied(this.prisma as any, organizationId, actorId, integration.id)) {
-      throw new ForbiddenException("এই অ্যাকাউন্টে কমেন্টের উত্তর পাঠানোর অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+      throw forbidden("inbox.youHaveNotBeenGivenPermission");
     }
   }
 
@@ -709,7 +710,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
     const settings = await this.getSettings(organizationId);
     const plan = await this.buildReplyPlan(organizationId, settings, {
       authorName: comment.authorName,
@@ -1250,7 +1251,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
 
     const settings = await this.getSettings(organizationId);
     const classification = CommentClassifier.classify(comment.commentText, settings.bannedKeywords);
@@ -1300,7 +1301,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
 
     // CC27: deny gate — before any Graph call.
     await this.assertCommentReplyAccess(organizationId, actorId, comment);
@@ -1360,9 +1361,9 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
     if (comment.isPrivateDmSent) {
-      throw new BadRequestException("A private reply was already sent for this comment — Meta allows only one private reply per comment");
+      throw badRequest("inbox.aPrivateReplyWasAlreadySent");
     }
     // CC27: deny gate — before any Graph call.
     await this.assertCommentReplyAccess(organizationId, actorId, comment);
@@ -1398,7 +1399,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
     const client = await this.graphClientFor(organizationId, comment.platform);
     try {
       await client.deleteComment(comment.externalCommentId);
@@ -1429,7 +1430,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
     const updated = await (this.prisma as any).socialComment.update({
       where: { id: commentId },
       data: { assignedUserId },
@@ -1448,7 +1449,7 @@ export class SocialCommentsService {
     const comment = await (this.prisma as any).socialComment.findFirst({
       where: { id: commentId, organizationId },
     });
-    if (!comment) throw new NotFoundException("Comment not found");
+    if (!comment) throw notFound("inbox.commentNotFound");
 
     // IN8: HIDDEN is a platform action now — POST /{comment-id}
     // {is_hidden:true} must confirm before the local status moves;

@@ -181,25 +181,25 @@ describe("AB8 scope validation", () => {
   it("rejects an unknown scope with a 400 listing the allowed scopes", async () => {
     const svc = new MerchantApiService(makePrisma(), makeAudit() as any);
     const err = await svc.createKey("org-1", "user-1", { name: "K", scopes: ["products:read", "admin:all"] }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "merchantApi.unknownScopeAllowedScopesUnknownScope" });
     for (const s of MERCHANT_API_SCOPES) expect(err.message).toContain(s);
     expect(err.message).toContain("admin:all");
   });
 
   it("rejects empty / missing scopes; dedupes valid ones", async () => {
-    expect(() => validateScopes([])).toThrow(BadRequestException);
-    expect(() => validateScopes(undefined)).toThrow(BadRequestException);
-    expect(() => validateScopes("products:read")).toThrow(BadRequestException);
+    expect(() => validateScopes([])).toThrow(expect.objectContaining({ code: "merchantApi.atLeastOneScopeMustBe" }));
+    expect(() => validateScopes(undefined)).toThrow(expect.objectContaining({ code: "merchantApi.atLeastOneScopeMustBe" }));
+    expect(() => validateScopes("products:read")).toThrow(expect.objectContaining({ code: "merchantApi.atLeastOneScopeMustBe" }));
     expect(validateScopes(["orders:read", "orders:read", "products:read"])).toEqual(["orders:read", "products:read"]);
   });
 
   it("requireScope throws a 403 naming the missing scope", () => {
-    expect(() => requireScope(reqWith(["orders:read"]), "products:read")).toThrow(ForbiddenException);
+    expect(() => requireScope(reqWith(["orders:read"]), "products:read")).toThrow(expect.objectContaining({ code: "merchantApi.thisKeyDoesNotHaveThe" }));
     try {
       requireScope(reqWith(["orders:read"]), "products:read");
       throw new Error("should have thrown");
     } catch (e: any) {
-      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(e).toMatchObject({ code: "merchantApi.thisKeyDoesNotHaveThe" });
       expect(e.message).toContain("products:read");
       expect(e.message).toContain("scope");
     }
@@ -249,7 +249,7 @@ describe("AB8 MerchantApiKeyGuard", () => {
   it("missing token → 401", async () => {
     const { guard } = await setup();
     const err = await guard.canActivate(ctxFor({ headers: {} })).catch((e) => e);
-    expect(err).toBeInstanceOf(UnauthorizedException);
+    expect(err).toMatchObject({ code: "merchantApi.merchantApiKeyRequiredAuthorizationBearer" });
     expect(err.getStatus()).toBe(401);
   });
 
@@ -259,7 +259,7 @@ describe("AB8 MerchantApiKeyGuard", () => {
     await svc.revokeKey("org-1", record.id);
     const req = { headers: { authorization: `Bearer ${key}` } };
     const err = await guard.canActivate(ctxFor(req)).catch((e) => e);
-    expect(err).toBeInstanceOf(UnauthorizedException);
+    expect(err).toMatchObject({ code: "merchantApi.invalidOrRevokedMerchantApiKey" });
     expect(err.getStatus()).toBe(401);
   });
 
@@ -364,7 +364,7 @@ describe("AB8 MerchantApiController — delegation with the key's org", () => {
     const ctl = new MerchantApiController(products, orders, customers);
     // listProducts throws synchronously (it is not an async method).
     const err: any = (() => { try { return ctl.listProducts(reqWith(["orders:read"]), {}); } catch (e) { return e; } })();
-    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err).toMatchObject({ code: "merchantApi.thisKeyDoesNotHaveThe" });
     expect(err.getStatus()).toBe(403);
     expect(err.message).toContain("products:read");
     expect(calls).toHaveLength(0);
@@ -383,7 +383,7 @@ describe("AB8 staff key controller", () => {
     expect(created.record).not.toHaveProperty("keyHash");
 
     const err = await ctl.revoke(user, "org-2", created.record.id).catch((e: any) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "merchantApi.merchantApiKeyNotFound" });
     expect(err.getStatus()).toBe(404);
     // Still active for its own org after the foreign attempt.
     expect(await svc.authenticate(created.key)).not.toBeNull();

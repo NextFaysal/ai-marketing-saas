@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { seal, unseal } from "../common/platform-config";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB5 (AX9) — LicenseKeysService: the per-product pool of vendor
@@ -118,12 +119,10 @@ export class LicenseKeysService {
       .findFirst({ where: { id: productId, organizationId: orgId } })
       .catch(() => null);
     if (!product) {
-      throw new BadRequestException("পণ্যটি পাওয়া যায়নি");
+      throw badRequest("commerce.productNotFoundShort");
     }
     if (!product.digital) {
-      throw new BadRequestException(
-        "শুধুমাত্র ডিজিটাল পণ্যের জন্য লাইসেন্স কী ইমপোর্ট করা যায়",
-      );
+      throw badRequest("commerce.licenseImportDigitalOnly");
     }
 
     const rawLines = String(dto?.text ?? "").split(/\r?\n/);
@@ -141,9 +140,7 @@ export class LicenseKeysService {
       entries.push({ lineNo: i + 1, canonical });
     }
     if (entries.length + invalidLines.length > MAX_IMPORT_LINES) {
-      throw new BadRequestException(
-        `একবারে সর্বোচ্চ ${MAX_IMPORT_LINES}টি কী ইমপোর্ট করা যায়`,
-      );
+      throw badRequest("commerce.licenseImportMax", { max: MAX_IMPORT_LINES });
     }
 
     const now = new Date();
@@ -296,7 +293,7 @@ export class LicenseKeysService {
     const row = await this.t("licenseKey")
       .findFirst({ where: { id: keyId, organizationId: orgId } })
       .catch(() => null);
-    if (!row) throw new NotFoundException("লাইসেন্স কীটি পাওয়া যায়নি");
+    if (!row) throw notFound("commerce.licenseKeyNotFound");
     if (row.status === "revoked") return serializeKey(row);
     // Revoking an ASSIGNED key removes it from the buyer reveal
     // (the reveal reads status="assigned" only) — it cannot

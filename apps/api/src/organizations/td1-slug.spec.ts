@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -108,7 +109,7 @@ describe("TD1 create() enforcement", () => {
   it("refuses a reserved slug with a Bengali BadRequest", async () => {
     const { svc } = makeService();
     await expect(svc.create("u-1", { name: "Fake Shop", slug: "fake" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("u-1", { name: "Dash", slug: "dashboard" } as any))
       .rejects.toThrow(/সংরক্ষিত/);
   });
@@ -116,21 +117,21 @@ describe("TD1 create() enforcement", () => {
   it("refuses a badly formatted slug with BadRequest", async () => {
     const { svc } = makeService();
     await expect(svc.create("u-1", { name: "Bad", slug: "bad--slug" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("keeps the existing Conflict behaviour for a taken slug", async () => {
     const { svc } = makeService({ orgs: [{ id: "o-1", slug: "demo-store" }] });
     await expect(svc.create("u-1", { name: "Copy", slug: "demo-store" } as any))
-      .rejects.toBeInstanceOf(ConflictException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.create("u-1", { name: "Copy", slug: "demo-store" } as any))
-      .rejects.toThrow("This slug is already taken");
+      .rejects.toMatchObject({ code: "organizations.slugAlreadyTaken", status: 409 });
   });
 
   it("a settings-extra name is refused at create too", async () => {
     const { svc } = makeService({ settings: [{ key: "reservedSlugsExtra", value: { slugs: ["brand-xyz"] } }] });
     await expect(svc.create("u-1", { name: "Brand", slug: "brand-xyz" } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("creates an organization with an ordinary slug", async () => {

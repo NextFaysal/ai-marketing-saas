@@ -186,7 +186,7 @@ describe("CX8 label scan — upload discipline + flow", () => {
     const prisma = fakePrisma();
     const svc = new LabelScanService(prisma, visionReturning("{}"));
     await expect(svc.scanLabel(ORG, "user-1", { buffer: PDF_BYTES, size: PDF_BYTES.length }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ code: "cx8.onlyImagesJpegPngWebpCan" });
     try { await svc.scanLabel(ORG, "user-1", { buffer: PDF_BYTES, size: PDF_BYTES.length }); } catch (e: any) {
       expect(e.message).toContain("শুধু ছবি");
     }
@@ -198,7 +198,7 @@ describe("CX8 label scan — upload discipline + flow", () => {
     const svc = new LabelScanService(prisma, vision);
     const big = Buffer.alloc(MAX_LABEL_SCAN_BYTES + 1);
     JPEG_BYTES.copy(big, 0);
-    await expect(svc.scanLabel(ORG, "user-1", { buffer: big, size: big.length })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.scanLabel(ORG, "user-1", { buffer: big, size: big.length })).rejects.toMatchObject({ code: "cx8.theImageIsTooLargeAt" });
     expect(vision.calls).toHaveLength(0);
   });
 
@@ -249,8 +249,8 @@ describe("CX8 label scan — upload discipline + flow", () => {
     const out: any = await svc.searchByNumber(ORG, "2222");
     expect(out.matched).toBeNull();
     expect(out.candidates).toHaveLength(1);
-    await expect(svc.searchByNumber(ORG, "   ")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.searchByNumber(ORG, "a b")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.searchByNumber(ORG, "   ")).rejects.toMatchObject({ code: "cx8.writeTheNumberToSearchFor" });
+    await expect(svc.searchByNumber(ORG, "a b")).rejects.toMatchObject({ code: "cx8.theNumberIsNotInThe" });
   });
 });
 
@@ -360,18 +360,18 @@ describe("CX8 product recognition flow — agent-only, never sends", () => {
   it("guards: another org's conversation 404s; an outbound or non-image message is a 400", async () => {
     const vision = visionReturning("{}");
     const { prisma, svc } = setup(vision);
-    await expect(svc.recognize("org-2", "user-1", "conv-1", "msg-1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.recognize("org-2", "user-1", "conv-1", "msg-1")).rejects.toMatchObject({ code: "cx8.conversationNotFoundInThisOrganization" });
     prisma.channelMessage.rows.push({ id: "msg-out", conversationId: "conv-1", direction: "out", type: "image", mediaStorageKey: "k", mediaContentType: "image/jpeg" });
-    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-out")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-out")).rejects.toMatchObject({ code: "cx8.productsCanOnlyBeSearchedFrom" });
     prisma.channelMessage.rows.push({ id: "msg-text", conversationId: "conv-1", direction: "in", type: "text", content: "hi" });
-    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-text")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-text")).rejects.toMatchObject({ code: "cx8.productsCanOnlyBeSearchedFrom" });
   });
 
   it("a message whose bytes were never stored → honest Bengali error, no vision call", async () => {
     const vision = visionReturning("{}");
     const { prisma, svc } = setup(vision);
     prisma.channelMessage.rows.push({ id: "msg-nobytes", conversationId: "conv-1", direction: "in", type: "image", mediaStorageKey: null, mediaUrl: null, mediaId: "wa-media-id" });
-    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-nobytes")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.recognize(ORG, "user-1", "conv-1", "msg-nobytes")).rejects.toMatchObject({ code: "cx8.noSavedCopyOfThisMessage" });
     expect(vision.calls).toHaveLength(0);
   });
 });

@@ -7,6 +7,7 @@ import type {
   UpdatePickupPointDto,
   UpdateShippingRateRuleDto,
 } from "./storefront.dto";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC30 — weight-based shipping rate rules + pickup points.
@@ -63,7 +64,7 @@ function parseMinorField(value: string | null | undefined, field: string): bigin
   if (value === null || value === undefined) return null;
   const raw = String(value).trim();
   if (!/^\d+$/.test(raw)) {
-    throw new BadRequestException(`${field} অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (মাইনর একক) হতে হবে`);
+    throw badRequest("storefront.fieldNonNegativeMinor", { field: field });
   }
   return BigInt(raw);
 }
@@ -71,14 +72,14 @@ function parseMinorField(value: string | null | undefined, field: string): bigin
 function parseWeightField(value: number | null | undefined, field: string): number | null {
   if (value === null || value === undefined) return null;
   if (!Number.isInteger(value) || Number(value) < 0) {
-    throw new BadRequestException(`${field} অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (গ্রাম) হতে হবে`);
+    throw badRequest("storefront.fieldNonNegativeGrams", { field: field });
   }
   return Number(value);
 }
 
 function assertWeightRange(min: number | null, max: number | null) {
   if (min !== null && max !== null && min > max) {
-    throw new BadRequestException("সর্বনিম্ন ওজন সর্বোচ্চ ওজনের বেশি হতে পারবে না");
+    throw badRequest("storefront.minWeightExceedsMax");
   }
 }
 
@@ -204,19 +205,19 @@ export class DeliveryPricingService {
     const zone = await this.t("shippingZone")
       .findFirst({ where: { id: zoneId, organizationId: orgId } })
       .catch(() => null);
-    if (!zone) throw new NotFoundException("শিপিং জোন পাওয়া যায়নি");
+    if (!zone) throw notFound("storefront.shippingZoneNotFound");
   }
 
   async createRule(orgId: string, actorId: string, dto: CreateShippingRateRuleDto) {
     const charge = parseMinorField(dto.chargeMinor, "chargeMinor");
     if (charge === null) {
-      throw new BadRequestException("chargeMinor অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (মাইনর একক) হতে হবে");
+      throw badRequest("storefront.chargeMinorInvalid");
     }
     const minWeightGrams = parseWeightField(dto.minWeightGrams, "minWeightGrams");
     const maxWeightGrams = parseWeightField(dto.maxWeightGrams, "maxWeightGrams");
     assertWeightRange(minWeightGrams, maxWeightGrams);
     if (dto.priority !== undefined && dto.priority !== null && !Number.isInteger(dto.priority)) {
-      throw new BadRequestException("priority অবশ্যই পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("courier.priorityMustBeInteger");
     }
     if (dto.shippingZoneId) await this.assertZoneOfOrg(orgId, dto.shippingZoneId);
     const rule = await this.t("shippingRateRule").create({
@@ -245,7 +246,7 @@ export class DeliveryPricingService {
     const rule = await this.t("shippingRateRule").findFirst({
       where: { id: ruleId, organizationId: orgId },
     });
-    if (!rule) throw new NotFoundException("শিপিং রেট নিয়মটি পাওয়া যায়নি");
+    if (!rule) throw notFound("storefront.shippingRateRuleNotFound");
     return rule;
   }
 
@@ -265,13 +266,13 @@ export class DeliveryPricingService {
     if (dto.chargeMinor !== undefined) {
       const charge = parseMinorField(dto.chargeMinor, "chargeMinor");
       if (charge === null) {
-        throw new BadRequestException("chargeMinor অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (মাইনর একক) হতে হবে");
+        throw badRequest("storefront.chargeMinorInvalid");
       }
       data.chargeMinor = charge;
     }
     if (dto.priority !== undefined) {
       if (dto.priority !== null && !Number.isInteger(dto.priority)) {
-        throw new BadRequestException("priority অবশ্যই পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("courier.priorityMustBeInteger");
       }
       data.priority = dto.priority ?? 0;
     }
@@ -333,7 +334,7 @@ export class DeliveryPricingService {
 
   private requirePointField(value: string | undefined, label: string): string {
     const v = String(value ?? "").trim();
-    if (!v) throw new BadRequestException(`${label} দিতে হবে`);
+    if (!v) throw badRequest("storefront.labelRequired", { label: label });
     return v;
   }
 
@@ -368,7 +369,7 @@ export class DeliveryPricingService {
     const point = await this.t("pickupPoint").findFirst({
       where: { id: pointId, organizationId: orgId },
     });
-    if (!point) throw new NotFoundException("পিকআপ পয়েন্টটি পাওয়া যায়নি");
+    if (!point) throw notFound("storefront.pickupPointNotFound");
     return point;
   }
 
@@ -382,7 +383,7 @@ export class DeliveryPricingService {
     if (dto.feeMinor !== undefined) {
       const fee = parseMinorField(dto.feeMinor, "feeMinor");
       if (fee === null) {
-        throw new BadRequestException("feeMinor অবশ্যই অঋণাত্মক পূর্ণসংখ্যা (মাইনর একক) হতে হবে");
+        throw badRequest("storefront.feeMinorInvalid");
       }
       data.feeMinor = fee;
     }

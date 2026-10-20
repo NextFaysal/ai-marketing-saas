@@ -198,7 +198,7 @@ describe("SocialAiService.generateCopy — real LLM", () => {
     const prisma = fakePrisma();
     const provider = realProviderReturning(JSON.stringify({ variants: [{ caption: "  " }, {}] }));
     await expect(buildAi(prisma, provider).generateCopy("org-1", "user-1", { productId: "prod-1" }))
-      .rejects.toThrow("The AI provider returned no usable caption variants. Nothing was saved.");
+      .rejects.toMatchObject({ code: "social.theAiProviderReturnedNoUsable" });
   });
 
   it("provider errors surface verbatim as BadRequest and write NO usage row", async () => {
@@ -264,7 +264,7 @@ describe("SocialAiService.generateCopy — guards", () => {
     } catch (e) { caught = e; }
     expect(caught).not.toBeNull();
     expect(caught.getStatus ? caught.getStatus() : caught.status).toBe(403);
-    expect(caught.message).toContain("AI features are temporarily disabled for this organization by the platform team.");
+    expect(caught.message).toContain("AI features প্ল্যাটফর্ম team দ্বারা এই organization-এর জন্য সাময়িকভাবে বন্ধ আছে।");
     expect(prisma.aIUsageRecord.rows).toHaveLength(0);
   });
 
@@ -281,7 +281,7 @@ describe("SocialAiService.generateCopy — guards", () => {
     } catch (e) { caught = e; }
     expect(caught).not.toBeNull();
     expect(caught.getStatus ? caught.getStatus() : caught.status).toBe(429);
-    expect(caught.message).toContain("Daily AI generation limit reached for this organization (1)");
+    expect(caught.message).toContain("এই organization-এর জন্য daily AI generation limit পূর্ণ হয়েছে (1)");
     expect(prisma.aIUsageRecord.rows).toHaveLength(1); // only the seed
   });
 
@@ -292,7 +292,7 @@ describe("SocialAiService.generateCopy — guards", () => {
       currency: "BDT", category: null, description: null, stockQuantity: null,
     });
     const svc = buildAi(prisma, devProvider);
-    await expect(svc.generateCopy("org-1", "user-1", { productId: "prod-other" })).rejects.toThrow("Product not found in this organization");
+    await expect(svc.generateCopy("org-1", "user-1", { productId: "prod-other" })).rejects.toMatchObject({ code: "social.productNotFoundInThisOrganization" });
     await expect(svc.generateCopy("org-1", "user-1", {})).rejects.toThrow("Product বেছে নিন অথবা একটা বিষয় (Topic) লিখুন।");
     await expect(svc.generateCopy("org-1", "user-1", { topic: "   " })).rejects.toThrow("Product বেছে নিন অথবা একটা বিষয় (Topic) লিখুন।");
   });
@@ -392,12 +392,12 @@ describe("SocialService hashtag sets (SP3)", () => {
     expect(auditRows.some((r: any) => r.action === "social.hashtag_set_deleted")).toBe(true);
 
     await expect(svc.updateHashtagSet("org-1", "user-1", "missing-id", { name: "X" }))
-      .rejects.toThrow("Hashtag set not found in this organization");
+      .rejects.toMatchObject({ code: "social.hashtagSetNotFoundInThis" });
     await expect(svc.deleteHashtagSet("org-1", "user-1", "missing-id"))
-      .rejects.toThrow("Hashtag set not found in this organization");
+      .rejects.toMatchObject({ code: "social.hashtagSetNotFoundInThis" });
     // a set from another org is "not found" here, never leaked
     await expect(svc.deleteHashtagSet("org-2", "user-9", a.id))
-      .rejects.toThrow("Hashtag set not found in this organization");
+      .rejects.toMatchObject({ code: "social.hashtagSetNotFoundInThis" });
   });
 
   it("validation: empty name → Bengali 400; >30 tags → Bengali 400", async () => {

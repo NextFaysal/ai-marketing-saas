@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VisionService } from "../ai/vision.service";
 import { detectMediaKind } from "../inbox/media-sniff";
 import { LABEL_SCAN_PROMPT, LabelIdentifiers, cleanIdentifier, parseLabelExtraction } from "./label-extract";
+import { badRequest } from "../i18n/api-exception";
 
 /** CX8 label uploads: images only, 8MB cap (multer enforces it at
  *  the route; the service re-checks so no caller can bypass it). */
@@ -39,14 +40,14 @@ export class LabelScanService {
   async scanLabel(organizationId: string, userId: string, file: { buffer?: Buffer; size?: number } | undefined) {
     const bytes = file?.buffer;
     if (!bytes || bytes.length === 0) {
-      throw new BadRequestException("ছবি পাওয়া যায়নি — একটি লেবেলের ছবি আপলোড করুন");
+      throw badRequest("cx8.theImageWasNotFoundUpload");
     }
     if (bytes.length > MAX_LABEL_SCAN_BYTES) {
-      throw new BadRequestException("ছবি অনেক বড় — সর্বোচ্চ ৮MB আপলোড করা যাবে");
+      throw badRequest("cx8.theImageIsTooLargeAt");
     }
     const detected = detectMediaKind(bytes);
     if (!detected || detected.kind !== "image" || !["image/jpeg", "image/png", "image/webp"].includes(detected.contentType)) {
-      throw new BadRequestException("শুধু ছবি (JPEG/PNG/WebP) আপলোড করা যাবে — ফাইলের আসল ফরম্যাট ছবি নয়");
+      throw badRequest("cx8.onlyImagesJpegPngWebpCan");
     }
 
     const result = await this.vision.analyzeImage(organizationId, userId, {
@@ -79,13 +80,13 @@ export class LabelScanService {
    */
   async searchByNumber(organizationId: string, queryRaw: string) {
     const q = String(queryRaw ?? "").trim();
-    if (!q) throw new BadRequestException("খোঁজার নম্বরটি লিখুন");
+    if (!q) throw badRequest("cx8.writeTheNumberToSearchFor");
     let ids: LabelIdentifiers;
     if (/^\d{4}$/.test(q)) {
       ids = { phoneLast4: q };
     } else {
       const clean = cleanIdentifier(q);
-      if (!clean) throw new BadRequestException("নম্বরটি সঠিক ফরম্যাটে নয় — ট্র্যাকিং কোড, অর্ডার নম্বর অথবা ফোনের শেষ ৪ ডিজিট লিখুন");
+      if (!clean) throw badRequest("cx8.theNumberIsNotInThe");
       ids = { trackingCode: clean, orderNumber: clean };
       if (/^\d{5,}$/.test(q)) ids.phoneLast4 = q.slice(-4);
     }

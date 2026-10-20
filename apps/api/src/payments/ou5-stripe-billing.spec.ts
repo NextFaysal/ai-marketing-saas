@@ -153,7 +153,7 @@ describe("OU5(b) Stripe platform checkout", () => {
   it("refuses honestly when Stripe is not configured", async () => {
     const { svc } = makePayments(false);
     await expect(svc.createCheckout("org-1", ACTOR, "GROWTH", "01712345678", { gateway: "stripe" }))
-      .rejects.toThrow(/not configured/);
+      .rejects.toMatchObject({ code: "payments.stripeNotConfiguredPlatform", status: 400 });
   });
 
   it("a validly-signed webhook activates exactly once; duplicate is idempotent", async () => {

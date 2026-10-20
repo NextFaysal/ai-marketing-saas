@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { OrdersService } from "../orders/orders.service";
@@ -9,6 +9,7 @@ import {
 import type {
   CreateLiveSessionDto, CreateOrderFromCommentDto, ImportLiveCommentsDto, ManualCommentDto,
 } from "./live-commerce.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const SESSION_STATUSES = ["scheduled", "live", "ended"] as const;
 
@@ -87,7 +88,7 @@ export class LiveCommerceService {
    * session id gets the same 404 as a nonexistent id. */
   private async getSessionOrThrow(organizationId: string, sessionId: string) {
     const row = await this.db().liveSession.findFirst({ where: { id: sessionId, organizationId } });
-    if (!row) throw new NotFoundException("Live সেশনটি পাওয়া যায়নি");
+    if (!row) throw notFound("liveCommerce.theLiveSessionWasNotFound");
     return row;
   }
 
@@ -95,20 +96,20 @@ export class LiveCommerceService {
 
   async createSession(organizationId: string, actorId: string, dto: CreateLiveSessionDto) {
     const title = String(dto.title ?? "").trim();
-    if (!title) throw new BadRequestException("সেশনের শিরোনাম আবশ্যক");
+    if (!title) throw badRequest("liveCommerce.theSessionTitleIsRequired");
     const source = dto.source === "meta" ? "meta" : "manual";
     const socialAccountId = dto.socialAccountId?.trim() || null;
     const externalLiveVideoId = dto.externalLiveVideoId?.trim() || null;
     if (source === "meta") {
       if (!socialAccountId || !externalLiveVideoId) {
-        throw new BadRequestException("Meta সেশনের জন্য socialAccountId ও externalLiveVideoId দুটোই আবশ্যক");
+        throw badRequest("liveCommerce.bothSocialaccountidAndExternallivevideoidAreRequired");
       }
       // The account must be THIS org's — a foreign account id is
       // refused here, never silently linked.
       const account = await this.db().socialAccount.findFirst({
         where: { id: socialAccountId, organizationId },
       });
-      if (!account) throw new BadRequestException("Social অ্যাকাউন্টটি এই দোকানের নয় বা পাওয়া যায়নি");
+      if (!account) throw badRequest("liveCommerce.theSocialAccountDoesNotBelong");
     }
     const row = await this.db().liveSession.create({
       data: {
@@ -142,13 +143,13 @@ export class LiveCommerceService {
         products: { orderBy: { displayOrder: "asc" }, include: { product: true } },
       },
     });
-    if (!row) throw new NotFoundException("Live সেশনটি পাওয়া যায়নি");
+    if (!row) throw notFound("liveCommerce.theLiveSessionWasNotFound");
     return pubSession(row);
   }
 
   async startSession(organizationId: string, actorId: string, sessionId: string) {
     const session = await this.getSessionOrThrow(organizationId, sessionId);
-    if (session.status === "ended") throw new BadRequestException("শেষ হয়ে যাওয়া সেশন আবার শুরু করা যাবে না");
+    if (session.status === "ended") throw badRequest("liveCommerce.anEndedSessionCannotBeStarted");
     if (session.status === "live") return pubSession(session); // idempotent
     const row = await this.db().liveSession.update({
       where: { id: session.id },
@@ -189,7 +190,7 @@ export class LiveCommerceService {
       const found = await this.db().product.findMany({ where: { id: { in: ids }, organizationId } });
       const foundIds = new Set((found as any[]).map((p) => p.id));
       const foreign = ids.filter((id) => !foundIds.has(id));
-      if (foreign.length) throw new BadRequestException("কিছু পণ্য এই দোকানের নয় বা পাওয়া যায়নি");
+      if (foreign.length) throw badRequest("liveCommerce.someProductsDoNotBelongTo");
     }
     const existing = await this.db().liveSessionProduct.findMany({ where: { liveSessionId: session.id } });
     const wasShowing = new Map<string, boolean>((existing as any[]).map((r) => [r.productId, r.isNowShowing === true]));
@@ -226,7 +227,7 @@ export class LiveCommerceService {
     const pin = await this.db().liveSessionProduct.findFirst({
       where: { liveSessionId: session.id, productId },
     });
-    if (!pin) throw new NotFoundException("পণ্যটি এই সেশনে পিন করা নেই");
+    if (!pin) throw notFound("liveCommerce.theProductIsNotPinnedIn");
     const apply = async (db: any) => {
       await db.liveSessionProduct.updateMany({
         where: { liveSessionId: session.id }, data: { isNowShowing: false },
@@ -351,14 +352,14 @@ export class LiveCommerceService {
             commenterExternalId: dto.commenterExternalId,
           }]
         : [];
-    if (!batch.length) throw new BadRequestException("কমেন্ট পাঠান — commenterName ও message আবশ্যক");
+    if (!batch.length) throw badRequest("liveCommerce.sendACommentCommenternameAndMessage");
     let created = 0;
     let skippedDuplicates = 0;
     const createdRows: any[] = [];
     for (const item of batch) {
       const commenterName = String(item.commenterName ?? "").trim();
       const message = String(item.message ?? "").trim();
-      if (!commenterName || !message) throw new BadRequestException("প্রতিটি কমেন্টে commenterName ও message আবশ্যক");
+      if (!commenterName || !message) throw badRequest("liveCommerce.commenternameAndMessageAreRequiredIn");
       const externalCommentId = item.externalCommentId?.trim() || null;
       if (externalCommentId) {
         const dup = await this.db().liveComment.findFirst({
@@ -419,7 +420,7 @@ export class LiveCommerceService {
     const comment = await this.db().liveComment.findFirst({
       where: { id: commentId, liveSessionId: session.id, organizationId },
     });
-    if (!comment) throw new NotFoundException("কমেন্টটি এই সেশনে পাওয়া যায়নি");
+    if (!comment) throw notFound("liveCommerce.theCommentWasNotFoundIn");
 
     const existingLink = await this.db().liveSessionOrder.findFirst({
       where: { liveCommentId: comment.id, organizationId },
@@ -436,13 +437,13 @@ export class LiveCommerceService {
     }
 
     if (!this.orders?.createManual) {
-      throw new BadRequestException("অর্ডার তৈরির সুবিধা এই deployment-এ নেই");
+      throw badRequest("liveCommerce.theOrderCreationFacilityIsNot");
     }
     if (!Array.isArray(dto.items) || !dto.items.length) {
-      throw new BadRequestException("অন্তত একটি আইটেম আবশ্যক");
+      throw badRequest("liveCommerce.atLeastOneItemIsRequired");
     }
     const phone = String(dto.customerPhone ?? "").trim();
-    if (!phone) throw new BadRequestException("ক্রেতার ফোন নম্বর আবশ্যক");
+    if (!phone) throw badRequest("liveCommerce.theBuyerSPhoneNumberIs");
 
     const created: any = await this.orders.createManual(organizationId, actorId, {
       customerPhone: phone,
@@ -455,7 +456,7 @@ export class LiveCommerceService {
       discountMinor: dto.discountMinor,
     } as any);
     const orderId = created?.id ? String(created.id) : null;
-    if (!orderId) throw new BadRequestException("অর্ডার তৈরি হলেও তার ID পাওয়া যায়নি");
+    if (!orderId) throw badRequest("liveCommerce.theOrderWasCreatedButIts");
 
     const linkData = {
       liveSessionId: session.id, orderId, liveCommentId: comment.id, organizationId,
@@ -546,7 +547,7 @@ export class LiveCommerceService {
   async buildFollowUpSegment(organizationId: string, actorId: string, sessionId: string) {
     const session = await this.getSessionOrThrow(organizationId, sessionId);
     if (!this.messaging?.createSavedAudience) {
-      throw new BadRequestException("অডিয়েন্স তৈরির সুবিধা এই deployment-এ নেই");
+      throw badRequest("liveCommerce.theAudienceCreationFacilityIsNot");
     }
     const comments = await this.db().liveComment.findMany({
       where: { liveSessionId: session.id, organizationId },

@@ -1,14 +1,13 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ShopAccountService } from "../storefront/shop-account.service";
 import type { CollectInstallmentDto, CreateInstallmentPlanDto } from "./installments.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC31 — installment (কিস্তি) plans over an order's outstanding
@@ -236,19 +235,19 @@ export class InstallmentsService {
     const order = await this.t("order").findFirst({
       where: { id: orderId, organizationId },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("installments.orderNotFoundInThisOrganization");
 
     const count = Number(dto.installmentCount);
     if (!Number.isInteger(count) || count < 2 || count > 24) {
-      throw new BadRequestException("কিস্তির সংখ্যা ২ থেকে ২৪-এর মধ্যে হতে হবে");
+      throw badRequest("installments.theNumberOfInstallmentsMustBe");
     }
     const intervalDays = Number(dto.intervalDays);
     if (!Number.isInteger(intervalDays) || intervalDays < 1 || intervalDays > 90) {
-      throw new BadRequestException("কিস্তির ব্যবধান ১ থেকে ৯০ দিনের মধ্যে হতে হবে");
+      throw badRequest("installments.theInstallmentIntervalMustBeBetween");
     }
     const start = dto.startDate ? new Date(dto.startDate as any) : new Date(NaN);
     if (Number.isNaN(start.getTime())) {
-      throw new BadRequestException("শুরুর তারিখ সঠিক নয়");
+      throw badRequest("installments.theStartDateIsNotValid");
     }
 
     // Existing-plan check BEFORE the due check: a completed
@@ -262,24 +261,24 @@ export class InstallmentsService {
       // orderId is UNIQUE — one plan per order lifetime (see the
       // class comment); the message names the actual state.
       if (existing.status === "active") {
-        throw new BadRequestException("এই অর্ডারে ইতিমধ্যে একটি সক্রিয় কিস্তি প্ল্যান আছে");
+        throw badRequest("installments.anActiveInstallmentPlanAlreadyExists");
       }
       if (existing.status === "completed") {
-        throw new BadRequestException("এই অর্ডারের কিস্তি প্ল্যান ইতিমধ্যে সম্পূর্ণ হয়েছে");
+        throw badRequest("installments.thisOrderSInstallmentPlanIs");
       }
-      throw new BadRequestException("এই অর্ডারে আগে একটি বাতিল কিস্তি প্ল্যান ছিল — নতুন প্ল্যান তৈরি করা যাচ্ছে না");
+      throw badRequest("installments.aCancelledInstallmentPlanExistedOn");
     }
 
     const due = await this.orderDue(organizationId, order);
     if (due === 0n) {
-      throw new BadRequestException("এই অর্ডারে বকেয়া নেই — কিস্তি প্ল্যান দরকার নেই");
+      throw badRequest("installments.thereIsNoOutstandingOnThis");
     }
 
     // Split: floor division; the remainder rides on item 1 so
     // Σ items == due exactly, by construction.
     const base = due / BigInt(count);
     if (base === 0n) {
-      throw new BadRequestException("বকেয়া পরিমাণ কিস্তির সংখ্যার তুলনায় খুব কম");
+      throw badRequest("installments.theOutstandingAmountIsTooSmall");
     }
     const remainder = due - base * BigInt(count);
     const startDay = this.dhakaDayString(start);
@@ -323,7 +322,7 @@ export class InstallmentsService {
     const plan = await this.t("installmentPlan")
       .findFirst({ where: { orderId, organizationId }, include: { items: true } })
       .catch(() => null);
-    if (!plan) throw new NotFoundException("কিস্তি প্ল্যান পাওয়া যায়নি");
+    if (!plan) throw notFound("installments.theInstallmentPlanWasNotFound");
     const items = await this.itemsForPlan(plan);
     // Live due recomputed from verifications — the coherence
     // surface: collections show up here immediately because
@@ -371,34 +370,32 @@ export class InstallmentsService {
     const item = await this.t("installmentItem")
       .findFirst({ where: { id: itemId } })
       .catch(() => null);
-    if (!item) throw new NotFoundException("কিস্তির আইটেম পাওয়া যায়নি");
+    if (!item) throw notFound("installments.theInstallmentItemWasNotFound");
     const plan = await this.t("installmentPlan")
       .findFirst({ where: { id: item.planId, organizationId } })
       .catch(() => null);
-    if (!plan) throw new NotFoundException("কিস্তির আইটেম পাওয়া যায়নি");
+    if (!plan) throw notFound("installments.theInstallmentItemWasNotFound");
     if (plan.status !== "active") {
-      throw new BadRequestException("প্ল্যানটি সক্রিয় নয় — সংগ্রহ করা যাচ্ছে না");
+      throw badRequest("installments.thePlanIsNotActiveIt2");
     }
 
     let amount: bigint;
     try { amount = BigInt(dto.amountMinor as any); } catch { amount = 0n; }
     if (amount <= 0n) {
-      throw new BadRequestException("সংগ্রহের পরিমাণ শূন্যের বেশি হতে হবে");
+      throw badRequest("installments.theCollectionAmountMustBeMore");
     }
     const remaining = BigInt(item.amountMinor ?? 0) - BigInt(item.paidMinor ?? 0);
     if (remaining === 0n) {
-      throw new BadRequestException("এই কিস্তিটি ইতিমধ্যে সম্পূর্ণ পরিশোধ হয়েছে");
+      throw badRequest("installments.thisInstallmentIsAlreadyFullyPaid");
     }
     if (amount > remaining) {
-      throw new BadRequestException(
-        `সংগ্রহের পরিমাণ (${amount.toString()}) এই কিস্তির বাকি (${remaining.toString()})-এর বেশি হতে পারবে না`,
-      );
+      throw badRequest("installments.theCollectionAmountCannotExceedThis", { p1: amount.toString(), p2: remaining.toString() });
     }
 
     const order = await this.t("order")
       .findFirst({ where: { id: plan.orderId, organizationId } })
       .catch(() => null);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("installments.orderNotFoundInThisOrganization");
 
     // Duplicate reference guard — identical to EC19: an approved
     // verification anywhere in the org with the same trxId means
@@ -415,7 +412,7 @@ export class InstallmentsService {
         duplicate = rows.find((r: any) => r.trxId === dto.reference && r.status === "approved") ?? null;
       }
       if (duplicate) {
-        throw new BadRequestException("This transaction reference has already been recorded as a verified payment");
+        throw badRequest("installments.thisTransactionReferenceHasAlreadyBeen");
       }
     }
 
@@ -479,9 +476,9 @@ export class InstallmentsService {
     const plan = await this.t("installmentPlan")
       .findFirst({ where: { id: planId, organizationId }, include: { items: true } })
       .catch(() => null);
-    if (!plan) throw new NotFoundException("কিস্তি প্ল্যান পাওয়া যায়নি");
+    if (!plan) throw notFound("installments.theInstallmentPlanWasNotFound");
     if (plan.status !== "active") {
-      throw new BadRequestException("প্ল্যানটি সক্রিয় নয় — বাতিল করা যাচ্ছে না");
+      throw badRequest("installments.thePlanIsNotActiveIt");
     }
     // Items and already-collected verifications are NOT touched:
     // money already collected stays collected (the order due
@@ -502,7 +499,7 @@ export class InstallmentsService {
 
   async dueWorklist(organizationId: string, bucket: string) {
     if (bucket !== "today" && bucket !== "overdue") {
-      throw new BadRequestException("bucket হতে হবে today অথবা overdue");
+      throw badRequest("installments.bucketMustBeTodayOrOverdue");
     }
     const today = this.todayDhaka();
     const plans: any[] =

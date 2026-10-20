@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  NotFoundException,
   Param,
   Patch,
   Post,
@@ -16,6 +15,7 @@ import { CreateFeedDto, SetFeedActiveDto, UpdateFeedDto } from "./feeds.dto";
 import { CurrentUser, AuthUser, Roles, PermissionArea, Public } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { notFound } from "../i18n/api-exception";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;
 
@@ -102,10 +102,10 @@ export class FeedsPublicController {
   @Get(":fileName")
   async serve(@Param("fileName") fileName: string, @Res() res: Response) {
     const dot = fileName.lastIndexOf(".");
-    if (dot <= 0) throw new NotFoundException("Feed not found");
+    if (dot <= 0) throw notFound("feeds.feedNotFound");
     const token = fileName.slice(0, dot);
     const ext = fileName.slice(dot + 1).toLowerCase();
-    if (ext !== "xml" && ext !== "csv") throw new NotFoundException("Feed not found");
+    if (ext !== "xml" && ext !== "csv") throw notFound("feeds.feedNotFound");
     const { contentType, body } = await this.feeds.serveByToken(token, ext);
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "public, max-age=300");

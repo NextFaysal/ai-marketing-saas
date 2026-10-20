@@ -211,7 +211,7 @@ describe("SU1 createPost", () => {
     const err = await social.createPost(ORG, ACTOR, {
       socialAccountId: "sacc-1", caption: "ভুল", recurrenceInterval: 2,
     } as any).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.toGiveARepeatIntervalFirst" });
     expect(db.socialPosts).toHaveLength(1);
   });
 });
@@ -251,7 +251,7 @@ describe("SU1 createPostGroup", () => {
         { socialAccountId: "sacc-1", caption: "   " },
       ],
     } as any).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.theCaptionCannotBeLeftEmpty" });
     expect(db.groups).toHaveLength(0);
     expect(db.socialPosts).toHaveLength(0);
   });

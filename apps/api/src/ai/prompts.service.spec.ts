@@ -58,8 +58,8 @@ describe("PromptsService (GV3/G4)", () => {
     const mine = await svc.create("org-1", "user-1", { title: "আগের", body: "body" });
     const updated = await svc.update("org-1", "user-1", mine.id, { title: "নতুন" });
     expect(updated.title).toBe("নতুন");
-    await expect(svc.update("org-1", "user-2", mine.id, { title: "হ্যাক" })).rejects.toThrow(/not found/i);
-    await expect(svc.remove("org-1", "user-2", mine.id)).rejects.toThrow(/not found/i);
+    await expect(svc.update("org-1", "user-2", mine.id, { title: "হ্যাক" })).rejects.toMatchObject({ code: "ai.promptNotFound" });
+    await expect(svc.remove("org-1", "user-2", mine.id)).rejects.toMatchObject({ code: "ai.promptNotFound" });
     await expect(svc.remove("org-1", "user-1", mine.id)).resolves.toEqual({ deleted: true });
     expect(await svc.list("org-1", "user-1")).toHaveLength(0);
   });

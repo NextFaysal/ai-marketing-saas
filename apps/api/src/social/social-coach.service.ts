@@ -10,6 +10,7 @@ import {
   shiftDay,
 } from "./social-insights.service";
 import { ungroundedNumbers } from "./social-ai.service";
+import { ApiException, forbidden } from "../i18n/api-exception";
 
 /**
  * SN9 — the weekly performance coach.
@@ -301,7 +302,7 @@ export class SocialCoachService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "social.aiFeaturesTemporarilyPausedPlatformWide" : "social.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -311,7 +312,7 @@ export class SocialCoachService {
       where: { organizationId, feature: "social_coach", createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(`Daily AI generation limit reached for this organization (${limit}).`, 429);
+      throw new ApiException("social.dailyAiGenerationLimitReachedFor", { limit: limit }, 429);
     }
   }
 

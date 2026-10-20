@@ -7,6 +7,7 @@ import { computeStockDiverged, pendingOutboxKeys } from "./stock-divergence";
 import { decryptJson, encryptJson } from "../integrations/crypto";
 import { exchangeShopifyClientCredentials, normalizeShopifyHost } from "../integrations/shopify/shopify-auth";
 import { ShopifyGraphQLClient } from "../integrations/shopify/shopify-graphql.client";
+import { badRequest, notFound } from "../i18n";
 
 const SYNC_MODES = ["mirror", "co-manage", "full-manage"] as const;
 
@@ -51,13 +52,13 @@ export class CommerceService {
 
   private async findListingOrThrow(organizationId: string, listingId: string): Promise<any> {
     const listing = await (this.prisma as any).storeListing.findFirst({ where: { id: listingId, organizationId } });
-    if (!listing) throw new NotFoundException("Listing not found in this organization");
+    if (!listing) throw notFound("commerce.listingNotFoundInOrg");
     return listing;
   }
 
   private async findStoreOrThrow(organizationId: string, storeId: string): Promise<any> {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     return store;
   }
 
@@ -174,13 +175,13 @@ export class CommerceService {
     choices?: Record<string, string>,
   ) {
     if (choice !== "keep_local" && choice !== "take_remote" && choice !== "per_field") {
-      throw new BadRequestException('choice must be "keep_local", "take_remote" or "per_field"');
+      throw badRequest("commerce.conflictChoiceInvalid");
     }
     const conflict = await (this.prisma as any).syncConflict.findFirst({ where: { id: conflictId, organizationId } });
-    if (!conflict) throw new NotFoundException("Conflict not found in this organization");
-    if (conflict.status !== "open") throw new BadRequestException("Conflict is already resolved");
+    if (!conflict) throw notFound("commerce.conflictNotFoundInOrg");
+    if (conflict.status !== "open") throw badRequest("commerce.conflictAlreadyResolved");
     const listing = await (this.prisma as any).storeListing.findFirst({ where: { id: conflict.listingId, organizationId } });
-    if (!listing) throw new NotFoundException("Listing not found in this organization");
+    if (!listing) throw notFound("commerce.listingNotFoundInOrg");
 
     let resolved: any;
     if (choice === "per_field") {
@@ -188,24 +189,24 @@ export class CommerceService {
       // choices must cover EXACTLY the differing fields.
       const diffs: any[] = Array.isArray((conflict as any).fieldDiffs) ? (conflict as any).fieldDiffs : [];
       if (diffs.length === 0) {
-        throw new BadRequestException("এই Conflict-এ ফিল্ড-ভিত্তিক পার্থক্যের তথ্য নেই — পুরো লোকাল বা পুরো স্টোরের মান বেছে নিন");
+        throw badRequest("commerce.conflictNoFieldDiffs");
       }
       const diffFields = diffs.map((d: any) => String(d?.field)).filter(Boolean);
       const given = choices && typeof choices === "object" ? choices : {};
       for (const key of Object.keys(given)) {
         if (!diffFields.includes(key)) {
-          throw new BadRequestException(`অজানা ফিল্ড: "${key}" — এই Conflict-এ এই ফিল্ডে কোনো পার্থক্য নেই`);
+          throw badRequest("commerce.conflictUnknownField", { field: key });
         }
         if (given[key] !== "local" && given[key] !== "remote") {
-          throw new BadRequestException(`ফিল্ড "${key}"-এর জন্য সিদ্ধান্ত "local" বা "remote" হতে হবে`);
+          throw badRequest("commerce.conflictFieldDecisionInvalid", { field: key });
         }
       }
       const missing = diffFields.filter((f) => !(f in given));
       if (missing.length > 0) {
-        throw new BadRequestException(`ফিল্ড "${missing[0]}"-এর জন্য সিদ্ধান্ত (local/remote) দেওয়া হয়নি`);
+        throw badRequest("commerce.conflictFieldDecisionMissing", { field: missing[0] });
       }
       const product = await (this.prisma as any).product.findFirst({ where: { id: listing.productId, organizationId } });
-      if (!product) throw new BadRequestException("Product no longer exists");
+      if (!product) throw badRequest("commerce.productNoLongerExists");
       const remoteChosen: Record<string, any> = {};
       for (const d of diffs) {
         if (given[String(d.field)] === "remote") remoteChosen[String(d.field)] = d.remoteValue;
@@ -239,7 +240,7 @@ export class CommerceService {
       await this.catalogPush.enqueueProductPush(organizationId, listing.productId, { listingId: listing.id, force: true });
     } else {
       const product = await (this.prisma as any).product.findFirst({ where: { id: listing.productId, organizationId } });
-      if (!product) throw new BadRequestException("Product no longer exists");
+      if (!product) throw badRequest("commerce.productNoLongerExists");
       const rv = (conflict.remoteValue ?? {}) as Record<string, any>;
       const data = this.remoteFieldsToProductData(rv);
       if (Object.keys(data).length > 0) {
@@ -293,7 +294,7 @@ export class CommerceService {
     let value: bigint | null = null;
     if (raw !== null) {
       if (typeof raw !== "string" || !/^-?\d+$/.test(raw.trim())) {
-        throw new BadRequestException("channelPriceMinor must be an integer decimal string or null");
+        throw badRequest("commerce.channelPriceMinorInvalid");
       }
       value = BigInt(raw.trim());
     }
@@ -321,7 +322,7 @@ export class CommerceService {
       if (v === undefined) return undefined;
       if (v === null) return null;
       const d = new Date(v);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException(`${field} is not a valid date`);
+      if (Number.isNaN(d.getTime())) throw badRequest("commerce.fieldNotValidDate", { field: field });
       return d;
     };
     const startsAt = parse(dto?.saleStartsAt, "saleStartsAt");
@@ -329,7 +330,7 @@ export class CommerceService {
     const effectiveStart = startsAt !== undefined ? startsAt : (listing.saleStartsAt ? new Date(listing.saleStartsAt) : null);
     const effectiveEnd = endsAt !== undefined ? endsAt : (listing.saleEndsAt ? new Date(listing.saleEndsAt) : null);
     if (effectiveStart && effectiveEnd && effectiveEnd.getTime() < effectiveStart.getTime()) {
-      throw new BadRequestException("saleEndsAt must not be before saleStartsAt");
+      throw badRequest("commerce.saleEndBeforeStart");
     }
     const data: Record<string, any> = {};
     if (startsAt !== undefined) data.saleStartsAt = startsAt;
@@ -386,7 +387,7 @@ export class CommerceService {
 
   async createLocation(organizationId: string, actorId: string, storeId: string, dto: { name: string; externalLocationId?: string; isDefault?: boolean }) {
     await this.findStoreOrThrow(organizationId, storeId);
-    if (!dto?.name?.trim()) throw new BadRequestException("Location name is required");
+    if (!dto?.name?.trim()) throw badRequest("commerce.locationNameRequired");
     if (dto.isDefault) await this.unsetOtherDefaults(organizationId, storeId);
     const created = await (this.prisma as any).storeLocation.create({
       data: {
@@ -403,7 +404,7 @@ export class CommerceService {
 
   async updateLocation(organizationId: string, actorId: string, locationId: string, dto: { name?: string; isDefault?: boolean }) {
     const location = await (this.prisma as any).storeLocation.findFirst({ where: { id: locationId, organizationId } });
-    if (!location) throw new NotFoundException("Location not found in this organization");
+    if (!location) throw notFound("commerce.locationNotFoundInOrg");
     if (dto?.isDefault === true) await this.unsetOtherDefaults(organizationId, location.storeId);
     const data: Record<string, any> = {};
     if (dto?.name !== undefined) data.name = dto.name.trim();
@@ -415,7 +416,7 @@ export class CommerceService {
 
   async deleteLocation(organizationId: string, actorId: string, locationId: string) {
     const location = await (this.prisma as any).storeLocation.findFirst({ where: { id: locationId, organizationId } });
-    if (!location) throw new NotFoundException("Location not found in this organization");
+    if (!location) throw notFound("commerce.locationNotFoundInOrg");
     await (this.prisma as any).storeLocation.delete({ where: { id: location.id } });
     await this.auditLog(organizationId, actorId, "commerce.location_delete", "StoreLocation", location.id);
     return { deleted: true };
@@ -430,7 +431,7 @@ export class CommerceService {
   async refreshLocations(organizationId: string, actorId: string, storeId: string) {
     const store = await this.findStoreOrThrow(organizationId, storeId);
     if (store.platform !== "SHOPIFY") {
-      throw new BadRequestException("শুধুমাত্র Shopify স্টোরের লোকেশন সিঙ্ক করা যায়");
+      throw badRequest("commerce.locationSyncShopifyOnly");
     }
     let integration: any = null;
     try {
@@ -441,12 +442,12 @@ export class CommerceService {
     } catch {
       integration = await (this.prisma as any).integration.findFirst({ where: { organizationId, storeId, provider: "shopify" } });
     }
-    if (!integration) throw new BadRequestException("Shopify integration not connected");
+    if (!integration) throw badRequest("commerce.shopifyNotConnected");
     let credential = integration.credential ?? null;
     if (!credential && typeof (this.prisma as any).integrationCredential?.findFirst === "function") {
       credential = await (this.prisma as any).integrationCredential.findFirst({ where: { integrationId: integration.id } }).catch(() => null);
     }
-    if (!credential?.encryptedData) throw new BadRequestException("Shopify integration not connected");
+    if (!credential?.encryptedData) throw badRequest("commerce.shopifyNotConnected");
 
     const secrets = decryptJson<any>(credential.encryptedData);
     let accessToken: string = secrets.accessToken;
@@ -457,14 +458,14 @@ export class CommerceService {
       const stillValid = !!accessToken && !!expiresAt && expiresAt.getTime() > Date.now() + 5 * 60 * 1000;
       if (!nonExpiring && !stillValid) {
         if (!secrets.clientId || !secrets.clientSecret) {
-          throw new BadRequestException("Shopify client credentials are missing; reconnect with clientId/clientSecret");
+          throw badRequest("commerce.shopifyClientCredentialsMissing");
         }
         const host = normalizeShopifyHost(integration.store?.url ?? store.url);
         let exchanged: { accessToken: string; expiresIn: number | null; scope: string | null };
         try {
           exchanged = await exchangeShopifyClientCredentials(host, secrets.clientId, secrets.clientSecret);
         } catch (e) {
-          throw new BadRequestException(e instanceof Error ? e.message : "unknown error");
+          throw e instanceof Error ? new BadRequestException(e.message) : badRequest("commerce.upstreamErrorUnknown");
         }
         const next = { ...secrets, accessToken: exchanged.accessToken, apiSecret: secrets.clientSecret };
         const tokenExpiresAt = exchanged.expiresIn ? new Date(Date.now() + exchanged.expiresIn * 1000) : null;
@@ -526,7 +527,7 @@ export class CommerceService {
    *  route; audit-logged here with from/to, like updateSyncMode. */
   async updateRefundPush(organizationId: string, actorId: string, storeId: string, enabled: boolean) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     const from = store.refundPushEnabled === true;
     const updated = await (this.prisma as any).store.update({ where: { id: store.id }, data: { refundPushEnabled: enabled } });
     await this.auditLog(organizationId, actorId, "store.refund_push_toggle", "Store", store.id, { from, to: enabled });
@@ -540,7 +541,7 @@ export class CommerceService {
    *  refund-to-credit API refuses. */
   async updateRefundToCredit(organizationId: string, actorId: string, storeId: string, enabled: boolean) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     const from = store.refundToCreditEnabled === true;
     const updated = await (this.prisma as any).store.update({ where: { id: store.id }, data: { refundToCreditEnabled: enabled } });
     await this.auditLog(organizationId, actorId, "store.refund_to_credit_toggle", "Store", store.id, { from, to: enabled });
@@ -550,7 +551,7 @@ export class CommerceService {
   /** EC5: shipment-plugin tracking meta key for Woo fulfilments. */
   async updateTrackingMetaKey(organizationId: string, actorId: string, storeId: string, key: string | null) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     const value = key != null && String(key).trim() !== "" ? String(key).trim() : null;
     const updated = await (this.prisma as any).store.update({ where: { id: store.id }, data: { courierTrackingMetaKey: value } });
     await this.auditLog(organizationId, actorId, "store.tracking_meta_key", "Store", store.id, { set: value !== null });
@@ -564,17 +565,17 @@ export class CommerceService {
     dto: { syncMode?: string; fieldOwnership?: Record<string, unknown>; weightUnit?: string | null },
   ) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     if (dto.syncMode === undefined && dto.weightUnit === undefined && dto.fieldOwnership === undefined) {
-      throw new BadRequestException("কমপক্ষে একটি সেটিং (syncMode / weightUnit) পাঠান");
+      throw badRequest("commerce.sendAtLeastOneSetting");
     }
     if (dto.syncMode !== undefined && !(SYNC_MODES as readonly string[]).includes(dto.syncMode)) {
-      throw new BadRequestException("syncMode must be mirror, co-manage, or full-manage");
+      throw badRequest("commerce.syncModeInvalid");
     }
     // CP3: manual weight-unit override on the same surface.
     const WEIGHT_UNITS = ["g", "kg", "lb", "oz"];
     if (dto.weightUnit !== undefined && dto.weightUnit !== null && !WEIGHT_UNITS.includes(dto.weightUnit)) {
-      throw new BadRequestException("weightUnit must be g, kg, lb or oz");
+      throw badRequest("commerce.weightUnitInvalid");
     }
     const from = store.syncMode ?? "mirror";
     const data: Record<string, any> = {};

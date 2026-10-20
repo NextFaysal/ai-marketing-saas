@@ -152,8 +152,8 @@ describe("ON2 timeline", () => {
 
   it("foreign / missing order is a 404", async () => {
     const { svc } = setup();
-    await expect(svc.timeline("org-2", "o1")).rejects.toThrow("Order not found in this organization");
-    await expect(svc.timeline("org-1", "missing")).rejects.toThrow("Order not found in this organization");
+    await expect(svc.timeline("org-2", "o1")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
+    await expect(svc.timeline("org-1", "missing")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 
   it("caps at 200 entries with the truncated flag", async () => {
@@ -203,7 +203,7 @@ describe("ON2 customer-360", () => {
 
   it("missing order is a 404", async () => {
     const { svc } = setup();
-    await expect(svc.customer360("org-1", "missing")).rejects.toThrow("Order not found in this organization");
+    await expect(svc.customer360("org-1", "missing")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 });
 
@@ -225,8 +225,8 @@ describe("ON2 comments", () => {
     const { svc } = setup();
     await expect(svc.createComment("org-1", "u1", "o1", "   ")).rejects.toThrow(/মন্তব্য/);
     await expect(svc.createComment("org-1", "u1", "o1", "x".repeat(2001))).rejects.toThrow(/মন্তব্য/);
-    await expect(svc.createComment("org-1", "u1", "missing", "hello")).rejects.toThrow("Order not found in this organization");
-    await expect(svc.listComments("org-1", "missing")).rejects.toThrow("Order not found in this organization");
+    await expect(svc.createComment("org-1", "u1", "missing", "hello")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
+    await expect(svc.listComments("org-1", "missing")).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 
   it("delete: author ok, other staff 403 Bengali, ADMIN member ok, missing comment 404", async () => {
@@ -236,10 +236,10 @@ describe("ON2 comments", () => {
     await expect(svc.deleteComment("org-1", "u-other", "o1", theirs.id)).rejects.toThrow(/শুধু মন্তব্যের লেখক অথবা অ্যাডমিন/);
     expect((await svc.deleteComment("org-1", "u-admin", "o1", theirs.id)).deleted).toBe(true);
     expect((await svc.deleteComment("org-1", "u1", "o1", mine.id)).deleted).toBe(true);
-    await expect(svc.deleteComment("org-1", "u1", "o1", "missing-comment")).rejects.toThrow("Comment not found");
-    await expect(svc.deleteComment("org-1", "u1", "missing-order", mine.id)).rejects.toThrow("Order not found in this organization");
+    await expect(svc.deleteComment("org-1", "u1", "o1", "missing-comment")).rejects.toMatchObject({ code: "orders.commentNotFound" });
+    await expect(svc.deleteComment("org-1", "u1", "missing-order", mine.id)).rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
     // A comment on ANOTHER order is scoped out -> 404.
     const onO2 = await svc.createComment("org-1", "u1", "o2", "অন্য অর্ডারের মন্তব্য");
-    await expect(svc.deleteComment("org-1", "u1", "o1", onO2.id)).rejects.toThrow("Comment not found");
+    await expect(svc.deleteComment("org-1", "u1", "o1", onO2.id)).rejects.toMatchObject({ code: "orders.commentNotFound" });
   });
 });

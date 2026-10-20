@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { WarehouseService } from "./warehouse.service";
 import { StockTransfersService } from "./stock-transfers.service";
 import { InventoryService } from "../inventory/inventory.service";
@@ -10,6 +10,7 @@ import {
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest } from "../i18n/api-exception";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;
 
@@ -32,7 +33,7 @@ export class WarehouseController {
   ) {}
 
   private requireTransfers(): StockTransfersService {
-    if (!this.transfers) throw new BadRequestException("ট্রান্সফার সুবিধাটি এই ডিপ্লয়মেন্টে নেই");
+    if (!this.transfers) throw badRequest("warehouse.theTransferFacilityIsNotAvailable");
     return this.transfers;
   }
 
@@ -184,7 +185,7 @@ export class WarehouseController {
 
   @Post("commerce/orders/:orderId/reallocate") @Roles(...WRITE_ROLES)
   async reallocateOrder(@CurrentUser() user: AuthUser, @Param("organizationId") orgId: string, @Param("orderId") orderId: string, @Body() dto: ReallocateOrderDto) {
-    if (!this.inventory) throw new BadRequestException("ইনভেন্টরি সার্ভিস পাওয়া যাচ্ছে না");
+    if (!this.inventory) throw badRequest("warehouse.theInventoryServiceIsNotAvailable");
     const result: any = await this.inventory.reallocateOrderBins(orgId, orderId, dto.warehouseId, user.userId);
     // Label the returned allocation rows like the order detail's
     // allocations[] (warehouseName/binCode) for a consistent API.

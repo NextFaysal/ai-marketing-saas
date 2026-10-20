@@ -65,7 +65,7 @@ describe("TrackingService.ingest", () => {
     const { svc } = await setup();
     const r = await svc.ingest({ key: "key-1", events: [{ ...baseEvent, clientEventId: "x1", type: "steal_data" } as any] });
     expect(r.rejected).toBe(1);
-    await expect(svc.ingest({ key: "wrong-key", events: [] })).rejects.toThrow("Unknown tracking key");
+    await expect(svc.ingest({ key: "wrong-key", events: [] })).rejects.toMatchObject({ code: "tracking.unknownTrackingKey" });
   });
 
   it("a purchase event for a synced order creates attribution credits for all models", async () => {

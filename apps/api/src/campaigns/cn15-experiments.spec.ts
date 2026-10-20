@@ -135,18 +135,18 @@ describe("CN15 Meta Experiments", () => {
 
   it("refuses out-of-range splits, same-plan pairs, cross-group pairs, unpublished variants and pixel-less variants", async () => {
     const s = setup(); global.fetch = s.fetchFn as any;
-    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B", splitA: 5 })).rejects.toThrow(/between 10 and 90/);
-    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-A" })).rejects.toThrow(/TWO different/);
+    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B", splitA: 5 })).rejects.toMatchObject({ code: "campaigns.splitaMustBeAnIntegerBetween" });
+    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-A" })).rejects.toMatchObject({ code: "campaigns.anExperimentNeedsTwoDifferentVariant" });
     s.tables.campaignPlan.rows.find((r: any) => r.id === "plan-B").abGroupId = "ab-OTHER";
-    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toThrow(/SAME A\/B group/);
+    await expect(s.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toMatchObject({ code: "campaigns.bothPlansMustBeVariantsOf" });
     expect(s.tables.campaignExperiment.rows).toHaveLength(0);
 
     const unpub = setup({ publishedB: false }); global.fetch = unpub.fetchFn as any;
-    await expect(unpub.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toThrow(/not published yet/);
+    await expect(unpub.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toMatchObject({ code: "campaigns.variantIsNotPublishedYetA" });
     expect(unpub.tables.campaignExperiment.rows).toHaveLength(0);
 
     const nopx = setup({ pixelOnA: false }); global.fetch = nopx.fetchFn as any;
-    await expect(nopx.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toThrow(/no pixel/);
+    await expect(nopx.frontier.createExperiment("org", "u1", { planAId: "plan-A", planBId: "plan-B" })).rejects.toMatchObject({ code: "campaigns.variantASAdSetsCarry" });
     expect(nopx.tables.campaignExperiment.rows).toHaveLength(0);
   });
 
@@ -187,6 +187,6 @@ describe("CN15 Meta Experiments", () => {
     expect(await s.frontier.listExperiments("org")).toHaveLength(1);
     expect(await s.frontier.listExperimentsForPlan("org", "plan-B")).toHaveLength(1);
     expect(await s.frontier.listExperiments("other-org")).toHaveLength(0);
-    await expect(s.frontier.getExperiment("other-org", "campaignExperiment-1")).rejects.toThrow(/not found/i);
+    await expect(s.frontier.getExperiment("other-org", "campaignExperiment-1")).rejects.toMatchObject({ code: "campaigns.experimentNotFoundInThisOrganization" });
   });
 });

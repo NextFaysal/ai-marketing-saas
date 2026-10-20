@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TenantPaymentsService } from "../connections/tenant-payments.service";
 import { ShopAccountService } from "../storefront/shop-account.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * GC12 — recovery resend of an order's online-payment link.
@@ -46,8 +47,8 @@ export class PaymentResendService {
     try {
       order = await this.t("order").findFirst({ where: { id: orderId, organizationId } });
     } catch { order = null; }
-    if (!order) throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
-    if (order.isPractice) throw new BadRequestException("Practice অর্ডারে পেমেন্ট লিংক পাঠানো যায় না।");
+    if (!order) throw notFound("courier.orderNotFoundShort");
+    if (order.isPractice) throw badRequest("orders.practiceOrderPaymentLinkBlocked");
 
     let attempts: any[] = [];
     try {
@@ -71,7 +72,7 @@ export class PaymentResendService {
       if (String(a.purpose ?? "full") === "deposit") verifiedDepositSum += amt;
     }
     if (totalMinor > 0n && verifiedSum >= totalMinor) {
-      throw new BadRequestException("ইতিমধ্যে পেমেন্ট সম্পন্ন হয়েছে");
+      throw badRequest("orders.paymentAlreadyCompleted");
     }
     const sorted = [...attempts].sort(
       (a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
@@ -81,7 +82,7 @@ export class PaymentResendService {
     const providerRaw = String(body?.provider ?? "").trim().toLowerCase() || (latest ? String(latest.provider ?? "") : "");
     const sourceRaw = String(body?.source ?? "").trim().toLowerCase() || (latest ? String(latest.source ?? "own") : "");
     if (!providerRaw || !sourceRaw) {
-      throw new BadRequestException("কোন গেটওয়ে দিয়ে পেমেন্ট লিংক পাঠাব তা জানা নেই — এই অর্ডারের আগের কোনো অনলাইন পেমেন্ট চেষ্টা নেই; provider ও source দিয়ে আবার চেষ্টা করুন।");
+      throw badRequest("orders.paymentLinkGatewayUnknown");
     }
     // Server truth, never the client's word: the pair must be an
     // option this shop actually offers right now.
@@ -110,7 +111,7 @@ export class PaymentResendService {
       try { due = BigInt(order.depositDueMinor ?? 0); } catch { due = 0n; }
       const outstanding = due - verifiedDepositSum;
       if (outstanding <= 0n) {
-        throw new BadRequestException("এই অর্ডারের ডিপোজিট ইতিমধ্যে পরিশোধ হয়েছে");
+        throw badRequest("orders.depositAlreadyPaid");
       }
       opts.amountMinor = outstanding;
       opts.purpose = "deposit";

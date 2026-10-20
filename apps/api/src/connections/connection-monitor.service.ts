@@ -6,6 +6,7 @@ import { EmailProvider } from "../messaging/email.provider";
 import { ConnectionsService } from "./connections.service";
 import { ConnectionDoctorService, type DoctorTarget } from "./connection-doctor.service";
 import { ProviderHealthService, whatsappQualityRank } from "./provider-health.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC12 (Connect Center Advanced) — connection monitoring sweep +
@@ -173,13 +174,13 @@ export class ConnectionMonitorService {
     const data: Record<string, unknown> = {};
     if (dto.emailEnabled !== undefined) data.emailEnabled = dto.emailEnabled === true;
     if (dto.categories !== undefined) {
-      if (dto.categories !== null && !Array.isArray(dto.categories)) throw new BadRequestException("categories must be an array or null");
+      if (dto.categories !== null && !Array.isArray(dto.categories)) throw badRequest("connections.categoriesMustBeArrayOrNull");
       data.categories = dto.categories === null ? null : dto.categories.map(String);
     }
     if (dto.doctorEnabled !== undefined) data.doctorEnabled = dto.doctorEnabled === true;
     if (dto.doctorIntervalHours !== undefined) {
       const hours = Number(dto.doctorIntervalHours);
-      if (!Number.isFinite(hours) || hours < 1 || hours > 168) throw new BadRequestException("doctorIntervalHours must be between 1 and 168");
+      if (!Number.isFinite(hours) || hours < 1 || hours > 168) throw badRequest("connections.doctorIntervalRange");
       data.doctorIntervalHours = Math.floor(hours);
     }
     const existing = await (this.prisma as any).connectionAlertPreference.findUnique({
@@ -216,7 +217,7 @@ export class ConnectionMonitorService {
     const row = await (this.prisma as any).connectionAlert.findFirst({
       where: { id: alertId, organizationId },
     }).catch(() => null);
-    if (!row) throw new NotFoundException("Alert not found");
+    if (!row) throw notFound("connections.alertNotFound");
     if (row.readAt) return row;
     return (this.prisma as any).connectionAlert.update({ where: { id: row.id }, data: { readAt: new Date() } });
   }
@@ -264,7 +265,7 @@ export class ConnectionMonitorService {
       const a = (c.accounts ?? []).find((x: any) => x.source === targetType && x.id === targetId);
       if (a) return { targetType, targetId, provider: a.provider, category: a.category, displayName: a.displayName };
     }
-    throw new NotFoundException("Connection target not found");
+    throw notFound("connections.connectionTargetNotFound");
   }
 
   // ---------- the sweep ----------

@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ReviewsService, parseReviewRating } from "./reviews.service";
 import { ProactiveService } from "../ai/proactive.service";
 import { JOB_TEMPLATES, JOB_TYPES } from "../automation/automation.service";
@@ -227,10 +228,10 @@ describe("CX12b public link page", () => {
       },
     });
     expect(reviews[0].source).toBe("link");
-    await expect(svc.submitPublicReview(token, { rating: 5 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.submitPublicReview(token, { rating: 9 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.publicReview("nope")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.submitPublicReview("nope", { rating: 3 })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.submitPublicReview(token, { rating: 5 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.submitPublicReview(token, { rating: 9 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.publicReview("nope")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.submitPublicReview("nope", { rating: 3 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("listReviews is org-scoped, filterable, and resolves order/customer labels", async () => {

@@ -123,7 +123,7 @@ describe("M17 website live chat", () => {
     const visible = await webchat.listMessages(site.widgetKey, start.token);
     expect(visible.map((m: any) => m.direction)).toEqual(["in", "out"]);
     // a forged token is refused
-    await expect(webchat.listMessages(site.widgetKey, "f".repeat(64))).rejects.toThrow("Invalid chat session token");
+    await expect(webchat.listMessages(site.widgetKey, "f".repeat(64))).rejects.toMatchObject({ code: "inbox.invalidChatSessionToken" });
     // session row never stores the raw token
     expect(JSON.stringify(tables.liveChatSession.rows)).not.toContain(start.token);
   });
@@ -146,7 +146,7 @@ describe("M17 customer merge", () => {
     expect(tables.channelConversation.rows[0].customerId).toBe("c-target");
     const list = await svc.list("org-1");
     expect(list.map((c: any) => c.id)).toEqual(["c-target"]); // source hidden
-    await expect(svc.merge("org-1", "admin", { sourceId: "c-source", targetId: "c-target" })).rejects.toThrow("already merged");
+    await expect(svc.merge("org-1", "admin", { sourceId: "c-source", targetId: "c-target" })).rejects.toMatchObject({ code: "customers.sourceCustomerWasAlreadyMerged" });
   });
 });
 

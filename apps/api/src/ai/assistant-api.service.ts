@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { notFound } from "../i18n/api-exception";
 
 /**
  * AP7 Assistant API keys — org-scoped programmatic access to the
@@ -51,7 +52,7 @@ export class AssistantApiService {
 
   async revokeKey(orgId: string, keyId: string) {
     const row = await this.p().assistantApiKey.findFirst({ where: { id: keyId, organizationId: orgId } });
-    if (!row) throw new NotFoundException("API key not found");
+    if (!row) throw notFound("ai.apiKeyNotFound");
     if (row.revokedAt) return this.publicRow(row);
     const updated = await this.p().assistantApiKey.update({
       where: { id: keyId },

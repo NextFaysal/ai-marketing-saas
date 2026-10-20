@@ -5,6 +5,7 @@ import { GoogleSsoService } from "./google-sso.service";
 import { VerificationService } from "./verification.service";
 import { LoginDto, RegisterDto, SetPhoneDto, VerifyEmailDto, VerifyPhoneOtpDto } from "./auth.dto";
 import { CurrentUser, Public, AuthUser } from "../common/decorators";
+import { serviceUnavailable } from "../i18n";
 
 @Controller("auth")
 export class AuthController {
@@ -19,11 +20,11 @@ export class AuthController {
   ) {}
 
   private verificationSvc(): VerificationService {
-    if (!this.verification) throw new ServiceUnavailableException("Verification service is unavailable");
+    if (!this.verification) throw serviceUnavailable("auth.verificationServiceUnavailable");
     return this.verification;
   }
   private googleSvc(): GoogleSsoService {
-    if (!this.googleSso) throw new ServiceUnavailableException("Google sign-in is unavailable");
+    if (!this.googleSso) throw serviceUnavailable("auth.googleSignInUnavailable");
     return this.googleSso;
   }
   @Public() @Post("register")

@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { PriceListsService, pickGroupPrice } from "./price-lists.service";
@@ -228,7 +229,7 @@ describe("AX7 PriceListsService — groups + items", () => {
     const { group } = await svc.createGroup("org-1", "u-1", { name: "পাইকারি" });
     expect(group.name).toBe("পাইকারি");
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: "customer_group.created" }));
-    await expect(svc.createGroup("org-1", "u-1", { name: "পাইকারি" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createGroup("org-1", "u-1", { name: "পাইকারি" })).rejects.toBeInstanceOf(ApiException);
     // Same name in ANOTHER org is fine.
     await svc.createGroup("org-2", "u-1", { name: "পাইকারি" });
 
@@ -253,7 +254,7 @@ describe("AX7 PriceListsService — groups + items", () => {
     ).rejects.toThrow(/ভ্যারিয়েন্টটি এই পণ্যের নয়/);
     await expect(
       svc.setItem("org-1", "u-1", group.id, { productId: "p-1", priceMinor: "-5" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
   });
 
   it("setItem find-first-then-write: product-level overwrite keeps ONE row; getPriceList resolves names", async () => {
@@ -305,8 +306,8 @@ describe("AX7 PriceListsService — groups + items", () => {
     const view2 = await svc.getPriceList("org-1", group.id);
     expect(view2.items.find((i: any) => i.productId === "p-2").priceMinor).toBe("10000");
     expect(view2.items.find((i: any) => i.productId === "p-1").priceMinor).toBe("9000");
-    await expect(svc.bulkPercentOff("org-1", "u-1", group.id, { percentOff: 0 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.bulkPercentOff("org-1", "u-1", group.id, { percentOff: 100 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.bulkPercentOff("org-1", "u-1", group.id, { percentOff: 0 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.bulkPercentOff("org-1", "u-1", group.id, { percentOff: 100 })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("priceMapForCustomer: no group ⇒ null; group without list ⇒ null; with list ⇒ variant beats product-level via pick", async () => {
@@ -531,10 +532,10 @@ describe("AX7 QuotesService", () => {
     const { svc } = setupQuotes();
     await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-foreign", qty: 1, unitPriceMinor: "100" }] } as any)).rejects.toThrow(/পণ্য পাওয়া যায়নি/);
     await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-1", variantId: "v-other", qty: 1, unitPriceMinor: "100" }] } as any)).rejects.toThrow(/ভ্যারিয়েন্টটি এই পণ্যের নয়/);
-    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-1", qty: 0, unitPriceMinor: "100" }] } as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-1", qty: 1000, unitPriceMinor: "100" }] } as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createQuote("org-1", "u-1", { lines: LINES } as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-foreign", lines: LINES } as any)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-1", qty: 0, unitPriceMinor: "100" }] } as any)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: [{ productId: "p-1", qty: 1000, unitPriceMinor: "100" }] } as any)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createQuote("org-1", "u-1", { lines: LINES } as any)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.createQuote("org-1", "u-1", { customerId: "cust-foreign", lines: LINES } as any)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("send stores ONLY the sha256 hash, returns the link, prefers email, rotates on re-send", async () => {
@@ -558,7 +559,7 @@ describe("AX7 QuotesService", () => {
     const token2 = sent2.link.split("/quote/")[1];
     expect(token2).not.toBe(token);
     expect(row.publicTokenHash).toBe(hashQuoteToken(token2));
-    await expect(svc.getByToken(token)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getByToken(token)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("send falls back to SMS (platform) when there is no email; sentVia none when nothing is configured", async () => {
@@ -592,7 +593,7 @@ describe("AX7 QuotesService", () => {
     const { quote }: any = await svc.createQuote("org-1", "u-1", { customerId: "cust-1", lines: LINES, deliveryChargeMinor: "6000", note: "দ্রুত ডেলিভারি" } as any);
     // A draft quote with a hand-set token hash refuses respond.
     prisma.quote.rows.find((r: any) => r.id === quote.id).publicTokenHash = hashQuoteToken("draft-token");
-    await expect(svc.publicRespond("draft-token", { accept: true })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.publicRespond("draft-token", { accept: true })).rejects.toBeInstanceOf(ApiException);
 
     const sent: any = await svc.sendQuote("org-1", "u-1", quote.id);
     const token = sent.link.split("/quote/")[1];
@@ -622,7 +623,7 @@ describe("AX7 QuotesService", () => {
     expect(pub.status).toBe("expired");
     const staff: any = await svc.getQuote("org-1", quote.id);
     expect(staff.quote.status).toBe("expired");
-    await expect(svc.publicRespond(token, { accept: true })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.publicRespond(token, { accept: true })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("update is draft-only; cancel works from draft/sent only", async () => {
@@ -632,9 +633,9 @@ describe("AX7 QuotesService", () => {
     expect(upd.quote.totalMinor).toBe("51000");
     const cancelled: any = await svc.cancelQuote("org-1", "u-1", quote.id);
     expect(cancelled.quote.status).toBe("cancelled");
-    await expect(svc.updateQuote("org-1", "u-1", quote.id, { note: "x" } as any)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.cancelQuote("org-1", "u-1", quote.id)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.getQuote("org-2", quote.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateQuote("org-1", "u-1", quote.id, { note: "x" } as any)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.cancelQuote("org-1", "u-1", quote.id)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getQuote("org-2", quote.id)).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -911,8 +912,8 @@ describe("AX7 CustomersService.update — groupId + creditTermsDays", () => {
     expect(out.customer.groupId).toBe("g-1");
     expect(out.customer.creditTermsDays).toBe(30);
     await expect(svc.update("org-1", "u-1", "cust-1", { groupId: "g-foreign" })).rejects.toThrow(/কাস্টমার গ্রুপটি পাওয়া যায়নি/);
-    await expect(svc.update("org-1", "u-1", "cust-1", { creditTermsDays: 91 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.update("org-1", "u-1", "cust-1", { creditTermsDays: -1 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.update("org-1", "u-1", "cust-1", { creditTermsDays: 91 })).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.update("org-1", "u-1", "cust-1", { creditTermsDays: -1 })).rejects.toBeInstanceOf(ApiException);
     const cleared: any = await svc.update("org-1", "u-1", "cust-1", { groupId: null });
     expect(cleared.customer.groupId).toBeNull();
   });

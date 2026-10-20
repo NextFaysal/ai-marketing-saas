@@ -153,9 +153,9 @@ describe("NF9 (a) share-token auth — hash at rest, wrong/revoked/expired refus
   it("wrong token 404s on resolve and on ping", async () => {
     const { svc } = makeWorld();
     await svc.issueShareLink(ORG, "staff-1", "rider-1");
-    await expect(svc.publicResolve("totally-wrong-token-value")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.postPing("totally-wrong-token-value", DHAKA)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.setSharing("totally-wrong-token-value", false)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publicResolve("totally-wrong-token-value")).rejects.toMatchObject({ code: "delivery.thisRiderLinkWasNotFound" });
+    await expect(svc.postPing("totally-wrong-token-value", DHAKA)).rejects.toMatchObject({ code: "delivery.thisRiderLinkWasNotFound" });
+    await expect(svc.setSharing("totally-wrong-token-value", false)).rejects.toMatchObject({ code: "delivery.thisRiderLinkWasNotFound" });
   });
 
   it("rotation kills the old token immediately; the new token resolves", async () => {
@@ -163,7 +163,7 @@ describe("NF9 (a) share-token auth — hash at rest, wrong/revoked/expired refus
     const first: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
     const second: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
     expect(second.token).not.toBe(first.token);
-    await expect(svc.publicResolve(first.token)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publicResolve(first.token)).rejects.toMatchObject({ code: "delivery.thisRiderLinkWasNotFound" });
     const resolved: any = await svc.publicResolve(second.token);
     expect(resolved.rider.id).toBe("rider-1");
   });
@@ -172,9 +172,9 @@ describe("NF9 (a) share-token auth — hash at rest, wrong/revoked/expired refus
     const { svc } = makeWorld();
     const issued: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
     await svc.revokeShareLink(ORG, "staff-1", "rider-1");
-    await expect(svc.publicResolve(issued.token)).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.postPing(issued.token, DHAKA)).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.setSharing(issued.token, true)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.publicResolve(issued.token)).rejects.toMatchObject({ code: "delivery.thisLocationShareLinkHasBeen" });
+    await expect(svc.postPing(issued.token, DHAKA)).rejects.toMatchObject({ code: "delivery.thisLocationShareLinkHasBeen" });
+    await expect(svc.setSharing(issued.token, true)).rejects.toMatchObject({ code: "delivery.thisLocationShareLinkHasBeen" });
     const state: any = await svc.shareState(ORG, "rider-1");
     expect(state).toMatchObject({ hasLink: true, sharing: false, revoked: true });
   });
@@ -183,14 +183,14 @@ describe("NF9 (a) share-token auth — hash at rest, wrong/revoked/expired refus
     const { svc, prisma } = makeWorld();
     const issued: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
     prisma.riderShareLink.rows[0].expiresAt = new Date(Date.now() - 1000);
-    await expect(svc.publicResolve(issued.token)).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.postPing(issued.token, DHAKA)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.publicResolve(issued.token)).rejects.toMatchObject({ code: "delivery.thisLocationShareLinkHasExpired" });
+    await expect(svc.postPing(issued.token, DHAKA)).rejects.toMatchObject({ code: "delivery.thisLocationShareLinkHasExpired" });
   });
 
   it("issuing for a foreign-org rider 404s (staff side is org-scoped)", async () => {
     const { svc } = makeWorld();
-    await expect(svc.issueShareLink(ORG, "staff-1", "rider-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.revokeShareLink(ORG, "staff-1", "rider-foreign")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.issueShareLink(ORG, "staff-1", "rider-foreign")).rejects.toMatchObject({ code: "delivery.theRiderWasNotFound" });
+    await expect(svc.revokeShareLink(ORG, "staff-1", "rider-foreign")).rejects.toMatchObject({ code: "delivery.theRiderWasNotFound" });
   });
 });
 
@@ -231,7 +231,7 @@ describe("NF9 (d) posting gates — active assignment + sharing ON; stop-sharing
   it("posting is refused when the rider has NO active assignment", async () => {
     const { svc, prisma } = makeWorld();
     const issued: any = await svc.issueShareLink(ORG, "staff-1", "rider-3"); // rider-3: no assignment
-    await expect(svc.postPing(issued.token, DHAKA)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.postPing(issued.token, DHAKA)).rejects.toMatchObject({ code: "delivery.thereIsNoActiveDeliveryAssignment" });
     expect(prisma.riderLocationPing.rows).toHaveLength(0);
   });
 
@@ -239,7 +239,7 @@ describe("NF9 (d) posting gates — active assignment + sharing ON; stop-sharing
     const { svc, prisma } = makeWorld();
     const issued: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
     prisma.deliveryAssignment.rows.find((r: any) => r.id === "as-1").status = "delivered";
-    await expect(svc.postPing(issued.token, DHAKA)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.postPing(issued.token, DHAKA)).rejects.toMatchObject({ code: "delivery.thereIsNoActiveDeliveryAssignment" });
     expect(prisma.riderLocationPing.rows).toHaveLength(0);
   });
 
@@ -252,7 +252,7 @@ describe("NF9 (d) posting gates — active assignment + sharing ON; stop-sharing
 
     const stopped: any = await svc.setSharing(issued.token, false);
     expect(stopped.sharingEnabled).toBe(false);
-    await expect(svc.postPing(issued.token, DHAKA)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.postPing(issued.token, DHAKA)).rejects.toMatchObject({ code: "delivery.locationSharingIsOffTurnSharing" });
     const resolved: any = await svc.publicResolve(issued.token);
     expect(resolved.sharingEnabled).toBe(false);
     const after = await svc.customerVisibleLocation(ORG, "ord-1", {});
@@ -266,9 +266,9 @@ describe("NF9 (d) posting gates — active assignment + sharing ON; stop-sharing
   it("invalid coordinates / recordedAt are refused and write nothing", async () => {
     const { svc, prisma } = makeWorld();
     const issued: any = await svc.issueShareLink(ORG, "staff-1", "rider-1");
-    await expect(svc.postPing(issued.token, { lat: 999, lng: 90 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.postPing(issued.token, { lat: 23, lng: -999 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.postPing(issued.token, { ...DHAKA, recordedAt: "not-a-date" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.postPing(issued.token, { lat: 999, lng: 90 })).rejects.toMatchObject({ code: "delivery.latIsNotValidMustBe" });
+    await expect(svc.postPing(issued.token, { lat: 23, lng: -999 })).rejects.toMatchObject({ code: "delivery.lngIsNotValidMustBe" });
+    await expect(svc.postPing(issued.token, { ...DHAKA, recordedAt: "not-a-date" })).rejects.toMatchObject({ code: "delivery.recordedatIsNotValid" });
     expect(prisma.riderLocationPing.rows).toHaveLength(0);
   });
 });

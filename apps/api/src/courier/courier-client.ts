@@ -4,6 +4,7 @@ import { PathaoClient, PATHAO_PROD_BASE } from "./pathao.client";
 import { RedxClient, REDX_DEFAULT_BASE } from "./redx.client";
 import { EcourierClient, ECOURIER_DEFAULT_BASE, ECOURIER_PAYMENT_METHODS } from "./ecourier.client";
 import { PaperflyDevAdapterClient, PaperflyDevAdapterError } from "./paperfly.client";
+import { badRequest } from "../i18n";
 
 /**
  * GB5 (GC13) — the courier adapter framework.
@@ -235,7 +236,7 @@ export function createCourierClient(
       // every operation refuses (paperfly.client.ts).
       return new PaperflyDevAdapterClient({ apiKey: creds.apiKey, apiSecret: creds.apiSecret });
     default:
-      throw new BadRequestException(`Unknown courier provider: ${provider}`);
+      throw badRequest("courier.unknownCourierProvider", { provider: provider });
   }
 }
 
@@ -251,7 +252,7 @@ export function courierAdapter(provider: CourierProviderKey, client: CourierConc
     case "ecourier": return new EcourierCourierAdapter(client as EcourierClient);
     case "paperfly": return new PaperflyCourierAdapter(client as PaperflyDevAdapterClient);
     default:
-      throw new BadRequestException(`Unknown courier provider: ${provider}`);
+      throw badRequest("courier.unknownCourierProvider", { provider: provider });
   }
 }
 
@@ -304,16 +305,16 @@ class PathaoCourierAdapter implements CourierClient {
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
     const c = this.inner;
     const phone = normalizeBdPhone(req.recipientPhone);
-    if (!/^01\d{9}$/.test(phone)) throw new BadRequestException("Pathao এর জন্য প্রাপকের ফোন 01 দিয়ে শুরু হওয়া ১১ ডিজিটের নম্বর হতে হবে");
+    if (!/^01\d{9}$/.test(phone)) throw badRequest("courier.pathaoPhoneFormat");
     let storeId = req.pathao?.storeId;
     if (!storeId) {
       const stores = await c.getStores();
       const first = stores.find((s: any) => s.is_active === 1 || s.is_active === true) ?? stores[0];
-      if (!first) throw new BadRequestException("Pathao অ্যাকাউন্টে কোনো স্টোর পাওয়া যায়নি — আগে Pathao Merchant Panel এ স্টোর তৈরি করুন");
+      if (!first) throw badRequest("courier.pathaoNoStore");
       storeId = Number(first.store_id);
     }
     const weight = req.pathao?.itemWeightKg ?? 0.5;
-    if (!(weight >= 0.5 && weight <= 10)) throw new BadRequestException("Pathao তে ওজন ০.৫–১০ কেজির মধ্যে হতে হয়");
+    if (!(weight >= 0.5 && weight <= 10)) throw badRequest("courier.pathaoWeightRange");
     const booked = await c.createOrder({
       store_id: storeId, merchant_order_id: req.invoice,
       recipient_name: req.recipientName, recipient_phone: phone, recipient_address: req.recipientAddress,
@@ -348,10 +349,10 @@ class RedxCourierAdapter implements CourierClient {
   async book(req: CourierBookingRequest): Promise<CourierBookingResult> {
     const c = this.inner;
     if (!req.redx?.deliveryAreaId || !req.redx?.deliveryArea) {
-      throw new BadRequestException("RedX বুকিংয়ের জন্য ডেলিভারি এলাকা (Area) বেছে নিতে হবে");
+      throw badRequest("courier.redxAreaRequired");
     }
     const weightKg = req.redx?.parcelWeightKg ?? 0.5;
-    if (!(weightKg > 0 && weightKg <= 30)) throw new BadRequestException("RedX তে ওজন ০–৩০ কেজির মধ্যে হতে হয়");
+    if (!(weightKg > 0 && weightKg <= 30)) throw badRequest("courier.redxWeightRange");
     const booked = await c.createParcel({
       customer_name: req.recipientName, customer_phone: normalizeBdPhone(req.recipientPhone),
       delivery_area: req.redx.deliveryArea, delivery_area_id: req.redx.deliveryAreaId,
@@ -399,7 +400,7 @@ class EcourierCourierAdapter implements CourierClient {
     const zip = req.ecourier?.zip?.trim();
     const packageCode = req.ecourier?.packageCode?.trim();
     if (!city || !thana || !area || !zip || !packageCode) {
-      throw new BadRequestException("eCourier বুকিংয়ের জন্য প্রাপকের শহর (City), থানা, এলাকা (Area), পোস্টকোড (Zip) ও Package Code — সবগুলোই দরকার");
+      throw badRequest("courier.ecourierFieldsRequired");
     }
     // payment_method (COD | POS | MPAY | CCRD): staff's choice
     // wins; the default is COD exactly when money is collected
@@ -408,10 +409,10 @@ class EcourierCourierAdapter implements CourierClient {
     let paymentMethod = req.ecourier?.paymentMethod?.trim().toUpperCase() || "";
     if (!paymentMethod) {
       if (req.codAmountMajor > 0) paymentMethod = "COD";
-      else throw new BadRequestException("প্রিপেইড অর্ডারের জন্য eCourier পেমেন্ট মেথড (POS / MPAY / CCRD) বেছে নিন — ডকুমেন্টে প্রিপেইডের কোনো ডিফল্ট মান নেই");
+      else throw badRequest("courier.ecourierPrepaidMethodRequired");
     }
     if (!(ECOURIER_PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
-      throw new BadRequestException(`eCourier পেমেন্ট মেথড হতে হবে: ${ECOURIER_PAYMENT_METHODS.join(" / ")}`);
+      throw badRequest("courier.ecourierPaymentMethods", { methods: ECOURIER_PAYMENT_METHODS.join(" / ") });
     }
     const booked = await this.inner.placeOrder({
       recipient_name: req.recipientName,
@@ -464,22 +465,22 @@ class PaperflyCourierAdapter implements CourierClient {
     try {
       await this.inner.createOrder({});
     } catch (e) {
-      if (e instanceof PaperflyDevAdapterError) throw new BadRequestException(e.message);
+      if (e instanceof PaperflyDevAdapterError) throw badRequest("courier.paperflyDevNotLive");
       throw e;
     }
     // Unreachable — the dev adapter always refuses. Kept as a
     // guard so a future edit can never fall through to a
     // fabricated booking result.
-    throw new BadRequestException("Paperfly development adapter cannot book");
+    throw badRequest("courier.paperflyDevCannotBook");
   }
 
   async statusOf(_ref: { consignmentId: string | null; trackingCode: string | null }): Promise<CourierStatusResult> {
     try {
       await this.inner.statusByTrackingCode("");
     } catch (e) {
-      if (e instanceof PaperflyDevAdapterError) throw new BadRequestException(e.message);
+      if (e instanceof PaperflyDevAdapterError) throw badRequest("courier.paperflyDevNotLive");
       throw e;
     }
-    throw new BadRequestException("Paperfly development adapter cannot track");
+    throw badRequest("courier.paperflyDevCannotTrack");
   }
 }

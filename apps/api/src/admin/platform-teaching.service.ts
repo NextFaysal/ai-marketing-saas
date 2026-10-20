@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { TEACHING_KINDS, TEACHING_LANGUAGES } from "./platform-teaching.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SA-B22 (Smart AI Phase 6, T1): the Admin Training Console's
@@ -81,9 +82,9 @@ export class PlatformTeachingService {
 
   async update(actor: any, id: string, dto: any, ip?: string) {
     const patch = this.validateUpdate(dto);
-    if (!Object.keys(patch).length) throw new BadRequestException("Nothing to update");
+    if (!Object.keys(patch).length) throw badRequest("admin.nothingToUpdate");
     const existing = await this.db().platformTeaching.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException("Teaching item not found");
+    if (!existing) throw notFound("admin.teachingItemNotFound");
     const row = await this.db().platformTeaching.update({
       where: { id },
       data: { ...patch, updatedById: actor?.id ?? null },
@@ -103,9 +104,9 @@ export class PlatformTeachingService {
    * item: a disabled row is absent from every Brain context
    * (the Brain read filters on enabled — spec-pinned). */
   async setEnabled(actor: any, id: string, enabled: boolean, ip?: string) {
-    if (typeof enabled !== "boolean") throw new BadRequestException("enabled must be a boolean");
+    if (typeof enabled !== "boolean") throw badRequest("admin.enabledMustBeABoolean");
     const existing = await this.db().platformTeaching.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException("Teaching item not found");
+    if (!existing) throw notFound("admin.teachingItemNotFound");
     const row = await this.db().platformTeaching.update({
       where: { id },
       data: { enabled, updatedById: actor?.id ?? null },
@@ -122,7 +123,7 @@ export class PlatformTeachingService {
 
   async remove(actor: any, id: string, ip?: string) {
     const existing = await this.db().platformTeaching.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException("Teaching item not found");
+    if (!existing) throw notFound("admin.teachingItemNotFound");
     await this.db().platformTeaching.delete({ where: { id } });
     await this.audit.log({
       userId: actor?.id,
@@ -141,17 +142,17 @@ export class PlatformTeachingService {
   private validateCreate(dto: any) {
     const title = String(dto?.title ?? "").trim();
     const content = String(dto?.content ?? "").trim();
-    if (!title) throw new BadRequestException("title is required");
-    if (!content) throw new BadRequestException("content is required");
-    if (title.length > 200) throw new BadRequestException("title is too long (max 200)");
-    if (content.length > 4000) throw new BadRequestException("content is too long (max 4000)");
+    if (!title) throw badRequest("admin.titleIsRequired");
+    if (!content) throw badRequest("admin.contentIsRequired");
+    if (title.length > 200) throw badRequest("admin.titleIsTooLongMax200");
+    if (content.length > 4000) throw badRequest("admin.contentIsTooLongMax4000");
     const language = dto?.language ?? "bn";
     if (!(TEACHING_LANGUAGES as readonly string[]).includes(language)) {
-      throw new BadRequestException(`language must be one of ${TEACHING_LANGUAGES.join(", ")}`);
+      throw badRequest("admin.languageMustBeOneOf", { p1: TEACHING_LANGUAGES.join(", ") });
     }
     const kind = dto?.kind ?? "guidance";
     if (!(TEACHING_KINDS as readonly string[]).includes(kind)) {
-      throw new BadRequestException(`kind must be one of ${TEACHING_KINDS.join(", ")}`);
+      throw badRequest("admin.kindMustBeOneOf", { p1: TEACHING_KINDS.join(", ") });
     }
     return {
       title,
@@ -167,30 +168,30 @@ export class PlatformTeachingService {
     const patch: Record<string, unknown> = {};
     if (dto?.title !== undefined) {
       const title = String(dto.title ?? "").trim();
-      if (!title) throw new BadRequestException("title cannot be empty");
-      if (title.length > 200) throw new BadRequestException("title is too long (max 200)");
+      if (!title) throw badRequest("admin.titleCannotBeEmpty");
+      if (title.length > 200) throw badRequest("admin.titleIsTooLongMax200");
       patch.title = title;
     }
     if (dto?.content !== undefined) {
       const content = String(dto.content ?? "").trim();
-      if (!content) throw new BadRequestException("content cannot be empty");
-      if (content.length > 4000) throw new BadRequestException("content is too long (max 4000)");
+      if (!content) throw badRequest("admin.contentCannotBeEmpty");
+      if (content.length > 4000) throw badRequest("admin.contentIsTooLongMax4000");
       patch.content = content;
     }
     if (dto?.language !== undefined) {
       if (!(TEACHING_LANGUAGES as readonly string[]).includes(dto.language)) {
-        throw new BadRequestException(`language must be one of ${TEACHING_LANGUAGES.join(", ")}`);
+        throw badRequest("admin.languageMustBeOneOf", { p1: TEACHING_LANGUAGES.join(", ") });
       }
       patch.language = dto.language;
     }
     if (dto?.kind !== undefined) {
       if (!(TEACHING_KINDS as readonly string[]).includes(dto.kind)) {
-        throw new BadRequestException(`kind must be one of ${TEACHING_KINDS.join(", ")}`);
+        throw badRequest("admin.kindMustBeOneOf", { p1: TEACHING_KINDS.join(", ") });
       }
       patch.kind = dto.kind;
     }
     if (dto?.sortOrder !== undefined) {
-      if (!Number.isInteger(dto.sortOrder)) throw new BadRequestException("sortOrder must be an integer");
+      if (!Number.isInteger(dto.sortOrder)) throw badRequest("admin.sortorderMustBeAnInteger");
       patch.sortOrder = dto.sortOrder;
     }
     return patch;

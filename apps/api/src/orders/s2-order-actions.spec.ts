@@ -45,9 +45,9 @@ describe("S2 OrdersService.updateOrder", () => {
   it("cross-org order is a 404 with the getOne message", async () => {
     const { svc } = setup();
     await expect(svc.updateOrder("org-2", "u1", "o1", { status: "completed" }))
-      .rejects.toThrow("Order not found in this organization");
+      .rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
     await expect(svc.updateOrder("org-1", "u1", "missing", { status: "completed" }))
-      .rejects.toThrow("Order not found in this organization");
+      .rejects.toMatchObject({ code: "commerce.orderNotFoundInOrg" });
   });
 
   describe("transition table", () => {

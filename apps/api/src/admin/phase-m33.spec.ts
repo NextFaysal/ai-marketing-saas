@@ -71,7 +71,7 @@ describe("Milestone 33 — dynamic platform config (AdminService)", () => {
 
   it("validates provider names and graph versions; meta secrets are sealed too", async () => {
     const svc = new AdminService(prismaFake(), audit);
-    await expect(svc.updatePlatformConfig(actor, "llm", { provider: "grok" })).rejects.toThrow(/provider must be/);
+    await expect(svc.updatePlatformConfig(actor, "llm", { provider: "grok" })).rejects.toMatchObject({ code: "admin.providerMustBeOpenaiAnthropicGemini" });
     await expect(svc.updatePlatformConfig(actor, "meta", { graphVersion: "21" })).rejects.toThrow(/v21\.0/);
     // AA3: meta saves now verify-before-save (app-token probe) — answer it.
     (global as any).fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({ access_token: "app-token" }) }));
@@ -85,7 +85,7 @@ describe("Milestone 33 — dynamic platform config (AdminService)", () => {
 
   it("testLlm refuses honestly with no real LLM, and surfaces the provider's own error with a bad key", async () => {
     const svc = new AdminService(prismaFake(), audit);
-    await expect(svc.testLlm()).rejects.toThrow(/No real LLM is configured/);
+    await expect(svc.testLlm()).rejects.toMatchObject({ code: "admin.noRealLlmIsConfiguredSet" });
     await svc.updatePlatformConfig(actor, "llm", { provider: "openai", apiKey: "sk-bad" });
     (global as any).fetch = jest.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: { message: "Incorrect API key provided" } }) }));
     await expect(svc.testLlm()).rejects.toThrow(/Incorrect API key provided/);

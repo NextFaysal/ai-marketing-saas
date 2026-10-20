@@ -13,6 +13,7 @@ import { phoneKeyLoose } from "../commerce/promotions";
 import { ShopAccountService } from "./shop-account.service";
 import { StorefrontService } from "./storefront.service";
 import { STOCK_INCREASED_EVENT } from "../inventory/inventory.service";
+import { badRequest, notFound } from "../i18n";
 
 export interface StockIncreasedPayload {
   organizationId: string;
@@ -84,7 +85,7 @@ export class RetentionService {
     const org = orgSlug
       ? await this.t("organization").findFirst({ where: { slug: orgSlug } }).catch(() => null)
       : null;
-    if (!org) throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+    if (!org) throw notFound("orders.storeNotFound");
     let setting: any = null;
     try {
       setting = await this.t("storefrontSetting").findFirst({ where: { organizationId: org.id } });
@@ -92,7 +93,7 @@ export class RetentionService {
       setting = null;
     }
     if (!setting || setting.shopEnabled !== true) {
-      throw new NotFoundException("দোকানটি পাওয়া যায়নি");
+      throw notFound("orders.storeNotFound");
     }
     return { org, setting };
   }
@@ -124,7 +125,7 @@ export class RetentionService {
       const variant = await this.t("productVariant")
         .findFirst({ where: { productId: product.id, sku: variantSku } })
         .catch(() => null);
-      if (!variant) throw new NotFoundException("ভ্যারিয়েন্টটি পাওয়া যায়নি");
+      if (!variant) throw notFound("storefront.variantNotFound");
       return variant.stockQuantity ?? null;
     }
     if (product.stockQuantity !== null && product.stockQuantity !== undefined) {
@@ -147,19 +148,19 @@ export class RetentionService {
       where: { id: String(dto.productId ?? ""), organizationId: org.id },
     });
     if (!product || product.status !== "ACTIVE") {
-      throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+      throw notFound("commerce.productNotFoundShort");
     }
     const variantSku = dto.variantSku?.trim() ? dto.variantSku.trim() : null;
     const stock = await this.targetStock(product, variantSku);
     if (stock === null) {
-      throw new BadRequestException("এই পণ্যের স্টক ট্র্যাক করা হয় না — স্টক অ্যালার্ট দেওয়া যাবে না");
+      throw badRequest("storefront.stockNotTrackedNoAlert");
     }
     if (stock > 0) {
-      throw new BadRequestException("পণ্যটি এখন স্টকে আছে");
+      throw badRequest("storefront.productNowInStock");
     }
     const phoneKey = phoneKeyLoose(dto.phone);
     if (phoneKey.length < 11) {
-      throw new BadRequestException("সঠিক মোবাইল নম্বর দিন");
+      throw badRequest("storefront.mobileNumberInvalid");
     }
 
     const table = this.t("stockAlertSubscription");
@@ -382,7 +383,7 @@ export class RetentionService {
     },
   ) {
     if (!this.storefront) {
-      throw new BadRequestException("ট্র্যাকিং সেবা এই মুহূর্তে পাওয়া যাচ্ছে না");
+      throw badRequest("storefront.trackingServiceUnavailableNow");
     }
     // The ONE matcher: every failure is the same constant 404.
     const { org, order } = await this.storefront.matchTrackedOrder(orgSlug, {
@@ -391,14 +392,12 @@ export class RetentionService {
     } as any);
 
     if (!(await this.orderDelivered(order))) {
-      throw new BadRequestException(
-        "অর্ডারটি এখনো ডেলিভারি হয়নি — ডেলিভারি সম্পন্ন হলে রিটার্ন/এক্সচেঞ্জের অনুরোধ করা যাবে",
-      );
+      throw badRequest("storefront.returnNeedsDelivery");
     }
     const type = dto.type === "exchange" ? "exchange" : "return";
     const reason = String(dto.reason ?? "").trim();
     if (reason.length < 3) {
-      throw new BadRequestException("কারণটি লিখুন");
+      throw badRequest("storefront.reasonRequiredText");
     }
 
     // The order's own items (embedded or the orderItem table).
@@ -418,12 +417,10 @@ export class RetentionService {
       lines = [];
       for (const line of dto.items) {
         const oi = byId.get(String(line.orderItemId));
-        if (!oi) throw new BadRequestException("অর্ডারে এই আইটেমটি নেই");
+        if (!oi) throw badRequest("storefront.itemNotInOrderShort");
         const qty = Math.floor(Number(line.quantity));
         if (!(qty > 0) || qty > Number(oi.quantity)) {
-          throw new BadRequestException(
-            `"${oi.name}"-এর পরিমাণ অর্ডারের পরিমাণের বেশি হতে পারবে না`,
-          );
+          throw badRequest("storefront.returnQtyExceedsOrder", { name: oi.name });
         }
         lines.push({ orderItemId: String(oi.id), quantity: qty });
       }
@@ -432,7 +429,7 @@ export class RetentionService {
       lines = orderItems.map((i: any) => ({ orderItemId: String(i.id), quantity: Number(i.quantity) }));
     }
     if (lines.length === 0) {
-      throw new BadRequestException("কমপক্ষে একটি আইটেম বেছে দিন");
+      throw badRequest("storefront.selectAtLeastOneItem");
     }
 
     // Duplicate OPEN request of the same type for this order.
@@ -443,7 +440,7 @@ export class RetentionService {
       (r) => r.requestType === type && OPEN_RETURN_STATUSES.includes(String(r.status)),
     );
     if (duplicate) {
-      throw new BadRequestException("এই অর্ডারের জন্য একই ধরনের একটি অনুরোধ ইতিমধ্যে খোলা আছে");
+      throw badRequest("storefront.sameTypeRequestOpen");
     }
 
     const row = await table.create({
@@ -486,7 +483,7 @@ export class RetentionService {
     const product = await this.t("product").findFirst({
       where: { organizationId: org.id, slug: productSlug, status: "ACTIVE" },
     });
-    if (!product) throw new NotFoundException("পণ্যটি পাওয়া যায়নি");
+    if (!product) throw notFound("commerce.productNotFoundShort");
     return { org, product };
   }
 
@@ -499,8 +496,8 @@ export class RetentionService {
     const { org, product } = await this.requirePublicProduct(orgSlug, productSlug);
     const customerName = String(dto.customerName ?? "").trim();
     const question = String(dto.question ?? "").trim();
-    if (customerName.length < 2) throw new BadRequestException("আপনার নাম লিখুন");
-    if (question.length < 5) throw new BadRequestException("প্রশ্নটি আরেকটু বিস্তারিত লিখুন");
+    if (customerName.length < 2) throw badRequest("storefront.nameRequiredText");
+    if (question.length < 5) throw badRequest("storefront.questionTooShort");
     const phoneKey = dto.phone?.trim() ? phoneKeyLoose(dto.phone) : null;
     const row = await this.t("productQuestion").create({
       data: {
@@ -577,7 +574,7 @@ export class RetentionService {
     const row = await this.t("productQuestion").findFirst({
       where: { id: questionId, organizationId },
     });
-    if (!row) throw new NotFoundException("প্রশ্নটি পাওয়া যায়নি");
+    if (!row) throw notFound("storefront.questionNotFound");
     return row;
   }
 
@@ -585,7 +582,7 @@ export class RetentionService {
   async staffAnswerQuestion(organizationId: string, actorId: string, questionId: string, answer: string) {
     const row = await this.requireQuestion(organizationId, questionId);
     const text = String(answer ?? "").trim();
-    if (!text) throw new BadRequestException("উত্তর লিখুন");
+    if (!text) throw badRequest("storefront.answerRequiredText");
     const updated = await this.t("productQuestion").update({
       where: { id: row.id },
       data: { answer: text, answeredById: actorId, answeredAt: new Date(), status: "published" },

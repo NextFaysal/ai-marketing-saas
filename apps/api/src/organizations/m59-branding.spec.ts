@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { OrganizationsService } from "./organizations.service";
 
 /**
@@ -81,15 +82,15 @@ describe("M59 branding settings", () => {
 
   it("rejects a malformed colour and a malformed domain", async () => {
     const { service } = makeService();
-    await expect(service.updateBranding("org-1", "u-1", { primaryColor: "red" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.updateBranding("org-1", "u-1", { primaryColor: "#12345" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.updateBranding("org-1", "u-1", { customDomain: "not a domain" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.updateBranding("org-1", "u-1", { customDomain: "localhost" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.updateBranding("org-1", "u-1", { primaryColor: "red" })).rejects.toBeInstanceOf(ApiException);
+    await expect(service.updateBranding("org-1", "u-1", { primaryColor: "#12345" })).rejects.toBeInstanceOf(ApiException);
+    await expect(service.updateBranding("org-1", "u-1", { customDomain: "not a domain" })).rejects.toBeInstanceOf(ApiException);
+    await expect(service.updateBranding("org-1", "u-1", { customDomain: "localhost" })).rejects.toBeInstanceOf(ApiException);
   });
 
   it("rejects a domain another org already saved, but allows the owner org to keep its own", async () => {
     const { service } = makeService();
-    await expect(service.updateBranding("org-1", "u-1", { customDomain: "reports.taken.com" })).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.updateBranding("org-1", "u-1", { customDomain: "reports.taken.com" })).rejects.toBeInstanceOf(ApiException);
     const own = await service.updateBranding("org-2", "u-9", { customDomain: "reports.taken.com" });
     expect(own.customDomain).toBe("reports.taken.com");
   });
@@ -103,7 +104,7 @@ describe("M59 branding settings", () => {
 
   it("rejects an empty update", async () => {
     const { service } = makeService();
-    await expect(service.updateBranding("org-1", "u-1", {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.updateBranding("org-1", "u-1", {})).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -121,13 +122,13 @@ describe("M59 logo upload + public serve", () => {
   it("rejects a disallowed content type, a spoofed type, and an oversize image", async () => {
     const { service } = makeService();
     await expect(service.uploadLogo("org-1", "u-1", { dataBase64: PNG_1PX.toString("base64"), contentType: "image/gif" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     // JPEG header declared, PNG bytes supplied.
     await expect(service.uploadLogo("org-1", "u-1", { dataBase64: PNG_1PX.toString("base64"), contentType: "image/jpeg" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     const big = Buffer.concat([PNG_1PX, Buffer.alloc(OrganizationsService.LOGO_MAX_BYTES)]);
     await expect(service.uploadLogo("org-1", "u-1", { dataBase64: big.toString("base64"), contentType: "image/png" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("publicLogo is null before upload and after removal", async () => {

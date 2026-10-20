@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SocialService } from "./social.service";
@@ -7,6 +7,7 @@ import { SocialOAuthService } from "./social-oauth.service";
 import { ThreadsClient } from "./threads.client";
 import { MetaSocialPublisher, SocialPostInsights, isTokenDeadError } from "./meta-publisher";
 import { PdfCanvas, buildPdf } from "../courier/pdf";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SP7 — Published-post insights + performance summary.
@@ -374,7 +375,7 @@ export class SocialInsightsService {
 
   private assertInsightsFetchable(post: any): void {
     if (post.status !== "published" || !post.platformPostId) {
-      throw new BadRequestException("শুধু Published পোস্টের Data আনা যায় — এই পোস্টটি এখনো প্রকাশিত হয়নি।");
+      throw badRequest("social.dataCanOnlyBeFetchedFor");
     }
   }
 
@@ -386,7 +387,7 @@ export class SocialInsightsService {
    */
   async refreshPostInsights(organizationId: string, actorId: string, postId: string) {
     const post = await (this.prisma as any).socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
     this.assertInsightsFetchable(post);
     let insights: SocialPostInsights;
     try {
@@ -861,7 +862,7 @@ export class SocialInsightsService {
     let month = typeof monthInput === "string" ? monthInput.trim() : "";
     if (!month) month = dayInTimeZone(new Date(), timeZone).slice(0, 7);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      throw new BadRequestException("মাসের ফরম্যাট সঠিক নয় — YYYY-MM আকারে দিন (যেমন 2026-10)।");
+      throw badRequest("social.theMonthFormatIsNotCorrect");
     }
     const all = await (this.prisma as any).socialPost.findMany({
       where: { organizationId }, take: 1000,

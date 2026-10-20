@@ -116,7 +116,7 @@ describe("CA26 instantiation: DB rows produce exactly the old const-path plans",
 
   it("an unknown key still refuses with the old error", async () => {
     const svc: any = new CampaignsService(basePrisma(true) as any, auditStub, devLlm);
-    await expect(svc.instantiateBlueprint("org-1", "u", { blueprintKey: "nope", adAccountId: "acc-1" })).rejects.toThrow("Unknown blueprint");
+    await expect(svc.instantiateBlueprint("org-1", "u", { blueprintKey: "nope", adAccountId: "acc-1" })).rejects.toMatchObject({ code: "campaigns.unknownBlueprint" });
   });
 });
 
@@ -168,8 +168,8 @@ describe("CA26 platform-admin CRUD", () => {
     expect(updated.version).toBe(2);
     await expect(admin.updatePlatformBlueprint(actor, created.id, { key: "other" })).rejects.toThrow(/key বদলানো যায় না/);
     // the org-owned row is NOT a platform blueprint for admin update/delete
-    await expect(admin.updatePlatformBlueprint(actor, "bp-org", { name: "X" })).rejects.toThrow(/not found/);
-    await expect(admin.deletePlatformBlueprint(actor, "bp-org")).rejects.toThrow(/not found/);
+    await expect(admin.updatePlatformBlueprint(actor, "bp-org", { name: "X" })).rejects.toMatchObject({ code: "admin.platformBlueprintNotFound" });
+    await expect(admin.deletePlatformBlueprint(actor, "bp-org")).rejects.toMatchObject({ code: "admin.platformBlueprintNotFound" });
     const list = await admin.listPlatformBlueprints();
     expect(list.blueprints.map((b: any) => b.key)).toEqual(["new_bp"]);
     await admin.deletePlatformBlueprint(actor, created.id);

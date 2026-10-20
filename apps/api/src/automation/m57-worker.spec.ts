@@ -104,7 +104,7 @@ describe("M57 dispatch mode", () => {
     const out: any = await svc.replayDlq(row.id, "admin-1");
     expect(out).toMatchObject({ replayed: true, mode: "inline" });
     expect(db.dlq[0].replayedAt).toBeTruthy();
-    await expect(svc.replayDlq(row.id, "admin-1")).rejects.toThrow(/already replayed/);
+    await expect(svc.replayDlq(row.id, "admin-1")).rejects.toMatchObject({ code: "automation.thisEntryWasAlreadyReplayed" });
   });
 });
 
@@ -115,14 +115,14 @@ describe("M57 internal surface", () => {
   it("refuses everything when the secret is not configured", async () => {
     delete process.env.INTERNAL_JOB_SECRET;
     const ctrl = new InternalJobsController({} as any);
-    await expect(ctrl.execute("anything", { scheduledJobId: "j" })).rejects.toThrow(/not configured/);
+    await expect(ctrl.execute("anything", { scheduledJobId: "j" })).rejects.toMatchObject({ code: "automation.internalJobSurfaceIsNotConfigured" });
   });
 
   it("rejects a wrong secret and accepts the right one", async () => {
     process.env.INTERNAL_JOB_SECRET = "topsecret";
     const automation = { executeScheduledJobById: jest.fn(async () => ({ ok: true, summary: "s" })) };
     const ctrl = new InternalJobsController(automation as any);
-    await expect(ctrl.execute("wrong", { scheduledJobId: "j" })).rejects.toThrow(/Invalid internal secret/);
+    await expect(ctrl.execute("wrong", { scheduledJobId: "j" })).rejects.toMatchObject({ code: "automation.invalidInternalSecret" });
     await expect(ctrl.execute("topsecret", { scheduledJobId: "j" })).resolves.toMatchObject({ ok: true });
     expect(automation.executeScheduledJobById).toHaveBeenCalledWith("j");
   });

@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { IngestDto, TrackEventDto } from "./tracking.dto";
 import { classifyTouchpoint } from "../attribution/engine";
 import { AttributionService } from "../attribution/attribution.service";
 import { parseMoneyToMinor } from "@repo/contracts";
+import { badRequest } from "../i18n/api-exception";
 
 const MAX_BATCH = 50;
 const ALLOWED_TYPES = ["page_view", "product_view", "add_to_cart", "checkout_started", "lead", "purchase", "refund", "custom", "identify"];
@@ -13,9 +14,9 @@ export class TrackingService {
   constructor(private readonly prisma: PrismaService, private readonly attribution: AttributionService) {}
 
   async ingest(dto: IngestDto) {
-    if (dto.events.length > MAX_BATCH) throw new BadRequestException(`Batch too large: max ${MAX_BATCH} events`);
+    if (dto.events.length > MAX_BATCH) throw badRequest("tracking.batchTooLargeMaxEvents", { MAX_BATCH: MAX_BATCH });
     const store = await (this.prisma as any).store.findFirst({ where: { trackingKey: dto.key } });
-    if (!store) throw new BadRequestException("Unknown tracking key");
+    if (!store) throw badRequest("tracking.unknownTrackingKey");
     const organizationId: string = store.organizationId;
 
     let accepted = 0, duplicates = 0, rejected = 0;

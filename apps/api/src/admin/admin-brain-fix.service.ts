@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { BrainAdminService } from "../ai/brain-admin.service";
 import { AnswerStoreService } from "../ai/answer-store.service";
 import { LearningService } from "../ai/learning.service";
 import { AdminBrainService } from "./admin-brain.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /** The provenance marker stamped on every console decision —
  * the same string LearningService writes to
@@ -60,11 +61,9 @@ export class AdminBrainFixService {
   private requireReason(reason: unknown): string {
     const r = String(reason ?? "").trim();
     if (!r) {
-      throw new BadRequestException(
-        "A reason is required for every admin Brain fix — it is recorded verbatim in the audit trail.",
-      );
+      throw badRequest("admin.aReasonIsRequiredForEvery");
     }
-    if (r.length > 500) throw new BadRequestException("reason is too long (max 500)");
+    if (r.length > 500) throw badRequest("admin.reasonIsTooLongMax500");
     return r;
   }
 
@@ -75,7 +74,7 @@ export class AdminBrainFixService {
   async invalidateAnswer(actor: any, organizationId: string, answerId: string, reasonRaw: unknown, ip?: string) {
     const reason = this.requireReason(reasonRaw);
     const before = await this.db().aiStoredAnswer.findFirst({ where: { id: answerId, organizationId } });
-    if (!before) throw new NotFoundException("Stored answer not found");
+    if (!before) throw notFound("admin.storedAnswerNotFound");
     // Snapshot the pre-fix state into locals BEFORE mutating —
     // the audit must record what the row WAS, whatever the ORM
     // does with the fetched object afterwards.
@@ -118,7 +117,7 @@ export class AdminBrainFixService {
   ) {
     const reason = this.requireReason(reasonRaw);
     if (decisionRaw !== "approve" && decisionRaw !== "reject") {
-      throw new BadRequestException("decision must be \"approve\" or \"reject\"");
+      throw badRequest("admin.decisionMustBeApproveOrReject");
     }
     const updated =
       decisionRaw === "approve"
@@ -159,9 +158,9 @@ export class AdminBrainFixService {
   async forgetCustomerMemory(actor: any, organizationId: string, customerKeyRaw: unknown, reasonRaw: unknown, ip?: string) {
     const reason = this.requireReason(reasonRaw);
     const customerKey = String(customerKeyRaw ?? "").trim();
-    if (!customerKey) throw new BadRequestException("customerKey is required");
+    if (!customerKey) throw badRequest("admin.customerkeyIsRequired");
     const row = await this.db().customerMemory.findFirst({ where: { organizationId, customerKey } });
-    if (!row) throw new NotFoundException("Customer memory not found");
+    if (!row) throw notFound("admin.customerMemoryNotFound");
     await this.brainAdmin.deleteCustomerMemory(organizationId, actor?.id, row.id);
     await this.audit.log({
       organizationId,
@@ -182,7 +181,7 @@ export class AdminBrainFixService {
    * response payload — no staff actor is stamped anywhere. */
   async setAnswerStoreEnabled(actor: any, organizationId: string, enabledRaw: unknown, reasonRaw: unknown, ip?: string) {
     const reason = this.requireReason(reasonRaw);
-    if (typeof enabledRaw !== "boolean") throw new BadRequestException("enabled must be a boolean");
+    if (typeof enabledRaw !== "boolean") throw badRequest("admin.enabledMustBeABoolean");
     await this.brain.getOrgOrThrow(organizationId);
     const db = this.db();
     const before = await db.businessProfile.findUnique({

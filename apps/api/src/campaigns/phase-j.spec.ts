@@ -93,7 +93,7 @@ describe("Phase J - status sync surfaces disapprovals", () => {
     const prisma = basePrisma();
     prisma.campaignPlan.rows.push({ id: "plan-2", organizationId: "org-1", name: "Draft", status: "draft", adAccountId: "acc-1" });
     const svc = new CampaignsService(prisma as any, audit, llm);
-    await expect(svc.syncObjectStatuses("org-1", "user-1", "plan-2")).rejects.toThrow(/no Meta campaign/);
+    await expect(svc.syncObjectStatuses("org-1", "user-1", "plan-2")).rejects.toMatchObject({ code: "campaigns.thisPlanHasNoMetaCampaign" });
   });
 });
 
@@ -210,7 +210,7 @@ describe("Phase J - Google keywords and assets", () => {
       adAccountId: "gacc-1", name: "X", dailyBudget: "500", countryCodes: ["BD"],
       headlines: ["Aaa", "Bbb", "Ccc"], descriptions: ["One.", "Two."], finalUrl: "https://x.example",
       keywords: [],
-    })).rejects.toThrow(/at least 1 keyword/);
+    })).rejects.toMatchObject({ code: "publishing.aSearchCampaignNeedsAtLeast" });
   });
 });
 

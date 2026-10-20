@@ -1,8 +1,6 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
@@ -19,6 +17,7 @@ import {
   type FeedProductInput,
 } from "./feed-generator";
 import type { CreateFeedDto, UpdateFeedDto } from "./feeds.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const CHANNELS = ["meta", "google", "tiktok", "daraz"] as const;
 
@@ -60,7 +59,7 @@ export class FeedsService {
 
   private async loadOr404(orgId: string, id: string): Promise<any> {
     const row = await this.table().findFirst({ where: { id, organizationId: orgId } });
-    if (!row) throw new NotFoundException("Feed not found in this organization");
+    if (!row) throw notFound("feeds.feedNotFoundInThisOrganization");
     return row;
   }
 
@@ -87,12 +86,12 @@ export class FeedsService {
 
   async create(orgId: string, actorId: string, dto: CreateFeedDto) {
     if (!(CHANNELS as readonly string[]).includes(dto.channel)) {
-      throw new BadRequestException("চ্যানেল সঠিক নয় (meta | google | tiktok | daraz)");
+      throw badRequest("feeds.theChannelIsNotValidMeta");
     }
     // OU3: the Daraz export exists only as CSV (no XML form is
     // claimed for a Seller Center upload file).
     if (dto.channel === "daraz" && dto.format !== undefined && dto.format !== "csv") {
-      throw new BadRequestException("Daraz ফিড শুধু CSV ফরম্যাটে হয়");
+      throw badRequest("feeds.theDarazFeedIsOnlyIn");
     }
     const format = dto.format ?? (dto.channel === "tiktok" || dto.channel === "daraz" ? "csv" : "xml");
     const row = await this.table().create({
@@ -166,7 +165,7 @@ export class FeedsService {
 
   private async buildForOrg(orgId: string, feed: any) {
     const org = await (this.prisma as any).organization.findFirst({ where: { id: orgId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("feeds.organizationNotFound");
     const setting = await (this.prisma as any).storefrontSetting
       .findFirst({ where: { organizationId: orgId } })
       .catch(() => null);
@@ -236,9 +235,9 @@ export class FeedsService {
    * response never reveals which case it was. */
   async serveByToken(token: string, ext: string): Promise<{ contentType: string; body: string }> {
     const feed = await this.table().findFirst({ where: { token } });
-    if (!feed || feed.active !== true) throw new NotFoundException("Feed not found");
+    if (!feed || feed.active !== true) throw notFound("feeds.feedNotFound");
     const expectedExt = feed.format === "xml" ? "xml" : "csv";
-    if (ext !== expectedExt) throw new NotFoundException("Feed not found");
+    if (ext !== expectedExt) throw notFound("feeds.feedNotFound");
     const { items } = await this.buildForOrg(feed.organizationId, feed);
     let body: string;
     let contentType: string;

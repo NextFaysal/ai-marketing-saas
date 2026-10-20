@@ -105,8 +105,8 @@ describe("CN14 meta setting validation", () => {
     const t = basePrisma();
     const svc = new OfflineConversionsService(t as any, audit);
     await expect(svc.saveSetting("org-1", "u", "meta", { adAccountId: "macc-1" })).rejects.toThrow(/dataset \(pixel\) id/);
-    await expect(svc.saveSetting("org-1", "u", "meta", { adAccountId: "macc-1", datasetId: "DS-9", trigger: "bogus" })).rejects.toThrow(/Invalid trigger/);
-    await expect(svc.saveSetting("org-1", "u", "google", { adAccountId: "macc-1", conversionAction: "1" })).rejects.toThrow(/not google/);
+    await expect(svc.saveSetting("org-1", "u", "meta", { adAccountId: "macc-1", datasetId: "DS-9", trigger: "bogus" })).rejects.toMatchObject({ code: "offlineConversions.invalidTrigger" });
+    await expect(svc.saveSetting("org-1", "u", "google", { adAccountId: "macc-1", conversionAction: "1" })).rejects.toMatchObject({ code: "offlineConversions.thatAdAccountIsAAccount" });
     const saved = await svc.saveSetting("org-1", "u", "meta", { adAccountId: "macc-1", datasetId: "DS-9", trigger: "delivered", leadFeedbackEnabled: true });
     expect(saved.datasetId).toBe("DS-9");
     expect(saved.leadFeedbackEnabled).toBe(true);
@@ -192,7 +192,7 @@ describe("CN14 meta order upload (dataset CAPI)", () => {
     const svc = new OfflineConversionsService(t as any, audit);
     await svc.saveSetting("org-1", "u", "meta", { adAccountId: "macc-1", datasetId: "DS-9", trigger: "delivered" });
     global.fetch = graphFetch("zero").fn as any;
-    await expect(svc.uploadForOrder("org-1", "ord-1", "meta")).rejects.toThrow(/did NOT confirm/);
+    await expect(svc.uploadForOrder("org-1", "ord-1", "meta")).rejects.toMatchObject({ code: "offlineConversions.metaUploadDidNotConfirm" });
     expect(t.offlineConversionLog.rows.find((r: any) => r.platform === "meta")?.status).toBe("failed");
   });
 });

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
@@ -12,6 +12,7 @@ import { classifyShipmentStatus } from "../courier/courier-performance";
 import { AbandonedCheckoutsService } from "../commerce/abandoned-checkouts.service";
 import { LlmFactory } from "../ai/llm/llm.factory";
 import { deriveAbandonedCarts, deriveBrowseAbandoned } from "../tracking/abandoned-carts";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const WORKFLOW_TRIGGERS = [
   "order_created", "lead_created", "lead_stage_changed", "inbox_message_received", "inbox_unanswered",
@@ -76,10 +77,10 @@ export function isBlockedWebhookHost(hostname: string): boolean {
   return false;
 }
 
-export const WORKFLOW_PRESETS: { key: string; name: string; descriptionBn: string; trigger: string; conditions?: any[]; steps: any[] }[] = [
+export const WORKFLOW_PRESETS: { key: string; name: string; nameEn: string; descriptionBn: string; descriptionEn: string; trigger: string; conditions?: any[]; steps: any[] }[] = [
   {
-    key: "recovery_followup", name: "Recovery Follow-up", trigger: "inbox_message_received",
-    descriptionBn: "নতুন বার্তার ১ ঘণ্টা পরও উত্তর না হলে ভদ্র ফলো-আপ পাঠায়।",
+    key: "recovery_followup", name: "Recovery Follow-up", nameEn: "Recovery Follow-up", trigger: "inbox_message_received",
+    descriptionBn: "নতুন বার্তার ১ ঘণ্টা পরও উত্তর না হলে ভদ্র ফলো-আপ পাঠায়।", descriptionEn: "If a new message gets no reply after 1 hour, it sends a polite follow-up.",
     steps: [
       { type: "wait", minutes: 60 },
       { type: "condition", field: "agentReplied", op: "eq", value: false },
@@ -87,14 +88,14 @@ export const WORKFLOW_PRESETS: { key: string; name: string; descriptionBn: strin
     ],
   },
   {
-    key: "complaint_note", name: "অভিযোগ সতর্কতা", trigger: "inbox_message_received",
-    descriptionBn: "অভিযোগ শনাক্ত হলে কথোপকথনে অগ্রাধিকার নোট যোগ করে।",
+    key: "complaint_note", name: "অভিযোগ সতর্কতা", nameEn: "Complaint Alert", trigger: "inbox_message_received",
+    descriptionBn: "অভিযোগ শনাক্ত হলে কথোপকথনে অগ্রাধিকার নোট যোগ করে।", descriptionEn: "When a complaint is detected, it adds a priority note to the conversation.",
     conditions: [{ field: "intent", op: "eq", value: "complaint" }],
     steps: [{ type: "add_conversation_note", text: "অভিযোগ এসেছে — অগ্রাধিকার দিয়ে দেখুন" }],
   },
   {
-    key: "unanswered_escalation", name: "Unanswered Escalation", trigger: "inbox_unanswered",
-    descriptionBn: "২ ঘণ্টা উত্তরহীন কথোপকথনে নোট + ADMIN দের জানায়।",
+    key: "unanswered_escalation", name: "Unanswered Escalation", nameEn: "Unanswered Escalation", trigger: "inbox_unanswered",
+    descriptionBn: "২ ঘণ্টা উত্তরহীন কথোপকথনে নোট + ADMIN দের জানায়।", descriptionEn: "Adds a note to conversations unanswered for 2 hours and informs the ADMINs.",
     conditions: [{ field: "unansweredMinutes", op: "gte", value: 120 }],
     steps: [
       { type: "add_conversation_note", text: "২ ঘণ্টা ধরে উত্তর হয়নি" },
@@ -102,60 +103,60 @@ export const WORKFLOW_PRESETS: { key: string; name: string; descriptionBn: strin
     ],
   },
   {
-    key: "delivered_review", name: "ডেলিভারির পর রিভিউ", trigger: "order_delivered",
-    descriptionBn: "ডেলিভারির ১ দিন পর টিমকে রিভিউ চাইতে মনে করিয়ে দেয়।",
+    key: "delivered_review", name: "ডেলিভারির পর রিভিউ", nameEn: "Review After Delivery", trigger: "order_delivered",
+    descriptionBn: "ডেলিভারির ১ দিন পর টিমকে রিভিউ চাইতে মনে করিয়ে দেয়।", descriptionEn: "1 day after delivery, it reminds the team to ask for a review.",
     steps: [
       { type: "wait", minutes: 1440 },
       { type: "notify_team", title: "রিভিউ চাওয়ার সময়", text: "অর্ডার {{orderNumber}} ডেলিভারি হয়েছে — গ্রাহককে রিভিউ চেয়ে বার্তা দিন" },
     ],
   },
   {
-    key: "cod_thanks_ops", name: "COD কনফার্ম — টিম অ্যালার্ট", trigger: "order_cod_confirmed",
-    descriptionBn: "COD অর্ডার কনফার্ম হলেই টিমকে প্যাকেজিং শুরু করতে জানায়।",
+    key: "cod_thanks_ops", name: "COD কনফার্ম — টিম অ্যালার্ট", nameEn: "COD Confirm — Team Alert", trigger: "order_cod_confirmed",
+    descriptionBn: "COD অর্ডার কনফার্ম হলেই টিমকে প্যাকেজিং শুরু করতে জানায়।", descriptionEn: "As soon as a COD order is confirmed, it tells the team to start packaging.",
     steps: [
       { type: "notify_team", title: "COD কনফার্ম", text: "অর্ডার {{orderNumber}} COD কনফার্ম হয়েছে (মোট {{total}} টাকা) — প্যাকেজিং শুরু করুন" },
     ],
   },
   {
-    key: "refund_team_alert", name: "Refund হলে টিম অ্যালার্ট", trigger: "order_refunded",
-    descriptionBn: "কোনো অর্ডারে refund হলেই টিমকে পরিমাণসহ জানায়।",
+    key: "refund_team_alert", name: "Refund হলে টিম অ্যালার্ট", nameEn: "Team Alert on Refund", trigger: "order_refunded",
+    descriptionBn: "কোনো অর্ডারে refund হলেই টিমকে পরিমাণসহ জানায়।", descriptionEn: "As soon as any order is refunded, it informs the team with the amount.",
     steps: [
       { type: "notify_team", title: "Refund হয়েছে", text: "অর্ডার {{orderNumber}} এ {{refundAmount}} টাকা refund হয়েছে (মোট refund {{cumulativeRefunded}} টাকা) — যাচাই করুন" },
     ],
   },
   {
-    key: "shipment_return_alert", name: "পার্সেল রিটার্ন হলে টিম অ্যালার্ট", trigger: "shipment_returned",
-    descriptionBn: "কুরিয়ার পার্সেল রিটার্ন কনফার্ম করলেই টিমকে অর্ডার ও ট্র্যাকিং কোডসহ জানায়।",
+    key: "shipment_return_alert", name: "পার্সেল রিটার্ন হলে টিম অ্যালার্ট", nameEn: "Team Alert on Parcel Return", trigger: "shipment_returned",
+    descriptionBn: "কুরিয়ার পার্সেল রিটার্ন কনফার্ম করলেই টিমকে অর্ডার ও ট্র্যাকিং কোডসহ জানায়।", descriptionEn: "As soon as the courier confirms a parcel return, it informs the team with the order and tracking code.",
     steps: [
       { type: "notify_team", title: "পার্সেল রিটার্ন হয়েছে", text: "অর্ডার {{orderNumber}} এর পার্সেল রিটার্ন হয়েছে (ট্র্যাকিং: {{trackingCode}}) — গ্রাহকের সাথে যোগাযোগ করুন" },
     ],
   },
   {
-    key: "big_order_alert", name: "বড় অর্ডার অ্যালার্ট", trigger: "order_created",
-    descriptionBn: "১,০০০ টাকার বেশি অর্ডার এলেই OWNER কে জানায়।",
+    key: "big_order_alert", name: "বড় অর্ডার অ্যালার্ট", nameEn: "Big Order Alert", trigger: "order_created",
+    descriptionBn: "১,০০০ টাকার বেশি অর্ডার এলেই OWNER কে জানায়।", descriptionEn: "As soon as an order over 1,000 taka arrives, it informs the OWNER.",
     conditions: [{ field: "total", op: "gte", value: 1000 }],
     steps: [
       { type: "notify_team", role: "OWNER", title: "বড় অর্ডার", text: "বড় অর্ডার এসেছে: {{orderNumber}} ({{total}} টাকা)" },
     ],
   },
   {
-    key: "cart_recovery_alert", name: "Abandoned Cart রিকভারি", trigger: "cart_abandoned",
-    descriptionBn: "গ্রাহক পণ্য কার্টে ফেলে রেখে চলে গেলে টিমকে ফলো-আপ অ্যালার্ট জানায়।",
+    key: "cart_recovery_alert", name: "Abandoned Cart রিকভারি", nameEn: "Abandoned Cart Recovery", trigger: "cart_abandoned",
+    descriptionBn: "গ্রাহক পণ্য কার্টে ফেলে রেখে চলে গেলে টিমকে ফলো-আপ অ্যালার্ট জানায়।", descriptionEn: "When a customer leaves products in the cart, it alerts the team to follow up.",
     steps: [
       { type: "notify_team", title: "কার্ট ফেলে গেছেন", text: "{{contactName}} কার্টে {{itemsCount}}টি আইটেম রেখে গেছেন (মোট {{cartValue}} টাকা) — রিকভারির সুযোগ!" },
     ],
   },
   {
-    key: "vip_order_channel_alert", name: "VIP অর্ডারে Slack/চ্যানেল অ্যালার্ট", trigger: "order_created",
-    descriptionBn: "৫,০০০ টাকার বেশি VIP অর্ডার আসলে টিম ও চ্যানেলে তাৎক্ষণিক অ্যালার্ট পাঠায়।",
+    key: "vip_order_channel_alert", name: "VIP অর্ডারে Slack/চ্যানেল অ্যালার্ট", nameEn: "VIP Order Slack/Channel Alert", trigger: "order_created",
+    descriptionBn: "৫,০০০ টাকার বেশি VIP অর্ডার আসলে টিম ও চ্যানেলে তাৎক্ষণিক অ্যালার্ট পাঠায়।", descriptionEn: "When a VIP order over 5,000 taka arrives, it sends an instant alert to the team and the channel.",
     conditions: [{ field: "total", op: "gte", value: 5000 }],
     steps: [
       { type: "notify_team", role: "OWNER", title: "🎉 বড় VIP অর্ডার", text: "নতুন VIP অর্ডার এসেছে! অর্ডার নং: {{orderNumber}}, মোট: {{total}} টাকা" },
     ],
   },
   {
-    key: "ai_inbox_reply_assist", name: "AI ইনবক্স নোট ও অ্যাসিস্ট", trigger: "inbox_message_received",
-    descriptionBn: "ইনবক্স বার্তা এলে AI দিয়ে সারসংক্ষেপ নোট যোগ করে।",
+    key: "ai_inbox_reply_assist", name: "AI ইনবক্স নোট ও অ্যাসিস্ট", nameEn: "AI Inbox Note & Assist", trigger: "inbox_message_received",
+    descriptionBn: "ইনবক্স বার্তা এলে AI দিয়ে সারসংক্ষেপ নোট যোগ করে।", descriptionEn: "When an inbox message arrives, it adds a summary note using AI.",
     steps: [
       { type: "ai_generate", prompt: "গ্রাহকের বার্তার মূল চাহিদা সংক্ষেপে ১ বাক্যে নোট হিসেবে লিখুন: {{content}}", action: "add_conversation_note" },
     ],
@@ -747,16 +748,16 @@ export class WorkflowsService implements OnModuleInit {
   // ---------- CRUD ----------
   /** One validator for create AND update (Workflows W1). */
   private async validateDefinition(organizationId: string, trigger: string, steps: any[], conditions?: unknown) {
-    if (!(WORKFLOW_TRIGGERS as readonly string[]).includes(trigger)) throw new BadRequestException("Invalid trigger");
+    if (!(WORKFLOW_TRIGGERS as readonly string[]).includes(trigger)) throw badRequest("workflows.invalidTrigger");
     if (trigger === "schedule") {
       // Workflows W2: a schedule workflow needs its time.
       const conds = (conditions as any[]) ?? [];
       const t = conds.find((c) => c?.field === "scheduleTime");
       if (!t || !/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(t.value ?? ""))) {
-        throw new BadRequestException("schedule workflows need a scheduleTime condition (HH:MM, Asia/Dhaka)");
+        throw badRequest("workflows.scheduleWorkflowsNeedAScheduletimeCondition");
       }
     }
-    if (!Array.isArray(steps) || steps.length === 0) throw new BadRequestException("A workflow needs at least one step");
+    if (!Array.isArray(steps) || steps.length === 0) throw badRequest("workflows.aWorkflowNeedsAtLeastOne");
     await this.validateSteps(organizationId, steps, 0);
   }
 
@@ -765,67 +766,67 @@ export class WorkflowsService implements OnModuleInit {
    *  no branch and no wait inside an arm in v1). */
   private async validateSteps(organizationId: string, steps: any[], depth: number) {
     for (const step of steps) {
-      if (!(STEP_TYPES as readonly string[]).includes(step.type)) throw new BadRequestException(`Invalid step type: ${step.type}`);
+      if (!(STEP_TYPES as readonly string[]).includes(step.type)) throw badRequest("workflows.invalidStepType", { stepType: step.type });
       if ((step.type === "send_email" || step.type === "send_sms" || step.type === "issue_recovery_coupon") && !step.templateId) {
         // AX18: the coupon step sends its code WITH a template,
         // so it needs a templateId exactly like the send steps.
-        throw new BadRequestException(`${step.type} steps need a templateId`);
+        throw badRequest("workflows.stepsNeedATemplateid", { stepType: step.type });
       }
       if (step.type === "wait" && (!Number(step.minutes) || Number(step.minutes) < 1 || Number(step.minutes) > 43200)) {
-        throw new BadRequestException("wait steps need minutes between 1 and 43200 (30 days)");
+        throw badRequest("workflows.waitStepsNeedMinutesBetween1");
       }
       if (step.type === "condition" && (!step.field || !step.op)) {
-        throw new BadRequestException("condition steps need a field and an operator");
+        throw badRequest("workflows.conditionStepsNeedAFieldAnd");
       }
       if (step.type === "send_inbox_message" && !step.text && !step.whatsappTemplateId) {
-        throw new BadRequestException("send_inbox_message steps need text or a whatsappTemplateId");
+        throw badRequest("workflows.sendInboxMessageStepsNeedText");
       }
       // Workflows W3 step validation.
       if (step.type === "assign_conversation" && !step.userId && !step.clear) {
-        throw new BadRequestException("assign_conversation steps need a userId (or clear: true)");
+        throw badRequest("workflows.assignConversationStepsNeedAUserid");
       }
       if (step.type === "change_lead_stage" && !["new", "contacted", "qualified", "proposal", "won", "lost"].includes(step.stage)) {
-        throw new BadRequestException("change_lead_stage steps need a valid stage");
+        throw badRequest("workflows.changeLeadStageStepsNeedA");
       }
       if (step.type === "add_tag" && (!step.tag || !["lead", "conversation"].includes(step.target ?? "lead"))) {
-        throw new BadRequestException("add_tag steps need a tag and a target (lead | conversation)");
+        throw badRequest("workflows.addTagStepsNeedATag");
       }
       if (step.type === "notify_team" && !step.text) {
-        throw new BadRequestException("notify_team steps need text");
+        throw badRequest("workflows.notifyTeamStepsNeedText");
       }
       if (step.type === "create_follow_up" && (!Number(step.days) || Number(step.days) < 1 || Number(step.days) > 90)) {
-        throw new BadRequestException("create_follow_up steps need days between 1 and 90");
+        throw badRequest("workflows.createFollowUpStepsNeedDays");
       }
       if (step.type === "http_webhook") {
         let u: URL | null = null;
         try { u = new URL(String(step.url ?? "")); } catch { u = null; }
         if (!u || u.protocol !== "https:" || isBlockedWebhookHost(u.hostname)) {
-          throw new BadRequestException("http_webhook steps need a public https URL");
+          throw badRequest("workflows.httpWebhookStepsNeedAPublic");
         }
       }
       if (step.type === "notify_channel") {
         let u: URL | null = null;
         try { u = new URL(String(step.url ?? "")); } catch { u = null; }
         if (!u || u.protocol !== "https:" || isBlockedWebhookHost(u.hostname)) {
-          throw new BadRequestException("notify_channel steps need a public https webhook URL");
+          throw badRequest("workflows.notifyChannelStepsNeedAPublic");
         }
-        if (!step.text) throw new BadRequestException("notify_channel steps need text");
+        if (!step.text) throw badRequest("workflows.notifyChannelStepsNeedText");
       }
       if (step.type === "ai_generate" && !step.prompt) {
-        throw new BadRequestException("ai_generate steps need a prompt");
+        throw badRequest("workflows.aiGenerateStepsNeedAPrompt");
       }
       // Workflows W4: branch shape + arm rules.
       if (step.type === "branch") {
-        if (depth > 0) throw new BadRequestException("branch steps cannot nest inside a branch arm");
-        if (!step.field || !step.op) throw new BadRequestException("branch steps need a field and an operator");
+        if (depth > 0) throw badRequest("workflows.branchStepsCannotNestInsideA");
+        if (!step.field || !step.op) throw badRequest("workflows.branchStepsNeedAFieldAnd");
         const thenSteps = Array.isArray(step.then) ? step.then : [];
         const elseSteps = Array.isArray(step.else) ? step.else : [];
-        if (thenSteps.length + elseSteps.length === 0) throw new BadRequestException("branch steps need at least one sub-step in an arm");
+        if (thenSteps.length + elseSteps.length === 0) throw badRequest("workflows.branchStepsNeedAtLeastOne");
         await this.validateSteps(organizationId, thenSteps, depth + 1);
         await this.validateSteps(organizationId, elseSteps, depth + 1);
       }
       if (depth > 0 && step.type === "wait") {
-        throw new BadRequestException("wait steps are not allowed inside a branch arm (v1)");
+        throw badRequest("workflows.waitStepsAreNotAllowedInside");
       }
       if (step.templateId) await this.messaging.getTemplate(organizationId, step.templateId);
     }
@@ -854,7 +855,7 @@ export class WorkflowsService implements OnModuleInit {
 
   async update(organizationId: string, workflowId: string, dto: { enabled?: boolean; name?: string; trigger?: string; conditions?: unknown; steps?: any[]; cooldownMinutes?: number; dailyRunCap?: number | null; journey?: unknown }, actorId?: string) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
-    if (!workflow) throw new NotFoundException("Workflow not found");
+    if (!workflow) throw notFound("workflows.workflowNotFound");
     const data: any = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
@@ -866,14 +867,14 @@ export class WorkflowsService implements OnModuleInit {
     // Workflows W6 governance fields.
     if (dto.cooldownMinutes !== undefined) {
       const v = Number(dto.cooldownMinutes);
-      if (!Number.isFinite(v) || v < 0 || v > 10080) throw new BadRequestException("cooldownMinutes must be 0..10080");
+      if (!Number.isFinite(v) || v < 0 || v > 10080) throw badRequest("workflows.cooldownminutesMustBe010080");
       data.cooldownMinutes = Math.floor(v);
     }
     if (dto.dailyRunCap !== undefined) {
       if (dto.dailyRunCap === null) data.dailyRunCap = null;
       else {
         const v = Number(dto.dailyRunCap);
-        if (!Number.isFinite(v) || v < 1 || v > 10000) throw new BadRequestException("dailyRunCap must be 1..10000 (or null to clear)");
+        if (!Number.isFinite(v) || v < 1 || v > 10000) throw badRequest("workflows.dailyruncapMustBe110000Or");
         data.dailyRunCap = Math.floor(v);
       }
     }
@@ -895,7 +896,7 @@ export class WorkflowsService implements OnModuleInit {
    *  clone can never double-send before a human reviews it. */
   async clone(organizationId: string, workflowId: string, actorId: string, dto?: { name?: string }) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
-    if (!workflow) throw new NotFoundException("Workflow not found");
+    if (!workflow) throw notFound("workflows.workflowNotFound");
     const copy = await (this.prisma as any).workflow.create({
       data: {
         organizationId, name: dto?.name?.trim() || `${workflow.name} (কপি)`,
@@ -909,7 +910,7 @@ export class WorkflowsService implements OnModuleInit {
 
   async delete(organizationId: string, workflowId: string, actorId?: string) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
-    if (!workflow) throw new NotFoundException("Workflow not found");
+    if (!workflow) throw notFound("workflows.workflowNotFound");
     await (this.prisma as any).workflow.delete({ where: { id: workflowId } });
     await this.audit.log({ organizationId, userId: actorId, action: "workflow.delete", entityType: "Workflow", entityId: workflowId }).catch(() => undefined);
     return { deleted: true };
@@ -931,7 +932,7 @@ export class WorkflowsService implements OnModuleInit {
    *  human reviews before it can act. */
   async installPreset(organizationId: string, actorId: string, key: string, dto?: { name?: string }) {
     const preset = WORKFLOW_PRESETS.find((x) => x.key === key);
-    if (!preset) throw new NotFoundException("Preset not found");
+    if (!preset) throw notFound("workflows.presetNotFound");
     const workflow = await (this.prisma as any).workflow.create({
       data: {
         organizationId, name: dto?.name?.trim() || preset.name, trigger: preset.trigger,
@@ -1041,7 +1042,7 @@ export class WorkflowsService implements OnModuleInit {
    */
   async dryRun(organizationId: string, workflowId: string, rawContext: Record<string, any>) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
-    if (!workflow) throw new NotFoundException("Workflow not found");
+    if (!workflow) throw notFound("workflows.workflowNotFound");
     const context = await this.enrichContext(organizationId, rawContext ?? {});
     if (!evaluateConditions(context, workflow.conditions ?? undefined)) {
       return { workflowId, conditionsPassed: false, context, trace: [] as any[] };
@@ -1108,7 +1109,7 @@ export class WorkflowsService implements OnModuleInit {
    *  a deliberate human action). */
   async manualRun(organizationId: string, workflowId: string, actorId: string, rawContext: Record<string, any>) {
     const workflow = await (this.prisma as any).workflow.findFirst({ where: { id: workflowId, organizationId } });
-    if (!workflow) throw new NotFoundException("Workflow not found");
+    if (!workflow) throw notFound("workflows.workflowNotFound");
     const context = await this.enrichContext(organizationId, rawContext ?? {});
     const run = await this.runWorkflow(workflow, { ...context, manualRunBy: actorId }, { governance: false });
     await this.audit.log({ organizationId, userId: actorId, action: "workflow.manual_run", entityType: "Workflow", entityId: workflowId, metadata: { runId: run.id } }).catch(() => undefined);
@@ -1120,10 +1121,10 @@ export class WorkflowsService implements OnModuleInit {
   async retryRun(organizationId: string, runId: string, actorId: string) {
     const p = this.prisma as any;
     const old = await p.workflowRun.findFirst({ where: { id: runId, organizationId } });
-    if (!old) throw new NotFoundException("Run not found");
-    if (old.status !== "failed") throw new BadRequestException("Only failed runs can be retried");
+    if (!old) throw notFound("workflows.runNotFound");
+    if (old.status !== "failed") throw badRequest("workflows.onlyFailedRunsCanBeRetried");
     const workflow = await p.workflow.findFirst({ where: { id: old.workflowId, organizationId } });
-    if (!workflow) throw new BadRequestException("The workflow no longer exists");
+    if (!workflow) throw badRequest("workflows.theWorkflowNoLongerExists");
     const run = await this.runWorkflow(workflow, { ...(old.context as any), _retryOf: old.id }, { governance: false });
     await this.audit.log({ organizationId, userId: actorId, action: "workflow.run_retry", entityType: "WorkflowRun", entityId: old.id, metadata: { newRunId: run.id } }).catch(() => undefined);
     return p.workflowRun.findUnique({ where: { id: run.id } });

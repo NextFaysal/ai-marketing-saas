@@ -58,7 +58,7 @@ describe("SA-B22 authorisation (SUPER only)", () => {
     const guard = new SuperAdminGuard(guardPrisma(), { getAllAndOverride: () => ["SUPER"] } as any);
     await expect(
       guard.canActivate(ctxFor({ user: { userId: "tenant-owner", tv: 0 }, headers: {}, method: "GET", url: "/admin/ai/teaching" })),
-    ).rejects.toThrow(/Platform admin access required/);
+    ).rejects.toMatchObject({ code: "common.platformAdminRequired" });
   });
 
   it("a SUPPORT admin is refused on the SUPER tier", async () => {
@@ -133,7 +133,7 @@ describe("SA-B22 PlatformTeachingService", () => {
     const disabled = await svc.setEnabled(actor, row.id, false);
     expect(disabled.enabled).toBe(false);
     expect(logs.some((l) => l.action === "admin.ai_teaching_disable")).toBe(true);
-    await expect(svc.setEnabled(actor, "missing", true)).rejects.toThrow(/not found/i);
+    await expect(svc.setEnabled(actor, "missing", true)).rejects.toMatchObject({ code: "admin.teachingItemNotFound" });
     const out = await svc.remove(actor, row.id);
     expect(out.deleted).toBe(true);
     expect(table.rows.length).toBe(0);

@@ -174,7 +174,7 @@ describe("CreativeStudioService.generate — real LLM", () => {
     }));
     const { studio: studio2 } = buildService(prisma2, allBad);
     await expect(studio2.generate("org-1", "user-1", { productId: "prod-1" }))
-      .rejects.toThrow("The AI provider returned no usable copy variants. Nothing was saved.");
+      .rejects.toMatchObject({ code: "ai.theAiProviderReturnedNoUsable" });
   });
 
   it("provider errors surface verbatim as BadRequest and write no usage", async () => {
@@ -229,8 +229,8 @@ describe("CreativeStudioService.generate — guards", () => {
       currency: "BDT", category: null, description: null, stockQuantity: null, imageUrl: null,
     });
     const { studio } = buildService(prisma, devProvider);
-    await expect(studio.generate("org-1", "user-1", { productId: "prod-other" })).rejects.toThrow("Product not found in this organization");
-    await expect(studio.generate("org-1", "user-1", { productId: "missing" })).rejects.toThrow("Product not found in this organization");
+    await expect(studio.generate("org-1", "user-1", { productId: "prod-other" })).rejects.toMatchObject({ code: "ai.productNotFoundInThisOrganization" });
+    await expect(studio.generate("org-1", "user-1", { productId: "missing" })).rejects.toMatchObject({ code: "ai.productNotFoundInThisOrganization" });
   });
 
   it("kill switch blocks with 403 before anything else", async () => {
@@ -243,7 +243,7 @@ describe("CreativeStudioService.generate — guards", () => {
     } catch (e) { caught = e; }
     expect(caught).not.toBeNull();
     expect(caught.getStatus ? caught.getStatus() : caught.status).toBe(403);
-    expect(caught.message).toContain("AI features are temporarily disabled for this organization by the platform team.");
+    expect(caught.message).toContain("AI features প্ল্যাটফর্ম team দ্বারা এই organization-এর জন্য সাময়িকভাবে বন্ধ আছে।");
   });
 
   it("daily cap for creative_studio blocks with 429 once the limit is used", async () => {
@@ -260,7 +260,7 @@ describe("CreativeStudioService.generate — guards", () => {
     } catch (e) { caught = e; }
     expect(caught).not.toBeNull();
     expect(caught.getStatus ? caught.getStatus() : caught.status).toBe(429);
-    expect(caught.message).toContain("Daily AI generation limit reached for this organization (1)");
+    expect(caught.message).toContain("এই organization-এর জন্য daily AI generation limit পূর্ণ হয়েছে (1)");
   });
 });
 
@@ -305,7 +305,7 @@ describe("CreativeStudioService.createDraft", () => {
       adAccountId: "acc-1",
       headline: "Some headline",
       primaryText: "Some primary text",
-    })).rejects.toThrow("A landing link is required: pass linkUrl or set the business website URL in Business Knowledge");
+    })).rejects.toMatchObject({ code: "ai.aLandingLinkIsRequiredPass" });
     expect(prisma.campaignPlan.rows).toHaveLength(0);
   });
 

@@ -85,7 +85,7 @@ describe("ML1 — AuthService.updateMyPreferences", () => {
 
   it('rejects "fr" with BadRequest and writes nothing', async () => {
     const { svc, db, users } = makeAuth();
-    await expect(svc.updateMyPreferences("u-1", "fr")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.updateMyPreferences("u-1", "fr")).rejects.toMatchObject({ code: "auth.preferredLocaleInvalid", status: 400 });
     expect(users[0].preferredLocale).toBeNull();
     expect(db.user.update).not.toHaveBeenCalled();
   });
@@ -104,7 +104,7 @@ describe("ML1 — OrganizationsService.updateDashboardLocale", () => {
     const { svc, audit, org } = makeOrgs();
     await expect(
       svc.updateDashboardLocale("org-1", "agent-1", { dashboardLocale: "en" }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toMatchObject({ code: "organizations.ownerOrAdminOnly", status: 403 });
     expect(org.dashboardLocale).toBe("bn");
     expect(audit.calls).toHaveLength(0);
   });

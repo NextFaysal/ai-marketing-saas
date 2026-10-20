@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
+import { ApiException } from "../i18n/api-exception";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { IntegrationsService } from "./integrations.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC12: WooCommerce wc-auth 1-click connect.
@@ -43,14 +45,12 @@ export class WooAuthService {
     // Woo must be able to POST the generated keys back to us.
     const apiBase = process.env.API_PUBLIC_URL?.replace(/\/+$/, "");
     if (!apiBase) {
-      throw new BadRequestException(
-        "১-ক্লিক কানেক্টের জন্য API_PUBLIC_URL (API-র পাবলিক ঠিকানা) সেট করা নেই — the 1-click WooCommerce flow needs API_PUBLIC_URL (public API address) configured so WooCommerce can send the generated keys back.",
-      );
+      throw badRequest("integrations.apiPublicUrlTheApiS");
     }
     const store = await (this.prisma as any).store.findFirst({ where: { id: dto.storeId, organizationId: orgId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("integrations.storeNotFoundInThisOrganization");
     if (store.platform !== "WOOCOMMERCE") {
-      throw new BadRequestException("WooCommerce wc-auth is only available for WooCommerce stores");
+      throw badRequest("integrations.woocommerceWcAuthIsOnlyAvailable");
     }
 
     const state = randomBytes(32).toString("hex");
@@ -93,26 +93,26 @@ export class WooAuthService {
 
   async handleCallback(payload: { key_id?: unknown; user_id?: unknown; consumer_key?: unknown; consumer_secret?: unknown; key_permissions?: unknown }) {
     if (!payload?.user_id || typeof payload.user_id !== "string") {
-      throw new BadRequestException("Unknown wc-auth attempt");
+      throw badRequest("integrations.unknownWcAuthAttempt");
     }
     const attempt = await (this.prisma as any).wcAuthAttempt.findFirst({ where: { id: payload.user_id } });
-    if (!attempt) throw new BadRequestException("Unknown wc-auth attempt");
+    if (!attempt) throw badRequest("integrations.unknownWcAuthAttempt");
 
     // Replay / reuse is refused outright: an attempt is single-use.
-    if (attempt.status === "consumed") throw new BadRequestException("This wc-auth attempt has already been used");
+    if (attempt.status === "consumed") throw badRequest("integrations.thisWcAuthAttemptHasAlready");
     if (attempt.status === "failed") {
-      throw new BadRequestException(`This wc-auth attempt has already failed${attempt.failureReason ? `: ${attempt.failureReason}` : ""}`);
+      throw badRequest("integrations.thisWcAuthAttemptHasAlready2", { p1: attempt.failureReason ? `: ${attempt.failureReason}` : "" });
     }
     if (new Date(attempt.expiresAt).getTime() < Date.now()) {
       await this.markFailed(attempt.id, "expired");
-      throw new BadRequestException("This wc-auth attempt has expired");
+      throw badRequest("integrations.thisWcAuthAttemptHasExpired");
     }
 
     const consumerKey = typeof payload.consumer_key === "string" ? payload.consumer_key : "";
     const consumerSecret = typeof payload.consumer_secret === "string" ? payload.consumer_secret : "";
     if (!consumerKey || !consumerSecret) {
       await this.markFailed(attempt.id, "missing_consumer_credentials");
-      throw new BadRequestException("WooCommerce callback did not include consumer_key/consumer_secret");
+      throw badRequest("integrations.woocommerceCallbackDidNotIncludeConsumer");
     }
 
     // Strict permissions: the flow requested read_write (catalog /
@@ -121,7 +121,7 @@ export class WooAuthService {
     if (payload.key_permissions !== undefined && payload.key_permissions !== null && payload.key_permissions !== "read_write") {
       const reason = `unexpected_key_permissions:${String(payload.key_permissions)}`;
       await this.markFailed(attempt.id, reason);
-      throw new BadRequestException(`WooCommerce returned unexpected key permissions: ${String(payload.key_permissions)}`);
+      throw badRequest("integrations.woocommerceReturnedUnexpectedKeyPermissions", { p1: String(payload.key_permissions) });
     }
 
     const store = await (this.prisma as any).store.findFirst({
@@ -130,7 +130,7 @@ export class WooAuthService {
     const normalize = (u: unknown) => String(u ?? "").replace(/\/+$/, "");
     if (!store || normalize(store.url) !== normalize(attempt.storeUrl)) {
       await this.markFailed(attempt.id, "store_mismatch");
-      throw new BadRequestException("Store no longer matches the wc-auth attempt");
+      throw badRequest("integrations.storeNoLongerMatchesTheWc");
     }
 
     let result: any;
@@ -143,6 +143,7 @@ export class WooAuthService {
     } catch (e) {
       const message = e instanceof Error ? e.message : "WooCommerce connection failed";
       await this.markFailed(attempt.id, message);
+      if (e instanceof ApiException) throw e;
       throw new BadRequestException(message);
     }
 

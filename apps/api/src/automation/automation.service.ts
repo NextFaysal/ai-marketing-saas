@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
 import { leaderClaim } from "../common/leader-claim";
 import { PrismaService } from "../prisma/prisma.service";
 import { createAgentNotification } from "../common/agent-notify";
@@ -61,6 +61,7 @@ import { GiftCardsService } from "../commerce/gift-cards.service";
 import { CatalogsService } from "../catalogs/catalogs.service";
 import { WebPushService } from "../webpush/webpush.service";
 import { DataExportsService } from "../data-tools/data-exports.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const JOB_TYPES = [
   "woo_products", "woo_orders", "shopify_products", "shopify_orders", "woo_customers", "shopify_customers", "woo_reviews",
@@ -241,120 +242,178 @@ export const JOB_TYPES = [
 export interface JobTemplate {
   key: string;
   name: string;
+  /** MB4 (a2, D-MB4-8/D7): English companion of `name` for locale-aware gallery rendering. */
+  nameEn: string;
   descriptionBn: string;
+  /** MB4 (a2, D-MB4-8/D7): English companion of `descriptionBn`. */
+  descriptionEn: string;
   type: string;
   targetKind: "org" | "integration" | "competitor";
   intervalMinutes: number;
 }
 export const JOB_TEMPLATES: JobTemplate[] = [
-  { key: "woo_orders_sync", name: "WooCommerce Orders Sync (টেমপ্লেট)", type: "woo_orders", targetKind: "integration", intervalMinutes: 30,
-    descriptionBn: "বেছে নেওয়া WooCommerce স্টোরের অর্ডারগুলো প্রতি ৩০ মিনিটে Sync হবে — নতুন অর্ডার ও স্ট্যাটাসের পরিবর্তন এখানে চলে আসবে।" },
-  { key: "woo_customers_sync", name: "WooCommerce Customers Sync (টেমপ্লেট)", type: "woo_customers", targetKind: "integration", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
-  { key: "woo_reviews_sync", name: "WooCommerce Reviews Sync (টেমপ্লেট)", type: "woo_reviews", targetKind: "integration", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের পণ্যের রিভিউগুলো Sync হবে — যেসব পণ্য এখানে ম্যাপ করা আছে শুধু সেগুলোর রিভিউ আসবে; ম্যাপ না থাকা পণ্যের রিভিউ বাদ যাবে। Shopify স্টোরে রিভিউর কোনো উৎস (মেটাফিল্ড) না থাকলে ফলাফলে unsupported দেখাবে।" },
-  { key: "shopify_customers_sync", name: "Shopify Customers Sync (টেমপ্লেট)", type: "shopify_customers", targetKind: "integration", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া Shopify স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।" },
-  { key: "daily_briefing", name: "Daily AI Briefing (টেমপ্লেট)", type: "daily_briefing", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার AI ব্রিফিং তৈরি হবে — গত দিনের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ, সঙ্গে গুরুত্বপূর্ণ অস্বাভাবিক পরিবর্তনের (Anomaly) সতর্কতা।" },
-  { key: "daily_report", name: "Daily AI Report (টেমপ্লেট)", type: "daily_report", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার AI Daily Report তৈরি হবে — বিক্রি ও বিজ্ঞাপনের হালনাগাদ সারসংক্ষেপ Reports অংশে পাবেন।" },
-  { key: "monthly_report", name: "Monthly AI Report (টেমপ্লেট)", type: "monthly_report", targetKind: "org", intervalMinutes: 43200,
-    descriptionBn: "প্রতি ৩০ দিনে একবার AI Monthly Report তৈরি হবে — পুরো মাসের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ Reports অংশে পাবেন।" },
-  { key: "subscription_sweep", name: "Subscription Sweep (টেমপ্লেট)", type: "subscription_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার Subscription যাচাই হবে — মেয়াদ শেষ হলে নির্ধারিত Plan পরিবর্তন প্রয়োগ হবে বা Subscription Past Due চিহ্নিত হবে।" },
-  { key: "billing_reminders", name: "Billing Reminders (টেমপ্লেট)", type: "billing_reminders", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: মেয়াদ শেষের আগাম সতর্কতা এবং অসম্পূর্ণ (Abandoned) পেমেন্টের Reminder ইমেইল পাঠানো হবে।" },
-  { key: "lead_followup_sweep", name: "Lead Follow-up Sweep (টেমপ্লেট)", type: "lead_followup_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায় Lead ফলোআপ যাচাই হবে — আজকের ও Overdue ফলোআপের নোটিফিকেশন দায়িত্বপ্রাপ্ত সদস্যের কাছে যাবে (একই Lead-এর জন্য দিনে একবার)।" },
-  { key: "ad_spend_watchdog", name: "Ad Spend Watchdog (টেমপ্লেট)", type: "ad_spend_watchdog", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: Spend Watch চালু থাকা প্রতিটি Ad Account-এর আজকের খরচ যাচাই হবে — দৈনিক ক্যাপ ছুঁলে বা গত ৭ দিনের (বা যত দিনের ইতিহাস আছে) গড়ের তুলনায় অস্বাভাবিক বেশি হলে Owner/Admin নোটিফিকেশন পাবেন (Account প্রতি দিনে একবার করে)। এটি শুধু সতর্কতা — কোনো Campaign স্বয়ংক্রিয়ভাবে বন্ধ হবে না।" },
-  { key: "inbox_assignment_sweep", name: "Inbox Assignment Sweep (টেমপ্লেট)", type: "inbox_assignment_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: অ্যাসাইনবিহীন কথোপকথন এবং Away এজেন্টের কথোপকথন সক্রিয় এজেন্টদের মধ্যে পুনঃবণ্টন হবে।" },
-  { key: "competitor_multi_sync", name: "Competitor Multi-Platform Sync (টেমপ্লেট)", type: "competitor_multi_sync", targetKind: "competitor", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: বেছে নেওয়া প্রতিদ্বন্দ্বীর সব প্ল্যাটফর্মের (Meta/Google/TikTok/Bing) বিজ্ঞাপন একসাথে Sync হবে।" },
-  { key: "meta_status_sync", name: "Meta Status Sync (টেমপ্লেট)", type: "meta_status_sync", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: সব Published Campaign Plan-এর Meta Status Sync হবে — Meta-তে বাইরে থেকে বদলালে এখানেও তা মিলে যাবে।" },
-  { key: "audience_refresh", name: "Audience Refresh (টেমপ্লেট)", type: "audience_refresh", targetKind: "org", intervalMinutes: 360,
-    descriptionBn: "প্রতি ৬ ঘণ্টায়: সব Audience-এর সদস্য তালিকা হালনাগাদ ডেটা দিয়ে Refresh হবে।" },
-  { key: "plan_schedule_sweep", name: "Plan Schedule Sweep (টেমপ্লেট)", type: "plan_schedule_sweep", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে: Campaign Plan-এ বসানো Pause/Resume Window-এর সময় হয়ে গেলে তা কার্যকর হবে — Pause/Resume Meta-নিশ্চিত পথেই হয়, প্রতিটি Window ঠিক একবারই চলে। এই Job না থাকলে কোনো Window কার্যকর হবে না।" },
-  { key: "pacing_alert_sweep", name: "Pacing Alert Sweep (টেমপ্লেট)", type: "pacing_alert_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: Live Plan-গুলোর Pacing যাচাই হবে — শেষ ৭ দিনের আসল খরচের গতিতে Lifetime Budget Plan-এর শেষ তারিখের অন্তত ২ দিন আগে ফুরিয়ে যাওয়ার Projection থাকলে, অথবা আজ পর্যন্ত প্রত্যাশিত খরচের চেয়ে ২০%-এর বেশি খরচ হয়ে গেলে Plan-এর তৈরি-কর্তা Notification পাবেন (একই সতর্কতা ২৪ ঘণ্টায় একবারের বেশি নয়)। এটি শুধু সতর্কতা — কোনো Campaign নিজে থেকে Pause হবে না, কোনো Budget বদলাবে না। এই Job না থাকলে কোনো Pacing Alert আসবে না।" },
-  { key: "media_lifecycle_sweep", name: "Media Lifecycle Sweep (টেমপ্লেট)", type: "media_lifecycle_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: মিডিয়া লাইব্রেরির মেয়াদ-শেষ ট্র্যাশ আসলেই মোছা হবে, অসম্পূর্ণ আপলোডের পুরনো quarantine ফাইল পরিষ্কার হবে, হারানো/অনাথ ফাইলের রিপোর্ট তৈরি হবে, আর backup bucket সেট থাকলে registry স্ন্যাপশট ও নতুন প্রাইভেট ফাইলের কপি যাবে।" },
-  { key: "product_image_mirror_sweep", name: "Product Image Auto-Mirror (টেমপ্লেট)", type: "product_image_mirror_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: বাইরের হোস্টে থাকা প্রোডাক্ট ও রিভিউ ছবিগুলো নিজের Cloudflare R2 স্টোরেজে কপি হয়ে যাবে — বাইরের হোস্ট বন্ধ হলেও দোকানের ছবি অক্ষত থাকবে। পণ্য সেটিংসে অটো-মিরর বন্ধ করা থাকলে এই Job কিছুই করবে না।" },
-  { key: "audit_retention", name: "Audit Retention (টেমপ্লেট)", type: "audit_retention", targetKind: "org", intervalMinutes: 10080,
-    descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।" },
-  { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে: শিডিউল করা Social পোস্টগুলোর সময় হয়ে গেলে সেগুলো Facebook Page / Instagram-এ প্রকাশ হবে। প্রকাশ ব্যর্থ হলে ব্যবধান রেখে আবার চেষ্টা হবে (সর্বোচ্চ ৩ বার), তারপর পোস্টটি Failed হবে ও Owner/Admin নোটিফিকেশন পাবেন।" },
-  { key: "social_evergreen_sweep", name: "Social Evergreen Sweep (টেমপ্লেট)", type: "social_evergreen_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: Evergreen চিহ্নিত Published পোস্টগুলোর মধ্যে যেগুলোর ন্যূনতম ব্যবধান (Gap) পেরিয়ে গেছে, সেগুলোর একটি করে নতুন Draft কপি তৈরি হবে — নিজে থেকে কিছুই Publish হবে না; Draftটি যাচাই করে মানুষ শিডিউল বা প্রকাশ করবেন। সর্বোচ্চ চক্রের সীমা পেরিয়ে গেলে আর কপি তৈরি হবে না।" },
-  { key: "social_follower_snapshot", name: "Social Follower Snapshot (টেমপ্লেট)", type: "social_follower_snapshot", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: সংযুক্ত Facebook Page ও Instagram অ্যাকাউন্টের Follower সংখ্যা Platform যা দেয় তা-ই Snapshot হিসেবে রাখা হবে — Platform সংখ্যা না দিলে ওই দিনের Snapshot হবে না, কোনো সংখ্যা বানানো হবে না।" },
-  { key: "social_coach_weekly", name: "Social Coach Weekly (টেমপ্লেট)", type: "social_coach_weekly", targetKind: "org", intervalMinutes: 10080,
-    descriptionBn: "সপ্তাহে একবার: গত ৭ দিন বনাম আগের ৭ দিনের Social Post পারফরম্যান্সের সারসংক্ষেপ (Coach Digest) তৈরি হয়ে Owner/Admin-দের নোটিফিকেশন যাবে এবং Analytics ট্যাবে দেখা যাবে। এই Job নিজে থেকে কোনো পোস্ট তৈরি বা Publish করে না — শুধু সারসংক্ষেপ। একই সপ্তাহে দুইবার চললেও Digest একটাই থাকবে।" },
-  { key: "social_syndication_sweep", name: "Social Syndication Sweep (টেমপ্লেট)", type: "social_syndication_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: Auto-draft সেটিংসে চালু থাকলে RSS Feed-এর নতুন আইটেম এবং নিজের সংযুক্ত YouTube চ্যানেলের নতুন আপলোড থেকে শুধু Draft পোস্ট তৈরি হবে — কখনো নিজে থেকে Publish হবে না। কোন আইটেম থেকে Draft হয়েছে তা মনে রাখা হয়, তাই একই আইটেম দুইবার Draft হবে না; প্রতিদিনের সর্বোচ্চ Draft সীমা (Cap) Auto-draft সেটিংসের toggle ও Cap মেনে চলে।" },
-  { key: "inbox_autoreply_sweep", name: "Inbox Auto-Reply Sweep (টেমপ্লেট)", type: "inbox_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
-    descriptionBn: "প্রতি ১ মিনিটে: Inbox সেটিংসে উত্তরের আগে অপেক্ষা (AI Reply Delay) চালু থাকলে, সময় হয়ে যাওয়া অপেক্ষমাণ AI উত্তরগুলো পাঠানো হবে — পরপর আসা মেসেজ জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = সেটিংসের অপেক্ষা + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)।" },
-  { key: "comment_autoreply_sweep", name: "Comment Auto-Reply Sweep (টেমপ্লেট)", type: "comment_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
-    descriptionBn: "প্রতি ১ মিনিটে: Comments সেটিংসের Reply Delay অনুযায়ী অপেক্ষমাণ AI কমেন্ট-উত্তরগুলো দেওয়া হবে — একই লেখকের একই পোস্টে পরপর কমেন্ট জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = Delay সেটিং + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)। স্প্যাম হাইড সঙ্গে সঙ্গেই হয়, এই Job-এর জন্য অপেক্ষা করে না।" },
-  { key: "handover_timer_sweep", name: "Handover Timer Sweep (টেমপ্লেট)", type: "handover_timer_sweep", targetKind: "org", intervalMinutes: 1,
-    descriptionBn: "প্রতি ১ মিনিটে: টাইমড অ্যাসাইনমেন্টের সময় শেষ হয়ে গেলে যাচাই হবে — দায়িত্বপ্রাপ্ত এজেন্ট এর মধ্যে উত্তর দিয়ে থাকলে অ্যাসাইনমেন্ট স্বাভাবিক হয়ে থাকবে, উত্তর না দিয়ে থাকলে কথোপকথনটি AI-এর কাছে ফেরত যাবে (Autopilot আবার চালু হবে)।" },
-  { key: "courier_auto_sync", name: "Courier Auto-Sync (টেমপ্লেট)", type: "courier_auto_sync", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: শেষ হয়নি এমন সব শিপমেন্টের স্ট্যাটাস কুরিয়ারের কাছ থেকে একে একে যাচাই হবে (সর্বশেষ ২০০টি); স্ট্যাটাস বদলালে গ্রাহক ট্র্যাকিং কার্ড পাবেন — চ্যাটে, না থাকলে SMS, না হলে ইমেইলে। একটি শিপমেন্ট ব্যর্থ হলে বাকিগুলো থামবে না; ফলাফলে ব্যর্থগুলো গণনা থাকবে।" },
-  { key: "review_request_sweep", name: "Review Request Sweep (টেমপ্লেট)", type: "review_request_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: ডেলিভারি হওয়া অর্ডারের রিভিউ জিজ্ঞাসা পাঠানো হবে — Inbox সেটিংসে Review Request চালু থাকলে এবং সেটিংসের বিলম্ব (ঘণ্টা) পার হলে। জিজ্ঞাসা যায় চ্যাটে, না থাকলে SMS, না হলে ইমেইলে (রিভিউ লিংকসহ)। যেসব অর্ডারে কোনো চ্যানেলই নেই সেগুলো pending অবস্থায় থেকে যাবে — পাঠানো হয়েছে বলে কখনো দেখানো হবে না।" },
-  { key: "broadcast_send_sweep", name: "Broadcast Send Sweep (টেমপ্লেট)", type: "broadcast_send_sweep", targetKind: "org", intervalMinutes: 1,
-    descriptionBn: "প্রতি ১ মিনিটে: সময় হয়ে যাওয়া শিডিউল করা Broadcast পাঠানো হবে এবং মাঝপথে আটকে যাওয়া (বাধাপড়া) Broadcast আবার চালু হবে — প্রতি রানে Broadcast প্রতি সর্বোচ্চ ২০০ জন প্রাপক। এই Job চালু না থাকলে শিডিউল করা Broadcast পাঠানো হবে না।" },
-  { key: "order_chase_sweep", name: "Order Chase Sweep (টেমপ্লেট)", type: "order_chase_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া গ্রাহকদের আলতো করে মনে করিয়ে দেওয়া হবে — শুধুমাত্র Inbox সেটিংসে 'To Chase' চালু থাকলে (ডিফল্ট বন্ধ)। প্রথম অনুস্মারক সেটিংসের প্রথম বিলম্বের পর, তারপর সেটিংসের ব্যবধানে, সর্বোচ্চ সেটিংসের বার পর্যন্ত; Quiet Hours সম্মান করা হয়। গ্রাহক উত্তর দিলে, অর্ডার সম্পূর্ণ হলে, মানুষ দায়িত্ব নিলে বা গ্রাহক থামতে বললে অনুসরণ সঙ্গে সঙ্গে বন্ধ হয়।" },
-  { key: "inbox_chase_sweep", name: "Incomplete Order Chase (টেমপ্লেট)", type: "inbox_chase_sweep", targetKind: "org", intervalMinutes: 15,
-    descriptionBn: "প্রতি ১৫ মিনিটে: চ্যাটে অসম্পূর্ণ অর্ডার রেখে যাওয়া গ্রাহকদের ভদ্র ফলো-আপ পাঠাবে এবং আটকে থাকা বট সেশনগুলো সময়মতো পরিচালনা করবে।" },
-  { key: "sync_outbox_process", name: "Store Sync Outbox (টেমপ্লেট)", type: "sync_outbox", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে স্টোরে পাঠানোর অপেক্ষমাণ পরিবর্তনগুলো (Sync Outbox) প্রসেস হবে; যে কাজ সংশ্লিষ্ট প্ল্যাটফর্মে এখনো সমর্থিত নয় তা failed হিসেবে verbatim কারণসহ থেকে যাবে, কখনো সফল দেখানো হবে না" },
-  { key: "commerce_subscription_sweep", name: "Commerce Subscription Renewal (টেমপ্লেট)", type: "commerce_subscription_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: সময় হয়ে যাওয়া গ্রাহক সাবস্ক্রিপশনগুলোর জন্য COD নবায়ন অর্ডার তৈরি হবে (ডেলিভারি চার্জ ছাড়া)। পরপর ৫ বার ব্যর্থ হলে সাবস্ক্রিপশনটি স্বয়ংক্রিয়ভাবে বিরতি পাবে।" },
-  { key: "wishlist_price_alert_sweep", name: "Wishlist Price-Drop Alerts (টেমপ্লেট)", type: "wishlist_price_alert_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: উইশলিস্টে থাকা পণ্যের দাম যোগ করার সময়ের দামের (বা সর্বশেষ জানানো দামের) চেয়ে কমে গেলে গ্রাহককে SMS-এ জানানো হবে — একই দামে একবারই, আরও কমলে আবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
-  { key: "installment_due_sweep", name: "Installment Due Reminders (টেমপ্লেট)", type: "installment_due_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: সক্রিয় কিস্তি প্ল্যানের মেয়াদ আসন্ন (আজ থেকে ২ দিনের মধ্যে) বা পার হয়ে যাওয়া অপaid কিস্তির জন্য গ্রাহককে SMS-এ একবার করে মনে করিয়ে দেওয়া হবে — প্রতিটি কিস্তির প্রতিটি অবস্থায় ঠিক একবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।" },
-  { key: "stuck_parcel_sweep", name: "আটকে থাকা পার্সেল এসকেলেশন (টেমপ্লেট)", type: "stuck_parcel_sweep", targetKind: "org", intervalMinutes: 360,
-    descriptionBn: "প্রতি ৬ ঘণ্টায় (৩৬০ মিনিটে): পথে থাকা যেসব পার্সেল Fulfillment সেটিংসের stuckDays সীমার বেশি সময় ধরে একই স্ট্যাটাসে আটকে আছে, সেগুলোর জন্য Owner/Admin স্টাফ জরুরি নোটিফিকেশন পাবেন এবং গ্রাহককে ON5 ইঞ্জিনে জানানো হবে — প্রতিটি শিপমেন্টের প্রতিটি স্ট্যাটাসে ঠিক একবার; স্ট্যাটাস বদলালে নতুন স্ট্যাটাসের জন্য আবার এসকেলেশন হতে পারে।" },
-  { key: "owner_order_digest", name: "মালিকের দৈনিক অর্ডার ডাইজেস্ট (টেমপ্লেট)", type: "owner_order_digest", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: গতকালের অর্ডার সারাংশ (অর্ডার, বিক্রি, আদায়, বকেয়া, আটকে থাকা পার্সেল, SLA ভঙ্গ) দোকানের মালিকদের (OWNER) ইমেইলে পাঠানো হবে। মালিকের ফোন নম্বর রেকর্ডে থাকলেই কেবল SMS যাবে — নম্বর না থাকলে SMS পাঠানো হয়েছে বলে দেখানো হবে না। প্রতিটি পাঠানোর ফল Audit Log-এ থাকবে।" },
-  { key: "order_automation_sweep", name: "অর্ডার অটোমেশন যাচাই (টেমপ্লেট)", type: "order_automation_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার অটোমেশন স্টুডিওর সময়ভিত্তিক নিয়মগুলো যাচাই হবে — নির্দিষ্ট ঘণ্টার বেশি একই কুরিয়ার স্ট্যাটাসে আটকে থাকা পার্সেল (parcel_stuck_hours) এবং ডেলিভারি হওয়া অর্ডারের নির্দিষ্ট দিনের বেশি পুরনো বকেয়া (due_overdue_days)। প্রতিটি নিয়ম প্রতিটি অর্ডারে প্রতিটি অবস্থায় ঠিক একবারই চলবে; সব কাজের বিবরণ নিয়মের লগে থাকবে।" },
-  { key: "scheduled_report_sweep", name: "নির্ধারিত রিপোর্ট পাঠানো (টেমপ্লেট)", type: "scheduled_report_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: Reports অংশে সেট করা নির্ধারিত রিপোর্টগুলোর সময় হয়ে গেলে (প্রতিদিন: গতকালের; প্রতি সপ্তাহে: শেষ ৭ দিনের) রিপোর্ট তৈরি হয়ে প্রাপকদের ইমেইলে সংযুক্তি (attachment) হিসেবে পাঠানো হবে। ইমেইল সার্ভিস সেটআপ না থাকলে পাঠানো হয়েছে বলে রেকর্ড হবে না (failed_no_provider)।" },
-  { key: "webhook_delivery_sweep", name: "Webhook ডেলিভারি (টেমপ্লেট)", type: "webhook_delivery_sweep", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে: Settings → Webhooks-এ সেট করা endpoint-গুলোতে সময় হয়ে যাওয়া অর্ডার-ইভেন্ট (order.created / order.status_changed / order.paid / order.returned) স্বাক্ষরিত (HMAC) POST হিসেবে পাঠানো হবে। ব্যর্থ হলে ১ মিনিট → ৫ মিনিট → ৩০ মিনিট → ২ ঘণ্টা ব্যবধানে আবার চেষ্টা হবে; ৫ বার ব্যর্থ হলে ডেলিভারিটি failed হবে।" },
-  { key: "loyalty_points_sweep", name: "লয়্যালটি পয়েন্ট মেয়াদ (টেমপ্লেট)", type: "loyalty_points_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: লয়্যালটি পয়েন্টের মেয়াদ যাচাই হবে — যেসব আয়/পুরস্কারের পয়েন্টের মেয়াদ (Loyalty সেটিংসের pointsExpiryDays) পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে লেজারে লেখা হবে। মেয়াদ না থাকা পয়েন্টে কোনো প্রভাব পড়বে না।" },
-  { key: "gift_card_expiry_sweep", name: "গিফট কার্ড মেয়াদ (টেমপ্লেট)", type: "gift_card_expiry_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতিদিন একবার: গিফট কার্ডের মেয়াদ যাচাই হবে — যেসব কার্ডের মেয়াদ পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে চিহ্নিত হবে এবং অবশিষ্ট ব্যালেন্স লেজারে মেয়াদোত্তীর্ণ হিসেবে লেখা হবে। মেয়াদ না থাকা কার্ডে কোনো প্রভাব পড়বে না।" },
-  { key: "catalog_sync_sweep", name: "Meta ক্যাটালগ অটো-সিঙ্ক (টেমপ্লেট)", type: "catalog_sync_sweep", targetKind: "org", intervalMinutes: 10,
-    descriptionBn: "প্রতি ১০ মিনিটে: Auto-Sync চালু থাকা Meta ক্যাটালগগুলোর জন্য সারিতে থাকা পণ্যের পরিবর্তনগুলো (তৈরি/হালনাগাদ/মুছে ফেলা) Meta Catalog-এ পাঠানো হবে। ব্যর্থ হলে পরের রানে আবার চেষ্টা হবে; ৩ বার ব্যর্থ হলে রেকর্ডটি Failed হবে এবং কারণটি ক্যাটালগের Sync Status-এ দেখা যাবে।" },
-  { key: "web_push_sweep", name: "Web Push Campaign Drain (টেমপ্লেট)", type: "web_push_sweep", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে: সারিতে থাকা (queued) ওয়েব পুশ ক্যাম্পেইনগুলোর বাকি সাবস্ক্রাইবারদের কাছে পুশ পাঠানো হবে — প্রতি রানে সর্বোচ্চ ৫টি ক্যাম্পেইন, ক্যাম্পেইন প্রতি সর্বোচ্চ ৫০০ জন। যেসব ব্রাউজারের সাবস্ক্রিপশন শেষ হয়ে গেছে (push service 404/410 দিলে) সেগুলো gone হিসেবে চিহ্নিত হবে এবং আর পাঠানো হবে না।" },
-  { key: "data_export_generate", name: "ডেটা এক্সপোর্ট তৈরি (টেমপ্লেট)", type: "data_export_generate", targetKind: "org", intervalMinutes: 15,
-    descriptionBn: "প্রতি ১৫ মিনিটে: বড় আকারের কারণে অপেক্ষমাণ (pending) থাকা ডেটা এক্সপোর্টগুলো তৈরি হয়ে ফাইল হিসেবে সংরক্ষণ হবে — তৈরি এক্সপোর্ট ৭ দিন পর্যন্ত ডাউনলোড করা যাবে।" },
-  { key: "org_backup_sweep", name: "সাপ্তাহিক ব্যাকআপ (টেমপ্লেট)", type: "org_backup_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: সাপ্তাহিক ব্যাকআপ চালু থাকলে এবং শেষ ব্যাকআপের ৭ দিন পার হলে নতুন ব্যাকআপ এক্সপোর্ট তৈরি হবে — সবশেষ ৪টি তৈরি ব্যাকআপ রাখা হবে, পুরনোগুলোর ফাইল মুছে সেগুলো মেয়াদোত্তীর্ণ চিহ্নিত হবে।" },
-  { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
-    descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।" },
-  { key: "connection_health_sweep", name: "Connection Health Sweep (টেমপ্লেট)", type: "connection_health_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ৬০ মিনিটে: সব কানেকশনের অবস্থা যাচাই হবে — কোনো কানেকশন বিচ্ছিন্ন/ত্রুটিপূর্ণ হলে, টোকেনের মেয়াদ শেষের দিকে গেলে (৭/৩/১ দিন), পরপর sync ব্যর্থ হলে বা webhook-এ সমস্যা ধরা পড়লে Organization-এর Owner/Admin-রা In-app ও ইমেইল সতর্কতা পাবেন। একই সমস্যার জন্য বারবার সতর্কতা যাবে না — অবস্থা বদলালেই কেবল যাবে; আবার ঠিক হলেও একবার জানানো হবে। এই Job চালু না থাকলে কানেকশন পর্যবেক্ষণ হবে না।" },
-  { key: "wallet_payout_sweep", name: "Wallet Payout Sweep (টেমপ্লেট)", type: "wallet_payout_sweep", targetKind: "org", intervalMinutes: 1440,
-    descriptionBn: "প্রতি দিনে একবার: Connect Center-এ Wallet Payout Schedule চালু থাকলে এবং আজই নির্ধারিত দিন (সাপ্তাহিক/মাসিক) হলে, উপলব্ধ ব্যালেন্স নির্ধারিত সীমার সমান বা বেশি হলে পুরো উপলব্ধ পরিমাণের একটি pending Payout অনুরোধ নিজে থেকে তৈরি হবে। এই Job কখনো approve করে না বা টাকা পাঠায় না — অনুমোদন ও mark-paid আগের মতোই অ্যাডমিনের হাতে। একই দিনে দ্বিতীয়বার চললেও নতুন অনুরোধ তৈরি হবে না।" },
-  { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
-    descriptionBn: "প্রতি ৫ মিনিটে: প্রথম উত্তরের অপেক্ষায় থাকা কথোপকথনের SLA যাচাই হবে (সীমা = Inbox সেটিংসের স্তরভিত্তিক নিয়ম: VIP → Channel অনুযায়ী → সাধারণ)। সীমার ৭৫% পেরোলে দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পাবেন; Breach-এর পর সেটিংসের Escalation বিলম্ব পেরোলে Team Lead জরুরি সতর্কতা পাবেন (সেটিংসে বন্ধ করা যায়); Auto-Reassign সেটিংসে চালু থাকলেই কেবল কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে। প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় এবং Audit-এ লেখা থাকে।" },
-  { key: "service_booking_reminder_sweep", name: "Service Booking Reminder (টেমপ্লেট)", type: "service_booking_reminder_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: আগামী ২৪ ঘণ্টার মধ্যে শুরু হতে যাওয়া নিশ্চিত (confirmed) সার্ভিস বুকিংগুলোর অতিথিকে SMS রিমাইন্ডার পাঠানো হবে — বুকিংপ্রতি একবারই; পাঠানোর আগেই বুকিংয়ে স্ট্যাম্প পড়ে, তাই পাঠানো ব্যর্থ হলেও (SMS চ্যানেল সেটআপ না থাকলে failed_no_channel হিসেবে রেকর্ড থাকে) আবার পাঠানো হয় না।" },
-  { key: "fraud_network_sweep", name: "Fraud Network Sweep (টেমপ্লেট)", type: "fraud_network_sweep", targetKind: "org", intervalMinutes: 60,
-    descriptionBn: "প্রতি ঘণ্টায়: ফ্রড নেটওয়ার্কে যোগ দেওয়া (opt-in) দোকানের চূড়ান্ত ফলাফলের অর্ডারগুলোর ফলাফল হ্যাশ-আকারে সম্মিলিত হিসাবে যোগ হবে — শুধু সংখ্যা শেয়ার হয়; ফোন নম্বর, নাম বা অর্ডারের বিবরণ কিছুই যায় না। যোগ না দিলে এই Job কিছুই করবে না। প্রতিটি অর্ডার ঠিক একবারই গণনা হয়।" },
+  { key: "woo_orders_sync", name: "WooCommerce Orders Sync (টেমপ্লেট)", nameEn: "WooCommerce Orders Sync (Template)", type: "woo_orders", targetKind: "integration", intervalMinutes: 30,
+    descriptionBn: "বেছে নেওয়া WooCommerce স্টোরের অর্ডারগুলো প্রতি ৩০ মিনিটে Sync হবে — নতুন অর্ডার ও স্ট্যাটাসের পরিবর্তন এখানে চলে আসবে।",
+    descriptionEn: "Orders from the chosen WooCommerce store will Sync every 30 minutes — new orders and status changes will arrive here." },
+  { key: "woo_customers_sync", name: "WooCommerce Customers Sync (টেমপ্লেট)", nameEn: "WooCommerce Customers Sync (Template)", type: "woo_customers", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।",
+    descriptionEn: "Every 60 minutes: customers of the chosen WooCommerce store will Sync — new customers and updated contact details will arrive here." },
+  { key: "woo_reviews_sync", name: "WooCommerce Reviews Sync (টেমপ্লেট)", nameEn: "WooCommerce Reviews Sync (Template)", type: "woo_reviews", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া WooCommerce স্টোরের পণ্যের রিভিউগুলো Sync হবে — যেসব পণ্য এখানে ম্যাপ করা আছে শুধু সেগুলোর রিভিউ আসবে; ম্যাপ না থাকা পণ্যের রিভিউ বাদ যাবে। Shopify স্টোরে রিভিউর কোনো উৎস (মেটাফিল্ড) না থাকলে ফলাফলে unsupported দেখাবে।",
+    descriptionEn: "Every 60 minutes: product reviews of the chosen WooCommerce store will Sync — only reviews of products mapped here will arrive; reviews of unmapped products will be skipped. If a Shopify store has no review source (metafield), the result will show unsupported." },
+  { key: "shopify_customers_sync", name: "Shopify Customers Sync (টেমপ্লেট)", nameEn: "Shopify Customers Sync (Template)", type: "shopify_customers", targetKind: "integration", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: বেছে নেওয়া Shopify স্টোরের গ্রাহকদের Sync হবে — নতুন গ্রাহক ও হালনাগাদ যোগাযোগের তথ্য এখানে চলে আসবে।",
+    descriptionEn: "Every 60 minutes: customers of the chosen Shopify store will Sync — new customers and updated contact details will arrive here." },
+  { key: "daily_briefing", name: "Daily AI Briefing (টেমপ্লেট)", nameEn: "Daily AI Briefing (Template)", type: "daily_briefing", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার AI ব্রিফিং তৈরি হবে — গত দিনের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ, সঙ্গে গুরুত্বপূর্ণ অস্বাভাবিক পরিবর্তনের (Anomaly) সতর্কতা।",
+    descriptionEn: "Once a day an AI briefing will be created — a summary of the previous day's sales and ads, along with alerts for important unusual changes (Anomalies)." },
+  { key: "daily_report", name: "Daily AI Report (টেমপ্লেট)", nameEn: "Daily AI Report (Template)", type: "daily_report", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার AI Daily Report তৈরি হবে — বিক্রি ও বিজ্ঞাপনের হালনাগাদ সারসংক্ষেপ Reports অংশে পাবেন।",
+    descriptionEn: "Once a day an AI Daily Report will be created — an updated summary of sales and ads, available in the Reports section." },
+  { key: "monthly_report", name: "Monthly AI Report (টেমপ্লেট)", nameEn: "Monthly AI Report (Template)", type: "monthly_report", targetKind: "org", intervalMinutes: 43200,
+    descriptionBn: "প্রতি ৩০ দিনে একবার AI Monthly Report তৈরি হবে — পুরো মাসের বিক্রি ও বিজ্ঞাপনের সারসংক্ষেপ Reports অংশে পাবেন।",
+    descriptionEn: "Once every 30 days an AI Monthly Report will be created — a summary of the whole month's sales and ads, available in the Reports section." },
+  { key: "subscription_sweep", name: "Subscription Sweep (টেমপ্লেট)", nameEn: "Subscription Sweep (Template)", type: "subscription_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার Subscription যাচাই হবে — মেয়াদ শেষ হলে নির্ধারিত Plan পরিবর্তন প্রয়োগ হবে বা Subscription Past Due চিহ্নিত হবে।",
+    descriptionEn: "Once a day Subscriptions will be checked — when one expires, the scheduled Plan change will be applied or the Subscription will be marked Past Due." },
+  { key: "billing_reminders", name: "Billing Reminders (টেমপ্লেট)", nameEn: "Billing Reminders (Template)", type: "billing_reminders", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: মেয়াদ শেষের আগাম সতর্কতা এবং অসম্পূর্ণ (Abandoned) পেমেন্টের Reminder ইমেইল পাঠানো হবে।",
+    descriptionEn: "Once a day: advance expiry warnings and Reminder emails for incomplete (Abandoned) payments will be sent." },
+  { key: "lead_followup_sweep", name: "Lead Follow-up Sweep (টেমপ্লেট)", nameEn: "Lead Follow-up Sweep (Template)", type: "lead_followup_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায় Lead ফলোআপ যাচাই হবে — আজকের ও Overdue ফলোআপের নোটিফিকেশন দায়িত্বপ্রাপ্ত সদস্যের কাছে যাবে (একই Lead-এর জন্য দিনে একবার)।",
+    descriptionEn: "Every hour Lead follow-ups will be checked — notifications for today's and Overdue follow-ups will go to the responsible member (once a day for the same Lead)." },
+  { key: "ad_spend_watchdog", name: "Ad Spend Watchdog (টেমপ্লেট)", nameEn: "Ad Spend Watchdog (Template)", type: "ad_spend_watchdog", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: Spend Watch চালু থাকা প্রতিটি Ad Account-এর আজকের খরচ যাচাই হবে — দৈনিক ক্যাপ ছুঁলে বা গত ৭ দিনের (বা যত দিনের ইতিহাস আছে) গড়ের তুলনায় অস্বাভাবিক বেশি হলে Owner/Admin নোটিফিকেশন পাবেন (Account প্রতি দিনে একবার করে)। এটি শুধু সতর্কতা — কোনো Campaign স্বয়ংক্রিয়ভাবে বন্ধ হবে না।",
+    descriptionEn: "Every hour: today's spend of every Ad Account with Spend Watch on will be checked — if the daily cap is hit or spend is unusually high compared to the average of the last 7 days (or however much history exists), Owner/Admin will get a notification (once per Account per day). This is only an alert — no Campaign will stop automatically." },
+  { key: "inbox_assignment_sweep", name: "Inbox Assignment Sweep (টেমপ্লেট)", nameEn: "Inbox Assignment Sweep (Template)", type: "inbox_assignment_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: অ্যাসাইনবিহীন কথোপকথন এবং Away এজেন্টের কথোপকথন সক্রিয় এজেন্টদের মধ্যে পুনঃবণ্টন হবে।",
+    descriptionEn: "Every hour: unassigned conversations and conversations of Away agents will be redistributed among active agents." },
+  { key: "competitor_multi_sync", name: "Competitor Multi-Platform Sync (টেমপ্লেট)", nameEn: "Competitor Multi-Platform Sync (Template)", type: "competitor_multi_sync", targetKind: "competitor", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: বেছে নেওয়া প্রতিদ্বন্দ্বীর সব প্ল্যাটফর্মের (Meta/Google/TikTok/Bing) বিজ্ঞাপন একসাথে Sync হবে।",
+    descriptionEn: "Once a day: ads from all platforms (Meta/Google/TikTok/Bing) of the chosen competitor will Sync together." },
+  { key: "meta_status_sync", name: "Meta Status Sync (টেমপ্লেট)", nameEn: "Meta Status Sync (Template)", type: "meta_status_sync", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: সব Published Campaign Plan-এর Meta Status Sync হবে — Meta-তে বাইরে থেকে বদলালে এখানেও তা মিলে যাবে।",
+    descriptionEn: "Every hour: the Meta Status of all Published Campaign Plans will Sync — if changed outside on Meta, it will match here too." },
+  { key: "audience_refresh", name: "Audience Refresh (টেমপ্লেট)", nameEn: "Audience Refresh (Template)", type: "audience_refresh", targetKind: "org", intervalMinutes: 360,
+    descriptionBn: "প্রতি ৬ ঘণ্টায়: সব Audience-এর সদস্য তালিকা হালনাগাদ ডেটা দিয়ে Refresh হবে।",
+    descriptionEn: "Every 6 hours: every Audience's member list will Refresh with updated data." },
+  { key: "plan_schedule_sweep", name: "Plan Schedule Sweep (টেমপ্লেট)", nameEn: "Plan Schedule Sweep (Template)", type: "plan_schedule_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: Campaign Plan-এ বসানো Pause/Resume Window-এর সময় হয়ে গেলে তা কার্যকর হবে — Pause/Resume Meta-নিশ্চিত পথেই হয়, প্রতিটি Window ঠিক একবারই চলে। এই Job না থাকলে কোনো Window কার্যকর হবে না।",
+    descriptionEn: "Every 5 minutes: when the time of a Pause/Resume Window set on a Campaign Plan arrives, it will take effect — Pause/Resume happens through the Meta-confirmed path only, and each Window runs exactly once. Without this Job, no Window will take effect." },
+  { key: "pacing_alert_sweep", name: "Pacing Alert Sweep (টেমপ্লেট)", nameEn: "Pacing Alert Sweep (Template)", type: "pacing_alert_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: Live Plan-গুলোর Pacing যাচাই হবে — শেষ ৭ দিনের আসল খরচের গতিতে Lifetime Budget Plan-এর শেষ তারিখের অন্তত ২ দিন আগে ফুরিয়ে যাওয়ার Projection থাকলে, অথবা আজ পর্যন্ত প্রত্যাশিত খরচের চেয়ে ২০%-এর বেশি খরচ হয়ে গেলে Plan-এর তৈরি-কর্তা Notification পাবেন (একই সতর্কতা ২৪ ঘণ্টায় একবারের বেশি নয়)। এটি শুধু সতর্কতা — কোনো Campaign নিজে থেকে Pause হবে না, কোনো Budget বদলাবে না। এই Job না থাকলে কোনো Pacing Alert আসবে না।",
+    descriptionEn: "Every hour: the Pacing of Live Plans will be checked — if at the last 7 days' real spend pace a Lifetime Budget Plan is projected to run out at least 2 days before its end date, or more than 20% over the expected spend to date has occurred, the Plan's creator will get a Notification (the same alert no more than once in 24 hours). This is only an alert — no Campaign will Pause itself, no Budget will change. Without this Job, no Pacing Alert will arrive." },
+  { key: "media_lifecycle_sweep", name: "Media Lifecycle Sweep (টেমপ্লেট)", nameEn: "Media Lifecycle Sweep (Template)", type: "media_lifecycle_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: মিডিয়া লাইব্রেরির মেয়াদ-শেষ ট্র্যাশ আসলেই মোছা হবে, অসম্পূর্ণ আপলোডের পুরনো quarantine ফাইল পরিষ্কার হবে, হারানো/অনাথ ফাইলের রিপোর্ট তৈরি হবে, আর backup bucket সেট থাকলে registry স্ন্যাপশট ও নতুন প্রাইভেট ফাইলের কপি যাবে।",
+    descriptionEn: "Once a day: expired media library trash will actually be deleted, old quarantine files of incomplete uploads will be cleaned, a report of lost/orphaned files will be created, and if a backup bucket is set, the registry snapshot and copies of new private files will go there." },
+  { key: "product_image_mirror_sweep", name: "Product Image Auto-Mirror (টেমপ্লেট)", nameEn: "Product Image Auto-Mirror (Template)", type: "product_image_mirror_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: বাইরের হোস্টে থাকা প্রোডাক্ট ও রিভিউ ছবিগুলো নিজের Cloudflare R2 স্টোরেজে কপি হয়ে যাবে — বাইরের হোস্ট বন্ধ হলেও দোকানের ছবি অক্ষত থাকবে। পণ্য সেটিংসে অটো-মিরর বন্ধ করা থাকলে এই Job কিছুই করবে না।",
+    descriptionEn: "Once a day: product and review images hosted outside will be copied to your own Cloudflare R2 storage — even if the outside host closes, the shop's images will stay intact. If auto-mirror is off in product settings, this Job will do nothing." },
+  { key: "audit_retention", name: "Audit Retention (টেমপ্লেট)", nameEn: "Audit Retention (Template)", type: "audit_retention", targetKind: "org", intervalMinutes: 10080,
+    descriptionBn: "সপ্তাহে একবার: মেয়াদোত্তীর্ণ পুরনো Audit Log পরিষ্কার হবে। এটি Platform-ব্যাপী Job — কত দিনের লগ থাকবে তা Platform-এর Retention সেটিং ঠিক করে; Admin কার্যকলাপের লগ মোছা হয় না।",
+    descriptionEn: "Once a week: expired old Audit Logs will be cleaned. This is a Platform-wide Job — how many days of logs are kept is decided by the Platform's Retention setting; Admin activity logs are not deleted." },
+  { key: "social_publish_due", name: "Social Post Publisher (টেমপ্লেট)", nameEn: "Social Post Publisher (Template)", type: "social_publish_due", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: শিডিউল করা Social পোস্টগুলোর সময় হয়ে গেলে সেগুলো Facebook Page / Instagram-এ প্রকাশ হবে। প্রকাশ ব্যর্থ হলে ব্যবধান রেখে আবার চেষ্টা হবে (সর্বোচ্চ ৩ বার), তারপর পোস্টটি Failed হবে ও Owner/Admin নোটিফিকেশন পাবেন।",
+    descriptionEn: "Every 5 minutes: when the time of scheduled Social posts arrives, they will be published to Facebook Page / Instagram. If publishing fails, it will retry with gaps (at most 3 times), then the post will be Failed and Owner/Admin will get a notification." },
+  { key: "social_evergreen_sweep", name: "Social Evergreen Sweep (টেমপ্লেট)", nameEn: "Social Evergreen Sweep (Template)", type: "social_evergreen_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: Evergreen চিহ্নিত Published পোস্টগুলোর মধ্যে যেগুলোর ন্যূনতম ব্যবধান (Gap) পেরিয়ে গেছে, সেগুলোর একটি করে নতুন Draft কপি তৈরি হবে — নিজে থেকে কিছুই Publish হবে না; Draftটি যাচাই করে মানুষ শিডিউল বা প্রকাশ করবেন। সর্বোচ্চ চক্রের সীমা পেরিয়ে গেলে আর কপি তৈরি হবে না।",
+    descriptionEn: "Once a day: among Published posts marked Evergreen, for those whose minimum gap has passed, one new Draft copy each will be created — nothing will Publish by itself; a person will review the Draft and schedule or publish it. Once the maximum cycle limit is passed, no more copies will be created." },
+  { key: "social_follower_snapshot", name: "Social Follower Snapshot (টেমপ্লেট)", nameEn: "Social Follower Snapshot (Template)", type: "social_follower_snapshot", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: সংযুক্ত Facebook Page ও Instagram অ্যাকাউন্টের Follower সংখ্যা Platform যা দেয় তা-ই Snapshot হিসেবে রাখা হবে — Platform সংখ্যা না দিলে ওই দিনের Snapshot হবে না, কোনো সংখ্যা বানানো হবে না।",
+    descriptionEn: "Once a day: the Follower counts of connected Facebook Pages and Instagram accounts will be kept as a Snapshot exactly as the Platform gives — if the Platform gives no number, there will be no Snapshot that day, and no number will be invented." },
+  { key: "social_coach_weekly", name: "Social Coach Weekly (টেমপ্লেট)", nameEn: "Social Coach Weekly (Template)", type: "social_coach_weekly", targetKind: "org", intervalMinutes: 10080,
+    descriptionBn: "সপ্তাহে একবার: গত ৭ দিন বনাম আগের ৭ দিনের Social Post পারফরম্যান্সের সারসংক্ষেপ (Coach Digest) তৈরি হয়ে Owner/Admin-দের নোটিফিকেশন যাবে এবং Analytics ট্যাবে দেখা যাবে। এই Job নিজে থেকে কোনো পোস্ট তৈরি বা Publish করে না — শুধু সারসংক্ষেপ। একই সপ্তাহে দুইবার চললেও Digest একটাই থাকবে।",
+    descriptionEn: "Once a week: a summary of the last 7 days vs the previous 7 days of Social Post performance (Coach Digest) will be created, Owner/Admin will get a notification and it will be visible in the Analytics tab. This Job creates or Publishes no post by itself — only a summary. Even if it runs twice in the same week, the Digest will stay one." },
+  { key: "social_syndication_sweep", name: "Social Syndication Sweep (টেমপ্লেট)", nameEn: "Social Syndication Sweep (Template)", type: "social_syndication_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: Auto-draft সেটিংসে চালু থাকলে RSS Feed-এর নতুন আইটেম এবং নিজের সংযুক্ত YouTube চ্যানেলের নতুন আপলোড থেকে শুধু Draft পোস্ট তৈরি হবে — কখনো নিজে থেকে Publish হবে না। কোন আইটেম থেকে Draft হয়েছে তা মনে রাখা হয়, তাই একই আইটেম দুইবার Draft হবে না; প্রতিদিনের সর্বোচ্চ Draft সীমা (Cap) Auto-draft সেটিংসের toggle ও Cap মেনে চলে।",
+    descriptionEn: "Every 60 minutes: if on in the Auto-draft settings, only Draft posts will be created from new RSS Feed items and new uploads of your own connected YouTube channel — it will never Publish by itself. Which item a Draft came from is remembered, so the same item will not be Drafted twice; the daily maximum Draft limit (Cap) follows the Auto-draft settings' toggle and Cap." },
+  { key: "inbox_autoreply_sweep", name: "Inbox Auto-Reply Sweep (টেমপ্লেট)", nameEn: "Inbox Auto-Reply Sweep (Template)", type: "inbox_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: Inbox সেটিংসে উত্তরের আগে অপেক্ষা (AI Reply Delay) চালু থাকলে, সময় হয়ে যাওয়া অপেক্ষমাণ AI উত্তরগুলো পাঠানো হবে — পরপর আসা মেসেজ জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = সেটিংসের অপেক্ষা + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)।",
+    descriptionEn: "Every 1 minute: if waiting before replies (AI Reply Delay) is on in Inbox settings, pending AI replies whose time has arrived will be sent — messages arriving in a row are combined into one reply. Effective delay = the setting's wait + at most 1 minute (this Job's interval)." },
+  { key: "comment_autoreply_sweep", name: "Comment Auto-Reply Sweep (টেমপ্লেট)", nameEn: "Comment Auto-Reply Sweep (Template)", type: "comment_autoreply_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: Comments সেটিংসের Reply Delay অনুযায়ী অপেক্ষমাণ AI কমেন্ট-উত্তরগুলো দেওয়া হবে — একই লেখকের একই পোস্টে পরপর কমেন্ট জমিয়ে একটাই উত্তর। কার্যকর বিলম্ব = Delay সেটিং + সর্বোচ্চ ১ মিনিট (এই Job-এর ব্যবধান)। স্প্যাম হাইড সঙ্গে সঙ্গেই হয়, এই Job-এর জন্য অপেক্ষা করে না।",
+    descriptionEn: "Every 1 minute: pending AI comment replies will be given according to the Reply Delay in Comments settings — consecutive comments by the same author on the same post are combined into one reply. Effective delay = the Delay setting + at most 1 minute (this Job's interval). Spam is hidden immediately, it does not wait for this Job." },
+  { key: "handover_timer_sweep", name: "Handover Timer Sweep (টেমপ্লেট)", nameEn: "Handover Timer Sweep (Template)", type: "handover_timer_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: টাইমড অ্যাসাইনমেন্টের সময় শেষ হয়ে গেলে যাচাই হবে — দায়িত্বপ্রাপ্ত এজেন্ট এর মধ্যে উত্তর দিয়ে থাকলে অ্যাসাইনমেন্ট স্বাভাবিক হয়ে থাকবে, উত্তর না দিয়ে থাকলে কথোপকথনটি AI-এর কাছে ফেরত যাবে (Autopilot আবার চালু হবে)।",
+    descriptionEn: "Every 1 minute: when a timed assignment's time ends it will be checked — if the responsible agent has replied by then, the assignment will stay normal; if not, the conversation will return to the AI (Autopilot will turn on again)." },
+  { key: "courier_auto_sync", name: "Courier Auto-Sync (টেমপ্লেট)", nameEn: "Courier Auto-Sync (Template)", type: "courier_auto_sync", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: শেষ হয়নি এমন সব শিপমেন্টের স্ট্যাটাস কুরিয়ারের কাছ থেকে একে একে যাচাই হবে (সর্বশেষ ২০০টি); স্ট্যাটাস বদলালে গ্রাহক ট্র্যাকিং কার্ড পাবেন — চ্যাটে, না থাকলে SMS, না হলে ইমেইলে। একটি শিপমেন্ট ব্যর্থ হলে বাকিগুলো থামবে না; ফলাফলে ব্যর্থগুলো গণনা থাকবে।",
+    descriptionEn: "Every 60 minutes: the status of all unfinished shipments will be checked one by one with the courier (the latest 200); if the status changes, the customer will get a tracking card — in chat, or SMS if not, or email if not. If one shipment fails, the rest will not stop; the failures will be counted in the result." },
+  { key: "review_request_sweep", name: "Review Request Sweep (টেমপ্লেট)", nameEn: "Review Request Sweep (Template)", type: "review_request_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: ডেলিভারি হওয়া অর্ডারের রিভিউ জিজ্ঞাসা পাঠানো হবে — Inbox সেটিংসে Review Request চালু থাকলে এবং সেটিংসের বিলম্ব (ঘণ্টা) পার হলে। জিজ্ঞাসা যায় চ্যাটে, না থাকলে SMS, না হলে ইমেইলে (রিভিউ লিংকসহ)। যেসব অর্ডারে কোনো চ্যানেলই নেই সেগুলো pending অবস্থায় থেকে যাবে — পাঠানো হয়েছে বলে কখনো দেখানো হবে না।",
+    descriptionEn: "Every 60 minutes: review requests will be sent for delivered orders — if Review Request is on in Inbox settings and the setting's delay (hours) has passed. The request goes to chat, or SMS if not, or email if not (with the review link). Orders with no channel will stay pending — they will never be shown as sent." },
+  { key: "broadcast_send_sweep", name: "Broadcast Send Sweep (টেমপ্লেট)", nameEn: "Broadcast Send Sweep (Template)", type: "broadcast_send_sweep", targetKind: "org", intervalMinutes: 1,
+    descriptionBn: "প্রতি ১ মিনিটে: সময় হয়ে যাওয়া শিডিউল করা Broadcast পাঠানো হবে এবং মাঝপথে আটকে যাওয়া (বাধাপড়া) Broadcast আবার চালু হবে — প্রতি রানে Broadcast প্রতি সর্বোচ্চ ২০০ জন প্রাপক। এই Job চালু না থাকলে শিডিউল করা Broadcast পাঠানো হবে না।",
+    descriptionEn: "Every 1 minute: scheduled Broadcasts whose time has arrived will be sent and Broadcasts stuck midway (interrupted) will resume — at most 200 recipients per Broadcast per run. If this Job is not on, scheduled Broadcasts will not be sent." },
+  { key: "order_chase_sweep", name: "Order Chase Sweep (টেমপ্লেট)", nameEn: "Order Chase Sweep (Template)", type: "order_chase_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার বটে শুরু করে মাঝপথে থেমে যাওয়া গ্রাহকদের আলতো করে মনে করিয়ে দেওয়া হবে — শুধুমাত্র Inbox সেটিংসে 'To Chase' চালু থাকলে (ডিফল্ট বন্ধ)। প্রথম অনুস্মারক সেটিংসের প্রথম বিলম্বের পর, তারপর সেটিংসের ব্যবধানে, সর্বোচ্চ সেটিংসের বার পর্যন্ত; Quiet Hours সম্মান করা হয়। গ্রাহক উত্তর দিলে, অর্ডার সম্পূর্ণ হলে, মানুষ দায়িত্ব নিলে বা গ্রাহক থামতে বললে অনুসরণ সঙ্গে সঙ্গে বন্ধ হয়।",
+    descriptionEn: "Every 60 minutes: customers who started ordering in chat and stopped midway will be gently reminded — only if 'To Chase' is on in Inbox settings (off by default). The first reminder after the setting's first delay, then at the setting's interval, up to the setting's maximum times; Quiet Hours are honoured. The chase stops immediately if the customer replies, the order completes, a human takes over, or the customer asks to stop." },
+  { key: "inbox_chase_sweep", name: "Incomplete Order Chase (টেমপ্লেট)", nameEn: "Incomplete Order Chase (Template)", type: "inbox_chase_sweep", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: চ্যাটে অসম্পূর্ণ অর্ডার রেখে যাওয়া গ্রাহকদের ভদ্র ফলো-আপ পাঠাবে এবং আটকে থাকা বট সেশনগুলো সময়মতো পরিচালনা করবে।",
+    descriptionEn: "Every 15 minutes: polite follow-ups will be sent to customers who left an incomplete order in chat, and stuck bot sessions will be handled in time." },
+  { key: "sync_outbox_process", name: "Store Sync Outbox (টেমপ্লেট)", nameEn: "Store Sync Outbox (Template)", type: "sync_outbox", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে স্টোরে পাঠানোর অপেক্ষমাণ পরিবর্তনগুলো (Sync Outbox) প্রসেস হবে; যে কাজ সংশ্লিষ্ট প্ল্যাটফর্মে এখনো সমর্থিত নয় তা failed হিসেবে verbatim কারণসহ থেকে যাবে, কখনো সফল দেখানো হবে না",
+    descriptionEn: "Every 5 minutes, pending changes to send to the store (Sync Outbox) will be processed; a job the relevant platform does not support yet will remain failed with the verbatim reason, and will never be shown as successful" },
+  { key: "commerce_subscription_sweep", name: "Commerce Subscription Renewal (টেমপ্লেট)", nameEn: "Commerce Subscription Renewal (Template)", type: "commerce_subscription_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সময় হয়ে যাওয়া গ্রাহক সাবস্ক্রিপশনগুলোর জন্য COD নবায়ন অর্ডার তৈরি হবে (ডেলিভারি চার্জ ছাড়া)। পরপর ৫ বার ব্যর্থ হলে সাবস্ক্রিপশনটি স্বয়ংক্রিয়ভাবে বিরতি পাবে।",
+    descriptionEn: "Every 60 minutes: COD renewal orders will be created for customer subscriptions whose time has arrived (without delivery charges). After 5 consecutive failures, the subscription will pause automatically." },
+  { key: "wishlist_price_alert_sweep", name: "Wishlist Price-Drop Alerts (টেমপ্লেট)", nameEn: "Wishlist Price-Drop Alerts (Template)", type: "wishlist_price_alert_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: উইশলিস্টে থাকা পণ্যের দাম যোগ করার সময়ের দামের (বা সর্বশেষ জানানো দামের) চেয়ে কমে গেলে গ্রাহককে SMS-এ জানানো হবে — একই দামে একবারই, আরও কমলে আবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।",
+    descriptionEn: "Every 60 minutes: if the price of a wishlisted product drops below the price at the time of adding (or the last notified price), the customer will be informed by SMS — once at the same price, again if it drops further. If the shop's SMS sender is not set up, it will not be shown as sent (it will be recorded as failed_no_channel)." },
+  { key: "installment_due_sweep", name: "Installment Due Reminders (টেমপ্লেট)", nameEn: "Installment Due Reminders (Template)", type: "installment_due_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সক্রিয় কিস্তি প্ল্যানের মেয়াদ আসন্ন (আজ থেকে ২ দিনের মধ্যে) বা পার হয়ে যাওয়া অপaid কিস্তির জন্য গ্রাহককে SMS-এ একবার করে মনে করিয়ে দেওয়া হবে — প্রতিটি কিস্তির প্রতিটি অবস্থায় ঠিক একবার। দোকানের SMS সেন্ডার সেটআপ না থাকলে পাঠানো হয়েছে বলে দেখানো হবে না (failed_no_channel হিসেবে রেকর্ড থাকবে)।",
+    descriptionEn: "Every 60 minutes: customers will be reminded once by SMS for unpaid installments of active installment plans that are due soon (within 2 days from today) or overdue — exactly once for each installment in each state. If the shop's SMS sender is not set up, it will not be shown as sent (it will be recorded as failed_no_channel)." },
+  { key: "stuck_parcel_sweep", name: "আটকে থাকা পার্সেল এসকেলেশন (টেমপ্লেট)", nameEn: "Stuck Parcel Escalation (Template)", type: "stuck_parcel_sweep", targetKind: "org", intervalMinutes: 360,
+    descriptionBn: "প্রতি ৬ ঘণ্টায় (৩৬০ মিনিটে): পথে থাকা যেসব পার্সেল Fulfillment সেটিংসের stuckDays সীমার বেশি সময় ধরে একই স্ট্যাটাসে আটকে আছে, সেগুলোর জন্য Owner/Admin স্টাফ জরুরি নোটিফিকেশন পাবেন এবং গ্রাহককে ON5 ইঞ্জিনে জানানো হবে — প্রতিটি শিপমেন্টের প্রতিটি স্ট্যাটাসে ঠিক একবার; স্ট্যাটাস বদলালে নতুন স্ট্যাটাসের জন্য আবার এসকেলেশন হতে পারে।",
+    descriptionEn: "Every 6 hours (360 minutes): for parcels in transit stuck in the same status longer than the stuckDays limit in Fulfillment settings, Owner/Admin staff will get an urgent notification and the customer will be informed through the ON5 engine — exactly once for each shipment in each status; if the status changes, escalation can happen again for the new status." },
+  { key: "owner_order_digest", name: "মালিকের দৈনিক অর্ডার ডাইজেস্ট (টেমপ্লেট)", nameEn: "Owner's Daily Order Digest (Template)", type: "owner_order_digest", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: গতকালের অর্ডার সারাংশ (অর্ডার, বিক্রি, আদায়, বকেয়া, আটকে থাকা পার্সেল, SLA ভঙ্গ) দোকানের মালিকদের (OWNER) ইমেইলে পাঠানো হবে। মালিকের ফোন নম্বর রেকর্ডে থাকলেই কেবল SMS যাবে — নম্বর না থাকলে SMS পাঠানো হয়েছে বলে দেখানো হবে না। প্রতিটি পাঠানোর ফল Audit Log-এ থাকবে।",
+    descriptionEn: "Once a day: yesterday's order summary (orders, sales, collections, dues, stuck parcels, SLA breaches) will be emailed to the shop's owners (OWNER). SMS will go only if the owner's phone number is on record — without a number it will not be shown as SMS sent. The result of every send will be in the Audit Log." },
+  { key: "order_automation_sweep", name: "অর্ডার অটোমেশন যাচাই (টেমপ্লেট)", nameEn: "Order Automation Check (Template)", type: "order_automation_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: অর্ডার অটোমেশন স্টুডিওর সময়ভিত্তিক নিয়মগুলো যাচাই হবে — নির্দিষ্ট ঘণ্টার বেশি একই কুরিয়ার স্ট্যাটাসে আটকে থাকা পার্সেল (parcel_stuck_hours) এবং ডেলিভারি হওয়া অর্ডারের নির্দিষ্ট দিনের বেশি পুরনো বকেয়া (due_overdue_days)। প্রতিটি নিয়ম প্রতিটি অর্ডারে প্রতিটি অবস্থায় ঠিক একবারই চলবে; সব কাজের বিবরণ নিয়মের লগে থাকবে।",
+    descriptionEn: "Every 60 minutes: the Order Automation Studio's time-based rules will be checked — parcels stuck in the same courier status for more than the specified hours (parcel_stuck_hours) and dues older than the specified days on delivered orders (due_overdue_days). Each rule will run exactly once per order per state; details of all work will be in the rule's log." },
+  { key: "scheduled_report_sweep", name: "নির্ধারিত রিপোর্ট পাঠানো (টেমপ্লেট)", nameEn: "Scheduled Report Sending (Template)", type: "scheduled_report_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: Reports অংশে সেট করা নির্ধারিত রিপোর্টগুলোর সময় হয়ে গেলে (প্রতিদিন: গতকালের; প্রতি সপ্তাহে: শেষ ৭ দিনের) রিপোর্ট তৈরি হয়ে প্রাপকদের ইমেইলে সংযুক্তি (attachment) হিসেবে পাঠানো হবে। ইমেইল সার্ভিস সেটআপ না থাকলে পাঠানো হয়েছে বলে রেকর্ড হবে না (failed_no_provider)।",
+    descriptionEn: "Every 60 minutes: when the time of scheduled reports set in the Reports section arrives (daily: yesterday's; weekly: the last 7 days'), the report will be generated and sent to the recipients as an email attachment. If the email service is not set up, it will not be recorded as sent (failed_no_provider)." },
+  { key: "webhook_delivery_sweep", name: "Webhook ডেলিভারি (টেমপ্লেট)", nameEn: "Webhook Delivery (Template)", type: "webhook_delivery_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: Settings → Webhooks-এ সেট করা endpoint-গুলোতে সময় হয়ে যাওয়া অর্ডার-ইভেন্ট (order.created / order.status_changed / order.paid / order.returned) স্বাক্ষরিত (HMAC) POST হিসেবে পাঠানো হবে। ব্যর্থ হলে ১ মিনিট → ৫ মিনিট → ৩০ মিনিট → ২ ঘণ্টা ব্যবধানে আবার চেষ্টা হবে; ৫ বার ব্যর্থ হলে ডেলিভারিটি failed হবে।",
+    descriptionEn: "Every 5 minutes: due order events (order.created / order.status_changed / order.paid / order.returned) will be sent as signed (HMAC) POSTs to the endpoints set in Settings → Webhooks. On failure it will retry at 1 minute → 5 minutes → 30 minutes → 2 hours intervals; after 5 failures the delivery will be failed." },
+  { key: "loyalty_points_sweep", name: "লয়্যালটি পয়েন্ট মেয়াদ (টেমপ্লেট)", nameEn: "Loyalty Points Expiry (Template)", type: "loyalty_points_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: লয়্যালটি পয়েন্টের মেয়াদ যাচাই হবে — যেসব আয়/পুরস্কারের পয়েন্টের মেয়াদ (Loyalty সেটিংসের pointsExpiryDays) পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে লেজারে লেখা হবে। মেয়াদ না থাকা পয়েন্টে কোনো প্রভাব পড়বে না।",
+    descriptionEn: "Once a day: loyalty point expiry will be checked — points from earnings/rewards whose expiry (the Loyalty settings' pointsExpiryDays) has passed will be written in the ledger as expired. Points with no expiry will be unaffected." },
+  { key: "gift_card_expiry_sweep", name: "গিফট কার্ড মেয়াদ (টেমপ্লেট)", nameEn: "Gift Card Expiry (Template)", type: "gift_card_expiry_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতিদিন একবার: গিফট কার্ডের মেয়াদ যাচাই হবে — যেসব কার্ডের মেয়াদ পার হয়ে গেছে, সেগুলো মেয়াদোত্তীর্ণ হিসেবে চিহ্নিত হবে এবং অবশিষ্ট ব্যালেন্স লেজারে মেয়াদোত্তীর্ণ হিসেবে লেখা হবে। মেয়াদ না থাকা কার্ডে কোনো প্রভাব পড়বে না।",
+    descriptionEn: "Once a day: gift card expiry will be checked — cards whose expiry has passed will be marked expired and the remaining balance will be written in the ledger as expired. Cards with no expiry will be unaffected." },
+  { key: "catalog_sync_sweep", name: "Meta ক্যাটালগ অটো-সিঙ্ক (টেমপ্লেট)", nameEn: "Meta Catalog Auto-Sync (Template)", type: "catalog_sync_sweep", targetKind: "org", intervalMinutes: 10,
+    descriptionBn: "প্রতি ১০ মিনিটে: Auto-Sync চালু থাকা Meta ক্যাটালগগুলোর জন্য সারিতে থাকা পণ্যের পরিবর্তনগুলো (তৈরি/হালনাগাদ/মুছে ফেলা) Meta Catalog-এ পাঠানো হবে। ব্যর্থ হলে পরের রানে আবার চেষ্টা হবে; ৩ বার ব্যর্থ হলে রেকর্ডটি Failed হবে এবং কারণটি ক্যাটালগের Sync Status-এ দেখা যাবে।",
+    descriptionEn: "Every 10 minutes: for Meta catalogs with Auto-Sync on, queued product changes (created/updated/deleted) will be sent to the Meta Catalog. On failure it will retry on the next run; after 3 failures the record will be Failed and the reason will be visible in the catalog's Sync Status." },
+  { key: "web_push_sweep", name: "Web Push Campaign Drain (টেমপ্লেট)", nameEn: "Web Push Campaign Drain (Template)", type: "web_push_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: সারিতে থাকা (queued) ওয়েব পুশ ক্যাম্পেইনগুলোর বাকি সাবস্ক্রাইবারদের কাছে পুশ পাঠানো হবে — প্রতি রানে সর্বোচ্চ ৫টি ক্যাম্পেইন, ক্যাম্পেইন প্রতি সর্বোচ্চ ৫০০ জন। যেসব ব্রাউজারের সাবস্ক্রিপশন শেষ হয়ে গেছে (push service 404/410 দিলে) সেগুলো gone হিসেবে চিহ্নিত হবে এবং আর পাঠানো হবে না।",
+    descriptionEn: "Every 5 minutes: queued web push campaigns will be pushed to their remaining subscribers — at most 5 campaigns per run, at most 500 people per campaign. Browsers whose subscription has ended (push service 404/410) will be marked gone and will not be sent to again." },
+  { key: "data_export_generate", name: "ডেটা এক্সপোর্ট তৈরি (টেমপ্লেট)", nameEn: "Data Export Generation (Template)", type: "data_export_generate", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: বড় আকারের কারণে অপেক্ষমাণ (pending) থাকা ডেটা এক্সপোর্টগুলো তৈরি হয়ে ফাইল হিসেবে সংরক্ষণ হবে — তৈরি এক্সপোর্ট ৭ দিন পর্যন্ত ডাউনলোড করা যাবে।",
+    descriptionEn: "Every 15 minutes: data exports pending because of their large size will be generated and stored as files — a generated export can be downloaded for up to 7 days." },
+  { key: "org_backup_sweep", name: "সাপ্তাহিক ব্যাকআপ (টেমপ্লেট)", nameEn: "Weekly Backup (Template)", type: "org_backup_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সাপ্তাহিক ব্যাকআপ চালু থাকলে এবং শেষ ব্যাকআপের ৭ দিন পার হলে নতুন ব্যাকআপ এক্সপোর্ট তৈরি হবে — সবশেষ ৪টি তৈরি ব্যাকআপ রাখা হবে, পুরনোগুলোর ফাইল মুছে সেগুলো মেয়াদোত্তীর্ণ চিহ্নিত হবে।",
+    descriptionEn: "Every 60 minutes: if weekly backup is on and 7 days have passed since the last backup, a new backup export will be created — the latest 4 generated backups will be kept, older ones' files will be deleted and they will be marked expired." },
+  { key: "sale_schedule_sweep", name: "Scheduled Sale (টেমপ্লেট)", nameEn: "Scheduled Sale (Template)", type: "sale_schedule", targetKind: "org", intervalMinutes: 15,
+    descriptionBn: "প্রতি ১৫ মিনিটে: লিস্টিংয়ে সেট করা Sale-এর সময়সীমা যাচাই হবে — শুরুর সময় হলে Sale মূল্য চালু হবে, শেষের সময় পার হলে আগের মূল্যে ফিরে যাবে এবং পরিবর্তন স্টোরে পাঠানো হবে।",
+    descriptionEn: "Every 15 minutes: Sale periods set on listings will be checked — when the start time arrives the Sale price will turn on, when the end time passes it will return to the previous price and the change will be sent to the store." },
+  { key: "connection_health_sweep", name: "Connection Health Sweep (টেমপ্লেট)", nameEn: "Connection Health Sweep (Template)", type: "connection_health_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ৬০ মিনিটে: সব কানেকশনের অবস্থা যাচাই হবে — কোনো কানেকশন বিচ্ছিন্ন/ত্রুটিপূর্ণ হলে, টোকেনের মেয়াদ শেষের দিকে গেলে (৭/৩/১ দিন), পরপর sync ব্যর্থ হলে বা webhook-এ সমস্যা ধরা পড়লে Organization-এর Owner/Admin-রা In-app ও ইমেইল সতর্কতা পাবেন। একই সমস্যার জন্য বারবার সতর্কতা যাবে না — অবস্থা বদলালেই কেবল যাবে; আবার ঠিক হলেও একবার জানানো হবে। এই Job চালু না থাকলে কানেকশন পর্যবেক্ষণ হবে না।",
+    descriptionEn: "Every 60 minutes: the status of all connections will be checked — if a connection is disconnected/faulty, a token is nearing expiry (7/3/1 days), syncs fail consecutively, or a webhook problem is detected, the Organization's Owner/Admin will get In-app and email alerts. The same problem will not alert repeatedly — only when the state changes; recovery is also reported once. If this Job is not on, connections will not be monitored." },
+  { key: "wallet_payout_sweep", name: "Wallet Payout Sweep (টেমপ্লেট)", nameEn: "Wallet Payout Sweep (Template)", type: "wallet_payout_sweep", targetKind: "org", intervalMinutes: 1440,
+    descriptionBn: "প্রতি দিনে একবার: Connect Center-এ Wallet Payout Schedule চালু থাকলে এবং আজই নির্ধারিত দিন (সাপ্তাহিক/মাসিক) হলে, উপলব্ধ ব্যালেন্স নির্ধারিত সীমার সমান বা বেশি হলে পুরো উপলব্ধ পরিমাণের একটি pending Payout অনুরোধ নিজে থেকে তৈরি হবে। এই Job কখনো approve করে না বা টাকা পাঠায় না — অনুমোদন ও mark-paid আগের মতোই অ্যাডমিনের হাতে। একই দিনে দ্বিতীয়বার চললেও নতুন অনুরোধ তৈরি হবে না।",
+    descriptionEn: "Once a day: if the Wallet Payout Schedule is on in the Connect Center and today is the scheduled day (weekly/monthly), and the available balance is equal to or above the set threshold, a pending Payout request for the full available amount will be created automatically. This Job never approves or sends money — approval and mark-paid remain in the admin's hands as before. Even if it runs a second time the same day, no new request will be created." },
+  { key: "inbox_sla_sweep", name: "Inbox SLA Sweep (টেমপ্লেট)", nameEn: "Inbox SLA Sweep (Template)", type: "inbox_sla_sweep", targetKind: "org", intervalMinutes: 5,
+    descriptionBn: "প্রতি ৫ মিনিটে: প্রথম উত্তরের অপেক্ষায় থাকা কথোপকথনের SLA যাচাই হবে (সীমা = Inbox সেটিংসের স্তরভিত্তিক নিয়ম: VIP → Channel অনুযায়ী → সাধারণ)। সীমার ৭৫% পেরোলে দায়িত্বপ্রাপ্ত এজেন্ট সতর্কতা পাবেন; Breach-এর পর সেটিংসের Escalation বিলম্ব পেরোলে Team Lead জরুরি সতর্কতা পাবেন (সেটিংসে বন্ধ করা যায়); Auto-Reassign সেটিংসে চালু থাকলেই কেবল কথোপকথন সবচেয়ে কম ব্যস্ত যোগ্য এজেন্টের কাছে যাবে। প্রতিটি ধাপ কথোপকথনপ্রতি একবারই হয় এবং Audit-এ লেখা থাকে।",
+    descriptionEn: "Every 5 minutes: the SLA of conversations awaiting a first reply will be checked (limit = the tiered rules of Inbox settings: VIP → by Channel → general). Past 75% of the limit, the responsible agent will get an alert; after a Breach, once the setting's Escalation delay passes, the Team Lead will get an urgent alert (can be turned off in settings); a conversation will go to the least busy eligible agent only if Auto-Reassign is on in settings. Each step happens once per conversation and is written in the Audit." },
+  { key: "service_booking_reminder_sweep", name: "Service Booking Reminder (টেমপ্লেট)", nameEn: "Service Booking Reminder (Template)", type: "service_booking_reminder_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: আগামী ২৪ ঘণ্টার মধ্যে শুরু হতে যাওয়া নিশ্চিত (confirmed) সার্ভিস বুকিংগুলোর অতিথিকে SMS রিমাইন্ডার পাঠানো হবে — বুকিংপ্রতি একবারই; পাঠানোর আগেই বুকিংয়ে স্ট্যাম্প পড়ে, তাই পাঠানো ব্যর্থ হলেও (SMS চ্যানেল সেটআপ না থাকলে failed_no_channel হিসেবে রেকর্ড থাকে) আবার পাঠানো হয় না।",
+    descriptionEn: "Every hour: guests of confirmed service bookings starting within the next 24 hours will be sent an SMS reminder — once per booking; the booking is stamped before sending, so even if sending fails (recorded as failed_no_channel when no SMS channel is set up) it is not sent again." },
+  { key: "fraud_network_sweep", name: "Fraud Network Sweep (টেমপ্লেট)", nameEn: "Fraud Network Sweep (Template)", type: "fraud_network_sweep", targetKind: "org", intervalMinutes: 60,
+    descriptionBn: "প্রতি ঘণ্টায়: ফ্রড নেটওয়ার্কে যোগ দেওয়া (opt-in) দোকানের চূড়ান্ত ফলাফলের অর্ডারগুলোর ফলাফল হ্যাশ-আকারে সম্মিলিত হিসাবে যোগ হবে — শুধু সংখ্যা শেয়ার হয়; ফোন নম্বর, নাম বা অর্ডারের বিবরণ কিছুই যায় না। যোগ না দিলে এই Job কিছুই করবে না। প্রতিটি অর্ডার ঠিক একবারই গণনা হয়।",
+    descriptionEn: "Every hour: final-outcome orders of shops that joined (opted in to) the fraud network will be added to the collective tally in hashed form — only numbers are shared; no phone number, name or order detail goes anywhere. If not joined, this Job will do nothing. Each order is counted exactly once." },
 ];
 
 export const RULE_METRICS = [
@@ -581,7 +640,7 @@ export class AutomationService implements OnModuleInit {
    * failure so BullMQ's retry/DLQ semantics see the failure. */
   async executeScheduledJobById(jobId: string) {
     const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: jobId } });
-    if (!job) throw new NotFoundException("Scheduled job not found (deleted?)");
+    if (!job) throw notFound("automation.scheduledJobNotFoundDeleted");
     const startedAt = new Date();
     try {
       const result = await this.executeJob(job);
@@ -688,11 +747,11 @@ export class AutomationService implements OnModuleInit {
 
   async replayDlq(dlqId: string, actorId: string) {
     const row = await (this.prisma as any).deadLetterJob.findFirst({ where: { id: dlqId } });
-    if (!row) throw new NotFoundException("Dead-letter entry not found");
-    if (row.replayedAt) throw new BadRequestException("This entry was already replayed");
-    if (!row.scheduledJobId) throw new BadRequestException("Entry has no scheduled job to replay");
+    if (!row) throw notFound("automation.deadLetterEntryNotFound");
+    if (row.replayedAt) throw badRequest("automation.thisEntryWasAlreadyReplayed");
+    if (!row.scheduledJobId) throw badRequest("automation.entryHasNoScheduledJobTo");
     const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: row.scheduledJobId } });
-    if (!job) throw new BadRequestException("The scheduled job no longer exists");
+    if (!job) throw badRequest("automation.theScheduledJobNoLongerExists");
     await (this.prisma as any).deadLetterJob.update({ where: { id: dlqId }, data: { replayedAt: new Date() } });
     await this.audit.log({
       organizationId: row.organizationId, userId: actorId, action: "automation.dlq_replayed",
@@ -758,7 +817,7 @@ export class AutomationService implements OnModuleInit {
    * audit, re-enqueue (queue mode) or execute inline. */
   async replayOrgDeadLetter(organizationId: string, dlqId: string, actorId: string) {
     const row = await (this.prisma as any).deadLetterJob.findFirst({ where: { id: dlqId, organizationId } });
-    if (!row) throw new NotFoundException("Dead-letter entry not found");
+    if (!row) throw notFound("automation.deadLetterEntryNotFound");
     return this.replayDlq(dlqId, actorId);
   }
 
@@ -855,10 +914,10 @@ export class AutomationService implements OnModuleInit {
 
   // ---------- Scheduled jobs ----------
   async createJob(organizationId: string, actorId: string, dto: { name: string; type: string; targetId: string; intervalMinutes: number }) {
-    if (!(JOB_TYPES as readonly string[]).includes(dto.type)) throw new BadRequestException("Invalid job type");
+    if (!(JOB_TYPES as readonly string[]).includes(dto.type)) throw badRequest("automation.invalidJobType");
     // CX3: the minimum drops 5 -> 1 so the 1-minute reply-debounce
     // sweep templates can actually be installed through this path.
-    if (!Number.isFinite(dto.intervalMinutes) || dto.intervalMinutes < 1) throw new BadRequestException("intervalMinutes must be at least 1");
+    if (!Number.isFinite(dto.intervalMinutes) || dto.intervalMinutes < 1) throw badRequest("automation.intervalminutesMustBeAtLeast1");
     const job = await (this.prisma as any).scheduledJob.create({
       data: {
         organizationId, name: dto.name, type: dto.type, targetId: dto.targetId,
@@ -891,7 +950,7 @@ export class AutomationService implements OnModuleInit {
    */
   async installJobTemplate(organizationId: string, actorId: string, key: string, dto?: { targetId?: string; name?: string }) {
     const tpl = JOB_TEMPLATES.find((t) => t.key === key);
-    if (!tpl) throw new NotFoundException("Job template not found");
+    if (!tpl) throw notFound("automation.jobTemplateNotFound");
     let targetId = organizationId;
     if (tpl.targetKind !== "org") {
       if (!dto?.targetId) {
@@ -911,7 +970,7 @@ export class AutomationService implements OnModuleInit {
     const existing = await (this.prisma as any).scheduledJob.findFirst({
       where: { organizationId, type: tpl.type, targetId },
     });
-    if (existing) throw new BadRequestException("এই টেমপ্লেটের Job ইতিমধ্যে তৈরি আছে");
+    if (existing) throw badRequest("automation.aJobForThisTemplateAlready");
     return this.createJob(organizationId, actorId, {
       name: dto?.name?.trim() ? dto.name.trim() : tpl.name,
       type: tpl.type, targetId, intervalMinutes: tpl.intervalMinutes,
@@ -920,7 +979,7 @@ export class AutomationService implements OnModuleInit {
 
   private async getJobOrThrow(organizationId: string, jobId: string) {
     const job = await (this.prisma as any).scheduledJob.findFirst({ where: { id: jobId, organizationId } });
-    if (!job) throw new NotFoundException("Scheduled job not found");
+    if (!job) throw notFound("automation.scheduledJobNotFound");
     return job;
   }
 
@@ -930,7 +989,7 @@ export class AutomationService implements OnModuleInit {
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.intervalMinutes !== undefined) {
-      if (dto.intervalMinutes < 1) throw new BadRequestException("intervalMinutes must be at least 1");
+      if (dto.intervalMinutes < 1) throw badRequest("automation.intervalminutesMustBeAtLeast1");
       data.intervalMinutes = Math.floor(dto.intervalMinutes);
     }
     return (this.prisma as any).scheduledJob.update({ where: { id: jobId }, data });
@@ -976,91 +1035,91 @@ export class AutomationService implements OnModuleInit {
       case "dunning_reminders": return this.sendDunningReminder(orgId);
       case "billing_reminders": return this.sendBillingReminders(orgId);
       case "inbox_assignment_sweep": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.sweepAssignments(orgId);
       }
       case "email_sync": {
-        if (!this.emailChannel) throw new BadRequestException("Email channel is not available in this deployment");
+        if (!this.emailChannel) throw badRequest("automation.emailChannelIsNotAvailableIn");
         return this.emailChannel.syncOrganization(orgId);
       }
       case "inbox_retention": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.applyRetention(orgId);
       }
       case "lead_followup_sweep": {
-        if (!this.leads) throw new BadRequestException("Leads service is not available in this deployment");
+        if (!this.leads) throw badRequest("automation.leadsServiceIsNotAvailableIn");
         return this.leads.sweepFollowUpReminders(orgId);
       }
       case "ad_spend_watchdog": {
-        if (!this.ads) throw new BadRequestException("Ads service is not available in this deployment");
+        if (!this.ads) throw badRequest("automation.adsServiceIsNotAvailableIn");
         return this.ads.runSpendWatchdog(orgId);
       }
       case "social_publish_due": {
-        if (!this.socialPublish) throw new BadRequestException("Social publish service is not available in this deployment");
+        if (!this.socialPublish) throw badRequest("automation.socialPublishServiceIsNotAvailable");
         return this.socialPublish.runDuePublishes(orgId);
       }
       case "social_evergreen_sweep": {
-        if (!this.socialQueue) throw new BadRequestException("Social queue service is not available in this deployment");
+        if (!this.socialQueue) throw badRequest("automation.socialQueueServiceIsNotAvailable");
         return this.socialQueue.runEvergreenSweep(orgId);
       }
       case "social_follower_snapshot": {
-        if (!this.socialInsights) throw new BadRequestException("Social insights service is not available in this deployment");
+        if (!this.socialInsights) throw badRequest("automation.socialInsightsServiceIsNotAvailable");
         return this.socialInsights.snapshotFollowers(orgId);
       }
       case "social_coach_weekly": {
-        if (!this.socialCoach) throw new BadRequestException("Social coach service is not available in this deployment");
+        if (!this.socialCoach) throw badRequest("automation.socialCoachServiceIsNotAvailable");
         return this.socialCoach.runWeeklyDigest(orgId);
       }
       case "social_syndication_sweep": {
-        if (!this.socialSyndication) throw new BadRequestException("Social syndication service is not available in this deployment");
+        if (!this.socialSyndication) throw badRequest("automation.socialSyndicationServiceIsNotAvailable");
         return this.socialSyndication.runSyndicationSweep(orgId);
       }
       case "inbox_autoreply_sweep": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.runDueAutoReplies(orgId);
       }
       case "comment_autoreply_sweep": {
-        if (!this.socialComments) throw new BadRequestException("Social comments service is not available in this deployment");
+        if (!this.socialComments) throw badRequest("automation.socialCommentsServiceIsNotAvailable");
         return this.socialComments.runDueCommentReplies(orgId);
       }
       case "handover_timer_sweep": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.runHandoverSweeps(orgId);
       }
       case "inbox_sla_sweep": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.runSlaSweeps(orgId);
       }
       case "courier_auto_sync": {
-        if (!this.courier) throw new BadRequestException("Courier service is not available in this deployment");
+        if (!this.courier) throw badRequest("automation.courierServiceIsNotAvailableIn");
         return this.courier.syncAll(orgId);
       }
       case "review_request_sweep": {
-        if (!this.reviews) throw new BadRequestException("Reviews service is not available in this deployment");
+        if (!this.reviews) throw badRequest("automation.reviewsServiceIsNotAvailableIn");
         return this.reviews.runReviewSweep(orgId, this.inbox);
       }
       case "order_chase_sweep": {
-        if (!this.orderChase) throw new BadRequestException("Order chase service is not available in this deployment");
+        if (!this.orderChase) throw badRequest("automation.orderChaseServiceIsNotAvailable");
         return this.orderChase.runOrderChaseSweep(orgId, this.inbox);
       }
       case "inbox_chase_sweep": {
-        if (!this.inbox) throw new BadRequestException("Inbox service is not available in this deployment");
+        if (!this.inbox) throw badRequest("automation.inboxServiceIsNotAvailableIn");
         return this.inbox.runChaseSweep(orgId);
       }
       case "broadcast_send_sweep": {
-        if (!this.messaging) throw new BadRequestException("Messaging service is not available in this deployment");
+        if (!this.messaging) throw badRequest("automation.messagingServiceIsNotAvailableIn");
         return this.messaging.runDueBroadcasts(orgId);
       }
       case "connection_health_sweep": {
-        if (!this.connectionMonitor) throw new BadRequestException("Connection monitor is not available in this deployment");
+        if (!this.connectionMonitor) throw badRequest("automation.connectionMonitorIsNotAvailableIn");
         return this.connectionMonitor.runSweep(orgId);
       }
       case "wallet_payout_sweep": {
-        if (!this.wallet) throw new BadRequestException("Wallet service is not available in this deployment");
+        if (!this.wallet) throw badRequest("automation.walletServiceIsNotAvailableIn");
         return this.wallet.runPayoutSweep(orgId);
       }
       case "auto_renew": {
-        if (!this.payments) throw new BadRequestException("Payments service is not available in this deployment");
+        if (!this.payments) throw badRequest("automation.paymentsServiceIsNotAvailableIn");
         return this.payments.chargeAutoRenew(orgId);
       }
       case "subscription_sweep": {
@@ -1110,7 +1169,7 @@ export class AutomationService implements OnModuleInit {
       case "creative_learning_sweep": return this.creativeLearning ? this.creativeLearning.runSweep() : { skipped: "creative learning unavailable" };
       case "competitor_intelligence_sweep": return this.competitorIntelligence ? this.competitorIntelligence.runSweep() : { skipped: "competitor intelligence unavailable" };
       case "audience_refresh": {
-        if (!this.audiences) throw new BadRequestException("Audience service is not available in this deployment");
+        if (!this.audiences) throw badRequest("automation.audienceServiceIsNotAvailableIn");
         return this.audiences.refreshAllMemberships(orgId, actor);
       }
       case "plan_schedule_sweep": {
@@ -1125,7 +1184,7 @@ export class AutomationService implements OnModuleInit {
         // real metric rows (see CampaignsService.scanPacingAlerts).
         return this.campaigns.scanPacingAlerts(orgId);
       }
-      default: throw new BadRequestException(`Unknown job type: ${job.type}`);
+      default: throw badRequest("automation.unknownJobType", { jobType: job.type });
     }
   }
 
@@ -1200,7 +1259,7 @@ export class AutomationService implements OnModuleInit {
    * fails honestly (EmailProvider throws) and the run is marked
    * error by the scheduler wrapper. */
   async sendWeeklyAdsReport(organizationId: string) {
-    if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
+    if (!this.email) throw badRequest("automation.emailProviderIsNotAvailableIn");
     const from = new Date(Date.now() - 6 * 86400000);
     from.setUTCHours(0, 0, 0, 0);
     const metrics = await (this.prisma as any).dailyAdMetric.findMany({
@@ -1220,7 +1279,7 @@ export class AutomationService implements OnModuleInit {
       where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
     });
     const recipients = memberships.map((m: any) => m.user?.email).filter(Boolean) as string[];
-    if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found");
+    if (recipients.length === 0) throw badRequest("automation.noOwnerAdminEmailRecipientsFound");
     const fmt = (minor: bigint) => (Number(minor) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
     const text = [
       "Weekly Ads Summary (last 7 days)", "",
@@ -1249,10 +1308,10 @@ export class AutomationService implements OnModuleInit {
    * is a job failure, not a silent success.
    */
   async deliverSavedReport(organizationId: string, savedReportId: string) {
-    if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
-    if (!this.reportExports) throw new BadRequestException("Report export service is not available in this deployment");
+    if (!this.email) throw badRequest("automation.emailProviderIsNotAvailableIn");
+    if (!this.reportExports) throw badRequest("automation.reportExportServiceIsNotAvailable");
     const def = await (this.prisma as any).savedReport.findFirst({ where: { id: savedReportId, organizationId } }).catch(() => null);
-    if (!def) throw new BadRequestException("Saved report not found for this job's target");
+    if (!def) throw badRequest("automation.savedReportNotFoundForThis");
     const memberships = await (this.prisma as any).membership.findMany({
       where: { organizationId, role: { in: ["OWNER", "ADMIN"] }, status: "ACTIVE" }, include: { user: true },
     }).catch(() => []);
@@ -1263,7 +1322,7 @@ export class AutomationService implements OnModuleInit {
       ...(memberships ?? []).map((m: any) => m.user?.email).filter(Boolean),
       ...billing.map((b: any) => String(b)).filter((b: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b)),
     ])] as string[];
-    if (!recipients.length) throw new BadRequestException("No email recipients found for this report (report recipients, OWNER/ADMIN, billing contacts all empty)");
+    if (!recipients.length) throw badRequest("automation.noEmailRecipientsFoundForThis");
     const parts = await this.reportExports.savedEmailParts(organizationId, savedReportId);
     let sent = 0;
     for (const to of recipients) {
@@ -1450,7 +1509,7 @@ export class AutomationService implements OnModuleInit {
   }
 
   async sendDunningReminder(organizationId: string) {
-    if (!this.email) throw new BadRequestException("Email provider is not available in this deployment");
+    if (!this.email) throw badRequest("automation.emailProviderIsNotAvailableIn");
     const sub = await (this.prisma as any).subscription.findFirst({
       where: { organizationId }, orderBy: { createdAt: "desc" },
     }).catch(() => null);
@@ -1471,7 +1530,7 @@ export class AutomationService implements OnModuleInit {
       where: { organizationId, role: { in: ["OWNER", "ADMIN"] } }, include: { user: true },
     });
     const recipients = memberships.map((m: any) => m.user?.email).filter(Boolean) as string[];
-    if (recipients.length === 0) throw new BadRequestException("No OWNER/ADMIN email recipients found");
+    if (recipients.length === 0) throw badRequest("automation.noOwnerAdminEmailRecipientsFound");
     const text = [
       `আসসালামু আলাইকুম,`,
       ``,
@@ -1509,19 +1568,19 @@ export class AutomationService implements OnModuleInit {
     actionConfig?: { percent?: number; minDailyMinor?: number; maxDailyMinor?: number; cooldownHours?: number };
     mode?: string;
   }) {
-    if (!(RULE_METRICS as readonly string[]).includes(dto.metric)) throw new BadRequestException("Invalid metric");
-    if (!["gt", "lt"].includes(dto.comparator)) throw new BadRequestException("Invalid comparator");
-    if (!(RULE_ACTIONS as readonly string[]).includes(dto.action)) throw new BadRequestException("Invalid action");
-    if (Number.isNaN(Number(dto.threshold))) throw new BadRequestException("threshold must be numeric");
+    if (!(RULE_METRICS as readonly string[]).includes(dto.metric)) throw badRequest("automation.invalidMetric");
+    if (!["gt", "lt"].includes(dto.comparator)) throw badRequest("automation.invalidComparator");
+    if (!(RULE_ACTIONS as readonly string[]).includes(dto.action)) throw badRequest("automation.invalidAction");
+    if (Number.isNaN(Number(dto.threshold))) throw badRequest("automation.thresholdMustBeNumeric");
     // CA10 default decision: NEW rules are suggest-mode —
     // no new rule silently gains the power to pause or scale
     // a live campaign. Pre-CA10 rows keep "execute" via the
     // migration default; the mode is changeable per rule.
     const mode = dto.mode ?? "suggest";
-    if (!(AutomationService.RULE_MODES as readonly string[]).includes(mode)) throw new BadRequestException("mode must be execute or suggest");
+    if (!(AutomationService.RULE_MODES as readonly string[]).includes(mode)) throw badRequest("automation.modeMustBeExecuteOrSuggest");
     if (dto.action === "scale_budget") {
       const percent = Number(dto.actionConfig?.percent ?? 0);
-      if (!percent || percent < -90 || percent > 200) throw new BadRequestException("scale_budget needs actionConfig.percent between -90 and 200");
+      if (!percent || percent < -90 || percent > 200) throw badRequest("automation.scaleBudgetNeedsActionconfigPercentBetween");
     }
     const rule = await (this.prisma as any).automationRule.create({
       data: {
@@ -1595,8 +1654,8 @@ export class AutomationService implements OnModuleInit {
 
   async updateRule(organizationId: string, ruleId: string, dto: { enabled?: boolean; mode?: string }) {
     const rule = await (this.prisma as any).automationRule.findFirst({ where: { id: ruleId, organizationId } });
-    if (!rule) throw new NotFoundException("Rule not found");
-    if (dto.mode !== undefined && !(AutomationService.RULE_MODES as readonly string[]).includes(dto.mode)) throw new BadRequestException("mode must be execute or suggest");
+    if (!rule) throw notFound("automation.ruleNotFound");
+    if (dto.mode !== undefined && !(AutomationService.RULE_MODES as readonly string[]).includes(dto.mode)) throw badRequest("automation.modeMustBeExecuteOrSuggest");
     return (this.prisma as any).automationRule.update({
       where: { id: ruleId },
       data: {
@@ -1608,7 +1667,7 @@ export class AutomationService implements OnModuleInit {
 
   async deleteRule(organizationId: string, ruleId: string) {
     const rule = await (this.prisma as any).automationRule.findFirst({ where: { id: ruleId, organizationId } });
-    if (!rule) throw new NotFoundException("Rule not found");
+    if (!rule) throw notFound("automation.ruleNotFound");
     await (this.prisma as any).automationRule.delete({ where: { id: ruleId } });
     return { deleted: true };
   }
@@ -1973,13 +2032,13 @@ export class AutomationService implements OnModuleInit {
   async approveSuggestion(organizationId: string, actorId: string, suggestionId: string) {
     const table = (this.prisma as any).ruleSuggestion;
     const suggestion = await table.findFirst({ where: { id: suggestionId, organizationId } });
-    if (!suggestion) throw new NotFoundException("Suggestion not found");
-    if (suggestion.status !== "pending") throw new BadRequestException(`এই সাজেশন ইতিমধ্যে "${suggestion.status}" — আবার সিদ্ধান্ত নেওয়া যাবে না`);
+    if (!suggestion) throw notFound("automation.suggestionNotFound");
+    if (suggestion.status !== "pending") throw badRequest("automation.thisSuggestionIsAlreadyADecision", { suggestionStatus: suggestion.status });
     const claimed = await table.updateMany({
       where: { id: suggestionId, organizationId, status: "pending" },
       data: { status: "approved", decidedById: actorId, decidedAt: new Date() },
     });
-    if (!claimed || claimed.count === 0) throw new BadRequestException("এই সাজেশনে ইতিমধ্যে অন্য কেউ সিদ্ধান্ত নিয়েছেন");
+    if (!claimed || claimed.count === 0) throw badRequest("automation.someoneElseHasAlreadyDecidedOn");
     const plan = await (this.prisma as any).campaignPlan.findFirst({ where: { id: suggestion.campaignPlanId, organizationId } }).catch(() => null);
     let result: any;
     if (!plan) result = { ok: false, error: "plan_not_found" };
@@ -1999,13 +2058,13 @@ export class AutomationService implements OnModuleInit {
   async rejectSuggestion(organizationId: string, actorId: string, suggestionId: string, reason?: string) {
     const table = (this.prisma as any).ruleSuggestion;
     const suggestion = await table.findFirst({ where: { id: suggestionId, organizationId } });
-    if (!suggestion) throw new NotFoundException("Suggestion not found");
-    if (suggestion.status !== "pending") throw new BadRequestException(`এই সাজেশন ইতিমধ্যে "${suggestion.status}" — আবার সিদ্ধান্ত নেওয়া যাবে না`);
+    if (!suggestion) throw notFound("automation.suggestionNotFound");
+    if (suggestion.status !== "pending") throw badRequest("automation.thisSuggestionIsAlreadyADecision", { suggestionStatus: suggestion.status });
     const claimed = await table.updateMany({
       where: { id: suggestionId, organizationId, status: "pending" },
       data: { status: "rejected", decidedById: actorId, decidedAt: new Date(), rejectReason: reason ?? null },
     });
-    if (!claimed || claimed.count === 0) throw new BadRequestException("এই সাজেশনে ইতিমধ্যে অন্য কেউ সিদ্ধান্ত নিয়েছেন");
+    if (!claimed || claimed.count === 0) throw badRequest("automation.someoneElseHasAlreadyDecidedOn");
     await (this.prisma as any).automationRun.create({
       data: { organizationId, kind: "suggestion", refId: suggestionId, status: "skipped", detail: `Suggestion rejected (${suggestion.action}) for plan ${suggestion.campaignPlanId}${reason ? `: ${reason}` : ""}`, evidence: { planId: suggestion.campaignPlanId, action: suggestion.action, rejectedBy: actorId } as any },
     }).catch(() => undefined);

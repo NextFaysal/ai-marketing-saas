@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { PrismaService } from "../prisma/prisma.service";
@@ -12,6 +12,7 @@ import { detectMediaKind } from "../inbox/media-sniff";
 import { resolveImageProvider } from "../ai/images/image.factory";
 import { assembleSlideshowMp4, isFfmpegAvailable, renderSlidePng } from "./video-slides";
 import { formatMinor } from "@repo/contracts";
+import { ApiException, badRequest, notFound } from "../i18n/api-exception";
 
 /** RB4/RM8: direct creative-upload limits. Images follow the
  * product cap; video gets 50 MB because complete() reads the
@@ -60,8 +61,8 @@ export class CreativesService {
     if (!(await orgFlagEnabled(this.prisma as any, organizationId, "creative_library"))) {
       throw new ForbiddenException(FLAG_DISABLED_MESSAGE("Creative Library"));
     }
-    if (!["image", "video"].includes(dto.kind)) throw new BadRequestException("kind must be image or video");
-    if (!/^https:\/\//i.test(dto.sourceUrl)) throw new BadRequestException("sourceUrl must be an https URL Meta can fetch");
+    if (!["image", "video"].includes(dto.kind)) throw badRequest("creatives.kindMustBeImageOrVideo");
+    if (!/^https:\/\//i.test(dto.sourceUrl)) throw badRequest("creatives.sourceurlMustBeAnHttpsUrl");
     const { account, token } = await metaTokenForAccount(this.prisma, organizationId, adAccountId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta account resolution failed");
     });
@@ -103,9 +104,7 @@ export class CreativesService {
 
   private creativeStorageOr400(): StorageService {
     if (!this.storage || this.storage.mode !== "s3") {
-      throw new BadRequestException(
-        "সরাসরি ফাইল আপলোড এখন চালু নেই — সার্ভারে object storage (Cloudflare R2) সেটআপ হয়নি। আপাতত URL দিয়ে ক্রিয়েটিভ যোগ করুন।",
-      );
+      throw badRequest("creatives.directFileUploadIsNotOn");
     }
     return this.storage;
   }
@@ -119,7 +118,7 @@ export class CreativesService {
   private normalizeCreativeUpload(kind: unknown, contentType: unknown, sizeBytes: unknown) {
     const k = String(kind ?? "");
     const allowed = CREATIVE_UPLOAD_CONTENT_TYPES[k];
-    if (!allowed) throw new BadRequestException("kind must be image or video");
+    if (!allowed) throw badRequest("creatives.kindMustBeImageOrVideo");
     const ct = String(contentType ?? "").split(";")[0].trim().toLowerCase();
     if (!allowed.includes(ct)) {
       throw new BadRequestException(
@@ -130,7 +129,7 @@ export class CreativesService {
     }
     const size = Number(sizeBytes);
     if (!Number.isInteger(size) || size < 1) {
-      throw new BadRequestException("ফাইলের আকার (sizeBytes) সঠিক নয়।");
+      throw badRequest("creatives.theFileSizeSizebytesIsNot");
     }
     const cap = k === "image" ? CREATIVE_IMAGE_UPLOAD_MAX_BYTES : CREATIVE_VIDEO_UPLOAD_MAX_BYTES;
     if (size > cap) {
@@ -154,7 +153,7 @@ export class CreativesService {
     const key = `_quarantine/${organizationId}/creative/${randomUUID()}`;
     const uploadUrl = storage.presignedPutUrl("public", key);
     if (!uploadUrl) {
-      throw new BadRequestException("আপলোডের URL তৈরি করা যায়নি — object storage সেটআপ যাচাই করুন।");
+      throw badRequest("creatives.theUploadUrlCouldNotBe");
     }
     void actorId;
     return { uploadUrl, key, contentType, sizeBytes, expiresInSeconds: 600 };
@@ -171,22 +170,22 @@ export class CreativesService {
     const key = String(dto?.key ?? "");
     const quarantinePrefix = `_quarantine/${organizationId}/creative/`;
     if (!key.startsWith(quarantinePrefix) || key.includes("..") || key.includes("\\")) {
-      throw new BadRequestException("আপলোডের key সঠিক নয় — presign থেকে পাওয়া key-ই পাঠাতে হবে।");
+      throw badRequest("creatives.theUploadKeyIsNotValid");
     }
     const dropQuarantine = () => storage.delete("public", key).catch(() => undefined);
 
     const head = await storage.head("public", key).catch(() => null);
     if (!head) {
-      throw new BadRequestException("আপলোড করা ফাইলটি পাওয়া যায়নি — আবার আপলোড করুন।");
+      throw badRequest("creatives.theUploadedFileWasNotFound");
     }
     if (head.sizeBytes !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলের আকার ঘোষিত আকারের সঙ্গে মিলছে না — ফাইলটি মোছা হয়েছে।");
+      throw badRequest("creatives.theUploadedFileSSizeDoes");
     }
     const bytes = await storage.get("public", key).catch(() => null);
     if (!bytes || bytes.length !== sizeBytes) {
       await dropQuarantine();
-      throw new BadRequestException("আপলোড করা ফাইলটি পড়া যায়নি — ফাইলটি মোছা হয়েছে, আবার চেষ্টা করুন।");
+      throw badRequest("creatives.theUploadedFileCouldNotBe");
     }
     // Magic bytes decide, never the declaration. For container
     // formats the declared type breaks the tie inside the sniff,
@@ -196,7 +195,7 @@ export class CreativesService {
     if (!detected || detected.kind !== kind || detected.contentType !== contentType) {
       await dropQuarantine();
       const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
-      throw new BadRequestException(`আপলোড করা ফাইলের আসল ফরম্যাট ঘোষিত টাইপের সঙ্গে মিলছে না (পাওয়া গেছে ${what}) — ফাইলটি মোছা হয়েছে।`);
+      throw badRequest("creatives.theUploadedFileSRealFormat", { what: what });
     }
 
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -295,7 +294,7 @@ export class CreativesService {
     const { killSwitches, effectiveLimits } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (ks.aiDisabledOrgIds.includes(organizationId)) {
-      throw new HttpException("AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw new ApiException("creatives.aiFeaturesAreTemporarilyDisabledFor", undefined, 403);
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -305,10 +304,7 @@ export class CreativesService {
       where: { organizationId, feature: "ad_image", createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("creatives.dailyAiGenerationLimitReachedFor", { limit: limit }, 429);
     }
   }
 
@@ -318,14 +314,14 @@ export class CreativesService {
     dto: { adAccountId: string; prompt: string; productId?: string },
   ) {
     const prompt = dto.prompt?.trim() ?? "";
-    if (!prompt) throw new BadRequestException("ছবির বর্ণনা (Prompt) দিন।");
+    if (!prompt) throw badRequest("creatives.giveTheImageDescriptionPrompt");
     await this.creativeFlagOr403(organizationId);
     // Enforcement BEFORE the provider is resolved or called.
     await this.checkAiImageDailyLimit(organizationId);
 
     const r = this.resolveProvider();
     if (!r) {
-      throw new BadRequestException("AI ছবি তৈরির provider configure করা নেই — Admin Panel থেকে সেট করুন");
+      throw badRequest("creatives.theAiImageGenerationProviderIs");
     }
     // Storage is checked BEFORE generation spends provider
     // quota: without object storage there is no public URL
@@ -337,7 +333,7 @@ export class CreativesService {
       product = await (this.prisma as any).product.findFirst({
         where: { id: dto.productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("creatives.productNotFoundInThisOrganization");
     }
     const finalPrompt = product
       ? `${prompt}\nProduct: ${product.name}${product.category ? `. Category: ${product.category}` : ""}.`
@@ -354,7 +350,7 @@ export class CreativesService {
     // produce nothing — no stored object, no asset, no usage.
     const detected = detectMediaKind(result.bytes, result.contentType);
     if (!detected || detected.kind !== "image") {
-      throw new BadRequestException("Provider এমন ডেটা ফেরত দিয়েছে যা ছবি হিসেবে পড়া যাচ্ছে না — Asset তৈরি হয়নি।");
+      throw badRequest("creatives.theProviderReturnedDataThatCould");
     }
 
     const sha256 = createHash("sha256").update(result.bytes).digest("hex");
@@ -448,13 +444,13 @@ export class CreativesService {
   ) {
     await this.creativeFlagOr403(organizationId);
     if (!(await this.videoFfmpegAvailable())) {
-      throw new BadRequestException("ভিডিও তৈরির জন্য ffmpeg এই সার্ভারে পাওয়া যাচ্ছে না — AI ভিডিও এখন তৈরি করা যাচ্ছে না।");
+      throw badRequest("creatives.ffmpegWasNotFoundOnThis");
     }
     const storage = this.creativeStorageOr400();
     const product = await (this.prisma as any).product.findFirst({
       where: { id: dto.productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found in this organization");
+    if (!product) throw notFound("creatives.productNotFoundInThisOrganization");
 
     // Photo sources: the product's own image URLs that resolve
     // to OUR CDN keys (bytes readable through StorageService).
@@ -471,7 +467,7 @@ export class CreativesService {
       if (bytes && detectMediaKind(bytes)?.kind === "image") photos.push(bytes);
     }
     if (!photos.length) {
-      throw new BadRequestException("প্রোডাক্টের কোনো ছবি আমাদের মিডিয়া CDN-এ পাওয়া যায়নি — ভিডিও বানাতে আগে প্রোডাক্টে ছবি আপলোড করুন (বাইরের URL থেকে ছবি এনে ভিডিও বানানো হয় না)।");
+      throw badRequest("creatives.noImageOfTheProductWas");
     }
 
     const org = await (this.prisma as any).organization?.findUnique?.({ where: { id: organizationId } }).catch(() => null);
@@ -503,7 +499,7 @@ export class CreativesService {
       }
       const mp4 = await assembleSlideshowMp4(frames, { width: aspect.width, height: aspect.height });
       if (mp4.length > CREATIVE_VIDEO_UPLOAD_MAX_BYTES) {
-        throw new BadRequestException(`তৈরি ভিডিও (${aspect.label}) সরাসরি আপলোডের সীমা ৫০ MB ছাড়িয়ে গেছে — ভিডিও তৈরি বাতিল করা হয়েছে।`);
+        throw badRequest("creatives.theGeneratedVideoExceedsTheDirect", { aspectLabel: aspect.label });
       }
       rendered.push({ label: aspect.label, bytes: mp4, width: aspect.width, height: aspect.height });
     }
@@ -579,8 +575,8 @@ export class CreativesService {
 
   async refreshVideo(organizationId: string, assetId: string) {
     const asset = await (this.prisma as any).creativeAsset.findFirst({ where: { id: assetId, organizationId } });
-    if (!asset) throw new NotFoundException("Asset not found");
-    if (asset.kind !== "video" || !asset.externalVideoId) throw new BadRequestException("Only uploaded videos can be refreshed");
+    if (!asset) throw notFound("creatives.assetNotFound");
+    if (asset.kind !== "video" || !asset.externalVideoId) throw badRequest("creatives.onlyUploadedVideosCanBeRefreshed");
     const { token } = await metaTokenForAccount(this.prisma, organizationId, asset.adAccountId);
     const res = await graphGet(token, `/${asset.externalVideoId}`, { fields: "status" });
     const vs = res?.status?.video_status as string | undefined;
@@ -594,7 +590,7 @@ export class CreativesService {
 
   async remove(organizationId: string, assetId: string) {
     const asset = await (this.prisma as any).creativeAsset.findFirst({ where: { id: assetId, organizationId } });
-    if (!asset) throw new NotFoundException("Asset not found");
+    if (!asset) throw notFound("creatives.assetNotFound");
     await (this.prisma as any).creativeAsset.delete({ where: { id: asset.id } });
     return { deleted: true };
   }

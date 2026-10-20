@@ -1,8 +1,6 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,6 +11,7 @@ import {
   MarkReorderedDto,
   SendReplenishmentReminderDto,
 } from "./predictive-replenishment.dto";
+import { notFound } from "../i18n/api-exception";
 
 @Injectable()
 export class PredictiveReplenishmentService {
@@ -217,7 +216,7 @@ export class PredictiveReplenishmentService {
     const item = await (this.prisma as any).predictiveReplenishment.findFirst({
       where: { id, organizationId },
     });
-    if (!item) throw new NotFoundException("Replenishment record not found");
+    if (!item) throw notFound("automation.replenishmentRecordNotFound");
 
     const message =
       dto?.customMessage ||
@@ -263,7 +262,7 @@ export class PredictiveReplenishmentService {
     const item = await (this.prisma as any).predictiveReplenishment.findFirst({
       where: { id, organizationId },
     });
-    if (!item) throw new NotFoundException("Replenishment record not found");
+    if (!item) throw notFound("automation.replenishmentRecordNotFound");
 
     const updated = await (this.prisma as any).predictiveReplenishment.update({
       where: { id },
@@ -304,7 +303,7 @@ export class PredictiveReplenishmentService {
     const product = await (this.prisma as any).product.findFirst({
       where: { id: productId, organizationId },
     });
-    if (!product) throw new NotFoundException("Product not found");
+    if (!product) throw notFound("automation.productNotFound");
 
     const updated = await (this.prisma as any).product.update({
       where: { id: productId },

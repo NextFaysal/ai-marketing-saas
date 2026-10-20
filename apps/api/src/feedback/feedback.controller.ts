@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
 import { Type } from "class-transformer";
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantGuard } from "../common/tenant.guard";
+import { badRequest } from "../i18n/api-exception";
 
 class FeedbackDto {
   @IsInt() @Min(0) @Max(10) @Type(() => Number) score!: number;
@@ -19,7 +20,7 @@ export class FeedbackController {
   async submit(@Req() req: any, @Body() dto: FeedbackDto) {
     const score = Number(dto.score);
     if (!Number.isInteger(score) || score < 0 || score > 10) {
-      throw new BadRequestException("score must be an integer between 0 and 10");
+      throw badRequest("feedback.scoreMustBeAnIntegerBetween");
     }
     const row = await (this.prisma as any).feedback.create({
       data: {

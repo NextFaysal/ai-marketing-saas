@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Header, NotFoundException, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Header, Optional, Param, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { AutomationService } from "../automation/automation.service";
 import { IntegrationsService } from "../integrations/integrations.service";
@@ -8,6 +8,7 @@ import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOpti
 import { AdminService } from "./admin.service";
 import { WalletService, buildPayoutInstructionCsv, buildStatementCsv, buildStatementPdf, statementRange } from "../connections/wallet.service";
 import { SuperAdminGuard, AdminTier } from "../common/super-admin.guard";
+import { notFound } from "../i18n/api-exception";
 
 class StatusDto {
   @IsIn(["ACTIVE", "SUSPENDED", "DELETED"]) status!: string;
@@ -455,7 +456,7 @@ export class AdminController {
   @Get("payout-requests/:id/execution/instruction.csv") @AdminTier("SUPER", "FINANCE") @Header("Content-Type", "text/csv; charset=utf-8") @Header("Content-Disposition", "attachment; filename=payout-instruction.csv")
   async payoutInstructionCsv(@Param("id") id: string) {
     const { execution } = await this.walletSvc().getPayoutExecutionForRequest(id);
-    if (!execution) throw new NotFoundException("No payout instruction exists for this request");
+    if (!execution) throw notFound("admin.noPayoutInstructionExistsForThis");
     return buildPayoutInstructionCsv(execution);
   }
   @Post("payout-requests/:id/execution/confirm") @AdminTier("SUPER", "FINANCE")

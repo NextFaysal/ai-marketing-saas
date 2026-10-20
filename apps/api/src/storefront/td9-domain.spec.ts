@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 
 /**
@@ -110,13 +111,9 @@ describe("TD9 setCustomDomain", () => {
       id: "org-2", slug: "other", name: "Other", brandName: null, customDomain: "www.taken.com",
     });
     const { svc } = makeService(prisma);
-    await expect(svc.setCustomDomain("org-1", "user-1", "taken.com")).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(svc.setCustomDomain("org-1", "user-1", "taken.com")).rejects.toMatchObject({ status: 409 });
     prisma.organization.rows[1].customDomain = "taken.com";
-    await expect(svc.setCustomDomain("org-1", "user-1", "www.taken.com")).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(svc.setCustomDomain("org-1", "user-1", "www.taken.com")).rejects.toMatchObject({ status: 409 });
     // The holder itself may keep / re-save its own domain.
     const own = await svc.setCustomDomain("org-2", "user-9", "taken.com");
     expect(own.domain).toBe("taken.com");
@@ -128,9 +125,7 @@ describe("TD9 setCustomDomain", () => {
       const prisma = makePrisma();
       seed(prisma);
       const { svc } = makeService(prisma);
-      await expect(svc.setCustomDomain("org-1", "user-1", domain)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(svc.setCustomDomain("org-1", "user-1", domain)).rejects.toMatchObject({ status: 400 });
       expect(prisma.organization.rows[0].customDomain).toBeNull();
     },
   );
@@ -141,9 +136,7 @@ describe("TD9 setCustomDomain", () => {
       const prisma = makePrisma();
       seed(prisma);
       const { svc } = makeService(prisma);
-      await expect(svc.setCustomDomain("org-1", "user-1", domain)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(svc.setCustomDomain("org-1", "user-1", domain)).rejects.toMatchObject({ status: 400 });
     },
   );
 
@@ -212,9 +205,7 @@ describe("TD9 setCustomDomain", () => {
     const prisma = makePrisma();
     seed(prisma);
     const { svc } = makeService(prisma);
-    await expect(svc.setCustomDomain("org-missing", "user-1", "shop.example.com")).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(svc.setCustomDomain("org-missing", "user-1", "shop.example.com")).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -253,8 +244,8 @@ describe("TD9 byDomain — www/apex resolution", () => {
     const prisma = makePrisma();
     seed(prisma, { domain: "shop.example.com", verified: false });
     const { svc } = makeService(prisma);
-    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.byDomain("www.shop.example.com")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.byDomain("shop.example.com")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.byDomain("www.shop.example.com")).rejects.toBeInstanceOf(ApiException);
   });
 });
 

@@ -182,21 +182,21 @@ describe("AA4 — AdminService settings validation + roundtrip", () => {
   it("(f) negative → 400 with the exact field message", async () => {
     const svc = new AdminService(makePrisma(), mkAudit());
     await expect(svc.updateSettings(SUPER, { planLimits: { GROWTH: { aiDaily: -1 } } }))
-      .rejects.toThrow("planLimits.GROWTH.aiDaily must be a non-negative integer");
+      .rejects.toMatchObject({ code: "admin.planlimitsMustBeANonNegative" });
   });
 
   it("(f) non-integer (1.5) → 400", async () => {
     const svc = new AdminService(makePrisma(), mkAudit());
     await expect(svc.updateSettings(SUPER, { planLimits: { FREE: { seats: 1.5 } } }))
-      .rejects.toThrow("planLimits.FREE.seats must be a non-negative integer");
+      .rejects.toMatchObject({ code: "admin.planlimitsMustBeANonNegative" });
   });
 
   it("(f) non-object planLimits → 400; non-object tier → 400", async () => {
     const svc = new AdminService(makePrisma(), mkAudit());
-    await expect(svc.updateSettings(SUPER, { planLimits: "nope" as any })).rejects.toThrow(/planLimits must be an object/);
-    await expect(svc.updateSettings(SUPER, { planLimits: { GROWTH: 5 as any } })).rejects.toThrow(/planLimits\.GROWTH must be an object/);
-    await expect(svc.updateSettings(SUPER, { planLimits: null as any })).rejects.toThrow(/planLimits must be an object/);
-    await expect(svc.updateSettings(SUPER, { planLimits: [] as any })).rejects.toThrow(/planLimits must be an object/);
+    await expect(svc.updateSettings(SUPER, { planLimits: "nope" as any })).rejects.toMatchObject({ code: "admin.planlimitsMustBeAnObject" });
+    await expect(svc.updateSettings(SUPER, { planLimits: { GROWTH: 5 as any } })).rejects.toMatchObject({ code: "admin.planlimitsMustBeAnObject2" });
+    await expect(svc.updateSettings(SUPER, { planLimits: null as any })).rejects.toMatchObject({ code: "admin.planlimitsMustBeAnObject" });
+    await expect(svc.updateSettings(SUPER, { planLimits: [] as any })).rejects.toMatchObject({ code: "admin.planlimitsMustBeAnObject" });
   });
 
   it("(g) accepts planLimits (including 0) and getSettings returns merged + stored", async () => {

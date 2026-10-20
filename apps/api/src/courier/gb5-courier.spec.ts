@@ -87,7 +87,7 @@ describe("GB5 registry", () => {
     // OU6: paperfly now builds the DEVELOPMENT adapter client
     // (never a live client — see ou6-courier.spec.ts).
     expect(createCourierClient("paperfly", {})).toBeInstanceOf(PaperflyDevAdapterClient);
-    expect(() => createCourierClient("sundarban" as any, {})).toThrow(/Unknown courier provider/);
+    expect(() => createCourierClient("sundarban" as any, {})).toThrow(expect.objectContaining({ code: "courier.unknownCourierProvider", status: 400 }));
   });
 
   it("adapters expose the provider key and the neutral contract", async () => {
@@ -374,7 +374,7 @@ describe("GB5 GC14 — event log + manual status through the shared applicator",
     const out: any = await svc.listShipmentEvents("org-1", shipment.id);
     expect(out.shipment.id).toBe(shipment.id);
     expect(out.events.length).toBeGreaterThanOrEqual(1);
-    await expect(svc.listShipmentEvents("org-2", shipment.id)).rejects.toThrow(/not found/i);
+    await expect(svc.listShipmentEvents("org-2", shipment.id)).rejects.toMatchObject({ code: "courier.shipmentNotFound", status: 404 });
   });
 });
 

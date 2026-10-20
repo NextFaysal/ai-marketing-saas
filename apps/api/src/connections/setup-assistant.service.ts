@@ -27,6 +27,7 @@ import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ConnectionsService } from "./connections.service";
 import { WalletService } from "./wallet.service";
+import { badRequest } from "../i18n";
 
 export type FindingSeverity = "blocker" | "improvement" | "info";
 
@@ -285,7 +286,7 @@ export class SetupAssistantService {
   async dismiss(organizationId: string, userId: string, findingKey: string) {
     const base = String(findingKey ?? "").split(":")[0];
     if (!(ASSISTANT_FINDING_KEYS as readonly string[]).includes(base ?? "")) {
-      throw new BadRequestException("অজানা finding — এটি dismiss করা যাবে না।");
+      throw badRequest("connections.unknownFindingNoDismiss");
     }
     await (this.prisma as any).setupFindingDismissal.upsert({
       where: { organizationId_userId_findingKey: { organizationId, userId, findingKey } },

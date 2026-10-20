@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +13,7 @@ import { detectMediaKind } from "../inbox/media-sniff";
 import { storedAssetPublicUrl } from "../storage/media-url";
 import { escapeXml } from "./social-image.service";
 import type { BrandOverlayMediaDto, BulkMediaDto, CreateMediaFolderDto, EditMediaAssetDto, UpdateMediaAssetDto, UpdateMediaFolderDto } from "./social.dto";
+import { ApiException, badRequest, conflict, notFound } from "../i18n/api-exception";
 
 const execFileAsync = promisify(execFile);
 
@@ -96,7 +97,7 @@ export class SocialMediaLibraryService {
    */
   imageEditor: (bytes: Buffer, aspect: string) => Promise<Buffer> = async (bytes, aspect) => {
     const ratio = ASPECT_RATIOS[aspect];
-    if (!ratio) throw new BadRequestException(`অসমর্থিত aspect ratio: ${aspect}`);
+    if (!ratio) throw badRequest("social.unsupportedAspectRatio", { aspect: aspect });
     const meta = await sharp(bytes).metadata();
     let pipeline = sharp(bytes);
     if (meta.width && meta.height) {
@@ -168,7 +169,7 @@ export class SocialMediaLibraryService {
     const meta = await sharp(baseBytes).metadata();
     const w = meta.width ?? 0;
     const h = meta.height ?? 0;
-    if (!w || !h) throw new BadRequestException("ছবিটির আকার পড়া যাচ্ছে না — overlay করা গেল না।");
+    if (!w || !h) throw badRequest("social.theImageSizeCouldNotBe");
 
     const composites: { input: Buffer; left?: number; top?: number }[] = [];
     if (opts.position === "corner") {
@@ -256,7 +257,7 @@ export class SocialMediaLibraryService {
 
   private validateFolderName(name: unknown): string {
     const trimmed = typeof name === "string" ? name.trim() : "";
-    if (!trimmed) throw new BadRequestException("ফোল্ডারের নাম দিন।");
+    if (!trimmed) throw badRequest("social.giveTheFolderAName");
     return trimmed;
   }
 
@@ -265,12 +266,12 @@ export class SocialMediaLibraryService {
     const clash = (Array.isArray(rows) ? rows : []).some(
       (r: any) => r.id !== excludeId && typeof r.name === "string" && r.name.toLowerCase() === name.toLowerCase(),
     );
-    if (clash) throw new ConflictException("এই নামে একটি ফোল্ডার আগেই আছে।");
+    if (clash) throw conflict("social.aFolderWithThisNameAlready");
   }
 
   private async getFolderRow(organizationId: string, folderId: string) {
     const row = await (this.prisma as any).mediaFolder.findFirst({ where: { id: folderId, organizationId } });
-    if (!row) throw new NotFoundException("Media folder not found in this organization");
+    if (!row) throw notFound("social.mediaFolderNotFoundInThis");
     return row;
   }
 
@@ -333,7 +334,7 @@ export class SocialMediaLibraryService {
 
   private async getAssetRow(organizationId: string, assetId: string) {
     const asset = await (this.prisma as any).mediaAsset.findFirst({ where: { id: assetId, organizationId } });
-    if (!asset) throw new NotFoundException("Media asset not found in this organization");
+    if (!asset) throw notFound("social.mediaAssetNotFoundInThis");
     return asset;
   }
 
@@ -362,7 +363,7 @@ export class SocialMediaLibraryService {
     const fields: string[] = [];
     if (dto.name !== undefined) {
       const name = typeof dto.name === "string" ? dto.name.trim() : "";
-      if (!name) throw new BadRequestException("মিডিয়ার নাম খালি রাখা যাবে না।");
+      if (!name) throw badRequest("social.theMediaNameCannotBeLeft");
       data.name = name;
       fields.push("name");
     }
@@ -373,7 +374,7 @@ export class SocialMediaLibraryService {
         const folder = await (this.prisma as any).mediaFolder.findFirst({
           where: { id: dto.folderId, organizationId },
         });
-        if (!folder) throw new BadRequestException("ফোল্ডারটি পাওয়া যায়নি");
+        if (!folder) throw badRequest("social.theFolderWasNotFound");
         data.folderId = folder.id;
       }
       fields.push("folderId");
@@ -416,7 +417,7 @@ export class SocialMediaLibraryService {
 
   async bulkMedia(organizationId: string, actorId: string, dto: BulkMediaDto) {
     const ids = Array.isArray(dto.ids) ? dto.ids : [];
-    if (ids.length === 0) throw new BadRequestException("কোনো মিডিয়া নির্বাচন করা হয়নি।");
+    if (ids.length === 0) throw badRequest("social.noMediaHasBeenSelected");
     // A move target is validated ONCE up front (null = make the
     // assets folderless, which is always valid).
     let targetFolderId: string | null = null;
@@ -424,7 +425,7 @@ export class SocialMediaLibraryService {
       const folder = await (this.prisma as any).mediaFolder.findFirst({
         where: { id: dto.folderId, organizationId },
       });
-      if (!folder) throw new BadRequestException("ফোল্ডারটি পাওয়া যায়নি");
+      if (!folder) throw badRequest("social.theFolderWasNotFound");
       targetFolderId = folder.id;
     }
     const results: { id: string; ok: boolean; error?: string }[] = [];
@@ -503,10 +504,10 @@ export class SocialMediaLibraryService {
   async editAsset(organizationId: string, actorId: string, assetId: string, dto: EditMediaAssetDto) {
     const asset = await this.getAssetRow(organizationId, assetId);
     if (asset.kind !== "image") {
-      throw new BadRequestException("শুধু ছবির aspect ratio বদলানো যায় — এটি একটি ভিডিও ফাইল।");
+      throw badRequest("social.onlyAnImageSAspectRatio");
     }
     const bytes = await this.readBytes(asset.storageKey);
-    if (!bytes) throw new NotFoundException("Media bytes not found in storage");
+    if (!bytes) throw notFound("social.mediaBytesNotFoundInStorage");
     const edited = await this.imageEditor(bytes, dto.aspect);
     const derived = await this.createDerivedAsset(organizationId, actorId, asset, {
       name: `${asset.name} (${dto.aspect})`, bytes: edited,
@@ -522,15 +523,15 @@ export class SocialMediaLibraryService {
   async coverFromVideo(organizationId: string, actorId: string, assetId: string, atSeconds?: number) {
     const asset = await this.getAssetRow(organizationId, assetId);
     if (asset.kind !== "video") {
-      throw new BadRequestException("শুধু ভিডিও থেকেই cover তোলা যায় — এটি একটি ছবি ফাইল।");
+      throw badRequest("social.aCoverCanOnlyBeTaken");
     }
     if (!(await this.ffmpegAvailable())) {
       // Honest unavailability: no row is created, nothing is
       // faked — the feature simply is not there on this host.
-      throw new BadRequestException("এই সার্ভারে ffmpeg পাওয়া যায়নি — ভিডিও থেকে cover তোলা এখন সম্ভব নয়। Server-এ ffmpeg install থাকলে এই feature কাজ করবে।");
+      throw badRequest("social.ffmpegWasNotFoundOnThis");
     }
     const bytes = await this.readBytes(asset.storageKey);
-    if (!bytes) throw new NotFoundException("Media bytes not found in storage");
+    if (!bytes) throw notFound("social.mediaBytesNotFoundInStorage");
     let frame: Buffer;
     try {
       frame = await this.frameExtractor(bytes, atSeconds ?? 1);
@@ -567,7 +568,7 @@ export class SocialMediaLibraryService {
   async brandOverlay(organizationId: string, actorId: string, assetId: string, dto: BrandOverlayMediaDto) {
     const asset = await this.getAssetRow(organizationId, assetId);
     if (asset.kind !== "image") {
-      throw new BadRequestException("Brand overlay শুধু ছবিতে বসানো যায় — ভিডিওতে overlay এই মুহূর্তে নেই।");
+      throw badRequest("social.brandOverlayCanOnlyBePlaced");
     }
     const position = dto.position === "top" || dto.position === "corner" ? dto.position : "bottom";
 
@@ -582,24 +583,24 @@ export class SocialMediaLibraryService {
     if (dto.logoAssetId) {
       const logoAsset = await this.getAssetRow(organizationId, dto.logoAssetId);
       if (logoAsset.kind !== "image") {
-        throw new BadRequestException("Logo হিসেবে একটি ছবি (image) asset বেছে নিন।");
+        throw badRequest("social.logoImageAsset");
       }
       logoBytes = await this.readBytes(logoAsset.storageKey);
-      if (!logoBytes) throw new NotFoundException("Logo ছবির bytes storage-এ পাওয়া যায়নি");
+      if (!logoBytes) throw notFound("social.logoBytesStorage");
     } else if (org?.logoContentType) {
       logoBytes = await this.readBytes(`branding/${organizationId}/logo`).catch(() => null);
     }
     if (position === "corner" && !logoBytes) {
-      throw new BadRequestException("Corner overlay-এর জন্য একটি Logo লাগবে — Branding-এ logo আপলোড করুন অথবা Library থেকে একটি logo ছবি বেছে দিন, না হলে উপরে/নিচে bar বেছে নিন।");
+      throw badRequest("social.aLogoIsNeededForA");
     }
 
     const bytes = await this.readBytes(asset.storageKey);
-    if (!bytes) throw new NotFoundException("Media bytes not found in storage");
+    if (!bytes) throw notFound("social.mediaBytesNotFoundInStorage");
     let composed: Buffer;
     try {
       composed = await this.overlayComposer(bytes, logoBytes, { position, barColor, brandName });
     } catch (e) {
-      if (e instanceof BadRequestException) throw e;
+      if (e instanceof ApiException && e.getStatus() === 400) throw e;
       throw new BadRequestException(e instanceof Error ? e.message : String(e));
     }
     const derived = await this.createDerivedAsset(organizationId, actorId, asset, {

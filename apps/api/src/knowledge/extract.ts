@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { unzipSync } from "fflate";
+import { badRequest } from "../i18n/api-exception";
 
 // pdf-parse v1.1.1, imported via its lib entry on purpose: the
 // package index runs debug file-reads when module.parent is falsy,
@@ -68,11 +69,11 @@ function decodePlainText(bytes: Buffer): string {
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new BadRequestException("ফাইলটি পাঠযোগ্য টেক্সট (UTF-8) নয়");
+    throw badRequest("knowledge.theFileIsNotReadableText");
   }
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
-    throw new BadRequestException("ফাইলটি পাঠযোগ্য টেক্সট (UTF-8) নয়");
+    throw badRequest("knowledge.theFileIsNotReadableText");
   }
   return text;
 }
@@ -109,30 +110,30 @@ export function docxXmlToText(xml: string): string {
 
 function extractDocxText(bytes: Buffer): string {
   if (!isZip(bytes)) {
-    throw new BadRequestException("ফাইলের আসল ফরম্যাট এক্সটেনশনের সঙ্গে মিলছে না");
+    throw badRequest("knowledge.theFileSRealFormatDoes");
   }
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(new Uint8Array(bytes));
   } catch {
-    throw new BadRequestException("ফাইলটি খোলা যায়নি — ফাইলটি ক্ষতিগ্রস্ত হতে পারে");
+    throw badRequest("knowledge.theFileCouldNotBeOpened");
   }
   const docXml = files["word/document.xml"];
   if (!docXml) {
-    throw new BadRequestException("এটি বৈধ .docx ফাইল নয় (word/document.xml পাওয়া যায়নি)");
+    throw badRequest("knowledge.thisIsNotAValidDocx");
   }
   let xml: string;
   try {
     xml = new TextDecoder("utf-8", { fatal: true }).decode(docXml);
   } catch {
-    throw new BadRequestException("docx ফাইলের ভেতরের লেখা পড়া যায়নি");
+    throw badRequest("knowledge.theTextInsideTheDocxFile");
   }
   return docxXmlToText(xml);
 }
 
 async function extractPdfText(bytes: Buffer): Promise<string> {
   if (!startsWithAscii(bytes, "%PDF-")) {
-    throw new BadRequestException("ফাইলের আসল ফরম্যাট এক্সটেনশনের সঙ্গে মিলছে না");
+    throw badRequest("knowledge.theFileSRealFormatDoes");
   }
   // pdf.js (inside pdf-parse) reads the raw underlying ArrayBuffer
   // in places, ignoring byteOffset — a pooled Node Buffer (multer's,
@@ -144,7 +145,7 @@ async function extractPdfText(bytes: Buffer): Promise<string> {
     const result = await pdfParse(standalone);
     return result.text ?? "";
   } catch {
-    throw new BadRequestException("PDF ফাইলটি পড়া যায়নি — ফাইলটি ক্ষতিগ্রস্ত হতে পারে");
+    throw badRequest("knowledge.thePdfFileCouldNotBe");
   }
 }
 
@@ -156,9 +157,9 @@ async function extractPdfText(bytes: Buffer): Promise<string> {
 export async function extractKnowledgeText(filename: string, bytes: Buffer): Promise<string> {
   const ext = fileExtension(filename);
   if (!ext || !(SUPPORTED as readonly string[]).includes(ext)) {
-    throw new BadRequestException(
-      `সমর্থিত নয় এমন ফাইল টাইপ${ext ? ` (.${ext})` : ""} — শুধু .pdf, .docx, .txt, .md ফাইল আপলোড করা যাবে`,
-    );
+    throw badRequest("knowledge.unsupportedFileType", {
+      p1: ext ? ` (.${ext})` : "",
+    });
   }
   let text: string;
   if (ext === "txt" || ext === "md") {
@@ -171,10 +172,10 @@ export async function extractKnowledgeText(filename: string, bytes: Buffer): Pro
   const trimmed = text.trim();
   if (!trimmed) {
     if (ext === "pdf") throw new BadRequestException(SCANNED_PDF_MESSAGE);
-    throw new BadRequestException("ফাইল থেকে কোনো লেখা পাওয়া যায়নি");
+    throw badRequest("knowledge.noTextWasFoundInThe");
   }
   if (trimmed.length > MAX_TEXT_CHARS) {
-    throw new BadRequestException("ফাইলের লেখা অনেক বড় (সর্বোচ্চ ২০০,০০০ অক্ষর)");
+    throw badRequest("knowledge.theFileTextIsTooLarge");
   }
   return trimmed;
 }

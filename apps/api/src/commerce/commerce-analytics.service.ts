@@ -5,6 +5,7 @@ import { chooseCostForDate } from "../analytics/metrics";
 import { dhakaDayStartUtc } from "../crm/lead-followups";
 import { computeStockDiverged, pendingOutboxKeys } from "./stock-divergence";
 import { AbandonedCheckoutsService } from "./abandoned-checkouts.service";
+import { badRequest } from "../i18n";
 
 /**
  * EC11 — per-store commerce analytics (read-only).
@@ -42,7 +43,7 @@ function parseDays(daysInput: unknown, def: number): number {
   const days =
     daysInput === undefined || daysInput === null || daysInput === "" ? def : Number(daysInput);
   if (!Number.isInteger(days) || days < 1 || days > 365) {
-    throw new BadRequestException("days must be an integer between 1 and 365");
+    throw badRequest("commerce.daysRange");
   }
   return days;
 }
@@ -51,7 +52,7 @@ function parseLimit(limitInput: unknown, def: number, max: number): number {
   const limit =
     limitInput === undefined || limitInput === null || limitInput === "" ? def : Number(limitInput);
   if (!Number.isInteger(limit) || limit < 1 || limit > max) {
-    throw new BadRequestException(`limit must be an integer between 1 and ${max}`);
+    throw badRequest("commerce.limitRange", { max: max });
   }
   return limit;
 }

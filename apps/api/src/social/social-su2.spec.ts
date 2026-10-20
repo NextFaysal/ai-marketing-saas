@@ -177,7 +177,7 @@ describe("SU2 slot CRUD", () => {
     const { queue } = services(db);
     await queue.createSlot(ORG, ACTOR, { socialAccountId: "sacc-1", weekday: 1, time: "09:00", enabled: false } as any);
     const err = await queue.createSlot(ORG, ACTOR, { socialAccountId: "sacc-1", weekday: 1, time: "09:00" } as any).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
+    expect(err).toMatchObject({ code: "social.aSlotAlreadyExistsForThis" });
   });
 
   it("invalid time → Bengali 400; foreign account → 404", async () => {
@@ -185,10 +185,10 @@ describe("SU2 slot CRUD", () => {
     seedAccount(db, { id: "sacc-foreign", organizationId: ORG2 });
     const { queue } = services(db);
     const bad = await queue.createSlot(ORG, ACTOR, { socialAccountId: "sacc-1", weekday: 1, time: "25:99" } as any).catch((e) => e);
-    expect(bad).toBeInstanceOf(BadRequestException);
+    expect(bad).toMatchObject({ code: "social.slotHhMm1030" });
     expect(bad.message).toContain("HH:MM");
     const foreign = await queue.createSlot(ORG, ACTOR, { socialAccountId: "sacc-foreign", weekday: 1, time: "09:00" } as any).catch((e) => e);
-    expect(foreign).toBeInstanceOf(NotFoundException);
+    expect(foreign).toMatchObject({ code: "social.socialAccountNotFoundInThis" });
   });
 });
 
@@ -224,7 +224,7 @@ describe("SU2 addToQueue", () => {
     const post = seedPost(db);
     const { queue } = services(db);
     const err = await queue.addToQueue(ORG, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.thereIsNoPostingSlotFor" });
     expect(err.message).toContain("কোনো Posting Slot নেই");
   });
 
@@ -252,7 +252,7 @@ describe("SU2 addToQueue", () => {
     const post = seedPost(db, { status: "published", publishedAt: new Date() });
     const { queue } = services(db);
     const err = await queue.addToQueue(ORG, ACTOR, post.id).catch((e) => e);
-    expect(err).toBeInstanceOf(ConflictException);
+    expect(err).toMatchObject({ code: "social.thePostCannotBeQueuedIn" });
   });
 });
 
@@ -273,7 +273,7 @@ describe("SU2 scheduleBestTime", () => {
     const target = seedPost(db);
     const { queue } = services(db);
     const err = await queue.scheduleBestTime(ORG, ACTOR, target.id).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.thereIsNotEnoughDataTo" });
     expect(err.message).toContain("৯টি");
     expect(err.message).toContain("১০টি");
   });

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, Optional } from "@n
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CompletePackingScanDto, ScanItemVerifyDto, StartPackingScanDto, VisionLabelScanDto } from "./packing-scan.dto";
+import { badRequest, notFound } from "../i18n";
 
 @Injectable()
 export class PackingScanService {
@@ -21,11 +22,11 @@ export class PackingScanService {
     });
 
     if (!order) {
-      throw new NotFoundException("অর্ডারটি খুঁজে পাওয়া যায়নি");
+      throw notFound("orders.orderNotFoundAlt");
     }
 
     if (!order.items || order.items.length === 0) {
-      throw new BadRequestException("অর্ডারে কোনো আইটেম নেই, স্ক্যান করা সম্ভব নয়");
+      throw badRequest("orders.orderNoItemsToScan");
     }
 
     // Check if an existing in-progress scan exists
@@ -84,11 +85,11 @@ export class PackingScanService {
     });
 
     if (!scanLog) {
-      throw new NotFoundException("স্ক্যান সেশন পাওয়া যায়নি");
+      throw notFound("orders.scanSessionNotFound");
     }
 
     if (scanLog.status !== "in_progress") {
-      throw new BadRequestException("এই প্যাকিং স্ক্যান সেশনটি ইতিমধ্যে সমাপ্ত হয়েছে");
+      throw badRequest("orders.scanSessionCompleted");
     }
 
     const querySku = (dto.sku || dto.barcode || "").trim().toLowerCase();
@@ -163,12 +164,12 @@ export class PackingScanService {
       include: { items: true },
     });
 
-    if (!scanLog) throw new NotFoundException("স্ক্যান সেশন পাওয়া যায়নি");
+    if (!scanLog) throw notFound("orders.scanSessionNotFound");
 
     const hasMismatch = scanLog.items.some((it: any) => it.scannedQty !== it.expectedQty);
 
     if (hasMismatch && !dto.overrideMismatch) {
-      throw new BadRequestException("সবগুলো আইটেম সঠিকভাবে মেলেনি। নিশ্চিত হতে overrideMismatch ফ্ল্যাগ দিন।");
+      throw badRequest("orders.scanMismatchNeedsOverride");
     }
 
     const finalStatus = hasMismatch ? "overridden" : "verified";
@@ -202,7 +203,7 @@ export class PackingScanService {
   async scanLabelVision(organizationId: string, dto: VisionLabelScanDto, fetchFn: typeof fetch = fetch) {
     const bytes = Buffer.from(dto.imageBase64, "base64");
     if (!bytes || bytes.length === 0) {
-      throw new BadRequestException("ছবি ডেটা পাওয়া যায়নি");
+      throw badRequest("orders.imageDataMissing");
     }
 
     const providerName = (process.env.LLM_PROVIDER ?? "").toLowerCase();

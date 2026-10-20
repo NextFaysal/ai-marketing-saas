@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { CreatePolicyDto, UpdatePolicyDto, CreateKnowledgeDocDto, UpdateKnowledgeDocDto, IngestKnowledgeFileDto } from "./knowledge.dto";
 import { baseTitleFromFilename, chunkKnowledgeText, extractKnowledgeText } from "./extract";
 import { KnowledgeIndexingService } from "../ai/knowledge-indexing.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SA-B1 (Smart AI Phase 0, P3): the visibility a new knowledge
@@ -59,14 +60,14 @@ export class KnowledgeService {
   }
   async updatePolicy(organizationId: string, actorId: string, policyId: string, dto: UpdatePolicyDto) {
     const existing = await (this.prisma as any).businessPolicy.findFirst({ where: { id: policyId, organizationId } });
-    if (!existing) throw new NotFoundException("Policy not found in this organization");
+    if (!existing) throw notFound("knowledge.policyNotFoundInThisOrganization");
     const updated = await (this.prisma as any).businessPolicy.update({ where: { id: policyId }, data: dto });
     await this.audit.log({ organizationId, userId: actorId, action: "policy.update", entityType: "BusinessPolicy", entityId: policyId });
     return updated;
   }
   async deletePolicy(organizationId: string, actorId: string, policyId: string) {
     const existing = await (this.prisma as any).businessPolicy.findFirst({ where: { id: policyId, organizationId } });
-    if (!existing) throw new NotFoundException("Policy not found in this organization");
+    if (!existing) throw notFound("knowledge.policyNotFoundInThisOrganization");
     await (this.prisma as any).businessPolicy.delete({ where: { id: policyId } });
     await this.audit.log({ organizationId, userId: actorId, action: "policy.delete", entityType: "BusinessPolicy", entityId: policyId });
     return { deleted: true };
@@ -95,7 +96,7 @@ export class KnowledgeService {
    */
   async updateDoc(organizationId: string, actorId: string, docId: string, dto: UpdateKnowledgeDocDto) {
     const existing = await (this.prisma as any).knowledgeDocument.findFirst({ where: { id: docId, organizationId } });
-    if (!existing) throw new NotFoundException("Document not found in this organization");
+    if (!existing) throw notFound("knowledge.documentNotFoundInThisOrganization");
     const data: Record<string, unknown> = {};
     if (dto.title !== undefined) data.title = dto.title;
     if (dto.content !== undefined) data.content = dto.content;
@@ -120,12 +121,12 @@ export class KnowledgeService {
     file: { originalname?: string; buffer?: Buffer } | undefined,
   ) {
     if (!file || !file.buffer || file.buffer.length === 0) {
-      throw new BadRequestException("কোনো ফাইল পাওয়া যায়নি");
+      throw badRequest("knowledge.noFileWasFound");
     }
     const filename = file.originalname ?? "file";
     const text = await extractKnowledgeText(filename, file.buffer);
     const chunks = chunkKnowledgeText(text);
-    if (!chunks.length) throw new BadRequestException("ফাইল থেকে কোনো লেখা পাওয়া যায়নি");
+    if (!chunks.length) throw badRequest("knowledge.noTextWasFoundInThe");
     const baseTitle = baseTitleFromFilename(filename);
     const total = chunks.length;
     const created: any[] = [];
@@ -150,7 +151,7 @@ export class KnowledgeService {
   }
   async deleteDoc(organizationId: string, actorId: string, docId: string) {
     const existing = await (this.prisma as any).knowledgeDocument.findFirst({ where: { id: docId, organizationId } });
-    if (!existing) throw new NotFoundException("Document not found in this organization");
+    if (!existing) throw notFound("knowledge.documentNotFoundInThisOrganization");
     await (this.prisma as any).knowledgeDocument.delete({ where: { id: docId } });
     await this.audit.log({ organizationId, userId: actorId, action: "knowledge.delete", entityType: "KnowledgeDocument", entityId: docId });
     this.unindexDoc(organizationId, docId);
@@ -164,14 +165,14 @@ export class KnowledgeService {
    * and saves each chunk as a KnowledgeDocument with sourceFile & chunkIndex.
    */
   async ingestFile(organizationId: string, actorId: string, dto: IngestKnowledgeFileDto) {
-    if (!dto.dataBase64) throw new BadRequestException("ফাইল ডেটা (base64) প্রয়োজন");
+    if (!dto.dataBase64) throw badRequest("knowledge.fileDataBase64IsRequired");
     const buffer = Buffer.from(dto.dataBase64, "base64");
-    if (buffer.length === 0) throw new BadRequestException("খালি ফাইল আপলোড করা যাবে না");
-    if (buffer.length > 10 * 1024 * 1024) throw new BadRequestException("ফাইলের সাইজ সর্বোচ্চ 10MB হতে পারে");
+    if (buffer.length === 0) throw badRequest("knowledge.anEmptyFileCannotBeUploaded");
+    if (buffer.length > 10 * 1024 * 1024) throw badRequest("knowledge.theFileSizeCanBeAt");
 
     const text = this.extractTextFromFile(dto.filename, buffer);
     if (!text || text.trim().length < 5) {
-      throw new BadRequestException("ফাইলের ভেতর কোনো পাঠযোগ্য তথ্য পাওয়া যায়নি");
+      throw badRequest("knowledge.noReadableInformationWasFoundInside");
     }
 
     const chunks = this.chunkText(text.trim(), 1500);

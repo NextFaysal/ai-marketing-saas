@@ -56,8 +56,8 @@ describe("CustomersService.update (CRM C4 — the first customer PATCH)", () => 
   it("validates custom values (bad date 400s, unknown key 400s) and 404s across orgs", async () => {
     const { svc } = await setup();
     await expect(svc.update("org-1", "a", "c1", { customFields: { since: "15-01-2024" } })).rejects.toThrow(/YYYY-MM-DD/);
-    await expect(svc.update("org-1", "a", "c1", { customFields: { nope: "x" } })).rejects.toThrow('Unknown custom field: "nope"');
-    await expect(svc.update("org-2", "a", "c1", { firstName: "X" })).rejects.toThrow("not found");
+    await expect(svc.update("org-1", "a", "c1", { customFields: { nope: "x" } })).rejects.toMatchObject({ code: "crm.unknownCustomFieldFor" });
+    await expect(svc.update("org-2", "a", "c1", { firstName: "X" })).rejects.toMatchObject({ code: "customers.customerNotFoundInThisOrganization" });
   });
 
   it("customFields: null clears all values", async () => {

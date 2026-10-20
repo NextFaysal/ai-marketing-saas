@@ -207,7 +207,7 @@ describe("SN2 share link creation", () => {
     expect(diffDays).toBeLessThan(3.1);
     for (const bad of [0, -1, 366, 2.5, "seven"]) {
       const err = await shares.createShareLink(ORG, ACTOR, { postId: "post-1" }, { expiresInDays: bad }).catch((e) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toMatchObject({ code: "social.theExpiryMustBeBetween1" });
     }
     expect(db.shareLinks).toHaveLength(1); // only the valid one was written
   });
@@ -220,9 +220,9 @@ describe("SN2 share link creation", () => {
     expect(out.postId).toBeNull();
     expect(db.shareLinks[0].groupId).toBe("group-1");
     expect(db.shareLinks[0].postId).toBeNull();
-    await expect(shares.createShareLink(ORG, ACTOR, { postId: "nope" }, {})).rejects.toBeInstanceOf(NotFoundException);
-    await expect(shares.createShareLink(ORG, ACTOR, { groupId: "nope" }, {})).rejects.toBeInstanceOf(NotFoundException);
-    await expect(shares.createShareLink(ORG, ACTOR, { postId: "post-1", groupId: "group-1" }, {})).rejects.toBeInstanceOf(BadRequestException);
+    await expect(shares.createShareLink(ORG, ACTOR, { postId: "nope" }, {})).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
+    await expect(shares.createShareLink(ORG, ACTOR, { groupId: "nope" }, {})).rejects.toMatchObject({ code: "social.socialPostGroupNotFoundIn" });
+    await expect(shares.createShareLink(ORG, ACTOR, { postId: "post-1", groupId: "group-1" }, {})).rejects.toMatchObject({ code: "social.aShareLinkIsForOne" });
   });
 });
 
@@ -257,7 +257,7 @@ describe("SN2 share link list + revoke", () => {
     const serialized = JSON.stringify(list);
     for (const t of fullTokens) expect(serialized).not.toContain(t);
     expect(byId.get("link-old").tokenMasked).toBe("…7890");
-    await expect(shares.listShareLinksForPost(ORG, "missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(shares.listShareLinksForPost(ORG, "missing")).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 
   it("revoke: row kept with revokedAt, audited, public GET + review both 410", async () => {
@@ -271,34 +271,34 @@ describe("SN2 share link list + revoke", () => {
     expect(db.shareLinks[0].revokedAt).toBeTruthy();
     expect(db.auditInputs.some((a: Row) => a.action === "social.share_link_revoked" && a.entityId === out.id)).toBe(true);
     const getErr = await shares.getPublicShare(token).catch((e) => e);
-    expect(getErr).toBeInstanceOf(GoneException);
+    expect(getErr).toMatchObject({ code: "social.thisShareLinkHasBeenRevoked" });
     expect(getErr.getStatus()).toBe(410);
     expect(getErr.message).toContain("বাতিল");
     const reviewErr = await shares.submitPublicReview(token, { postId: "post-1", reviewerName: "ক্লায়েন্ট", decision: "approved" }).catch((e) => e);
-    expect(reviewErr).toBeInstanceOf(GoneException);
+    expect(reviewErr).toMatchObject({ code: "social.thisShareLinkHasBeenRevoked" });
     expect(reviewErr.getStatus()).toBe(410);
-    await expect(shares.revokeShareLink(ORG, ACTOR, "missing")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(shares.revokeShareLink(ORG, ACTOR, "missing")).rejects.toMatchObject({ code: "social.shareLinkNotFoundInThis" });
   });
 
   it("unknown token → 404 on GET and review; expired link → 410 with the expiry message", async () => {
     const db = fakeDb(); seedAccount(db); seedPost(db);
     const { shares } = services(db);
     const nf = await shares.getPublicShare("no-such-token").catch((e) => e);
-    expect(nf).toBeInstanceOf(NotFoundException);
+    expect(nf).toMatchObject({ code: "social.theShareLinkWasNotFound" });
     expect(nf.getStatus()).toBe(404);
     await expect(shares.submitPublicReview("no-such-token", { postId: "post-1", reviewerName: "x", decision: "approved" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toMatchObject({ code: "social.theShareLinkWasNotFound" });
     db.shareLinks.push({
       id: "link-exp", organizationId: ORG, postId: "post-1", groupId: null,
       token: "expired-live-token-abcdef", expiresAt: new Date(Date.now() - 60_000),
       revokedAt: null, createdById: ACTOR, createdAt: new Date(Date.now() - 8 * 86_400_000),
     });
     const gone = await shares.getPublicShare("expired-live-token-abcdef").catch((e) => e);
-    expect(gone).toBeInstanceOf(GoneException);
+    expect(gone).toMatchObject({ code: "social.thisShareLinkHasExpiredContact" });
     expect(gone.getStatus()).toBe(410);
     expect(gone.message).toContain("মেয়াদ শেষ");
     await expect(shares.submitPublicReview("expired-live-token-abcdef", { postId: "post-1", reviewerName: "x", decision: "approved" }))
-      .rejects.toBeInstanceOf(GoneException);
+      .rejects.toMatchObject({ code: "social.thisShareLinkHasExpiredContact" });
     expect(db.clientReviews).toHaveLength(0);
   });
 });
@@ -398,18 +398,18 @@ describe("SN2 public review", () => {
     const db = fakeDb(); seedAccount(db); seedPost(db); seedPost(db, { id: "post-2" });
     const { shares } = services(db);
     const { token } = await makeLink(db, shares);
-    const cases: Row[] = [
-      { postId: "post-1", reviewerName: "   ", decision: "approved" },
-      { postId: "post-1", decision: "approved" },
-      { postId: "post-1", reviewerName: "নাম", decision: "ok" },
-      { postId: "post-1", reviewerName: "নাম", decision: "" },
-      { reviewerName: "নাম", decision: "approved" },
-      { postId: "post-2", reviewerName: "নাম", decision: "approved" }, // outside this link's scope
-      { postId: "ghost", reviewerName: "নাম", decision: "approved" },
+    const cases: [Row, string][] = [
+      [{ postId: "post-1", reviewerName: "   ", decision: "approved" }, "social.giveYourNameAReviewCannot"],
+      [{ postId: "post-1", decision: "approved" }, "social.giveYourNameAReviewCannot"],
+      [{ postId: "post-1", reviewerName: "নাম", decision: "ok" }, "social.asADecisionOnlyApprovedOr"],
+      [{ postId: "post-1", reviewerName: "নাম", decision: "" }, "social.asADecisionOnlyApprovedOr"],
+      [{ reviewerName: "নাম", decision: "approved" }, "social.sayWhichPostThisReviewIs"],
+      [{ postId: "post-2", reviewerName: "নাম", decision: "approved" }, "social.thisPostIsNotCoveredBy"], // outside this link's scope
+      [{ postId: "ghost", reviewerName: "নাম", decision: "approved" }, "social.thisPostIsNotCoveredBy"],
     ];
-    for (const body of cases) {
+    for (const [body, code] of cases) {
       const err = await shares.submitPublicReview(token, body).catch((e) => e);
-      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toMatchObject({ code });
       expect(err.getStatus()).toBe(400);
     }
     expect(db.clientReviews).toHaveLength(0);
@@ -424,7 +424,7 @@ describe("SN2 public review", () => {
     const ok: any = await shares.submitPublicReview(token, { postId: "post-1", reviewerName: "ক্লায়েন্ট", decision: "approved" });
     expect(ok.decision).toBe("approved");
     const err = await shares.submitPublicReview(token, { postId: "post-9", reviewerName: "ক্লায়েন্ট", decision: "approved" }).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.thisPostIsNotCoveredBy" });
     expect(db.clientReviews).toHaveLength(1);
   });
 

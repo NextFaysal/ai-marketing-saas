@@ -114,14 +114,14 @@ describe("W4 branch", () => {
     await expect(svc.create("org", "u1", {
       name: "N", trigger: "lead_created",
       steps: [{ type: "branch", field: "x", op: "eq", value: 1, then: [{ type: "branch", field: "y", op: "eq", value: 2, then: [{ type: "add_lead_activity", text: "z" }], else: [] }], else: [] }],
-    })).rejects.toThrow(/nest/);
+    })).rejects.toMatchObject({ code: "workflows.branchStepsCannotNestInsideA" });
     await expect(svc.create("org", "u1", {
       name: "W", trigger: "lead_created",
       steps: [{ type: "branch", field: "x", op: "eq", value: 1, then: [{ type: "wait", minutes: 5 }], else: [] }],
-    })).rejects.toThrow(/wait steps are not allowed/);
+    })).rejects.toMatchObject({ code: "workflows.waitStepsAreNotAllowedInside" });
     await expect(svc.create("org", "u1", {
       name: "E", trigger: "lead_created",
       steps: [{ type: "branch", field: "x", op: "eq", value: 1, then: [], else: [] }],
-    })).rejects.toThrow(/at least one sub-step/);
+    })).rejects.toMatchObject({ code: "workflows.branchStepsNeedAtLeastOne" });
   });
 });

@@ -159,7 +159,7 @@ describe("TD11 — cooldown inside the single availability decision", () => {
   it("create() refuses a cooldown slug with the same Bengali message (BadRequest, not Conflict)", async () => {
     const { svc } = orgSetup([activeTombstone()]);
     const err: any = await svc.create("u-9", { name: "New Shop", slug: "acme-shop" } as any).catch((e: any) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "common.slugCooldown" });
     expect(err.message).toContain("মুছে ফেলা");
   });
 
@@ -185,8 +185,8 @@ describe("TD11 — cooldown inside the single availability decision", () => {
 describe("TD11 — SUPER release", () => {
   it("refuses without a note", async () => {
     const { svc } = adminSetup({ slugTombstone: table([activeTombstone()]) });
-    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "")).rejects.toThrow(/reason is required/i);
-    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "   ")).rejects.toThrow(/reason is required/i);
+    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
+    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "   ")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
   });
 
   it("releases with a note: row updated, audit written, and the name frees up", async () => {
@@ -209,12 +209,12 @@ describe("TD11 — SUPER release", () => {
 
   it("unknown slug → 404; already-released and already-expired → BadRequest", async () => {
     const { svc } = adminSetup({ slugTombstone: table([activeTombstone()]) });
-    await expect(svc.releaseSlugTombstone(SUPER, "no-such-name", "some note")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.releaseSlugTombstone(SUPER, "no-such-name", "some note")).rejects.toMatchObject({ code: "admin.noSlugTombstoneFoundForThis" });
     await svc.releaseSlugTombstone(SUPER, "acme-shop", "first release");
-    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "second release")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.releaseSlugTombstone(SUPER, "acme-shop", "second release")).rejects.toMatchObject({ code: "admin.thisSlugWasAlreadyReleased" });
 
     const expiredSetup = adminSetup({ slugTombstone: table([{ ...activeTombstone(), expiresAt: new Date(Date.now() - DAY) }]) });
-    await expect(expiredSetup.svc.releaseSlugTombstone(SUPER, "acme-shop", "too late")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(expiredSetup.svc.releaseSlugTombstone(SUPER, "acme-shop", "too late")).rejects.toMatchObject({ code: "admin.thisSlugSCooldownHasAlready" });
   });
 
   it("list shows active vs history rows honestly", async () => {
@@ -249,7 +249,7 @@ describe("TD11 — SUPER release", () => {
       return { guard, ctx };
     };
     const support = guardFor(supportRow);
-    await expect(support.guard.canActivate(support.ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(support.guard.canActivate(support.ctx)).rejects.toMatchObject({ code: "common.adminTierRequired" });
     const sup = guardFor(superRow);
     await expect(sup.guard.canActivate(sup.ctx)).resolves.toBe(true);
   });

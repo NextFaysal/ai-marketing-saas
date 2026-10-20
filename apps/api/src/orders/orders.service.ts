@@ -27,6 +27,7 @@ import { bdPhoneMatchKey } from "./phone-utils";
 import { computeSlaStage, SLA_DEFAULTS } from "../fulfillment/sla";
 import { classifyShipmentStatus } from "../courier/courier-performance";
 import { phoneKey } from "./risk-score";
+import { badRequest, notFound } from "../i18n";
 
 function pubOrder(o: any) {
   return {
@@ -125,10 +126,10 @@ export class OrdersService {
    * update instead of duplicating.
    */
   async createManual(organizationId: string, actorId: string, dto: CreateManualOrderDto) {
-    if (!this.integrations) throw new BadRequestException("Manual orders are not available in this deployment");
-    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException("At least one item is required");
+    if (!this.integrations) throw badRequest("orders.manualOrdersUnavailable");
+    if (!Array.isArray(dto.items) || dto.items.length === 0) throw badRequest("orders.atLeastOneItemRequired");
     const phone = String(dto.customerPhone ?? "").trim();
-    if (!phone) throw new BadRequestException("customerPhone is required");
+    if (!phone) throw badRequest("orders.customerPhoneRequired");
     let subtotal = 0n;
     const items = dto.items.map((item) => {
       const lineTotal = BigInt(item.unitPriceMinor) * BigInt(item.quantity);
@@ -188,7 +189,7 @@ export class OrdersService {
           : {}),
       },
     }).catch(() => undefined);
-    if (!order) throw new NotFoundException("Order was recorded but could not be reloaded");
+    if (!order) throw notFound("orders.orderReloadFailed");
     // ON11: intake warnings ride the response (never blocking —
     // a warnings failure ships an empty list, creation stands).
     let intakeWarnings: any[] = [];
@@ -273,12 +274,12 @@ export class OrdersService {
    */
   async convertQuote(organizationId: string, actorId: string, quoteId: string) {
     if (!this.quotes?.buildConversionInput || !this.quotes?.markConverted) {
-      throw new BadRequestException("কোট রূপান্তর সুবিধা এই deployment-এ নেই");
+      throw badRequest("orders.quoteConversionUnavailable");
     }
     const { manualDto } = await this.quotes.buildConversionInput(organizationId, quoteId);
     const order: any = await this.createManual(organizationId, actorId, manualDto as any);
     const orderId = order?.id ? String(order.id) : null;
-    if (!orderId) throw new NotFoundException("Order was recorded but could not be reloaded");
+    if (!orderId) throw notFound("orders.orderReloadFailed");
     const { quote } = await this.quotes.markConverted(organizationId, actorId, quoteId, orderId);
     return { order, quote };
   }
@@ -288,7 +289,7 @@ export class OrdersService {
    * exposes on the commerce surface (creates nothing). */
   async previewQuoteConversion(organizationId: string, quoteId: string) {
     if (!this.quotes?.previewConversion) {
-      throw new BadRequestException("কোট রূপান্তর সুবিধা এই deployment-এ নেই");
+      throw badRequest("orders.quoteConversionUnavailable");
     }
     return this.quotes.previewConversion(organizationId, quoteId);
   }
@@ -323,20 +324,20 @@ export class OrdersService {
     const hasNote = dto.internalNote !== undefined;
     const hasAddress = dto.address !== undefined;
     if (!hasStatus && !hasRefund && !hasNote && !hasAddress) {
-      throw new BadRequestException("কিছুই পাঠানো হয়নি — status, refund অথবা internalNote-এর যেকোনো একটি পাঠান");
+      throw badRequest("orders.nothingToUpdate");
     }
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     // ON3: a merged-away order is terminal. Its verifications
     // (and goods) now live on the survivor, so reviving it or
     // recording a refund against it would corrupt the
     // survivor's due math. Note/address edits stay allowed.
     if ((order as any).mergedIntoId) {
       if (dto.status !== undefined && dto.status !== order.status) {
-        throw new BadRequestException("এই অর্ডারটি অন্য অর্ডারে মার্জ হয়ে গেছে — এটি আর চালু করা যাবে না");
+        throw badRequest("orders.mergedOrderNotProcessable");
       }
       if (dto.refund !== undefined && dto.refund !== null) {
-        throw new BadRequestException("এই অর্ডারটি অন্য অর্ডারে মার্জ হয়ে গেছে — এতে refund করা যাবে না");
+        throw badRequest("orders.mergedOrderNotRefundable");
       }
     }
     const from: string = order.status;
@@ -347,14 +348,14 @@ export class OrdersService {
     if (hasRefund) {
       try { refundAmount = BigInt(dto.refund!.amountMinor as any); } catch { refundAmount = null; }
       if (refundAmount === null) {
-        throw new BadRequestException("refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+        throw badRequest("orders.refundAmountInvalid");
       }
       if (refundAmount <= 0n) {
-        throw new BadRequestException("refund-এর পরিমাণ সঠিক সংখ্যায় পাঠান (পয়সায়)");
+        throw badRequest("orders.refundAmountInvalid");
       }
       newRefunded = BigInt(order.refundedMinor ?? 0) + refundAmount;
       if (newRefunded > BigInt(order.totalMinor ?? 0)) {
-        throw new BadRequestException("মোট refund অর্ডারের মোট মূল্যের বেশি হতে পারবে না");
+        throw badRequest("orders.refundExceedsOrderTotal");
       }
     }
 
@@ -364,7 +365,7 @@ export class OrdersService {
     if (hasStatus && dto.status !== from) {
       if (ORDER_TRANSITIONS[from]) {
         if (!ORDER_TRANSITIONS[from].includes(dto.status!)) {
-          throw new BadRequestException(`অর্ডারের অবস্থা "${from}" থেকে "${dto.status}"-তে নেওয়া যাবে না`);
+          throw badRequest("orders.invalidStatusTransition", { from: from, to: dto.status });
         }
       }
       // from outside the vocabulary → escape hatch, any target allowed.
@@ -477,7 +478,7 @@ export class OrdersService {
 
   /** EC5: turn this chat/manual order into a store draft order. */
   async createStoreDraft(organizationId: string, actorId: string, orderId: string, storeId?: string) {
-    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    if (!this.orderPush) throw badRequest("orders.storePushUnavailable");
     const order = await this.orderPush.createStoreDraft(organizationId, actorId, orderId, storeId);
     return pubOrder({ ...order, items: (await (this.prisma as any).orderItem.findMany({ where: { orderId: order.id } }).catch(() => [])) ?? [] });
   }
@@ -485,7 +486,7 @@ export class OrdersService {
   /** EC5: send a customer-visible note to the store order.
    * Distinct from internalNote, which never leaves the SaaS. */
   async pushStoreNote(organizationId: string, actorId: string, orderId: string, note: string) {
-    if (!this.orderPush) throw new BadRequestException("Store push is not available in this deployment");
+    if (!this.orderPush) throw badRequest("orders.storePushUnavailable");
     const result = await this.orderPush.enqueueNote(organizationId, orderId, note);
     await this.audit?.log({
       organizationId, userId: actorId, action: "orders.store_note_queued",
@@ -620,16 +621,16 @@ export class OrdersService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
 
     let amount: bigint;
     try { amount = BigInt(dto.amountMinor as any); } catch { amount = 0n; }
     if (amount <= 0n) {
-      throw new BadRequestException("Advance amount must be a positive amount in minor units");
+      throw badRequest("orders.advanceAmountInvalid");
     }
 
     const table = (this.prisma as any).paymentVerification;
-    if (!table?.create) throw new BadRequestException("Payment verification is not available in this deployment");
+    if (!table?.create) throw badRequest("orders.paymentVerificationUnavailable");
 
     const existingRows: any[] = table.findMany
       ? ((await table.findMany({ where: { organizationId, orderId } }).catch(() => [])) ?? [])
@@ -638,9 +639,7 @@ export class OrdersService {
     const total = BigInt(order.totalMinor ?? 0);
     const due = total > paidSoFar ? total - paidSoFar : 0n;
     if (amount > due) {
-      throw new BadRequestException(
-        `Advance ${amount.toString()} exceeds the amount still due on this order (${due.toString()})`,
-      );
+      throw badRequest("orders.advanceExceedsDue", { amount: amount.toString(), due: due.toString() });
     }
 
     if (dto.reference) {
@@ -654,7 +653,7 @@ export class OrdersService {
         duplicate = rows.find((r: any) => r.trxId === dto.reference && r.status === "approved") ?? null;
       }
       if (duplicate) {
-        throw new BadRequestException("This transaction reference has already been recorded as a verified payment");
+        throw badRequest("orders.transactionAlreadyRecorded");
       }
     }
 
@@ -859,12 +858,12 @@ export class OrdersService {
    * an Asia/Dhaka calendar day (returns that day's start instant). */
   private parseDhakaDay(value: string, label: string): Date {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+      throw badRequest("orders.invalidDateFormat", { label: label });
     }
     const [y, m, d] = value.split("-").map(Number);
     const probe = new Date(Date.UTC(y, m - 1, d));
     if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
-      throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+      throw badRequest("orders.invalidDateFormat", { label: label });
     }
     return dhakaDayStartUtc(new Date(`${value}T12:00:00.000Z`));
   }
@@ -884,7 +883,7 @@ export class OrdersService {
    */
   async resolveQueueOrderIds(organizationId: string, queueKey: string): Promise<string[]> {
     if (!isQueueKey(queueKey)) {
-      throw new BadRequestException(`অজানা কিউ "${queueKey}" — সঠিক কিউ: ${QUEUE_KEYS.join(", ")}`);
+      throw badRequest("orders.unknownQueue", { queue: queueKey, queues: QUEUE_KEYS.join(", ") });
     }
     const key = queueKey as QueueKey;
     const orderTable = (this.prisma as any).order;
@@ -1205,24 +1204,24 @@ export class OrdersService {
     const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
     const sort = q.sort ?? "placedAt_desc";
     if (!["placedAt_desc", "placedAt_asc", "total_desc", "total_asc"].includes(sort)) {
-      throw new BadRequestException(`অজানা sort "${sort}" — সঠিক sort: placedAt_desc, placedAt_asc, total_desc, total_asc`);
+      throw badRequest("orders.unknownSort", { sort: sort });
     }
     if (q.paymentState && !["paid", "partial", "due"].includes(q.paymentState)) {
-      throw new BadRequestException(`অজানা paymentState "${q.paymentState}" — সঠিক মান: paid, partial, due`);
+      throw badRequest("orders.unknownPaymentState", { value: q.paymentState });
     }
     if (q.riskBand && !["low", "medium", "high"].includes(q.riskBand)) {
-      throw new BadRequestException(`অজানা riskBand "${q.riskBand}" — সঠিক মান: low, medium, high`);
+      throw badRequest("orders.unknownRiskBand", { value: q.riskBand });
     }
     let minTotal: bigint | null = null;
     let maxTotal: bigint | null = null;
-    try { if (q.minTotal) minTotal = BigInt(q.minTotal); } catch { throw new BadRequestException("minTotal সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
-    try { if (q.maxTotal) maxTotal = BigInt(q.maxTotal); } catch { throw new BadRequestException("maxTotal সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
+    try { if (q.minTotal) minTotal = BigInt(q.minTotal); } catch { throw badRequest("orders.minTotalInvalid"); }
+    try { if (q.maxTotal) maxTotal = BigInt(q.maxTotal); } catch { throw badRequest("orders.maxTotalInvalid"); }
     let start: Date | undefined;
     let endExclusive: Date | undefined;
     if (q.dateFrom) start = this.parseDhakaDay(q.dateFrom, "dateFrom");
     if (q.dateTo) endExclusive = new Date(this.parseDhakaDay(q.dateTo, "dateTo").getTime() + 24 * 3600 * 1000);
     if (q.dateFrom && q.dateTo && q.dateFrom > q.dateTo) {
-      throw new BadRequestException("dateFrom তারিখ dateTo তারিখের পরে হতে পারবে না");
+      throw badRequest("orders.dateFromAfterDateTo");
     }
 
     let queueSet: Set<string> | null = null;
@@ -1310,13 +1309,13 @@ export class OrdersService {
   /** ON1 tag validation (shared by the tags endpoint + bulk):
    * an array of at most 10 tags, each trimmed 1..30 chars, deduped. */
   validateTags(input: unknown): string[] {
-    if (!Array.isArray(input)) throw new BadRequestException("tags একটি তালিকা (array) হতে হবে");
-    if (input.length > 10) throw new BadRequestException("সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে");
+    if (!Array.isArray(input)) throw badRequest("orders.tagsMustBeArray");
+    if (input.length > 10) throw badRequest("orders.tooManyTags");
     const out: string[] = [];
     for (const raw of input) {
       const tag = String(raw ?? "").trim();
       if (tag.length < 1 || tag.length > 30) {
-        throw new BadRequestException("প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে");
+        throw badRequest("orders.tagLengthRange");
       }
       if (!out.includes(tag)) out.push(tag);
     }
@@ -1327,7 +1326,7 @@ export class OrdersService {
   async setTags(organizationId: string, actorId: string, orderId: string, input: unknown) {
     const tags = this.validateTags(input);
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     await (this.prisma as any).order.update({ where: { id: order.id }, data: { tags } });
     await this.audit?.log({
       organizationId, userId: actorId, action: "orders.tags_updated",
@@ -1340,7 +1339,7 @@ export class OrdersService {
    * an ACTIVE member of the org. */
   async assignOrder(organizationId: string, actorId: string, orderId: string, assigneeId: string | null) {
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     if (assigneeId !== null && assigneeId !== undefined) {
       await this.assertActiveMember(organizationId, assigneeId);
     }
@@ -1360,7 +1359,7 @@ export class OrdersService {
       where: { userId, organizationId, status: "ACTIVE" },
     }).catch(() => null);
     if (!member) {
-      throw new BadRequestException("দায়িত্বপ্রাপ্ত ব্যক্তি এই প্রতিষ্ঠানের সক্রিয় সদস্য নন");
+      throw badRequest("orders.assigneeNotActiveMember");
     }
   }
 
@@ -1377,22 +1376,22 @@ export class OrdersService {
   async createSavedView(organizationId: string, userId: string, dto: { name?: string; queue?: string | null; filters?: unknown }) {
     const name = String(dto?.name ?? "").trim();
     if (name.length < 1 || name.length > 80) {
-      throw new BadRequestException("ভিউয়ের নাম ১–৮০ অক্ষরের হতে হবে");
+      throw badRequest("orders.viewNameLength");
     }
     const filters = dto?.filters ?? {};
     if (typeof filters !== "object" || filters === null || Array.isArray(filters)) {
-      throw new BadRequestException("filters একটি object হতে হবে");
+      throw badRequest("orders.filtersMustBeObject");
     }
     for (const key of Object.keys(filters as Record<string, unknown>)) {
       if (!LIST_V2_FILTER_KEYS.includes(key)) {
-        throw new BadRequestException(`অজানা filter "${key}" — সঠিক filter: ${LIST_V2_FILTER_KEYS.join(", ")}`);
+        throw badRequest("orders.unknownFilter", { filter: key, filters: LIST_V2_FILTER_KEYS.join(", ") });
       }
     }
     if (dto?.queue != null && !isQueueKey(dto.queue)) {
-      throw new BadRequestException(`অজানা কিউ "${dto.queue}" — সঠিক কিউ: ${QUEUE_KEYS.join(", ")}`);
+      throw badRequest("orders.unknownQueue", { queue: dto.queue, queues: QUEUE_KEYS.join(", ") });
     }
     const table = (this.prisma as any).orderSavedView;
-    if (!table?.create) throw new BadRequestException("Saved views are not available in this deployment");
+    if (!table?.create) throw badRequest("orders.savedViewsUnavailable");
     const row = await table.create({
       data: { organizationId, userId, name, queue: dto?.queue ?? null, filters },
     });
@@ -1408,7 +1407,7 @@ export class OrdersService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id: viewId, organizationId, userId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Saved view not found");
+    if (!row) throw notFound("orders.savedViewNotFound");
     await table.delete({ where: { id: row.id } });
     await this.audit?.log({
       organizationId, userId, action: "orders.saved_view_deleted",
@@ -1425,7 +1424,7 @@ export class OrdersService {
   async feed(organizationId: string, sinceRaw?: string) {
     const since = sinceRaw ? new Date(sinceRaw) : null;
     if (!since || Number.isNaN(since.getTime())) {
-      throw new BadRequestException("since একটি সঠিক ISO তারিখ-সময় হতে হবে");
+      throw badRequest("orders.sinceInvalid");
     }
     const rows: any[] = ((await (this.prisma as any).order.findMany({
       where: { organizationId, isPractice: false },
@@ -1476,12 +1475,12 @@ export class OrdersService {
   async exportCsv(organizationId: string, q: { status?: string; isCod?: boolean; from?: string; to?: string }): Promise<string> {
     const parseDay = (value: string, label: string): Date => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+        throw badRequest("orders.invalidDateFormat", { label: label });
       }
       const [y, m, d] = value.split("-").map(Number);
       const probe = new Date(Date.UTC(y, m - 1, d));
       if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
-        throw new BadRequestException(`${label} তারিখটি সঠিক নয় — YYYY-MM-DD ফরম্যাটে দিন (যেমন 2026-10-05)`);
+        throw badRequest("orders.invalidDateFormat", { label: label });
       }
       // Noon UTC keeps the instant inside the intended Dhaka
       // calendar date when solved to that day's Dhaka midnight.
@@ -1492,7 +1491,7 @@ export class OrdersService {
     if (q.from) start = parseDay(q.from, "from");
     if (q.to) endExclusive = new Date(parseDay(q.to, "to").getTime() + 24 * 3600 * 1000);
     if (q.from && q.to && q.from > q.to) {
-      throw new BadRequestException("from তারিখ to তারিখের পরে হতে পারবে না");
+      throw badRequest("orders.fromAfterTo");
     }
     const where: any = {
       organizationId,
@@ -1558,7 +1557,7 @@ export class OrdersService {
     const o = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId }, include: { customer: true, items: true, store: true },
     });
-    if (!o) throw new NotFoundException("Order not found in this organization");
+    if (!o) throw notFound("commerce.orderNotFoundInOrg");
     const out: any = pubOrder(o);
     // AB8 (AX27): staff payload carries ONLY the device-hash
     // prefix — the full hash never leaves the API.
@@ -1656,8 +1655,8 @@ export class OrdersService {
   /** M50 dedicated endpoint: the full assessment with verbatim reasons. */
   async riskForOrder(organizationId: string, orderId: string) {
     const o = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!o) throw new NotFoundException("Order not found in this organization");
-    if (!this.risk) throw new NotFoundException("Risk service unavailable");
+    if (!o) throw notFound("commerce.orderNotFoundInOrg");
+    if (!this.risk) throw notFound("orders.riskServiceUnavailable");
     return this.risk.forOrder(organizationId, o);
   }
 
@@ -1760,7 +1759,7 @@ export class OrdersService {
       where: { id: dto.primaryOrderId, organizationId },
       include: { items: true, customer: true },
     });
-    if (!primary) throw new NotFoundException("Primary order not found");
+    if (!primary) throw notFound("orders.primaryOrderNotFound");
 
     const duplicates = await (this.prisma as any).order.findMany({
       where: {
@@ -1771,7 +1770,7 @@ export class OrdersService {
     });
 
     if (duplicates.length === 0) {
-      throw new BadRequestException("No valid duplicate orders found to merge");
+      throw badRequest("orders.noDuplicatesToMerge");
     }
 
     let additionalAmountMinor = 0n;
@@ -1851,7 +1850,7 @@ export class OrdersService {
     const order = await (this.prisma as any).order.findFirst({
       where: { id: orderId, organizationId },
     });
-    if (!order) throw new NotFoundException("Order not found");
+    if (!order) throw notFound("connections.orderNotFoundPlain");
 
     const updated = await (this.prisma as any).order.update({
       where: { id: orderId },
@@ -1875,7 +1874,7 @@ export class OrdersService {
     agentId: string,
   ) {
     if (!orderIds || orderIds.length === 0) {
-      throw new BadRequestException("No order IDs provided");
+      throw badRequest("orders.noOrderIds");
     }
 
     const result = await (this.prisma as any).order.updateMany({

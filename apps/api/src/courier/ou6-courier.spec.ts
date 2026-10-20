@@ -1,5 +1,6 @@
 process.env.ENCRYPTION_KEY = Buffer.alloc(32, 11).toString("base64");
 import "reflect-metadata";
+import { ApiException } from "../i18n";
 import { BadRequestException } from "@nestjs/common";
 import {
   COURIER_CAPABILITIES, COURIER_PROVIDERS, courierAdapter, courierCapabilities, createCourierClient,
@@ -123,7 +124,7 @@ describe("OU6 Paperfly DEVELOPMENT adapter — refuses honestly, never calls the
       invoice: "1001", recipientName: "Karim", recipientPhone: "01712345678",
       recipientAddress: "House 9, Dhaka", codAmountMajor: 900, orderTotalMajor: 900,
       itemCount: 1, itemDescription: "Panjabi x1", items: [],
-    })).rejects.toThrow(BadRequestException);
+    })).rejects.toThrow(ApiException);
     await expect(adapter.book({
       invoice: "1001", recipientName: "Karim", recipientPhone: "01712345678",
       recipientAddress: "House 9, Dhaka", codAmountMajor: 900, orderTotalMajor: 900,

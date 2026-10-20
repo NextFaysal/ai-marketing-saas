@@ -102,20 +102,20 @@ describe("SuperAdminGuard", () => {
   it("rejects unauthenticated and non-admin requests", async () => {
     const p = basePrisma(); seedUsers(p);
     const guard = new SuperAdminGuard(p, { getAllAndOverride: () => undefined } as any);
-    await expect(guard.canActivate(ctxFor({ headers: {} }))).rejects.toThrow(/Authentication required/);
-    await expect(guard.canActivate(ctxFor({ user: { userId: "u-1", tv: 0 }, headers: {} }))).rejects.toThrow(/Platform admin access required/);
+    await expect(guard.canActivate(ctxFor({ headers: {} }))).rejects.toMatchObject({ code: "common.authRequired" });
+    await expect(guard.canActivate(ctxFor({ user: { userId: "u-1", tv: 0 }, headers: {} }))).rejects.toMatchObject({ code: "common.platformAdminRequired" });
   });
   it("rejects a revoked admin whose JWT still claims admin", async () => {
     const p = basePrisma(); seedUsers(p);
     p.user.rows.find((r: any) => r.id === "admin-2").isSuperAdmin = false; // revoked in DB after token issued
     const guard = new SuperAdminGuard(p, { getAllAndOverride: () => undefined } as any);
-    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-2", tv: 0 }, headers: {} }))).rejects.toThrow(/Platform admin access required/);
+    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-2", tv: 0 }, headers: {} }))).rejects.toMatchObject({ code: "common.platformAdminRequired" });
   });
   it("rejects a stale token version (session revoked)", async () => {
     const p = basePrisma(); seedUsers(p);
     p.user.rows.find((r: any) => r.id === "admin-1").tokenVersion = 3;
     const guard = new SuperAdminGuard(p, { getAllAndOverride: () => undefined } as any);
-    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-1", tv: 0 }, headers: {} }))).rejects.toThrow(/revoked/);
+    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-1", tv: 0 }, headers: {} }))).rejects.toMatchObject({ code: "common.adminSessionRevoked" });
   });
   it("admits a live admin and enforces tier restrictions", async () => {
     const p = basePrisma(); seedUsers(p);
@@ -133,8 +133,8 @@ describe("AdminService", () => {
     const p = basePrisma(); seedUsers(p);
     const logs: any[] = [];
     const svc = new AdminService(p, mkAudit(logs));
-    await expect(svc.setUserStatus(SUPER as any, "SUPER", "u-1", "SUSPENDED", "", "1.2.3.4")).rejects.toThrow(/reason/i);
-    await expect(svc.setUserStatus(SUPER as any, "SUPER", "admin-1", "SUSPENDED", "self test")).rejects.toThrow(/your own/);
+    await expect(svc.setUserStatus(SUPER as any, "SUPER", "u-1", "SUSPENDED", "", "1.2.3.4")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
+    await expect(svc.setUserStatus(SUPER as any, "SUPER", "admin-1", "SUSPENDED", "self test")).rejects.toMatchObject({ code: "admin.youCannotChangeYourOwnAccount" });
     const out = await svc.setUserStatus(SUPER as any, "SUPER", "u-1", "SUSPENDED", "chargeback abuse", "1.2.3.4");
     expect(out.status).toBe("SUSPENDED");
     expect(p.user.rows.find((r: any) => r.id === "u-1").status).toBe("SUSPENDED");
@@ -153,9 +153,9 @@ describe("AdminService", () => {
     await expect(svc.grantAdmin(SUPER as any, "u-1", "WIZARD", "x reason")).rejects.toThrow(/tier/);
     const granted = await svc.grantAdmin(SUPER as any, "u-1", "FINANCE", "handles billing");
     expect(granted.adminTier).toBe("FINANCE");
-    await expect(svc.revokeAdmin(SUPER as any, "admin-1", "self")).rejects.toThrow(/own admin/);
+    await expect(svc.revokeAdmin(SUPER as any, "admin-1", "self")).rejects.toMatchObject({ code: "admin.youCannotRevokeYourOwnAdmin" });
     // admin-1 is the only SUPER left (u-1 is FINANCE) -> cannot be revoked by admin-2 even though not self
-    await expect(svc.revokeAdmin({ id: "admin-2" } as any, "admin-1", "cleanup")).rejects.toThrow(/last active super admin/);
+    await expect(svc.revokeAdmin({ id: "admin-2" } as any, "admin-1", "cleanup")).rejects.toMatchObject({ code: "admin.thisIsTheLastActiveSuper" });
     const before = p.user.rows.find((r: any) => r.id === "u-1").tokenVersion;
     await svc.revokeAdmin(SUPER as any, "u-1", "role changed");
     expect(p.user.rows.find((r: any) => r.id === "u-1").isSuperAdmin).toBe(false);
@@ -165,7 +165,7 @@ describe("AdminService", () => {
     const p = basePrisma(); seedUsers(p);
     const logs: any[] = [];
     const svc = new AdminService(p, mkAudit(logs));
-    await expect(svc.setOrgStatus(SUPER as any, "org-1", "SUSPENDED", "")).rejects.toThrow(/reason/i);
+    await expect(svc.setOrgStatus(SUPER as any, "org-1", "SUSPENDED", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     const out = await svc.setOrgStatus(SUPER as any, "org-1", "SUSPENDED", "payment overdue 60d");
     expect(out.status).toBe("SUSPENDED");
     expect(logs.find((l) => l.action === "admin.org_status")?.metadata).toMatchObject({ from: "ACTIVE", to: "SUSPENDED" });
@@ -204,8 +204,8 @@ describe("AuthService suspension", () => {
   it("a suspended user cannot log in even with the right password", async () => {
     const p = basePrisma(); seedUsers(p);
     const auth = new AuthService(p, { signAsync: async () => "tok" } as any, mkAudit([]));
-    await expect(auth.login({ email: "bad@x.com", password: "sampass123" } as any)).rejects.toThrow(/suspended/);
-    await expect(auth.login({ email: "bad@x.com", password: "wrong" } as any)).rejects.toThrow(/Invalid email or password/);
+    await expect(auth.login({ email: "bad@x.com", password: "sampass123" } as any)).rejects.toMatchObject({ code: "auth.accountSuspended" });
+    await expect(auth.login({ email: "bad@x.com", password: "wrong" } as any)).rejects.toMatchObject({ code: "auth.invalidEmailOrPassword" });
   });
   it("reset via admin token changes the password and revokes old sessions", async () => {
     const p = basePrisma(); seedUsers(p);
@@ -219,7 +219,7 @@ describe("AuthService suspension", () => {
     const row = p.user.rows.find((r: any) => r.id === "u-2");
     expect(row.tokenVersion).toBe(tvBefore + 1);
     // token is one-time: its embedded tv no longer matches
-    await expect(auth.resetPasswordWithAdminToken(token, "another-pass-1")).rejects.toThrow(/no longer valid/);
+    await expect(auth.resetPasswordWithAdminToken(token, "another-pass-1")).rejects.toMatchObject({ code: "auth.resetLinkNoLongerValid" });
   });
 });
 
@@ -230,7 +230,7 @@ describe("AdminService Phase B — settings, flags, limits", () => {
     const before = await svc.getSettings();
     expect(before.signupOpen).toBe(true);
     expect(before.maintenanceMode).toBe(false);
-    await expect(svc.updateSettings(SUPER as any, { nope: 1 })).rejects.toThrow(/Unknown setting/);
+    await expect(svc.updateSettings(SUPER as any, { nope: 1 })).rejects.toMatchObject({ code: "admin.unknownSettingKey" });
     await expect(svc.updateSettings(SUPER as any, { killSwitches: { aiDisabledOrgIds: "x", broadcastsPaused: false } })).rejects.toThrow(/killSwitches/);
     const after = await svc.updateSettings(SUPER as any, { maintenanceMode: true, supportContact: "help@qosprey.com" });
     expect(after.maintenanceMode).toBe(true);
@@ -252,7 +252,7 @@ describe("AdminService Phase B — settings, flags, limits", () => {
     const flag2 = await svc.setOrgFlag(SUPER as any, "org-1", "dayparting", false);
     expect(flag2.enabled).toBe(false);
     expect(p.orgFeatureFlag.rows).toHaveLength(1);
-    await expect(svc.updateOrgLimits(SUPER as any, "org-1", { seatLimit: -1 })).rejects.toThrow(/non-negative/);
+    await expect(svc.updateOrgLimits(SUPER as any, "org-1", { seatLimit: -1 })).rejects.toMatchObject({ code: "admin.mustBeANonNegativeInteger" });
     const org = await svc.updateOrgLimits(SUPER as any, "org-1", { seatLimit: 3, aiDailyLimitOverride: 5 });
     expect(org.seatLimit).toBe(3);
     const cleared = await svc.updateOrgLimits(SUPER as any, "org-1", { aiDailyLimitOverride: null });
@@ -267,7 +267,7 @@ describe("AdminService Phase B — settings, flags, limits", () => {
     const view = await svc.supportView("org-1");
     expect(JSON.stringify(view)).not.toContain("SECRET-BODY-TEXT");
     expect(view.recentConversations[0].messageCount).toBe(1);
-    await expect(svc.supportConversationMessages(SUPER as any, "org-1", "conv-1", "")).rejects.toThrow(/reason/i);
+    await expect(svc.supportConversationMessages(SUPER as any, "org-1", "conv-1", "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     const access = await svc.supportConversationMessages(SUPER as any, "org-1", "conv-1", "fraud investigation #42");
     expect(access.messages[0].body).toBe("SECRET-BODY-TEXT");
     expect(logs.find((l) => l.action === "admin.support_content_access")?.metadata?.reason).toBe("fraud investigation #42");
@@ -296,16 +296,16 @@ describe("Platform settings enforcement helpers", () => {
     const p = basePrisma(); seedUsers(p);
     p.systemSetting.rows.push({ key: "signupOpen", value: false });
     const auth = new AuthService(p, { signAsync: async () => "tok" } as any, mkAudit([]));
-    await expect(auth.register({ email: "new@x.com", name: "New", password: "password123" } as any)).rejects.toThrow(/closed/);
+    await expect(auth.register({ email: "new@x.com", name: "New", password: "password123" } as any)).rejects.toMatchObject({ code: "auth.signupsClosed" });
   });
   it("AI kill switch + per-org cap are enforced by the chat service", async () => {
     const { ChatService } = await import("../ai/chat.service");
     const p = basePrisma(); seedUsers(p);
     p.organization.rows.find((r: any) => r.id === "org-1").aiDailyLimitOverride = 0;
     const chat = new ChatService(p, {} as any, {} as any);
-    await expect((chat as any).checkDailyLimit("org-1")).rejects.toThrow(/limit reached/);
+    await expect((chat as any).checkDailyLimit("org-1")).rejects.toMatchObject({ code: "ai.dailyAiMessageLimitReachedFor" });
     p.systemSetting.rows.push({ key: "killSwitches", value: { aiDisabledOrgIds: ["org-1"], broadcastsPaused: false } });
-    await expect((chat as any).checkDailyLimit("org-1")).rejects.toThrow(/disabled/);
+    await expect((chat as any).checkDailyLimit("org-1")).rejects.toMatchObject({ code: "ai.aiFeaturesTemporarilyDisabledForThisOrganization" });
   });
   it("seat limit blocks invites beyond the org's seat count", async () => {
     const { OrganizationsService } = await import("../organizations/organizations.service");
@@ -313,7 +313,7 @@ describe("Platform settings enforcement helpers", () => {
     p.organization.rows.find((r: any) => r.id === "org-1").seatLimit = 1; // org-1 already has 1 ACTIVE member
     p.user.rows.push({ id: "u-9", email: "nine@x.com", name: "Nine", status: "ACTIVE" });
     const orgs = new OrganizationsService(p, mkAudit([]));
-    await expect(orgs.invite("org-1", "u-1", { email: "nine@x.com", role: "SUPPORT_AGENT" } as any)).rejects.toThrow(/seats/);
+    await expect(orgs.invite("org-1", "u-1", { email: "nine@x.com", role: "SUPPORT_AGENT" } as any)).rejects.toMatchObject({ code: "organizations.seatLimitReached" });
   });
 });
 
@@ -323,7 +323,7 @@ describe("AdminService Phase C — SaaS billing", () => {
     const logs: any[] = [];
     const svc = new AdminService(p, mkAudit(logs));
     await expect(svc.updateSubscription(SUPER as any, "org-1", { plan: "PRO" }, "reason ok")).rejects.toThrow(/plan/);
-    await expect(svc.updateSubscription(SUPER as any, "org-1", { plan: "GROWTH" }, "")).rejects.toThrow(/reason/i);
+    await expect(svc.updateSubscription(SUPER as any, "org-1", { plan: "GROWTH" }, "")).rejects.toMatchObject({ code: "admin.aReasonIsRequiredForThis" });
     const created = await svc.updateSubscription(SUPER as any, "org-1", { plan: "GROWTH", status: "ACTIVE", currentPeriodEnd: "2027-01-01" }, "client upgraded at launch");
     expect(created.plan).toBe("GROWTH");
     const updated = await svc.updateSubscription(SUPER as any, "org-1", { status: "PAST_DUE" }, "payment failed twice");
@@ -337,8 +337,8 @@ describe("AdminService Phase C — SaaS billing", () => {
     const p = basePrisma(); seedUsers(p);
     const svc = new AdminService(p, mkAudit([]));
     await expect(svc.recordPayment(SUPER as any, { organizationId: "org-1", amountMinor: 100, method: "paypal" })).rejects.toThrow(/method/);
-    await expect(svc.recordPayment(SUPER as any, { organizationId: "org-1", amountMinor: 0, method: "bkash" })).rejects.toThrow(/positive/);
-    await expect(svc.recordPayment(SUPER as any, { organizationId: "ghost", amountMinor: 100, method: "bkash" })).rejects.toThrow(/not found/i);
+    await expect(svc.recordPayment(SUPER as any, { organizationId: "org-1", amountMinor: 0, method: "bkash" })).rejects.toMatchObject({ code: "admin.paymentAmountMustBePositive" });
+    await expect(svc.recordPayment(SUPER as any, { organizationId: "ghost", amountMinor: 100, method: "bkash" })).rejects.toMatchObject({ code: "admin.organizationNotFound" });
     const row = await svc.recordPayment(SUPER as any, { organizationId: "org-1", amountMinor: "300000", method: "bkash", reference: "TXN123" });
     expect(row.amountMinor).toBe("300000");
     const list = await svc.listPayments("org-1");
@@ -416,7 +416,7 @@ describe("Phase D — TOTP login flow, guard gate, session revocation", () => {
     const step1: any = await auth.login({ email: "secure@x.com", password: "securepass1" } as any);
     expect(step1.requiresTotp).toBe(true);
     expect(step1.accessToken).toBeUndefined();
-    await expect(auth.verifyTotpLogin(step1.challengeToken, "000000")).rejects.toThrow(/incorrect/);
+    await expect(auth.verifyTotpLogin(step1.challengeToken, "000000")).rejects.toMatchObject({ code: "auth.authCodeIncorrect" });
     const step2: any = await auth.verifyTotpLogin(step1.challengeToken, totp(secret));
     expect(step2.accessToken).toBe("real-token");
   });
@@ -428,7 +428,7 @@ describe("Phase D — TOTP login flow, guard gate, session revocation", () => {
     expect(enroll.secret.length).toBeGreaterThanOrEqual(16);
     expect(p.user.rows.find((r: any) => r.id === "admin-2").totpEnabled).toBe(false); // not yet
     const { totp } = await import("../common/totp");
-    await expect(svc.totpConfirm(actor, "000000")).rejects.toThrow(/incorrect/);
+    await expect(svc.totpConfirm(actor, "000000")).rejects.toMatchObject({ code: "admin.thatCodeIsIncorrectCheckThe" });
     await svc.totpConfirm(actor, totp(enroll.secret));
     expect(p.user.rows.find((r: any) => r.id === "admin-2").totpEnabled).toBe(true);
     await svc.totpDisable(actor, totp(enroll.secret));
@@ -451,7 +451,7 @@ describe("Phase D — TOTP login flow, guard gate, session revocation", () => {
     expect(p.user.rows.find((r: any) => r.id === "admin-2").tokenVersion).toBe(1);
     const guard = new SuperAdminGuard(p, { getAllAndOverride: () => undefined } as any);
     const ctxFor = (req: any) => ({ switchToHttp: () => ({ getRequest: () => req }), getHandler: () => null, getClass: () => null }) as any;
-    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-2", tv: 0 }, headers: {}, method: "GET", originalUrl: "/admin/users" }))).rejects.toThrow(/revoked/);
+    await expect(guard.canActivate(ctxFor({ user: { userId: "admin-2", tv: 0 }, headers: {}, method: "GET", originalUrl: "/admin/users" }))).rejects.toMatchObject({ code: "common.adminSessionRevoked" });
     await expect(guard.canActivate(ctxFor({ user: { userId: "admin-2", tv: 1 }, headers: {}, method: "GET", originalUrl: "/admin/users" }))).resolves.toBe(true);
   });
 });

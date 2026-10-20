@@ -75,8 +75,8 @@ describe("U5 pipeline + outcomes", () => {
   it("updateConversation validates stage and outcome, and stores them", async () => {
     const db = fakeDb(); db.conversations.push(convRow());
     const svc = service(db);
-    await expect(svc.updateConversation(ORG, "agent", "c1", { pipelineStage: "bogus" })).rejects.toThrow(/Invalid pipeline stage/);
-    await expect(svc.updateConversation(ORG, "agent", "c1", { outcome: "bogus" })).rejects.toThrow(/Invalid conversation outcome/);
+    await expect(svc.updateConversation(ORG, "agent", "c1", { pipelineStage: "bogus" })).rejects.toMatchObject({ code: "inbox.invalidPipelineStage" });
+    await expect(svc.updateConversation(ORG, "agent", "c1", { outcome: "bogus" })).rejects.toMatchObject({ code: "inbox.invalidConversationOutcome" });
     const updated = await svc.updateConversation(ORG, "agent", "c1", { status: "closed", outcome: "sale", outcomeReason: "COD confirmed" });
     expect(updated.pipelineStage).toBe("new");
     expect(db.conversations[0].outcome).toBe("sale");

@@ -10,6 +10,8 @@
  * selection at creation means read-nothing (the
  * service requires at least one grant or "*").
  */
+import { badRequest } from "../i18n/api-exception";
+
 export const API_KEY_AREAS = ["tenants", "billing", "growth", "admins", "system"] as const;
 export type ApiKeyArea = (typeof API_KEY_AREAS)[number];
 
@@ -54,15 +56,15 @@ const GRANT_RE = /^(\*|[a-z]+:(read|write|\*))$/;
 
 export function validateScopes(input: unknown): string[] {
   if (input === undefined || input === null) return ["*"];
-  if (!Array.isArray(input)) throw new Error("scopes must be an array of grants");
+  if (!Array.isArray(input)) throw badRequest("common.apiKeyScopesMustBeArray");
   const out = [...new Set(input.map((s) => String(s).trim()).filter(Boolean))];
   for (const g of out) {
-    if (!GRANT_RE.test(g)) throw new Error(`Unknown scope grant: ${g}`);
+    if (!GRANT_RE.test(g)) throw badRequest("common.apiKeyScopeGrantUnknown", { grant: g });
     if (g !== "*") {
       const area = g.split(":")[0];
-      if (!(API_KEY_AREAS as readonly string[]).includes(area)) throw new Error(`Unknown scope area: ${area}`);
+      if (!(API_KEY_AREAS as readonly string[]).includes(area)) throw badRequest("common.apiKeyScopeAreaUnknown", { area });
     }
   }
-  if (!out.length) throw new Error("Choose at least one scope grant (or * for full access)");
+  if (!out.length) throw badRequest("common.apiKeyScopesChooseAtLeastOne");
   return out;
 }

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { badRequest } from "../i18n/api-exception";
 
 export type AccountingExportType = "sales" | "tax" | "due" | "courier-collections";
 const EXPORT_TYPES: AccountingExportType[] = ["sales", "tax", "due", "courier-collections"];
@@ -38,21 +39,21 @@ export class AccountingService {
   /** Validate the period and return the UTC bounds of
    * [from 00:00, to 23:59:59.999] Asia/Dhaka (+06:00, no DST). */
   private parsePeriod(from?: string, to?: string): { start: Date; end: Date } {
-    const bad = () => new BadRequestException("তারিখ সঠিক নয় — from ও to দুটোই YYYY-MM-DD আকারে দিন");
+    const bad = () => badRequest("tax.dateInvalidGiveFromAndToYyyyMmDd");
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw bad();
     const start = new Date(`${from}T00:00:00+06:00`);
     const end = new Date(`${to}T23:59:59.999+06:00`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) throw bad();
     // Reject rolled-over calendar dates (e.g. 2026-02-30).
     if (dhakaDateString(start) !== from || dhakaDateString(end) !== to) throw bad();
-    if (start > end) throw new BadRequestException("শুরুর তারিখ শেষের তারিখের পরে হতে পারে না");
+    if (start > end) throw badRequest("tax.theStartDateCannotBeAfter");
     const days =
       Math.round(
         (Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10))) -
           Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)))) /
           86400000,
       ) + 1;
-    if (days > 366) throw new BadRequestException("সর্বোচ্চ ৩৬৬ দিনের রিপোর্ট একবারে নেওয়া যাবে");
+    if (days > 366) throw badRequest("tax.aReportOfAtMost366");
     return { start, end };
   }
 
@@ -120,7 +121,7 @@ export class AccountingService {
 
   async exportCsv(orgId: string, type: string, from?: string, to?: string): Promise<string> {
     if (!(EXPORT_TYPES as string[]).includes(type)) {
-      throw new BadRequestException("রিপোর্টের ধরন সঠিক নয় (sales | tax | due | courier-collections)");
+      throw badRequest("tax.theReportTypeIsNotValid");
     }
     const { start, end } = this.parsePeriod(from, to);
     if (type === "courier-collections") return this.courierCollectionsCsv(orgId, start, end);

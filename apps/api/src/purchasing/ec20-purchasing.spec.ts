@@ -134,7 +134,7 @@ describe("PurchasingService.createPurchaseOrder validation", () => {
     const p = await seedProduct(prisma);
     await expect(svc.createPurchaseOrder("org-1", "owner-1", {
       supplierId: foreign.id, items: [{ productId: p.id, qtyOrdered: 1, unitCostMinor: "100" }],
-    } as any)).rejects.toThrow(/Supplier not found in this organization/);
+    } as any)).rejects.toMatchObject({ code: "purchasing.supplierNotFoundInThisOrganization" });
   });
 
   it("404s a foreign product", async () => {
@@ -143,7 +143,7 @@ describe("PurchasingService.createPurchaseOrder validation", () => {
     const foreign = await seedProduct(prisma, { organizationId: "org-2" });
     await expect(svc.createPurchaseOrder("org-1", "owner-1", {
       supplierId: s.id, items: [{ productId: foreign.id, qtyOrdered: 1, unitCostMinor: "100" }],
-    } as any)).rejects.toThrow(/Product not found in this organization/);
+    } as any)).rejects.toMatchObject({ code: "purchasing.productNotFoundInThisOrganization" });
   });
 
   it("400s a bad qty and a bad unit cost, writing nothing", async () => {
@@ -340,9 +340,9 @@ describe("PurchasingService tenant isolation", () => {
     const foreign = await prisma.purchaseOrder.create({
       data: { organizationId: "org-2", supplierId: "s-x", status: "draft" },
     });
-    await expect(svc.getPurchaseOrder("org-1", foreign.id)).rejects.toThrow(/not found in this organization/);
+    await expect(svc.getPurchaseOrder("org-1", foreign.id)).rejects.toMatchObject({ code: "purchasing.purchaseOrderNotFoundInThis" });
     await expect(svc.receive("org-1", "owner-1", foreign.id, { items: [{ itemId: "i", qty: 1 }] } as any))
-      .rejects.toThrow(/not found in this organization/);
+      .rejects.toMatchObject({ code: "purchasing.purchaseOrderNotFoundInThis" });
   });
 });
 

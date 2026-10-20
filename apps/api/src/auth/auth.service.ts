@@ -6,6 +6,7 @@ import { createAgentNotification } from "../common/agent-notify";
 import { AuditService } from "../audit/audit.service";
 import { RegisterDto, LoginDto } from "./auth.dto";
 import { VerificationService, readEmailVerificationGate, verificationRequiredFor } from "./verification.service";
+import { badRequest, conflict, forbidden, notFound, unauthorized } from "../i18n";
 
 @Injectable()
 export class AuthService {
@@ -44,11 +45,11 @@ export class AuthService {
   async register(dto: RegisterDto, ip?: string, userAgent?: string) {
     const { platformSetting } = await import("../common/platform-settings");
     if ((await platformSetting(this.prisma as any, "signupOpen")) === false) {
-      throw new ForbiddenException("New signups are currently closed by the platform team. Please try again later.");
+      throw forbidden("auth.signupsClosed");
     }
     const email = dto.email.toLowerCase().trim();
     const existing = await (this.prisma as any).user.findUnique({ where: { email } });
-    if (existing) throw new ConflictException("An account with this email already exists");
+    if (existing) throw conflict("auth.accountEmailExists");
     const user = await (this.prisma as any).user.create({
       data: { email, name: dto.name.trim(), passwordHash: hashSync(dto.password, 10) },
     });
@@ -126,7 +127,7 @@ export class AuthService {
   async myReferral(userId: string) {
     const { ensureReferralCode } = await import("../common/referral");
     const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw notFound("auth.userNotFound");
     const code = await ensureReferralCode(this.prisma as any, user);
     const rows = await (this.prisma as any).referral?.findMany({
       where: { referrerUserId: userId }, orderBy: { createdAt: "desc" }, take: 50,
@@ -205,10 +206,10 @@ export class AuthService {
       // GB6 (GC16): the same failure lands in the per-user login
       // history (userId null for unknown emails).
       await this.recordLoginEvent({ userId: user?.id ?? null, email, success: false, ip, userAgent });
-      throw new UnauthorizedException("Invalid email or password");
+      throw unauthorized("auth.invalidEmailOrPassword");
     }
     if (user.status === "SUSPENDED") {
-      throw new UnauthorizedException("This account has been suspended by the platform team. Please contact support.");
+      throw unauthorized("auth.accountSuspended");
     }
     if (user.totpEnabled && user.totpSecretEncrypted) {
       // Password verified; a TOTP challenge must complete before any
@@ -234,9 +235,9 @@ export class AuthService {
   async resetPasswordWithAdminToken(token: string, newPassword: string) {
     const { verifyAdminToken } = await import("../common/admin-token");
     const body = verifyAdminToken(token, "pwd-reset");
-    if (!body) throw new UnauthorizedException("This reset link is invalid or has expired");
+    if (!body) throw unauthorized("auth.resetLinkInvalidOrExpired");
     const user = await (this.prisma as any).user.findUnique({ where: { id: body.sub } });
-    if (!user || (user.tokenVersion ?? 0) !== body.tv) throw new UnauthorizedException("This reset link is no longer valid");
+    if (!user || (user.tokenVersion ?? 0) !== body.tv) throw unauthorized("auth.resetLinkNoLongerValid");
     await (this.prisma as any).user.update({
       where: { id: user.id },
       data: { passwordHash: hashSync(newPassword, 10), tokenVersion: (user.tokenVersion ?? 0) + 1 },
@@ -252,22 +253,22 @@ export class AuthService {
     const { verifyTotp } = await import("../common/totp");
     const { decryptJson } = await import("../integrations/crypto");
     const body = verifyAdminToken(challengeToken, "totp-challenge");
-    if (!body) throw new UnauthorizedException("This sign-in challenge is invalid or has expired. Please sign in again.");
+    if (!body) throw unauthorized("auth.signInChallengeInvalid");
     // AB8 (AX26): a challenge minted by a Google SSO login
     // carries via:"google" — its completion is a GOOGLE login,
     // recorded as such; password challenges record "password".
     const method = (body as any).via === "google" ? "google" : "password";
     const user = await (this.prisma as any).user.findUnique({ where: { id: body.sub } });
     if (!user || user.status !== "ACTIVE" || !user.totpEnabled || !user.totpSecretEncrypted || (user.tokenVersion ?? 0) !== body.tv) {
-      throw new UnauthorizedException("This sign-in challenge is no longer valid. Please sign in again.");
+      throw unauthorized("auth.signInChallengeNoLongerValid");
     }
     let secret: string;
     try { secret = (decryptJson(user.totpSecretEncrypted) as { secret: string }).secret; }
-    catch { throw new UnauthorizedException("Two-factor authentication is misconfigured for this account. Contact the platform team."); }
+    catch { throw unauthorized("auth.totpMisconfigured"); }
     if (!verifyTotp(secret, code)) {
       // GB6 (GC16): a wrong code is a failed login attempt.
       await this.recordLoginEvent({ userId: body.sub, email: user.email, success: false, ip, userAgent, method });
-      throw new UnauthorizedException("That authentication code is incorrect");
+      throw unauthorized("auth.authCodeIncorrect");
     }
     await (this.prisma as any).user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
     await this.audit.log({ userId: user.id, action: user.isSuperAdmin ? "admin.login" : "auth.login", entityType: "User", entityId: user.id, metadata: { totp: true }, ipAddress: ip });
@@ -287,7 +288,7 @@ export class AuthService {
   async completeGoogleLogin(userId: string, ip?: string, userAgent?: string) {
     const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
     if (!user || user.status !== "ACTIVE") {
-      throw new UnauthorizedException("এই অ্যাকাউন্টে সাইন ইন করা যাচ্ছে না — আবার চেষ্টা করুন");
+      throw unauthorized("auth.signInFailedRetry");
     }
     if (user.totpEnabled && user.totpSecretEncrypted) {
       const { issueAdminToken } = await import("../common/admin-token");
@@ -313,14 +314,14 @@ export class AuthService {
     const user = await (this.prisma as any).user.findUnique({
       where: { id: userId }, select: { totpEnabled: true, totpSecretEncrypted: true },
     });
-    if (!user) throw new NotFoundException("User not found");
+    if (!user) throw notFound("auth.userNotFound");
     return { totpEnabled: user.totpEnabled === true, enrolmentInProgress: Boolean(user.totpSecretEncrypted) && user.totpEnabled !== true };
   }
 
   async totpEnroll(userId: string, ip?: string) {
     const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException("User not found");
-    if (user.totpEnabled) throw new BadRequestException("Two-factor authentication is already enabled. Disable it first to re-enrol.");
+    if (!user) throw notFound("auth.userNotFound");
+    if (user.totpEnabled) throw badRequest("auth.totpAlreadyEnabled");
     const { generateTotpSecret, otpauthUrl } = await import("../common/totp");
     const { encryptJson } = await import("../integrations/crypto");
     const secret = generateTotpSecret();
@@ -342,14 +343,14 @@ export class AuthService {
   private async ownTotpSecret(userId: string): Promise<string> {
     const { decryptJson } = await import("../integrations/crypto");
     const user = await (this.prisma as any).user.findUnique({ where: { id: userId } });
-    if (!user?.totpSecretEncrypted) throw new BadRequestException("No two-factor enrolment in progress. Start enrolment first.");
+    if (!user?.totpSecretEncrypted) throw badRequest("auth.totpNoEnrolment");
     return (decryptJson(user.totpSecretEncrypted) as { secret: string }).secret;
   }
 
   async totpConfirm(userId: string, code: string, ip?: string) {
     const { verifyTotp } = await import("../common/totp");
     const secret = await this.ownTotpSecret(userId);
-    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect — check the time on your device and try again");
+    if (!verifyTotp(secret, code)) throw badRequest("auth.totpCodeIncorrectTime");
     await (this.prisma as any).user.update({ where: { id: userId }, data: { totpEnabled: true } });
     await this.audit.log({ userId, action: "auth.totp_enabled", entityType: "User", entityId: userId, ipAddress: ip });
     return { totpEnabled: true };
@@ -358,7 +359,7 @@ export class AuthService {
   async totpDisable(userId: string, code: string, ip?: string) {
     const { verifyTotp } = await import("../common/totp");
     const secret = await this.ownTotpSecret(userId);
-    if (!verifyTotp(secret, code)) throw new BadRequestException("That code is incorrect");
+    if (!verifyTotp(secret, code)) throw badRequest("auth.codeIncorrect");
     await (this.prisma as any).user.update({ where: { id: userId }, data: { totpEnabled: false, totpSecretEncrypted: null } });
     await this.audit.log({ userId, action: "auth.totp_disabled", entityType: "User", entityId: userId, ipAddress: ip });
     return { totpEnabled: false };
@@ -378,7 +379,7 @@ export class AuthService {
         preferredLocale: true,
       },
     });
-    if (!user) throw new UnauthorizedException("User not found");
+    if (!user) throw unauthorized("auth.userNotFound");
     // verificationRequired mirrors the JwtAuthGuard gate exactly
     // (same helper): the web shell uses it to show the blocking
     // verification wall before any tenant call starts failing.
@@ -405,11 +406,11 @@ export class AuthService {
       const user = await (this.prisma as any).user.findUnique({
         where: { id: userId }, select: { preferredLocale: true },
       });
-      if (!user) throw new NotFoundException("User not found");
+      if (!user) throw notFound("auth.userNotFound");
       return { preferredLocale: user.preferredLocale ?? null };
     }
     if (preferredLocale !== null && preferredLocale !== "bn" && preferredLocale !== "en") {
-      throw new BadRequestException('Preferred language must be "bn" or "en" — or null to clear the preference');
+      throw badRequest("auth.preferredLocaleInvalid");
     }
     const updated = await (this.prisma as any).user.update({
       where: { id: userId }, data: { preferredLocale },
@@ -441,7 +442,7 @@ export class AuthService {
     try {
       session = await (this.prisma as any).userSession?.findFirst?.({ where: { id: sessionId, userId } });
     } catch { session = null; }
-    if (!session) throw new NotFoundException("Session not found");
+    if (!session) throw notFound("auth.sessionNotFound");
     const alreadyRevoked = Boolean(session.revokedAt);
     if (!alreadyRevoked) {
       await (this.prisma as any).userSession.update({ where: { id: session.id }, data: { revokedAt: new Date() } });

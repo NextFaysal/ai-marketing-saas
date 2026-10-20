@@ -1,4 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
+import { badRequest } from "../i18n";
 import { lookup } from "node:dns/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -208,31 +209,31 @@ export class ProductImageMirrorService {
     try {
       url = new URL(rawUrl);
     } catch {
-      throw new Error(`ছবির URLটি সঠিক URL নয়: ${rawUrl}`);
+      throw badRequest("products.mirrorUrlInvalid", { url: rawUrl });
     }
     if (url.protocol !== "https:") {
-      throw new Error("শুধু https:// URL থেকে ছবি মিরর করা যায় — http বা অন্য protocol চলবে না।");
+      throw badRequest("products.mirrorHttpsOnly");
     }
     if (url.username || url.password) {
-      throw new Error("ছবির URL-এ username/password থাকা যাবে না।");
+      throw badRequest("products.mirrorUrlNoCredentials");
     }
     if (url.port && url.port !== "443") {
-      throw new Error(`ছবির URL-এ শুধু port 443 চলবে (দেওয়া হয়েছে ${url.port})।`);
+      throw badRequest("products.mirrorPort443Only", { port: url.port });
     }
     const hostname = url.hostname.replace(/^\[/, "").replace(/\]$/, "");
-    if (!hostname) throw new Error("ছবির URL-এ host পাওয়া যায়নি।");
+    if (!hostname) throw badRequest("products.mirrorHostMissing");
     let addresses: string[];
     try {
       addresses = await this.resolveHost(hostname);
     } catch (e) {
-      throw new Error(`ছবির host (${hostname}) খুঁজে পাওয়া যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+      throw badRequest("products.mirrorHostLookupFailed", { host: hostname, detail: e instanceof Error ? e.message : String(e) });
     }
     if (!Array.isArray(addresses) || addresses.length === 0) {
-      throw new Error(`ছবির host (${hostname})-এর কোনো ঠিকানা পাওয়া যায়নি।`);
+      throw badRequest("products.mirrorHostNoAddress", { host: hostname });
     }
     for (const address of addresses) {
       if (!isPublicAddress(address)) {
-        throw new Error("ছবির URL একটি private/internal ঠিকানায় নির্দেশ করে — নিরাপত্তার কারণে সেখান থেকে ছবি আনা যাবে না।");
+        throw badRequest("products.mirrorPrivateAddress");
       }
     }
     return url;
@@ -275,22 +276,22 @@ export class ProductImageMirrorService {
         try {
           res = await this.fetchFn(url.toString(), { redirect: "manual", signal: controller.signal });
         } catch (e) {
-          throw new Error(`ছবির URL থেকে ছবি আনা যায়নি: ${e instanceof Error ? e.message : String(e)}`);
+          throw badRequest("products.mirrorFetchFailed", { detail: e instanceof Error ? e.message : String(e) });
         }
         const status = Number(res?.status ?? 0);
         if (status >= 300 && status < 400) {
           const location = typeof res?.headers?.get === "function" ? res.headers.get("location") : null;
-          if (!location) throw new Error(`ছবির URL redirect করেছে (HTTP ${status}) কিন্তু কোনো ঠিকানা দেয়নি।`);
-          if (hop === MAX_REDIRECT_HOPS) throw new Error("ছবির URL অনেক বেশিবার redirect করেছে।");
+          if (!location) throw badRequest("products.mirrorRedirectNoLocation", { status });
+          if (hop === MAX_REDIRECT_HOPS) throw badRequest("products.mirrorTooManyRedirects");
           current = new URL(location, url).toString();
           continue;
         }
         if (status !== 200) {
-          throw new Error(`ছবির URL থেকে HTTP ${status} এসেছে — ছবি পাওয়া যায়নি।`);
+          throw badRequest("products.mirrorHttpStatus", { status });
         }
         return await this.readBodyCapped(res);
       }
-      throw new Error("ছবির URL অনেক বেশিবার redirect করেছে।");
+      throw badRequest("products.mirrorTooManyRedirects");
     } finally {
       clearTimeout(timer);
     }
@@ -416,7 +417,7 @@ export class ProductImageMirrorService {
         const detected = detectMediaKind(got.bytes);
         if (!detected || detected.kind !== "image") {
           const what = detected ? detected.contentType : "অচেনা ফরম্যাটের ডেটা";
-          throw new Error(`এই URL থেকে ছবি পাওয়া যায়নি — পাওয়া গেছে ${what}। শুধু PNG/JPEG/GIF/WebP ছবি মিরর করা যায়।`);
+          throw badRequest("products.mirrorNotAnImage", { what });
         }
         const sha256 = createHash("sha256").update(got.bytes).digest("hex");
         const existing = await (this.prisma as any).storedFile?.findFirst?.({

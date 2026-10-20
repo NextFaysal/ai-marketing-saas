@@ -145,8 +145,8 @@ describe("EC23 ensureInvoiceNumber", () => {
     const prisma = makePrisma();
     seedOrder(prisma, "o-9", "org-2");
     const svc = new InvoicesService(prisma);
-    await expect(svc.ensureInvoiceNumber("org-1", "o-9")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getInvoice("org-1", "o-9")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.ensureInvoiceNumber("org-1", "o-9")).rejects.toMatchObject({ code: "tax.orderNotFoundInThisOrganization" });
+    await expect(svc.getInvoice("org-1", "o-9")).rejects.toMatchObject({ code: "tax.orderNotFoundInThisOrganization" });
     expect(prisma.__counters).toHaveLength(0);
   });
 

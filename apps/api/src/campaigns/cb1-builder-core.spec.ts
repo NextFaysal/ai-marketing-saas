@@ -88,8 +88,8 @@ describe("CB1 builder core", () => {
     expect(updated.targeting.positions).toEqual(["feed", "reels"]);
     expect(updated.targeting.interests).toEqual(["Fashion"]); // untouched key survives
     expect(updated.targeting.countries).toEqual(["BD"]);
-    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { positions: ["moon"] as any })).rejects.toThrow(/Invalid position/);
-    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { dailyBudget: "", lifetimeBudget: "" })).rejects.toThrow(/budget is required/);
+    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { positions: ["moon"] as any })).rejects.toMatchObject({ code: "campaigns.invalidAllowed" });
+    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { dailyBudget: "", lifetimeBudget: "" })).rejects.toMatchObject({ code: "campaigns.eitherADailyOrALifetime" });
   });
 
   it("placements map into the Graph targeting payload per platform", async () => {
@@ -110,7 +110,7 @@ describe("CB1 builder core", () => {
     const updated: any = await svc.updateAd("org", plan.id, ad.id, "u1", { headline: "নতুন হেডলাইন", primaryText: "বদলানো টেক্সট" });
     expect(updated.headline).toBe("নতুন হেডলাইন");
     await expect(svc.updateAd("org", plan.id, ad.id, "u1", { format: "video" })).rejects.toThrow(/videoAssetId/);
-    await expect(svc.updateAd("org", plan.id, "foreign-ad", "u1", { headline: "x" })).rejects.toThrow(/not found/i);
+    await expect(svc.updateAd("org", plan.id, "foreign-ad", "u1", { headline: "x" })).rejects.toMatchObject({ code: "campaigns.adNotFoundInThisPlan" });
   });
 
   it("duplicateAdSet copies ads without external ids; duplicateAd clones inside the set", async () => {
@@ -129,6 +129,6 @@ describe("CB1 builder core", () => {
     const { svc } = setup();
     const { plan, adSet } = await draftWithAd(svc);
     await svc.submitForApproval("org", "u1", plan.id);
-    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { name: "X" })).rejects.toThrow(/no longer be edited/);
+    await expect(svc.updateAdSet("org", plan.id, adSet.id, "u1", { name: "X" })).rejects.toMatchObject({ code: "campaigns.planIsAndCanNoLonger" });
   });
 });

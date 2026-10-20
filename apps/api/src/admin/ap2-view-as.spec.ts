@@ -28,15 +28,15 @@ describe("AP2 TenantGuard view-as registry check", () => {
   });
   it("a revoked session is refused", async () => {
     const { ctx, prisma } = guardCtx({ ...live, revokedAt: new Date() });
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.viewAsRevoked" });
   });
   it("an expired session is refused", async () => {
     const { ctx, prisma } = guardCtx({ ...live, expiresAt: new Date(Date.now() - 1000) });
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.viewAsRevoked" });
   });
   it("a legacy token without a session id is refused", async () => {
     const { ctx, prisma } = guardCtx({ ...live }, { sessionId: undefined });
-    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(new TenantGuard(prisma).canActivate(ctx)).rejects.toMatchObject({ code: "common.viewAsRevoked" });
   });
 });
 
@@ -67,7 +67,7 @@ describe("AP2 AdminService session registry", () => {
   });
   it("another non-super admin cannot revoke someone else's session", async () => {
     const { svc } = setup();
-    await expect(svc.revokeViewAsSession({ id: "admin-2" }, "sess-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.revokeViewAsSession({ id: "admin-2" }, "sess-1")).rejects.toMatchObject({ code: "admin.onlyTheSessionSAdminOr" });
   });
   it("a SUPER admin can revoke any session", async () => {
     const { svc } = setup();

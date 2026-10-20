@@ -1,8 +1,6 @@
 import {
-  BadRequestException,
   Injectable,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -16,6 +14,7 @@ import type {
   RecordAffiliatePayoutDto,
   UpdateAffiliatePartnerDto,
 } from "./affiliates.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * EC32 — Affiliate Program.
@@ -127,7 +126,7 @@ export class AffiliatesService {
       percent < 0 ||
       percent > 50
     ) {
-      throw new BadRequestException("কমিশনের হার ০ থেকে ৫০ শতাংশের মধ্যে পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("affiliates.theCommissionRateMustBeAn");
     }
     return percent;
   }
@@ -146,7 +145,7 @@ export class AffiliatesService {
       .findFirst({ where: { organizationId: orgId, code } })
       .catch(() => null);
     if (clash && String(clash.id) !== String(exceptPartnerId ?? "")) {
-      throw new BadRequestException(`এই অ্যাফিলিয়েট কোডটি ইতিমধ্যে ব্যবহৃত হয়েছে: ${code}`);
+      throw badRequest("affiliates.thisAffiliateCodeIsAlreadyUsed", { code: code });
     }
   }
 
@@ -154,7 +153,7 @@ export class AffiliatesService {
     const partner = await this.t("affiliatePartner")
       .findFirst({ where: { id: partnerId, organizationId: orgId } })
       .catch(() => null);
-    if (!partner) throw new NotFoundException("Affiliate partner not found in this organization");
+    if (!partner) throw notFound("affiliates.affiliatePartnerNotFoundInThis");
     return partner;
   }
 
@@ -218,8 +217,8 @@ export class AffiliatesService {
   async createPartner(orgId: string, actorId: string, dto: CreateAffiliatePartnerDto) {
     const name = String(dto.name ?? "").trim();
     const phone = String(dto.phone ?? "").trim();
-    if (!name) throw new BadRequestException("পার্টনারের নাম আবশ্যক");
-    if (!phone) throw new BadRequestException("পার্টনারের ফোন নম্বর আবশ্যক");
+    if (!name) throw badRequest("affiliates.thePartnerNameIsRequired");
+    if (!phone) throw badRequest("affiliates.thePartnerPhoneNumberIsRequired");
 
     let code = dto.code ? normalizeCode(dto.code) : "";
     if (code) {
@@ -233,7 +232,7 @@ export class AffiliatesService {
           .catch(() => null);
         if (!clash) code = candidate;
       }
-      if (!code) throw new BadRequestException("অ্যাফিলিয়েট কোড তৈরি করা যায়নি — আবার চেষ্টা করুন");
+      if (!code) throw badRequest("affiliates.theAffiliateCodeCouldNotBe");
     }
 
     let percent: number;
@@ -247,7 +246,7 @@ export class AffiliatesService {
     }
     const status = dto.status ?? "active";
     if (!(PARTNER_STATUSES as readonly string[]).includes(status)) {
-      throw new BadRequestException("পার্টনারের অবস্থা active অথবা paused হতে হবে");
+      throw badRequest("affiliates.thePartnerStatusMustBeActive");
     }
 
     const partner = await this.t("affiliatePartner").create({
@@ -298,18 +297,18 @@ export class AffiliatesService {
     const data: Record<string, any> = {};
     if (dto.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name) throw new BadRequestException("পার্টনারের নাম আবশ্যক");
+      if (!name) throw badRequest("affiliates.thePartnerNameIsRequired");
       data.name = name;
     }
     if (dto.phone !== undefined) {
       const phone = String(dto.phone ?? "").trim();
-      if (!phone) throw new BadRequestException("পার্টনারের ফোন নম্বর আবশ্যক");
+      if (!phone) throw badRequest("affiliates.thePartnerPhoneNumberIsRequired");
       data.phone = phone;
     }
     if (dto.email !== undefined) data.email = dto.email?.trim() || null;
     if (dto.code !== undefined) {
       const code = normalizeCode(dto.code);
-      if (!code) throw new BadRequestException("অ্যাফিলিয়েট কোড খালি হতে পারবে না");
+      if (!code) throw badRequest("affiliates.theAffiliateCodeCannotBeEmpty");
       if (code !== partner.code) await this.assertCodeFree(orgId, code, partnerId);
       data.code = code;
     }
@@ -318,7 +317,7 @@ export class AffiliatesService {
     }
     if (dto.status !== undefined) {
       if (!(PARTNER_STATUSES as readonly string[]).includes(dto.status)) {
-        throw new BadRequestException("পার্টনারের অবস্থা active অথবা paused হতে হবে");
+        throw badRequest("affiliates.thePartnerStatusMustBeActive");
       }
       data.status = dto.status;
     }
@@ -606,11 +605,9 @@ export class AffiliatesService {
     const entry = await this.t("commissionEntry")
       .findFirst({ where: { id: entryId, organizationId: orgId } })
       .catch(() => null);
-    if (!entry) throw new NotFoundException("Commission entry not found in this organization");
+    if (!entry) throw notFound("affiliates.commissionEntryNotFoundInThis");
     if (entry.status !== "pending") {
-      throw new BadRequestException(
-        `শুধুমাত্র pending কমিশন অনুমোদন করা যায় (বর্তমান অবস্থা: ${entry.status})`,
-      );
+      throw badRequest("affiliates.onlyPendingCommissionCanBeApproved", { entryStatus: entry.status });
     }
     const saved = await this.t("commissionEntry").update({
       where: { id: entry.id },
@@ -777,7 +774,7 @@ export class AffiliatesService {
   ) {
     const partner = await this.getPartnerOr404(orgId, partnerId);
     if (!(PAYOUT_METHODS as readonly string[]).includes(dto.method)) {
-      throw new BadRequestException("পেআউটের মাধ্যম bkash, nagad, bank, cash অথবা other হতে হবে");
+      throw badRequest("affiliates.thePayoutMethodMustBeBkash");
     }
     let amount: bigint;
     try {
@@ -786,13 +783,11 @@ export class AffiliatesService {
       amount = 0n;
     }
     if (amount <= 0n) {
-      throw new BadRequestException("পেআউটের পরিমাণ শূন্যের বেশি হতে হবে");
+      throw badRequest("affiliates.thePayoutAmountMustBeMore");
     }
     const before = await this.balanceParts(orgId, partnerId);
     if (amount > before.outstanding) {
-      throw new BadRequestException(
-        `পেআউটের পরিমাণ (${amount.toString()}) বকেয়া কমিশনের (${before.outstanding.toString()})-এর বেশি হতে পারবে না`,
-      );
+      throw badRequest("affiliates.thePayoutAmountCannotExceedThe", { p1: amount.toString(), p2: before.outstanding.toString() });
     }
 
     const payout = await this.t("affiliatePayout").create({
@@ -880,7 +875,7 @@ export class AffiliatesService {
     const row = await this.t("payoutExecution")
       .findFirst({ where: { id: executionId, organizationId: orgId, subjectType: "affiliate_payout" } })
       .catch(() => null);
-    if (!row) throw new NotFoundException("Payout execution not found");
+    if (!row) throw notFound("affiliates.payoutExecutionNotFound");
     return row;
   }
 
@@ -908,7 +903,7 @@ export class AffiliatesService {
     await assertPayoutAutomationAllowed(this.prisma as any);
     const partner = await this.getPartnerOr404(orgId, partnerId);
     if (!(PAYOUT_METHODS as readonly string[]).includes(String(dto.method))) {
-      throw new BadRequestException("পেআউটের মাধ্যম bkash, nagad, bank, cash অথবা other হতে হবে");
+      throw badRequest("affiliates.thePayoutMethodMustBeBkash");
     }
     const method = String(dto.method);
     let amount: bigint;
@@ -918,7 +913,7 @@ export class AffiliatesService {
       amount = 0n;
     }
     if (amount <= 0n) {
-      throw new BadRequestException("পেআউটের পরিমাণ শূন্যের বেশি হতে হবে");
+      throw badRequest("affiliates.thePayoutAmountMustBeMore");
     }
     // Destination: the payee details the bank instruction pays
     // to. bkash/nagad need a number, bank needs account number
@@ -926,15 +921,15 @@ export class AffiliatesService {
     // fall back to the partner's own contact snapshot.
     let destination: any = dto.destination ?? null;
     if (destination !== null && (typeof destination !== "object" || Array.isArray(destination))) {
-      throw new BadRequestException("Payout গন্তব্যের তথ্য সঠিক নয়।");
+      throw badRequest("affiliates.thePayoutDestinationInformationIsNot");
     }
     if (method === "bkash" || method === "nagad") {
       if (!String(destination?.number ?? "").trim()) {
-        throw new BadRequestException(`${method} payout-এর জন্য গন্তব্য নম্বর (destination.number) প্রয়োজন।`);
+        throw badRequest("affiliates.aDestinationNumberDestinationNumberIs", { method: method });
       }
     } else if (method === "bank") {
       if (!String(destination?.accountNumber ?? "").trim() || !String(destination?.bankName ?? "").trim()) {
-        throw new BadRequestException("Bank payout-এর জন্য destination-এ অ্যাকাউন্ট নম্বর ও ব্যাংকের নাম প্রয়োজন।");
+        throw badRequest("affiliates.forABankPayoutTheAccount");
       }
     } else if (!destination) {
       destination = { payeeName: partner.name, phone: partner.phone };
@@ -947,9 +942,7 @@ export class AffiliatesService {
     const reserved = inflight.reduce((s: bigint, r: any) => s + toBig(r.amountMinor), 0n);
     const executable = before.outstanding - reserved;
     if (amount > executable) {
-      throw new BadRequestException(
-        `Execution-এর পরিমাণ (${amount.toString()}) executable বকেয়ার (${executable.toString()} = approved outstanding ${before.outstanding.toString()} − খোলা instruction ${reserved.toString()}) বেশি হতে পারবে না — শুধু APPROVED কমিশনের বিপরীতেই execution হয়`,
-      );
+      throw badRequest("affiliates.theExecutionAmountCannotExceedThe", { p1: amount.toString(), p2: executable.toString(), p3: before.outstanding.toString(), p4: reserved.toString() });
     }
     const execution = await this.t("payoutExecution").create({
       data: {
@@ -979,7 +972,7 @@ export class AffiliatesService {
     await assertPayoutAutomationAllowed(this.prisma as any);
     const ref = String(dto?.bankReference ?? "").trim();
     if (!ref) {
-      throw new BadRequestException("Execution confirm করতে হলে ব্যাংকের reference (bankReference) আবশ্যক।");
+      throw badRequest("affiliates.toConfirmAnExecutionTheBank");
     }
     const execution = await this.getAffiliateExecutionOr404(orgId, executionId);
     if (execution.status === "confirmed") {
@@ -996,7 +989,7 @@ export class AffiliatesService {
       };
     }
     if (execution.status !== "instruction_issued") {
-      throw new BadRequestException(`এই execution-টি confirm করা যাবে না (বর্তমান: ${execution.status}) — failed হলে নতুন instruction তৈরি করুন।`);
+      throw badRequest("affiliates.thisExecutionCannotBeConfirmedCurrent", { executionStatus: execution.status });
     }
     const amount = toBig(execution.amountMinor);
     const before = await this.balanceParts(orgId, execution.partnerId);
@@ -1004,9 +997,7 @@ export class AffiliatesService {
       // Truthful + retryable: nothing is created, the execution
       // stays open — the outstanding may have been consumed by a
       // manual recordPayout after the instruction was issued.
-      throw new BadRequestException(
-        `বর্তমান approved outstanding (${before.outstanding.toString()}) এই execution-এর পরিমাণের (${amount.toString()}) চেয়ে কম — confirm করা যাবে না।`,
-      );
+      throw badRequest("affiliates.theCurrentApprovedOutstandingIsLess", { p1: before.outstanding.toString(), p2: amount.toString() });
     }
     const payout = await this.t("affiliatePayout").create({
       data: {
@@ -1047,10 +1038,10 @@ export class AffiliatesService {
   ) {
     await assertPayoutAutomationAllowed(this.prisma as any);
     const reason = String(dto?.reason ?? "").trim();
-    if (!reason) throw new BadRequestException("Execution failed হিসেবে রেকর্ড করতে হলে কারণ (reason) আবশ্যক।");
+    if (!reason) throw badRequest("affiliates.toRecordAnExecutionAsFailed");
     const execution = await this.getAffiliateExecutionOr404(orgId, executionId);
     if (execution.status === "confirmed") {
-      throw new BadRequestException("Confirmed execution-কে failed করা যাবে না — টাকা ইতিমধ্যে বেরিয়ে গেছে হিসেবে রেকর্ড আছে।");
+      throw badRequest("affiliates.aConfirmedExecutionCannotBeMarked");
     }
     if (execution.status === "failed") return this.serializePayoutExecution(execution);
     const updated = await this.t("payoutExecution").update({

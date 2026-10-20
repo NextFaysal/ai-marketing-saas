@@ -151,7 +151,7 @@ describe("CX3 inbox settings: delay fields round-trip + validation", () => {
     await expect(service.updateSettings(ORG, "owner", { aiReplyDelaySeconds: -1 })).rejects.toThrow(/0\.\.600/);
     await expect(service.updateSettings(ORG, "owner", { aiReplyDelaySeconds: 1.5 })).rejects.toThrow(/0\.\.600/);
     await expect(service.updateSettings(ORG, "owner", { aiReplyDelayByChannel: { whatsapp: 999 } })).rejects.toThrow(/0\.\.600/);
-    await expect(service.updateSettings(ORG, "owner", { aiReplyDelayByChannel: { pigeon: 10 } as any })).rejects.toThrow(/Unknown channel/);
+    await expect(service.updateSettings(ORG, "owner", { aiReplyDelayByChannel: { pigeon: 10 } as any })).rejects.toMatchObject({ code: "inbox.unknownChannel" });
     await expect(service.updateSettings(ORG, "owner", { aiReplyDelayByChannel: [] as any })).rejects.toThrow(/object/);
   });
 

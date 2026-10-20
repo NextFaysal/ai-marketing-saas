@@ -37,6 +37,6 @@ describe("AssistantApiService (AP7)", () => {
     await svc.revokeKey("org1", record.id);
     expect(await svc.authenticate(key)).toBeNull();
     // A key id from another org cannot be revoked cross-org.
-    await expect(svc.revokeKey("org2", record.id)).rejects.toThrow(/not found/);
+    await expect(svc.revokeKey("org2", record.id)).rejects.toMatchObject({ code: "ai.apiKeyNotFound" });
   });
 });

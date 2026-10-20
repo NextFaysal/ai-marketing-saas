@@ -1,5 +1,4 @@
-import {
-  BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Put, Query, UseGuards,
+import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Put, Query, UseGuards,
 } from "@nestjs/common";
 import { PurchasingService } from "./purchasing.service";
 import { InventoryIntelligenceService } from "./inventory-intelligence.service";
@@ -10,6 +9,7 @@ import {
 import { CurrentUser, AuthUser, Roles, PermissionArea } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { badRequest } from "../i18n/api-exception";
 
 const WRITE_ROLES = ["OWNER", "ADMIN", "MARKETING_MANAGER"] as const;
 
@@ -103,7 +103,7 @@ export class PurchasingController {
     if (mode === "velocity") {
       return this.intelligence.reorderSuggestionsV2(orgId, "velocity");
     }
-    throw new BadRequestException("mode অবশ্যই simple বা velocity হতে হবে");
+    throw badRequest("purchasing.modeMustBeSimpleOrVelocity");
   }
 
   // ---- EC33: Inventory intelligence ----

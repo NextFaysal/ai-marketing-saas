@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from "@nestjs/common";
 import { isConnectionDenied, isMemberConnectionDenied } from "../common/permission-catalog";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -32,6 +32,7 @@ import { PublicMediaService } from "../storage/public-media.service";
 import { storedAssetPublicUrl } from "../storage/media-url";
 import { clampSocialPostPageLimit, decodeSocialPostCursor, encodeSocialPostCursor, socialPostCursorWhere } from "./social-post-cursor";
 import { parseCsv } from "./social-csv";
+import { badRequest, conflict, forbidden, notFound } from "../i18n/api-exception";
 
 // SU1: videoOnlyViolation now lives in social-preflight.ts (with
 // the rest of the pre-flight rules); re-exported here so existing
@@ -61,7 +62,7 @@ export function normalizeHashtagTags(tags: unknown): string[] {
     const tag = raw.trim().replace(/^#+/, "").trim();
     if (!tag) continue;
     if (tag.length > 100) {
-      throw new BadRequestException("একটি Hashtag সর্বোচ্চ ১০০ অক্ষরের হতে পারবে।");
+      throw badRequest("social.aHashtagCanBeAtMost");
     }
     const key = tag.toLowerCase();
     if (seen.has(key)) continue;
@@ -69,7 +70,7 @@ export function normalizeHashtagTags(tags: unknown): string[] {
     out.push(tag);
   }
   if (out.length > 30) {
-    throw new BadRequestException("একটি Set-এ সর্বোচ্চ ৩০টি Hashtag রাখা যায়।");
+    throw badRequest("social.aSetCanHoldAtMost");
   }
   return out;
 }
@@ -497,10 +498,10 @@ export class SocialService {
     try {
       await client.verifyToken();
     } catch (e) {
-      throw new BadRequestException(`Meta token verification failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("social.metaTokenVerificationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
     return client.listPages().catch((e) => {
-      throw new BadRequestException(`Could not list Meta pages: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("social.couldNotListMetaPages", { p1: e instanceof Error ? e.message : "unknown error" });
     });
   }
 
@@ -536,7 +537,7 @@ export class SocialService {
 
   async connectMetaPages(organizationId: string, actorId: string, dto: MetaSocialConnectDto) {
     if (!Array.isArray(dto.pageIds) || dto.pageIds.length === 0) {
-      throw new BadRequestException("কোনো Page নির্বাচন করা হয়নি — অন্তত একটি Page বেছে নিন।");
+      throw badRequest("social.noPageHasBeenSelectedChoose");
     }
     // CC28: the token-paste connect records WHICH Meta app the
     // token belongs to. "own" is only meaningful when the tenant
@@ -552,7 +553,7 @@ export class SocialService {
     const missing = [...new Set(dto.pageIds)].filter((id) => !byId.has(id));
     if (missing.length > 0) {
       // Nothing has been stored yet — fail before any write.
-      throw new BadRequestException(`নির্বাচিত Page এই Token-এর অধীনে পাওয়া যায়নি: ${missing.join(", ")} — Tokenটি ওই Pageগুলোতে Access পায় কিনা যাচাই করুন।`);
+      throw badRequest("social.theSelectedPageWasNotFound", { p1: missing.join(", ") });
     }
     const wanted = new Set(dto.pageIds);
     const selected = pages.filter((p) => wanted.has(p.pageId)); // discovery order
@@ -659,7 +660,7 @@ export class SocialService {
    */
   async disconnectAccount(organizationId: string, actorId: string, accountId: string) {
     const account = await (this.prisma as any).socialAccount.findFirst({ where: { id: accountId, organizationId } });
-    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (!account) throw notFound("social.socialAccountNotFoundInThis");
     let shared = false;
     if (account.integrationId) {
       const integrationId: string = account.integrationId;
@@ -695,22 +696,22 @@ export class SocialService {
   async uploadMedia(organizationId: string, actorId: string, dto: UploadSocialMediaDto) {
     const raw = (dto.dataBase64 ?? "").replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
     if (!raw || !/^[A-Za-z0-9+/]*={0,2}$/.test(raw) || raw.length % 4 !== 0) {
-      throw new BadRequestException("ছবি/ভিডিওর ডেটা সঠিক base64 নয় — আবার আপলোড করে চেষ্টা করুন।");
+      throw badRequest("social.theImageVideoDataIsNot");
     }
     const bytes = Buffer.from(raw, "base64");
     if (bytes.length === 0) {
-      throw new BadRequestException("ছবি/ভিডিওর ডেটা সঠিক base64 নয় — আবার আপলোড করে চেষ্টা করুন।");
+      throw badRequest("social.theImageVideoDataIsNot");
     }
     if (bytes.length > SOCIAL_MEDIA_MAX_BYTES) {
       // PP2: this base64 path stays the small-file path (the JSON
       // body limit sits just above this cap anyway). Larger files
       // — real videos — go through the streamed file upload.
-      throw new BadRequestException(`এই পথে ফাইলের আকার সর্বোচ্চ ${formatBytesMb(SOCIAL_MEDIA_MAX_BYTES)} হতে পারবে — বড় ভিডিওর জন্য ফাইল আপলোড ব্যবহার করুন।`);
+      throw badRequest("social.filesOnThisPathCanBe", { p1: formatBytesMb(SOCIAL_MEDIA_MAX_BYTES) });
     }
     // Magic bytes decide — the declared type is never trusted.
     const detected = detectMediaKind(bytes, dto.contentType);
     if (!detected || !(SOCIAL_MEDIA_KINDS as readonly string[]).includes(detected.kind)) {
-      throw new BadRequestException("শুধু ছবি বা ভিডিও আপলোড করা যাবে।");
+      throw badRequest("social.onlyImagesOrVideosCanBe");
     }
     // GC22 (GB9): plan enforcement — tenant library uploads are
     // refused when paused / past-due-past-grace, or when the
@@ -814,18 +815,18 @@ export class SocialService {
       // never have reached the mid-stream sniff threshold).
       const detected = sniffed ?? detectMediaKind(head, input.declaredContentType);
       if (!detected || !(SOCIAL_MEDIA_KINDS as readonly string[]).includes(detected.kind)) {
-        throw new BadRequestException("শুধু ছবি বা ভিডিও আপলোড করা যাবে।");
+        throw badRequest("social.onlyImagesOrVideosCanBe");
       }
       // The sniffed kind owns the cap — an image that slipped in
       // under the (larger) early cap is still refused here.
       if (detected.kind === "image" && total > imageCap) {
-        throw new BadRequestException(`ছবির আকার সর্বোচ্চ ${formatBytesMb(imageCap)} হতে পারবে।`);
+        throw badRequest("social.theImageSizeCanBeAt", { p1: formatBytesMb(imageCap) });
       }
       if (detected.kind === "video" && total > videoCap) {
-        throw new BadRequestException(`ভিডিওর আকার সর্বোচ্চ ${formatBytesMb(videoCap)} হতে পারবে।`);
+        throw badRequest("social.theVideoSizeCanBeAt", { p1: formatBytesMb(videoCap) });
       }
       if (total === 0) {
-        throw new BadRequestException("ফাঁকা ফাইল আপলোড করা যাবে না।");
+        throw badRequest("social.anEmptyFileCannotBeUploaded");
       }
       // GC22: exact storage check with the real byte total —
       // refusal here leaves no asset row and no stored object
@@ -837,7 +838,7 @@ export class SocialService {
       const written = await store.putStream(storageKey, createReadStream(tempPath), detected.contentType);
       if (written !== total) {
         await store.delete(storageKey).catch(() => undefined);
-        throw new BadRequestException("ফাইল সংরক্ষণ অসম্পূর্ণ হয়েছে — আবার আপলোড করে চেষ্টা করুন।");
+        throw badRequest("social.theFileSaveWasIncompleteUpload");
       }
       let asset: any;
       try {
@@ -874,14 +875,14 @@ export class SocialService {
 
   private async getAsset(organizationId: string, assetId: string) {
     const asset = await (this.prisma as any).mediaAsset.findFirst({ where: { id: assetId, organizationId } });
-    if (!asset) throw new NotFoundException("Media asset not found in this organization");
+    if (!asset) throw notFound("social.mediaAssetNotFoundInThis");
     return asset;
   }
 
   async getMediaFile(organizationId: string, assetId: string): Promise<{ bytes: Buffer; contentType: string }> {
     const asset = await this.getAsset(organizationId, assetId);
     const bytes = await MediaStore.fromEnv().get(asset.storageKey);
-    if (!bytes) throw new NotFoundException("Media bytes not found in storage");
+    if (!bytes) throw notFound("social.mediaBytesNotFoundInStorage");
     return { bytes, contentType: asset.contentType };
   }
 
@@ -967,7 +968,7 @@ export class SocialService {
   async getMediaFileStream(organizationId: string, assetId: string, rangeHeader?: string): Promise<MediaFileStream> {
     const asset = await this.getAsset(organizationId, assetId);
     const file = await this.streamStoredAsset(asset, rangeHeader);
-    if (!file) throw new NotFoundException("Media bytes not found in storage");
+    if (!file) throw notFound("social.mediaBytesNotFoundInStorage");
     return file;
   }
 
@@ -1009,9 +1010,9 @@ export class SocialService {
 
   private validateHashtagSetName(name: unknown): string {
     const trimmed = typeof name === "string" ? name.trim() : "";
-    if (!trimmed) throw new BadRequestException("Set-এর নাম দিন।");
+    if (!trimmed) throw badRequest("social.set");
     if (trimmed.length > 80) {
-      throw new BadRequestException("Set-এর নাম সর্বোচ্চ ৮০ অক্ষরের হতে পারবে।");
+      throw badRequest("social.set2");
     }
     return trimmed;
   }
@@ -1021,12 +1022,12 @@ export class SocialService {
     const clash = (Array.isArray(rows) ? rows : []).some(
       (r: any) => r.id !== excludeId && typeof r.name === "string" && r.name.toLowerCase() === name.toLowerCase(),
     );
-    if (clash) throw new ConflictException("এই নামে একটি Hashtag Set আগেই আছে।");
+    if (clash) throw conflict("social.aHashtagSetWithThisName");
   }
 
   private async getHashtagSetRow(organizationId: string, setId: string) {
     const row = await (this.prisma as any).socialHashtagSet.findFirst({ where: { id: setId, organizationId } });
-    if (!row) throw new NotFoundException("Hashtag set not found in this organization");
+    if (!row) throw notFound("social.hashtagSetNotFoundInThis");
     return row;
   }
 
@@ -1092,10 +1093,10 @@ export class SocialService {
     if (linkUrl === undefined || linkUrl === null || linkUrl === "") return null;
     let parsed: URL;
     try { parsed = new URL(linkUrl); } catch {
-      throw new BadRequestException("linkUrl সঠিক http(s) URL হতে হবে।");
+      throw badRequest("social.linkurlHttpSUrl");
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new BadRequestException("linkUrl সঠিক http(s) URL হতে হবে।");
+      throw badRequest("social.linkurlHttpSUrl");
     }
     return linkUrl;
   }
@@ -1104,9 +1105,9 @@ export class SocialService {
     const refs = mediaRefs ?? [];
     for (const ref of refs) {
       const asset = await (this.prisma as any).mediaAsset.findFirst({ where: { id: ref.assetId, organizationId } });
-      if (!asset) throw new BadRequestException(`মিডিয়া asset পাওয়া যায়নি: ${ref.assetId}`);
+      if (!asset) throw badRequest("social.mediaAssetNotFound", { refAssetId: ref.assetId });
       if (asset.kind !== ref.kind) {
-        throw new BadRequestException(`মিডিয়া asset-এর ধরন মেলে না: ${ref.assetId} (asset-টি ${asset.kind}, দেওয়া হয়েছে ${ref.kind})`);
+        throw badRequest("social.mediaAssetTypeMismatchTheAsset", { refAssetId: ref.assetId, assetKind: asset.kind, refKind: ref.kind });
       }
     }
     return refs.map((r) => ({ assetId: r.assetId, kind: r.kind }));
@@ -1159,7 +1160,7 @@ export class SocialService {
     const frequency = dto.recurrenceFrequency ?? null;
     const interval = dto.recurrenceInterval ?? null;
     if (!frequency && interval !== null) {
-      throw new BadRequestException("পুনরাবৃত্তির ব্যবধান দিতে হলে আগে পুনরাবৃত্তির ধরন (প্রতিদিন/সাপ্তাহিক/মাসিক) বেছে দিতে হবে।");
+      throw badRequest("social.toGiveARepeatIntervalFirst");
     }
     if (!frequency) return { seriesId: null, recurrenceFrequency: null, recurrenceInterval: null };
     // SU2: a fresh series id binds this post to its future chain.
@@ -1203,7 +1204,7 @@ export class SocialService {
     }).catch(() => null);
     if (!membership) return;
     if (isConnectionDenied(membership, socialAccountId)) {
-      throw new ForbiddenException("এই সোশ্যাল অ্যাকাউন্টে পোস্ট করার অনুমতি আপনাকে দেওয়া হয়নি — Connect Center-এর অ্যাক্সেস সেটিংস দেখুন বা OWNER/ADMIN-কে বলুন।");
+      throw forbidden("social.youHaveNotBeenGivenPermission");
     }
   }
 
@@ -1221,10 +1222,10 @@ export class SocialService {
 
   private async validatePostVariant(organizationId: string, actorId: string, dto: CreateSocialPostDto) {
     const account = await this.accountSummary(organizationId, dto.socialAccountId);
-    if (!account) throw new NotFoundException("Social account not found in this organization");
+    if (!account) throw notFound("social.socialAccountNotFoundInThis");
     await this.assertAccountAccess(organizationId, actorId, account.id);
     const caption = (dto.caption ?? "").trim();
-    if (!caption) throw new BadRequestException("ক্যাপশন খালি রাখা যাবে না।");
+    if (!caption) throw badRequest("social.theCaptionCannotBeLeftEmpty");
     const linkUrl = this.validateLinkUrl(dto.linkUrl);
     const mediaRefs = await this.validateMediaRefs(organizationId, dto.mediaRefs);
     const firstCommentText = this.normalizeFirstComment(dto.firstCommentText);
@@ -1286,9 +1287,9 @@ export class SocialService {
    * best-effort and the original error is rethrown. */
   async createPostGroup(organizationId: string, actorId: string, dto: CreateSocialPostGroupDto) {
     const name = (dto.name ?? "").trim();
-    if (!name) throw new BadRequestException("Group-এর নাম দিন।");
+    if (!name) throw badRequest("social.group");
     const variants = Array.isArray(dto.variants) ? dto.variants : [];
-    if (variants.length === 0) throw new BadRequestException("Group-এ অন্তত একটি Variant দিতে হবে।");
+    if (variants.length === 0) throw badRequest("social.groupVariant");
     const prepared: Awaited<ReturnType<SocialService["validatePostVariant"]>>[] = [];
     for (const variant of variants) {
       prepared.push(await this.validatePostVariant(organizationId, actorId, variant));
@@ -1341,7 +1342,7 @@ export class SocialService {
 
   async getGroup(organizationId: string, groupId: string) {
     const group = await (this.prisma as any).socialPostGroup.findFirst({ where: { id: groupId, organizationId } });
-    if (!group) throw new NotFoundException("Social post group not found in this organization");
+    if (!group) throw notFound("social.socialPostGroupNotFoundIn");
     return this.groupWithPosts(organizationId, group);
   }
 
@@ -1413,7 +1414,7 @@ export class SocialService {
   async createCaptionTest(organizationId: string, actorId: string, postId: string, dto?: CreateCaptionTestDto) {
     const source = await this.getPostRow(organizationId, postId);
     if (source.status !== "draft") {
-      throw new BadRequestException("Caption Test শুধু Draft পোস্ট থেকে তৈরি করা যায়।");
+      throw badRequest("social.aCaptionTestCanOnlyBe");
     }
     let captionTestId: string = source.captionTestId ?? "";
     let updatedSource: any = source;
@@ -1423,7 +1424,7 @@ export class SocialService {
       }).catch(() => []);
       const count = Array.isArray(existing) ? existing.length : 0;
       if (count >= 2) {
-        throw new BadRequestException("Caption Test-এর জোড়া ইতিমধ্যে পূর্ণ — একটি টেস্টে সর্বোচ্চ দুটি পোস্ট থাকে।");
+        throw badRequest("social.theCaptionTestPairIsAlready");
       }
     } else {
       captionTestId = randomUUID();
@@ -1475,7 +1476,7 @@ export class SocialService {
   async derivePost(organizationId: string, actorId: string, postId: string, accountIds: string[]) {
     const source = await this.getPostRow(organizationId, postId);
     const ids = [...new Set(Array.isArray(accountIds) ? accountIds : [])];
-    if (ids.length === 0) throw new BadRequestException("অন্তত একটি Target অ্যাকাউন্ট বেছে দিন।");
+    if (ids.length === 0) throw badRequest("social.chooseAtLeastOneTargetAccount");
 
     let groupId: string | null = source.postGroupId ?? null;
     if (!groupId) {
@@ -1565,7 +1566,7 @@ export class SocialService {
     cursor?: string | null; limit?: number;
   }): Promise<any> {
     if (query.status !== undefined && !(SOCIAL_POST_STATUSES as readonly string[]).includes(query.status)) {
-      throw new BadRequestException(`অবৈধ পোস্ট status: ${query.status}`);
+      throw badRequest("social.invalidPostStatus", { queryStatus: query.status });
     }
     const where: Record<string, unknown> = { organizationId };
     if (query.status !== undefined) where.status = query.status;
@@ -1617,27 +1618,27 @@ export class SocialService {
   async bulkPosts(organizationId: string, actorId: string, dto: { ids?: unknown; action?: unknown; scheduledAt?: unknown }) {
     const ids = [...new Set((Array.isArray(dto?.ids) ? dto.ids : []).filter((x): x is string => typeof x === "string" && !!x))];
     if (ids.length === 0) {
-      throw new BadRequestException("কোনো পোস্ট বেছে নেওয়া হয়নি — অন্তত একটি পোস্ট বেছে দিন।");
+      throw badRequest("social.noPostHasBeenSelectedChoose");
     }
     if (ids.length > 100) {
-      throw new BadRequestException("একবারে সর্বোচ্চ ১০০টি পোস্টে Bulk কাজ করা যায়।");
+      throw badRequest("social.bulkActionsCanBeAppliedTo");
     }
     const action = dto?.action;
     if (action !== "delete_drafts" && action !== "reschedule") {
-      throw new BadRequestException("অজানা Bulk কাজ — delete_drafts অথবা reschedule পাঠান।");
+      throw badRequest("social.unknownBulkActionSendDeleteDrafts");
     }
     let when: Date | null = null;
     if (action === "reschedule") {
       if (typeof dto?.scheduledAt !== "string" || !dto.scheduledAt.trim()) {
-        throw new BadRequestException("Reschedule করতে হলে নতুন তারিখ ও সময় (scheduledAt) দিতে হবে।");
+        throw badRequest("social.toRescheduleANewDateAnd");
       }
       when = new Date(dto.scheduledAt);
       if (Number.isNaN(when.getTime())) {
-        throw new BadRequestException("সঠিক তারিখ ও সময় দিন।");
+        throw badRequest("social.giveAValidDateAndTime");
       }
       // Same 5-minute grace window schedulePost allows.
       if (when.getTime() < Date.now() - 5 * 60_000) {
-        throw new BadRequestException("শিডিউলের সময় অতীতে হতে পারবে না — ভবিষ্যতের সময় দিন।");
+        throw badRequest("social.theScheduledTimeCannotBeIn");
       }
     }
     const approvalOn = action === "reschedule" ? await this.approvalSettingOn(organizationId) : false;
@@ -1720,13 +1721,13 @@ export class SocialService {
   async importPostsCsv(organizationId: string, actorId: string, csvText: string) {
     const parsed = parseCsv(typeof csvText === "string" ? csvText : "");
     if (!parsed.headers.includes("caption")) {
-      throw new BadRequestException("CSV-তে caption কলাম থাকতে হবে — প্রথম সারিতে caption,accountId,linkUrl,scheduledAt হেডার দিন।");
+      throw badRequest("social.thereMustBeACaptionColumn");
     }
     if (parsed.rows.length === 0) {
-      throw new BadRequestException("CSV-তে কোনো ডেটা সারি নেই — অন্তত একটি পোস্টের সারি দিন।");
+      throw badRequest("social.thereIsNoDataRowIn");
     }
     if (parsed.rows.length > 200) {
-      throw new BadRequestException("একবারে সর্বোচ্চ ২০০টি সারি Import করা যায়।");
+      throw badRequest("social.atMost200RowsCanBe");
     }
     const results: { row: number; ok: boolean; id?: string; error?: string }[] = [];
     for (const { row, values } of parsed.rows) {
@@ -1777,7 +1778,7 @@ export class SocialService {
 
   private async getPostRow(organizationId: string, postId: string) {
     const post = await (this.prisma as any).socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
     return post;
   }
 
@@ -1790,12 +1791,12 @@ export class SocialService {
   async updatePost(organizationId: string, actorId: string, postId: string, dto: UpdateSocialPostDto) {
     const post = await this.getPostRow(organizationId, postId);
     if (post.status !== "draft") {
-      throw new ConflictException("শুধু Draft পোস্ট সম্পাদনা করা যায়।");
+      throw conflict("social.onlyDraftPostsCanBeEdited");
     }
     const data: Record<string, unknown> = {};
     if (dto.caption !== undefined) {
       const caption = dto.caption.trim();
-      if (!caption) throw new BadRequestException("ক্যাপশন খালি রাখা যাবে না।");
+      if (!caption) throw badRequest("social.theCaptionCannotBeLeftEmpty");
       data.caption = caption;
     }
     if (dto.linkUrl !== undefined) data.linkUrl = this.validateLinkUrl(dto.linkUrl);
@@ -1822,7 +1823,7 @@ export class SocialService {
         data.recurrenceInterval = null;
       } else {
         if (!post.recurrenceFrequency) {
-          throw new BadRequestException("পুনরাবৃত্তির ব্যবধান দিতে হলে আগে পুনরাবৃত্তির ধরন (প্রতিদিন/সাপ্তাহিক/মাসিক) বেছে দিতে হবে।");
+          throw badRequest("social.toGiveARepeatIntervalFirst");
         }
         data.recurrenceInterval = dto.recurrenceInterval;
       }
@@ -1898,13 +1899,13 @@ export class SocialService {
     await this.assertAccountAccess(organizationId, actorId, post.socialAccountId);
     const fromStatus: string = post.status;
     if (!["draft", "scheduled", "failed"].includes(fromStatus)) {
-      throw new ConflictException(`এই অবস্থায় পোস্টটি শিডিউল করা যাবে না (বর্তমান অবস্থা: ${fromStatus})।`);
+      throw conflict("social.thePostCannotBeScheduledIn", { fromStatus: fromStatus });
     }
     // SP7 approval gate: while the org requires approval, only an
     // approved post may be scheduled (pending / rejected / never
     // submitted all block, with the reason in the message).
     if ((await this.approvalSettingOn(organizationId)) && post.approvalStatus !== "approved") {
-      throw new ConflictException("পোস্টটি অনুমোদিত নয় — অনুমোদন ব্যবস্থা চালু থাকলে শিডিউলের আগে OWNER/ADMIN-এর অনুমোদন লাগবে। আগে পোস্টটি অনুমোদনের জন্য পাঠান।");
+      throw conflict("social.thePostIsNotApprovedWhen2");
     }
     // SN2 client-approval gate: beside the internal gate above —
     // while socialRequireClientApproval is on, the post also
@@ -1925,10 +1926,10 @@ export class SocialService {
     if (mediaViolation) throw new BadRequestException(mediaViolation);
     const when = new Date(dto.scheduledAt);
     if (Number.isNaN(when.getTime())) {
-      throw new BadRequestException("সঠিক তারিখ ও সময় দিন।");
+      throw badRequest("social.giveAValidDateAndTime");
     }
     if (when.getTime() < Date.now() - 5 * 60_000) {
-      throw new BadRequestException("শিডিউলের সময় অতীতে হতে পারবে না — ভবিষ্যতের সময় দিন।");
+      throw badRequest("social.theScheduledTimeCannotBeIn");
     }
     const fromFailed = fromStatus === "failed";
     const updated = await (this.prisma as any).socialPost.update({
@@ -1957,7 +1958,7 @@ export class SocialService {
   async cancelSchedule(organizationId: string, actorId: string, postId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (post.status !== "scheduled") {
-      throw new ConflictException("শুধু শিডিউল করা পোস্টের শিডিউল বাতিল করা যায়।");
+      throw conflict("social.onlyAScheduledPostSSchedule");
     }
     const updated = await (this.prisma as any).socialPost.update({
       where: { id: post.id }, data: { status: "draft", scheduledAt: null },
@@ -1973,7 +1974,7 @@ export class SocialService {
   async deletePost(organizationId: string, actorId: string, postId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (post.status !== "draft") {
-      throw new ConflictException("শুধু Draft পোস্ট মুছে ফেলা যায়।");
+      throw conflict("social.onlyDraftPostsCanBeDeleted");
     }
     await (this.prisma as any).socialPost.delete({ where: { id: post.id } });
     await this.audit.log({
@@ -2001,7 +2002,7 @@ export class SocialService {
     const post = await this.getPostRow(organizationId, postId);
     const body = typeof dto?.body === "string" ? dto.body.trim() : "";
     if (!body) {
-      throw new BadRequestException("নোট খালি রাখা যাবে না — কিছু লিখুন।");
+      throw badRequest("social.theNoteCannotBeLeftEmpty");
     }
     const row = await (this.prisma as any).socialPostNote.create({
       data: { organizationId, socialPostId: post.id, authorId: actorId, body },
@@ -2018,11 +2019,11 @@ export class SocialService {
     const note = await (this.prisma as any).socialPostNote.findFirst({
       where: { id: noteId, organizationId, socialPostId: post.id },
     });
-    if (!note) throw new NotFoundException("Social post note not found in this organization");
+    if (!note) throw notFound("social.socialPostNoteNotFoundIn");
     // Own note: any writer may delete it. Someone else's note:
     // OWNER/ADMIN only — other WRITE roles get a 403.
     if (note.authorId !== actorId && !this.isApproverRole(await this.actorRole(organizationId, actorId))) {
-      throw new ForbiddenException("অন্যের নোট শুধু OWNER/ADMIN মুছতে পারেন।");
+      throw forbidden("social.onlyAnOwnerAdminCanDelete");
     }
     await (this.prisma as any).socialPostNote.delete({ where: { id: note.id } });
     await this.audit.log({
@@ -2056,13 +2057,13 @@ export class SocialService {
   async restorePostVersion(organizationId: string, actorId: string, postId: string, versionId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (post.status !== "draft") {
-      throw new ConflictException("শুধু Draft পোস্টে আগের Version ফিরিয়ে আনা যায়।");
+      throw conflict("social.onlyOnDraftPostsCanA");
     }
     const model = (this.prisma as any).socialPostVersion;
     const version = model?.findFirst
       ? await model.findFirst({ where: { id: versionId, organizationId, socialPostId: post.id } })
       : null;
-    if (!version) throw new NotFoundException("Social post version not found in this organization");
+    if (!version) throw notFound("social.socialPostVersionNotFoundIn");
     const snapshot: any = version.snapshot ?? {};
     const firstCommentText = typeof snapshot.firstCommentText === "string" && snapshot.firstCommentText
       ? snapshot.firstCommentText
@@ -2256,10 +2257,10 @@ export class SocialService {
     } else if (typeof assignedUserIdRaw === "string" && assignedUserIdRaw.trim()) {
       assignedUserId = assignedUserIdRaw.trim();
       if (!(await this.actorRole(organizationId, assignedUserId))) {
-        throw new BadRequestException("নির্বাচিত সদস্য এই Organization-এর সক্রিয় সদস্য নন — আগে Team-এ যোগ করুন।");
+        throw badRequest("social.theSelectedMemberIsNotAn");
       }
     } else {
-      throw new BadRequestException("সঠিক সদস্য বেছে দিন, অথবা দায়িত্ব সরাতে খালি পাঠান।");
+      throw badRequest("social.chooseAValidMemberOrSend");
     }
     const updated = await (this.prisma as any).socialPost.update({
       where: { id: post.id }, data: { assignedUserId },
@@ -2327,23 +2328,23 @@ export class SocialService {
   async submitForApproval(organizationId: string, actorId: string, postId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (!(await this.approvalSettingOn(organizationId))) {
-      throw new BadRequestException("এই Organization-এ পোস্ট অনুমোদন ব্যবস্থা চালু নেই — চালু করতে Social Posts পেজের সেটিংসে যান।");
+      throw badRequest("social.postApprovalIsNotEnabledIn");
     }
     if (post.status !== "draft") {
-      throw new ConflictException("শুধু Draft পোস্ট অনুমোদনের জন্য পাঠানো যায়।");
+      throw conflict("social.onlyDraftPostsCanBeSubmitted");
     }
     if (post.approvalStatus === "pending") {
-      throw new ConflictException("পোস্টটি ইতিমধ্যে অনুমোদনের অপেক্ষায় আছে।");
+      throw conflict("social.thePostIsAlreadyAwaitingApproval");
     }
     if (post.approvalStatus === "approved") {
-      throw new ConflictException("পোস্টটি ইতিমধ্যে অনুমোদিত — শিডিউল বা প্রকাশ করতে পারেন।");
+      throw conflict("social.thePostIsAlreadyApprovedYou");
     }
     if (post.approvalStatus === "manager_approved") {
       // SU9 two-step: a post that already passed step 1 cannot be
       // re-submitted back to "pending" — it waits for the final
       // (step-2) approval instead. An honest refuse, for every
       // actor including approvers.
-      throw new ConflictException("পোস্টটি প্রথম ধাপে অনুমোদিত হয়ে চূড়ান্ত অনুমোদনের অপেক্ষায় আছে — আবার পাঠানো যাবে না।");
+      throw conflict("social.thePostWasApprovedInThe");
     }
     if (this.isApproverRole(await this.actorRole(organizationId, actorId))) {
       const updated = await (this.prisma as any).socialPost.update({
@@ -2379,7 +2380,7 @@ export class SocialService {
   async approvePost(organizationId: string, actorId: string, postId: string) {
     const post = await this.getPostRow(organizationId, postId);
     if (!this.isApproverRole(await this.actorRole(organizationId, actorId))) {
-      throw new ForbiddenException("শুধু OWNER/ADMIN পোস্ট অনুমোদন করতে পারেন।");
+      throw forbidden("social.onlyOwnerAdminCanApproveA");
     }
     // SU9 two-step (only while Organization.socialApprovalTwoStep
     // is on): step 1 moves "pending" → "manager_approved" (its
@@ -2402,10 +2403,10 @@ export class SocialService {
         return this.serializePost(updated, account);
       }
       if (post.approvalStatus !== "manager_approved") {
-        throw new ConflictException("পোস্টটি অনুমোদনের অপেক্ষায় নেই।");
+        throw conflict("social.thePostIsNotAwaitingApproval");
       }
     } else if (post.approvalStatus !== "pending") {
-      throw new ConflictException("পোস্টটি অনুমোদনের অপেক্ষায় নেই।");
+      throw conflict("social.thePostIsNotAwaitingApproval");
     }
     const updated = await (this.prisma as any).socialPost.update({
       where: { id: post.id },
@@ -2431,11 +2432,11 @@ export class SocialService {
   async rejectPost(organizationId: string, actorId: string, postId: string, dto: { note?: unknown }) {
     const post = await this.getPostRow(organizationId, postId);
     if (!this.isApproverRole(await this.actorRole(organizationId, actorId))) {
-      throw new ForbiddenException("শুধু OWNER/ADMIN পোস্ট প্রত্যাখ্যান করতে পারেন।");
+      throw forbidden("social.onlyOwnerAdminCanRejectA");
     }
     const note = typeof dto?.note === "string" ? dto.note.trim() : "";
     if (!note) {
-      throw new BadRequestException("প্রত্যাখ্যানের কারণ (note) লিখতে হবে — লেখক যেন বুঝতে পারেন কী ঠিক করতে হবে।");
+      throw badRequest("social.aReasonForRejectionNoteMust");
     }
     // SU9 two-step: rejection is possible from BOTH steps while
     // two-step is on ("pending" and "manager_approved"); with it
@@ -2444,7 +2445,7 @@ export class SocialService {
       ? ["pending", "manager_approved"]
       : ["pending"];
     if (!rejectable.includes(post.approvalStatus ?? "")) {
-      throw new ConflictException("পোস্টটি অনুমোদনের অপেক্ষায় নেই।");
+      throw conflict("social.thePostIsNotAwaitingApproval");
     }
     const updated = await (this.prisma as any).socialPost.update({
       where: { id: post.id },

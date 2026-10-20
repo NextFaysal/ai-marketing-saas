@@ -12,6 +12,7 @@ import { EventsService } from "../common/events.service";
 import { SmsProvider } from "../messaging/sms.provider";
 import { tenantSmsFromRow } from "../messaging/sender-config";
 import { normalizeBdPhone } from "../orders/phone-utils";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * AB1 (AX1 Loyalty Points + AX2 Referral Rewards).
@@ -172,35 +173,35 @@ export class LoyaltyService {
     if (dto.earnPointsPer1000Minor !== undefined) {
       const v = dto.earnPointsPer1000Minor;
       if (!Number.isInteger(v) || v < 0 || v > 100000) {
-        throw new BadRequestException("আয় হারের পয়েন্ট সংখ্যা সঠিক নয় (০–১০০০০০)");
+        throw badRequest("commerce.earnRatePointsInvalid");
       }
       data.earnPointsPer1000Minor = v;
     }
     if (dto.redeemValueMinorPerPoint !== undefined) {
       const v = dto.redeemValueMinorPerPoint;
       if (!Number.isInteger(v) || v < 1 || v > 1000000) {
-        throw new BadRequestException("প্রতি পয়েন্টের মূল্য কমপক্ষে ১ পয়সা হতে হবে");
+        throw badRequest("commerce.pointValueMin");
       }
       data.redeemValueMinorPerPoint = v;
     }
     if (dto.minRedeemPoints !== undefined) {
       const v = dto.minRedeemPoints;
       if (!Number.isInteger(v) || v < 0 || v > 1000000) {
-        throw new BadRequestException("সর্বনিম্ন রিডিম পয়েন্ট সঠিক নয়");
+        throw badRequest("commerce.minRedeemPointsInvalid");
       }
       data.minRedeemPoints = v;
     }
     if (dto.maxRedeemSharePct !== undefined) {
       const v = dto.maxRedeemSharePct;
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 100)) {
-        throw new BadRequestException("সর্বোচ্চ রিডিম শেয়ার ১–১০০% হতে হবে");
+        throw badRequest("commerce.maxRedeemShareRange");
       }
       data.maxRedeemSharePct = v;
     }
     if (dto.pointsExpiryDays !== undefined) {
       const v = dto.pointsExpiryDays;
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 3650)) {
-        throw new BadRequestException("পয়েন্টের মেয়াদ ১–৩৬৫০ দিন হতে হবে");
+        throw badRequest("commerce.pointsValidityRange");
       }
       data.pointsExpiryDays = v;
     }
@@ -263,21 +264,21 @@ export class LoyaltyService {
     if (dto.enabled !== undefined) data.enabled = dto.enabled === true;
     if (dto.rewardType !== undefined) {
       if (dto.rewardType !== "points" && dto.rewardType !== "coupon") {
-        throw new BadRequestException("পুরস্কারের ধরন সঠিক নয় (points | coupon)");
+        throw badRequest("commerce.rewardTypeInvalid");
       }
       data.rewardType = dto.rewardType;
     }
     if (dto.rewardPoints !== undefined) {
       const v = dto.rewardPoints;
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 1000000)) {
-        throw new BadRequestException("পুরস্কারের পয়েন্ট সংখ্যা সঠিক নয়");
+        throw badRequest("commerce.rewardPointsInvalid");
       }
       data.rewardPoints = v;
     }
     if (dto.couponPercent !== undefined) {
       const v = dto.couponPercent;
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 90)) {
-        throw new BadRequestException("কুপনের ছাড় ১–৯০% হতে হবে");
+        throw badRequest("commerce.rewardCouponPercentRange");
       }
       data.couponPercent = v;
     }
@@ -289,10 +290,10 @@ export class LoyaltyService {
         try {
           parsed = BigInt(dto.rewardMinOrderMinor);
         } catch {
-          throw new BadRequestException("সর্বনিম্ন অর্ডার মূল্য সঠিক সংখ্যায় পাঠান (পয়সায়)");
+          throw badRequest("commerce.minOrderValueInvalid");
         }
         if (parsed < 0n) {
-          throw new BadRequestException("সর্বনিম্ন অর্ডার মূল্য ঋণাত্মক হতে পারবে না");
+          throw badRequest("commerce.minOrderValueNegative");
         }
         data.rewardMinOrderMinor = parsed;
       }
@@ -303,13 +304,13 @@ export class LoyaltyService {
     // error, surfaced here rather than at reward time.
     if (merged.enabled === true) {
       if (merged.rewardType === "points" && !(Number(merged.rewardPoints) > 0)) {
-        throw new BadRequestException("পয়েন্ট পুরস্কার চালু করতে পুরস্কারের পয়েন্ট সংখ্যা দিন");
+        throw badRequest("commerce.pointsRewardNeedsPoints");
       }
       if (
         merged.rewardType === "coupon" &&
         !(Number(merged.couponPercent) >= 1 && Number(merged.couponPercent) <= 90)
       ) {
-        throw new BadRequestException("কুপন পুরস্কার চালু করতে ছাড়ের শতাংশ (১–৯০) দিন");
+        throw badRequest("commerce.couponRewardNeedsPercent");
       }
     }
     const table = this.t("referralRewardSetting");
@@ -1136,7 +1137,7 @@ export class LoyaltyService {
     const customer = await this.t("customer")
       .findFirst({ where: { id: customerId, organizationId: orgId } })
       .catch(() => null);
-    if (!customer) throw new NotFoundException("কাস্টমার পাওয়া যায়নি");
+    if (!customer) throw notFound("commerce.customerNotFound");
     const setting = await this.loadLoyaltySetting(orgId);
     const balance = Number(customer.loyaltyBalanceCache ?? 0);
     const entries: any[] =
@@ -1164,7 +1165,7 @@ export class LoyaltyService {
     const order = await this.t("order")
       .findFirst({ where: { id: orderId, organizationId: orgId } })
       .catch(() => null);
-    if (!order) throw new NotFoundException("অর্ডার পাওয়া যায়নি");
+    if (!order) throw notFound("commerce.orderNotFound");
     const entries: any[] =
       (await this.t("loyaltyLedger")
         .findMany({
@@ -1201,13 +1202,13 @@ export class LoyaltyService {
     const customer = await this.t("customer")
       .findFirst({ where: { id: customerId, organizationId: orgId } })
       .catch(() => null);
-    if (!customer) throw new NotFoundException("কাস্টমার পাওয়া যায়নি");
+    if (!customer) throw notFound("commerce.customerNotFound");
     const delta: number | undefined = dto?.deltaPoints;
     if (delta === undefined || !Number.isInteger(delta) || delta === 0 || Math.abs(delta) > 1000000) {
-      throw new BadRequestException("পয়েন্টের পরিমাণ সঠিক নয় (শূন্য নয় এমন পূর্ণ সংখ্যা)");
+      throw badRequest("commerce.pointsAmountInvalid");
     }
     const note = String(dto?.note ?? "").trim();
-    if (!note) throw new BadRequestException("সংশোধনের কারণ (নোট) দেওয়া বাধ্যতামূলক");
+    if (!note) throw badRequest("commerce.adjustmentReasonMandatory");
     const entry = await (this.prisma as any).$transaction(async (tx: any) => {
       if (delta < 0) await this.consumeLotsTx(tx, orgId, customerId, -Number(delta));
       const balanceAfter = await this.applyDeltaTx(tx, customerId, Number(delta));

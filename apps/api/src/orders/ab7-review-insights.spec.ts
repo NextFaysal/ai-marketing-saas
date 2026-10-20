@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ReviewInsightsService, NO_LLM_MESSAGE } from "./review-insights.service";
 
 /**
@@ -89,7 +90,7 @@ function fixture(opts: { llm?: "dev" | "real" | "throw" | "badjson"; insightRows
 describe("AX15 generate", () => {
   it("refuses with the exact message when no real LLM is configured — nothing written", async () => {
     const { svc, insightRows, usage } = fixture({ llm: "dev" });
-    await expect(svc.generate(ORG, "prod-1", "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.generate(ORG, "prod-1", "user-1")).rejects.toBeInstanceOf(ApiException);
     await expect(svc.generate(ORG, "prod-1", "user-1")).rejects.toThrow(NO_LLM_MESSAGE);
     expect(NO_LLM_MESSAGE).toBe("LLM কনফিগার করা নেই — AI সারসংক্ষেপ উপলব্ধ নয়");
     expect(insightRows).toHaveLength(0);
@@ -98,7 +99,7 @@ describe("AX15 generate", () => {
 
   it("zero text reviews → Bengali refusal, nothing written (rating-only does not count)", async () => {
     const { svc, insightRows } = fixture();
-    await expect(svc.generate(ORG, "prod-2", "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.generate(ORG, "prod-2", "user-1")).rejects.toBeInstanceOf(ApiException);
     await expect(svc.generate(ORG, "prod-2", "user-1")).rejects.toThrow("কোনো লেখাসহ রিভিউ নেই");
     expect(insightRows).toHaveLength(0);
   });
@@ -139,17 +140,17 @@ describe("AX15 generate", () => {
   it("unparseable LLM output → BadRequest, pre-existing insight untouched", async () => {
     const prior = { id: "ins-1", organizationId: ORG, productId: "prod-1", summaryText: "আগের সারসংক্ষেপ", sentimentJson: { positive: 3, neutral: 0, negative: 1, total: 4 }, themesJson: ["মান"], reviewCountAtGeneration: 4, generatedAt: new Date("2026-10-01"), generatedById: "user-0", modelLabel: "old-model" };
     const { svc, insightRows } = fixture({ llm: "badjson", insightRows: [prior] });
-    await expect(svc.generate(ORG, "prod-1", "user-1")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.generate(ORG, "prod-1", "user-1")).rejects.toBeInstanceOf(ApiException);
     expect(insightRows[0].summaryText).toBe("আগের সারসংক্ষেপ");
   });
 
   it("foreign or unknown product → 404 for generate, staff GET and public-by-slug", async () => {
     const { svc } = fixture();
-    await expect(svc.generate(ORG, "prod-foreign", "user-1")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.generate(ORG, "nope", "user-1")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getForStaff(ORG, "prod-foreign")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getPublicBySlug("nope", "shirt")).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.getPublicBySlug("meghna", "nope")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.generate(ORG, "prod-foreign", "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.generate(ORG, "nope", "user-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getForStaff(ORG, "prod-foreign")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getPublicBySlug("nope", "shirt")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getPublicBySlug("meghna", "nope")).rejects.toBeInstanceOf(ApiException);
   });
 });
 

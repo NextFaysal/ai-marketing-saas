@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { TRACKING_FIELDS, validateTrackingValue } from "./tracking";
 
@@ -241,6 +242,7 @@ describe("GB7 validateTrackingValue", () => {
     expect(validateTrackingValue("ga4MeasurementId", "nope")).toEqual({
       ok: false,
       message: "GA4 Measurement ID-এর ফরম্যাট ঠিক নয় (G- দিয়ে শুরু হতে হবে)",
+      code: "storefront.trackingGa4Format",
     });
   });
 
@@ -259,7 +261,7 @@ describe("GB7 updateSettings — tracking fields", () => {
     const { svc } = makeService(prisma);
     await expect(
       svc.updateSettings("org-1", "user-1", { ga4MeasurementId: "BAD-123" } as any),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       svc.updateSettings("org-1", "user-1", { ga4MeasurementId: "BAD-123" } as any),
     ).rejects.toThrow("GA4 Measurement ID-এর ফরম্যাট ঠিক নয় (G- দিয়ে শুরু হতে হবে)");

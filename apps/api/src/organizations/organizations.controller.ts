@@ -5,6 +5,7 @@ import { ApproveJoinRequestDto, AssignCustomRoleDto, CreateCustomRoleDto, Create
 import { CurrentUser, AuthUser, PermissionArea, Public, Roles } from "../common/decorators";
 import { TenantGuard } from "../common/tenant.guard";
 import { RolesGuard } from "../common/roles.guard";
+import { notFound } from "../i18n";
 
 @Controller("organizations")
 export class OrganizationsController {
@@ -464,7 +465,7 @@ export class PublicBrandingController {
       return undefined;
     }
     const logo = await this.orgs.publicLogo(id);
-    if (!logo) throw new NotFoundException("No logo for this organization");
+    if (!logo) throw notFound("organizations.orgNoLogo");
     return new StreamableFile(logo.bytes, { type: logo.contentType, disposition: "inline" });
   }
 }

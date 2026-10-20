@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeCredits, filterTouchpointsInWindow, AttributionModelName, DEFAULT_ATTRIBUTION_WINDOW_DAYS } from "./engine";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const ALL_MODELS: AttributionModelName[] = ["FIRST_TOUCH", "LAST_TOUCH", "LAST_NON_DIRECT", "LINEAR"];
 const REVENUE_EXCLUDED_STATUSES = ["cancelled", "refunded", "failed"];
@@ -47,7 +48,7 @@ export class AttributionService {
 
   async creditsForOrder(organizationId: string, orderId: string) {
     const order = await (this.prisma as any).order.findFirst({ where: { id: orderId, organizationId } });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("attribution.orderNotFoundInThisOrganization");
     const credits = await (this.prisma as any).attributionCredit.findMany({
       where: { organizationId, orderId }, include: { touchpoint: true }, orderBy: { model: "asc" },
     });
@@ -72,7 +73,7 @@ export class AttributionService {
 
   async updateSettings(organizationId: string, windowDays: number) {
     if (![7, 14, 30, 60, 90].includes(windowDays)) {
-      throw new BadRequestException("windowDays must be one of 7, 14, 30, 60, 90");
+      throw badRequest("attribution.windowdaysMustBeOneOf7");
     }
     await (this.prisma as any).organization.update({ where: { id: organizationId }, data: { attributionWindowDays: windowDays } });
     return { windowDays };

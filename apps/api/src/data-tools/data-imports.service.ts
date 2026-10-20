@@ -1,5 +1,4 @@
-import {
-  BadRequestException, ConflictException, Injectable, Logger, NotFoundException,
+import { Injectable, Logger,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -7,6 +6,7 @@ import { refreshOrgSearchVectors } from "../products/search-vector";
 import {
   checkBundle, BUNDLE_TABLE_KEYS, IMPORT_TABLE_KEYS, type BundleCheckOk,
 } from "./org-data-import";
+import { badRequest, conflict, notFound } from "../i18n/api-exception";
 
 /**
  * ORG16 (Organization Next OB5) — org bundle import/restore.
@@ -65,7 +65,7 @@ export class DataImportsService {
   async targetEmptiness(organizationId: string): Promise<TargetEmptiness> {
     const p = this.prisma as any;
     const org = await p.organization?.findUnique({ where: { id: organizationId } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("dataTools.organizationNotFound");
     const count = async (table: string) => {
       try { return (await p[table]?.count({ where: { organizationId } })) ?? 0; }
       catch { return 0; }
@@ -130,12 +130,12 @@ export class DataImportsService {
 
   private parseBundle(bundleJson: string): unknown {
     if (typeof bundleJson !== "string" || bundleJson.trim() === "") {
-      throw new BadRequestException("bundleJson is required");
+      throw badRequest("dataTools.bundlejsonIsRequired");
     }
     try {
       return JSON.parse(bundleJson);
     } catch {
-      throw new BadRequestException("bundleJson is not valid JSON");
+      throw badRequest("dataTools.bundlejsonIsNotValidJson");
     }
   }
 
@@ -176,13 +176,11 @@ export class DataImportsService {
     const parsed = this.parseBundle(bundleJson);
     const check = checkBundle(parsed);
     if (!check.ok) {
-      throw new BadRequestException(`Invalid bundle: ${check.errors.join(", ")}`);
+      throw badRequest("dataTools.invalidBundle", { p1: check.errors.join(", ") });
     }
     const target = await this.targetEmptiness(organizationId);
     if (!target.empty) {
-      throw new ConflictException(
-        "Target organization is not empty — bundle restore is only allowed into a brand-new organization",
-      );
+      throw conflict("dataTools.targetOrganizationIsNotEmptyBundle");
     }
 
     const job = await p.dataImport.create({
@@ -271,7 +269,7 @@ export class DataImportsService {
     const p = this.prisma as any;
     const row = await p.dataImport?.findUnique({ where: { id: importId } }).catch(() => null);
     // Foreign-org rows are indistinguishable from missing ones.
-    if (!row || row.organizationId !== organizationId) throw new NotFoundException("Import not found");
+    if (!row || row.organizationId !== organizationId) throw notFound("dataTools.importNotFound");
     return row;
   }
 }

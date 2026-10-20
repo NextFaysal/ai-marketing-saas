@@ -179,7 +179,7 @@ describe("Phase I - report shares", () => {
     expect(JSON.stringify(view)).not.toContain("contributionProfit");
     expect(JSON.stringify(view)).not.toContain("999");
     prisma.reportShare.rows[0].expiresAt = new Date(Date.now() - 1000);
-    await expect(svc.publicReport(share.token)).rejects.toThrow(/expired/);
+    await expect(svc.publicReport(share.token)).rejects.toMatchObject({ code: "reports.thisReportLinkHasExpired" });
   });
 });
 

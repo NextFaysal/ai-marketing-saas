@@ -86,7 +86,7 @@ describe("CB2 readiness", () => {
     const { svc } = setup();
     const { plan } = await fullPlan(svc);
     await svc.updatePlan("org", plan.id, { dailyBudgetCap: "400" });
-    await expect(svc.submitForApproval("org", "u1", plan.id)).rejects.toThrow(/cap exceeded/);
+    await expect(svc.submitForApproval("org", "u1", plan.id)).rejects.toMatchObject({ code: "campaigns.planDailyBudgetCapExceededMinor" });
     await svc.updatePlan("org", plan.id, { dailyBudgetCap: "" });
     const submitted = await svc.submitForApproval("org", "u1", plan.id);
     expect(submitted.status).toBe("pending_approval");

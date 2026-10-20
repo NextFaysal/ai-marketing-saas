@@ -22,7 +22,11 @@ function money(minor: string): string {
 }
 
 export default function PublicBookingPage() {
-  const t = shopT("bn");
+  // MB4 (CD-3): the shop's locale arrives on the public services
+  // payload; until it loads the page renders in bn (the platform
+  // default), then re-renders in the shop's language.
+  const [locale, setLocale] = useState<string>("bn");
+  const t = shopT(locale);
   const params = useParams<{ orgSlug: string }>();
   const orgSlug = String(params?.orgSlug ?? "");
 
@@ -56,6 +60,7 @@ export default function PublicBookingPage() {
         ]);
         if (!alive) return;
         setOrgName(svc.orgName);
+        if (svc.locale) setLocale(svc.locale);
         setServices(svc.services);
         setStaffList(stf.staff);
       } catch (e) {

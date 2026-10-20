@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional, MessageEvent } from "@nestjs/common";
+import { Injectable, Optional, MessageEvent } from "@nestjs/common";
 import { Observable, Subject, interval, merge } from "rxjs";
 import { map } from "rxjs/operators";
 import { PrismaService } from "../prisma/prisma.service";
@@ -19,6 +19,7 @@ import {
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 export const STATUSES = ["open", "pending", "in_progress", "resolved", "closed"] as const;
 export const PRIORITIES = ["normal", "high", "urgent"] as const;
@@ -165,14 +166,14 @@ export class SupportService {
   async getTicketStream(organizationId: string, ticketId: string, isAdmin = false): Promise<Observable<MessageEvent>> {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket || (!isAdmin && ticket.organizationId !== organizationId)) {
-      throw new NotFoundException("Ticket not found");
+      throw notFound("support.ticketNotFound");
     }
     return this.createTicketStream(ticketId, isAdmin);
   }
 
   async getTicketStreamAdmin(ticketId: string): Promise<Observable<MessageEvent>> {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
     return this.createTicketStream(ticketId, true);
   }
 
@@ -197,13 +198,13 @@ export class SupportService {
 
   async uploadAttachment(organizationId: string, actorId: string, dto: UploadAttachmentDto) {
     const dataBase64 = String(dto.dataBase64 ?? "").trim();
-    if (!dataBase64) throw new BadRequestException("Attachment data is required");
+    if (!dataBase64) throw badRequest("support.attachmentDataIsRequired");
 
     // Clean data URL prefix if present
     const cleanBase64 = dataBase64.replace(/^data:[^;]+;base64,/, "");
     const buffer = Buffer.from(cleanBase64, "base64");
-    if (!buffer.length) throw new BadRequestException("Invalid attachment data");
-    if (buffer.length > 8 * 1024 * 1024) throw new BadRequestException("File size exceeds 8MB limit");
+    if (!buffer.length) throw badRequest("support.invalidAttachmentData");
+    if (buffer.length > 8 * 1024 * 1024) throw badRequest("support.fileSizeExceeds8mbLimit");
 
     const mime = dto.contentType || "application/octet-stream";
     const rawName = (dto.fileName ?? "screenshot.png").replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -234,7 +235,7 @@ export class SupportService {
   async getAttachmentFile(organizationId: string, fileId: string) {
     const safeFile = fileId.replace(/[^a-zA-Z0-9._-]/g, "");
     const filePath = join(process.cwd(), "..", ".media-store", "support", organizationId, safeFile);
-    if (!existsSync(filePath)) throw new NotFoundException("Attachment file not found");
+    if (!existsSync(filePath)) throw notFound("support.attachmentFileNotFound");
     const buffer = await readFile(filePath);
     let contentType = "application/octet-stream";
     if (safeFile.endsWith(".png")) contentType = "image/png";
@@ -305,8 +306,8 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
   async createTicket(organizationId: string, userId: string, dto: CreateTicketDto) {
     const subject = String(dto.subject ?? "").trim();
     const body = String(dto.body ?? "").trim();
-    if (subject.length < 3) throw new BadRequestException("Subject is required (min 3 characters)");
-    if (body.length < 1) throw new BadRequestException("Message body is required");
+    if (subject.length < 3) throw badRequest("support.subjectIsRequiredMin3Characters");
+    if (body.length < 1) throw badRequest("support.messageBodyIsRequired");
 
     const priority = dto.priority === "urgent" ? "urgent" : dto.priority === "high" ? "high" : "normal";
     // GC23: category — default "other"; anything outside the
@@ -315,7 +316,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
       ? "other"
       : String(dto.category);
     if (!(TICKET_CATEGORIES as readonly string[]).includes(category)) {
-      throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+      throw badRequest("support.categoryMustBeOneOf", { p1: TICKET_CATEGORIES.join(", ") });
     }
 
     // Set SLA deadline based on priority:
@@ -363,7 +364,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async getTicket(organizationId: string, ticketId: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== organizationId) throw notFound("support.ticketNotFound");
 
     // Tenant side MUST ONLY receive public messages (isInternal !== true)
     const messages = await (this.prisma as any).supportTicketMessage.findMany({
@@ -376,10 +377,10 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async replyAsTenant(organizationId: string, userId: string, ticketId: string, input: ReplyDto | string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== organizationId) throw notFound("support.ticketNotFound");
     const rawBody = typeof input === "string" ? input : input?.body;
     const text = String(rawBody ?? "").trim();
-    if (!text) throw new BadRequestException("Message body is required");
+    if (!text) throw badRequest("support.messageBodyIsRequired");
 
     const attachments = typeof input === "string" ? undefined : input?.attachments;
 
@@ -410,9 +411,9 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
   }
 
   async setTenantStatus(organizationId: string, ticketId: string, status: string) {
-    if (status !== "closed" && status !== "open") throw new BadRequestException("Tenants can close or reopen a ticket");
+    if (status !== "closed" && status !== "open") throw badRequest("support.tenantsCanCloseOrReopenA");
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== organizationId) throw notFound("support.ticketNotFound");
 
     const data: Record<string, unknown> = { status };
     if (status === "closed") data.resolvedAt = new Date();
@@ -424,10 +425,10 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async submitCsat(organizationId: string, userId: string, ticketId: string, dto: CsatDto) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== organizationId) throw notFound("support.ticketNotFound");
 
     const rating = Number(dto.rating);
-    if (!rating || rating < 1 || rating > 5) throw new BadRequestException("Rating must be between 1 and 5");
+    if (!rating || rating < 1 || rating > 5) throw badRequest("support.ratingMustBeBetween1And");
 
     const updated = await (this.prisma as any).supportTicket.update({
       where: { id: ticketId },
@@ -480,7 +481,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async getTicketAdmin(ticketId: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
 
     // Admin sees ALL messages including internal whisper notes
     const messages = await (this.prisma as any).supportTicketMessage.findMany({
@@ -525,10 +526,10 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async replyAsAdmin(actor: any, ticketId: string, input: ReplyDto | string, ip?: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
     const rawBody = typeof input === "string" ? input : input?.body;
     const text = String(rawBody ?? "").trim();
-    if (!text) throw new BadRequestException("Message body is required");
+    if (!text) throw badRequest("support.messageBodyIsRequired");
 
     const attachments = typeof input === "string" ? undefined : input?.attachments;
 
@@ -613,9 +614,9 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async addInternalNote(actor: any, ticketId: string, dto: InternalNoteDto, ip?: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
     const text = String(dto.body ?? "").trim();
-    if (!text) throw new BadRequestException("Internal note body is required");
+    if (!text) throw badRequest("support.internalNoteBodyIsRequired");
 
     const message = await (this.prisma as any).supportTicketMessage.create({
       data: {
@@ -643,12 +644,12 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
   }
   async updateAsAdmin(actor: any, ticketId: string, dto: AdminTicketUpdateDto, ip?: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
     const data: Record<string, unknown> = {};
 
     if (dto.status !== undefined) {
       if (!(STATUSES as readonly string[]).includes(dto.status as any)) {
-        throw new BadRequestException(`status must be one of ${STATUSES.join(", ")}`);
+        throw badRequest("support.statusMustBeOneOf", { p1: STATUSES.join(", ") });
       }
       data.status = dto.status;
       if (dto.status === "resolved") data.resolvedAt = new Date();
@@ -656,14 +657,14 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
     if (dto.assignedToId !== undefined) data.assignedToId = dto.assignedToId;
     if (dto.priority !== undefined) {
       if (!(PRIORITIES as readonly string[]).includes(dto.priority as any)) {
-        throw new BadRequestException(`priority must be one of ${PRIORITIES.join(", ")}`);
+        throw badRequest("support.priorityMustBeOneOf", { p1: PRIORITIES.join(", ") });
       }
       data.priority = dto.priority;
     }
     // GC23: admins can recategorize a ticket.
     if (dto.category !== undefined) {
       if (!(TICKET_CATEGORIES as readonly string[]).includes(dto.category)) {
-        throw new BadRequestException(`category must be one of ${TICKET_CATEGORIES.join(", ")}`);
+        throw badRequest("support.categoryMustBeOneOf", { p1: TICKET_CATEGORIES.join(", ") });
       }
       data.category = dto.category;
     }
@@ -700,7 +701,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
    */
   async issueTrackingToken(organizationId: string, ticketId: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket || ticket.organizationId !== organizationId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== organizationId) throw notFound("support.ticketNotFound");
     const token = issueTicketTrackingToken({ ticketId, orgId: organizationId });
     return { token, path: `/ticket/track/${token}` };
   }
@@ -710,9 +711,9 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
    * SLA / assignee internals never enter the payload. */
   async getPublicTicket(token: string) {
     const payload = verifyTicketTrackingToken(token);
-    if (!payload) throw new NotFoundException("Ticket not found");
+    if (!payload) throw notFound("support.ticketNotFound");
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: payload.ticketId } });
-    if (!ticket || ticket.organizationId !== payload.orgId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== payload.orgId) throw notFound("support.ticketNotFound");
     const messages = await (this.prisma as any).supportTicketMessage.findMany({
       where: { ticketId: ticket.id, isInternal: false },
       orderBy: { createdAt: "asc" },
@@ -741,11 +742,11 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
    * resolved/closed ticket reopens it, same as the tenant path. */
   async replyPublic(token: string, body: string) {
     const payload = verifyTicketTrackingToken(token);
-    if (!payload) throw new NotFoundException("Ticket not found");
+    if (!payload) throw notFound("support.ticketNotFound");
     const text = String(body ?? "").trim();
-    if (!text) throw new BadRequestException("Message body is required");
+    if (!text) throw badRequest("support.messageBodyIsRequired");
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: payload.ticketId } });
-    if (!ticket || ticket.organizationId !== payload.orgId) throw new NotFoundException("Ticket not found");
+    if (!ticket || ticket.organizationId !== payload.orgId) throw notFound("support.ticketNotFound");
     const message = await (this.prisma as any).supportTicketMessage.create({
       data: {
         ticketId: ticket.id,
@@ -768,7 +769,7 @@ In 2-3 concise sentences in Bengali (with necessary tech terms in English), sugg
 
   async generateAiDraft(ticketId: string, tone = "professional") {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
 
     const messages = await (this.prisma as any).supportTicketMessage.findMany({
       where: { ticketId, isInternal: false },
@@ -829,7 +830,7 @@ Return ONLY the reply text directly.`;
 
   async summarizeThread(ticketId: string) {
     const ticket = await (this.prisma as any).supportTicket.findUnique({ where: { id: ticketId } });
-    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket) throw notFound("support.ticketNotFound");
 
     const messages = await (this.prisma as any).supportTicketMessage.findMany({
       where: { ticketId },

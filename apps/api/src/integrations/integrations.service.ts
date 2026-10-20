@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
@@ -18,6 +18,7 @@ import { ShopifyGraphQLClient } from "./shopify/shopify-graphql.client";
 import { cadenceSkip } from "./sync-cadence";
 import { checkOrderCreate, isOrderLimitBlocked } from "../common/plan-limit-checks";
 import { refreshProductSearchVector } from "../products/search-vector";
+import { badRequest, forbidden, notFound } from "../i18n/api-exception";
 
 function stripReviewHtml(html: unknown): string | null {
   if (typeof html !== "string") return null;
@@ -105,7 +106,7 @@ export class IntegrationsService {
   // ---------- Connect ----------
   async connectWooCommerce(organizationId: string, actorId: string, dto: ConnectWooDto) {
     const store = await (this.prisma as any).store.findFirst({ where: { id: dto.storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("integrations.storeNotFoundInThisOrganization");
 
     // Test with the supplied credentials BEFORE persisting anything.
     // A failed test never stores secrets and never marks the store connected.
@@ -113,7 +114,7 @@ export class IntegrationsService {
     try {
       await client.testConnection();
     } catch (e) {
-      throw new BadRequestException(`WooCommerce connection failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("integrations.woocommerceConnectionFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     }
 
     const existing = await (this.prisma as any).integration.findFirst({
@@ -188,12 +189,12 @@ export class IntegrationsService {
   /** EC2: re-run Woo webhook registration for an existing connection. */
   async repairWooWebhooks(organizationId: string, actorId: string, integrationId: string) {
     const integration = await this.getIntegration(organizationId, integrationId);
-    if (integration.provider !== "woocommerce") throw new BadRequestException("Webhook repair is only available for WooCommerce integrations");
+    if (integration.provider !== "woocommerce") throw badRequest("integrations.webhookRepairIsOnlyAvailableFor2");
     let secrets: WooConnectionSecrets;
     try {
       secrets = this.getSecrets(integration);
     } catch {
-      throw new BadRequestException("Integration has no stored credentials");
+      throw badRequest("integrations.integrationHasNoStoredCredentials");
     }
     if (!secrets.webhookSecret) {
       secrets = { ...secrets, webhookSecret: randomBytes(24).toString("hex") };
@@ -233,7 +234,7 @@ export class IntegrationsService {
   async rotateWooWebhookSecret(organizationId: string, actorId: string, integrationId: string) {
     const integration = await this.getIntegration(organizationId, integrationId);
     if (integration.provider !== "woocommerce") {
-      throw new BadRequestException("Webhook secret rotation is only available for WooCommerce integrations");
+      throw badRequest("integrations.webhookSecretRotationIsOnlyAvailable");
     }
     const secrets = this.getSecrets(integration);
     const newSecret = randomBytes(24).toString("hex");
@@ -288,7 +289,7 @@ export class IntegrationsService {
    */
   async disconnect(organizationId: string, actorId: string, integrationId: string, opts?: { purgeMappings?: boolean; actorRole?: string }) {
     if (opts?.purgeMappings && opts?.actorRole !== undefined && opts.actorRole !== "OWNER") {
-      throw new ForbiddenException("Only the organization OWNER can purge store mappings on disconnect");
+      throw forbidden("integrations.onlyTheOrganizationOwnerCanPurge");
     }
     const integration = await this.getIntegration(organizationId, integrationId);
     await (this.prisma as any).integrationCredential.deleteMany({ where: { integrationId: integration.id } });
@@ -330,7 +331,7 @@ export class IntegrationsService {
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: integrationId, organizationId }, include: { store: true, credential: true },
     });
-    if (!integration) throw new NotFoundException("Integration not found in this organization");
+    if (!integration) throw notFound("integrations.integrationNotFoundInThisOrganization");
     return integration;
   }
 
@@ -344,9 +345,9 @@ export class IntegrationsService {
    */
   async processWooWebhookEvent(eventId: string): Promise<{ processed: boolean }> {
     const event = await (this.prisma as any).webhookEvent.findFirst({ where: { id: eventId } });
-    if (!event) throw new NotFoundException("Webhook event not found");
+    if (!event) throw notFound("integrations.webhookEventNotFound");
     const integration = await this.getIntegrationById(event.integrationId);
-    if (!integration) throw new NotFoundException("Integration not found");
+    if (!integration) throw notFound("integrations.integrationNotFound");
     const payload = (event.payload ?? {}) as any;
     try {
       if (event.topic?.startsWith("order.") && payload?.id) {
@@ -373,12 +374,12 @@ export class IntegrationsService {
   }
 
   getSecrets(integration: any): WooConnectionSecrets {
-    if (!integration.credential) throw new BadRequestException("Integration has no stored credentials");
+    if (!integration.credential) throw badRequest("integrations.integrationHasNoStoredCredentials");
     return decryptJson<WooConnectionSecrets>(integration.credential.encryptedData);
   }
 
   private async buildClient(integration: any): Promise<WooClient> {
-    if (!integration.store) throw new BadRequestException("Integration has no store");
+    if (!integration.store) throw badRequest("integrations.integrationHasNoStore");
     const secrets = this.getSecrets(integration);
     return new WooClient(integration.store.url, secrets);
   }
@@ -447,7 +448,7 @@ export class IntegrationsService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Product sync failed: ${message}`);
+      throw badRequest("integrations.productSyncFailed", { message: message });
     }
   }
 
@@ -592,7 +593,7 @@ export class IntegrationsService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Order sync failed: ${message}`);
+      throw badRequest("integrations.orderSyncFailed", { message: message });
     }
   }
 
@@ -853,7 +854,7 @@ export class IntegrationsService {
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     const errors: string[] = [];
     try {
-      if (!integration.storeId) throw new BadRequestException("Integration has no store");
+      if (!integration.storeId) throw badRequest("integrations.integrationHasNoStore");
       const client = await this.buildClient(integration);
       // No customer cursor column exists on Integration (only
       // productsCursor/ordersCursor) — fetch all pages each run;
@@ -887,7 +888,7 @@ export class IntegrationsService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } });
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } });
-      throw new BadRequestException(`Customer sync failed: ${message}`);
+      throw badRequest("integrations.customerSyncFailed", { message: message });
     }
   }
 
@@ -923,12 +924,12 @@ export class IntegrationsService {
     if (opts?.scheduled) { const cadence = await cadenceSkip(this.prisma, integration, "reviews"); if (cadence) return cadence; }
     if (integration.provider === "shopify") return this.syncShopifyReviews(organizationId, actorId, integration);
     if (integration.provider !== "woocommerce") {
-      throw new BadRequestException("Review sync is only available for WooCommerce/Shopify integrations");
+      throw badRequest("integrations.reviewSyncIsOnlyAvailableFor");
     }
     const job = await (this.prisma as any).syncJob.create({ data: { integrationId, kind: "reviews", status: "RUNNING" } });
     const stats = { fetched: 0, created: 0, updated: 0, skipped: 0 };
     try {
-      if (!integration.storeId) throw new BadRequestException("Integration has no store");
+      if (!integration.storeId) throw badRequest("integrations.integrationHasNoStore");
       const client = await this.buildClient(integration);
       for (let page = 1; page <= MAX_SYNC_PAGES; page++) {
         const res = await client.listProductReviews(page, PER_PAGE);
@@ -968,7 +969,7 @@ export class IntegrationsService {
       const message = e instanceof Error ? e.message : "Sync failed";
       await (this.prisma as any).syncJob.update({ where: { id: job.id }, data: { status: "FAILED", ...stats, error: message, completedAt: new Date() } }).catch(() => undefined);
       await (this.prisma as any).integration.update({ where: { id: integrationId }, data: { status: "ERROR", lastError: message } }).catch(() => undefined);
-      throw new BadRequestException(`Review sync failed: ${message}`);
+      throw badRequest("integrations.reviewSyncFailed", { message: message });
     }
   }
 

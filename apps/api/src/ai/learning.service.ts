@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnswerStoreService, normalizeQuestion } from "./answer-store.service";
 import { KnowledgeIndexingService } from "./knowledge-indexing.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SA-B4 (Smart AI Phase 0, P5/P6): the learning core — the one
@@ -185,7 +186,7 @@ export class LearningService {
 
   private async getItemOrThrow(organizationId: string, itemId: string) {
     const item = await this.db().learnedItem.findFirst({ where: { id: itemId, organizationId } });
-    if (!item) throw new NotFoundException("Learned item not found");
+    if (!item) throw notFound("ai.learnedItemNotFound");
     return item;
   }
 
@@ -201,10 +202,10 @@ export class LearningService {
   ) {
     const item = await this.getItemOrThrow(organizationId, itemId);
     if (item.status !== "suggested") {
-      throw new BadRequestException(`Learned item is already ${item.status}`);
+      throw badRequest("ai.learnedItemIsAlready", { itemStatus: item.status });
     }
     if (opts.visibility !== undefined && opts.visibility !== "public" && opts.visibility !== "internal") {
-      throw new BadRequestException("visibility must be public or internal");
+      throw badRequest("ai.visibilityMustBePublicOrInternal");
     }
     const content = (item.content ?? {}) as Record<string, unknown>;
     let appliedRef: string;
@@ -212,7 +213,7 @@ export class LearningService {
     if (item.kind === "faq_pair") {
       const question = String(content.question ?? "").trim();
       const answer = String(content.answer ?? "").trim();
-      if (!question || !answer) throw new BadRequestException("faq_pair suggestion is missing its question or answer");
+      if (!question || !answer) throw badRequest("ai.faqPairSuggestionIsMissingIts");
       const result = await this.store().store(organizationId, {
         question,
         answer,
@@ -220,12 +221,12 @@ export class LearningService {
         origin: "staff_approved",
       });
       if (!result.stored) {
-        throw new BadRequestException(`Answer Store refused this suggestion: ${result.reason}`);
+        throw badRequest("ai.answerStoreRefusedThisSuggestion", { resultReason: result.reason });
       }
       appliedRef = `answer:${result.entryId}`;
     } else if (item.kind === "fact" || item.kind === "product_note") {
       const text = String(content.text ?? "").trim();
-      if (!text) throw new BadRequestException(`${item.kind} suggestion is missing its text`);
+      if (!text) throw badRequest("ai.suggestionIsMissingItsText", { itemKind: item.kind });
       // SA-B5 (P7): a performance fact is INTERNAL and that is
       // NOT overridable — an approver cannot make order counts
       // or campaign returns quotable to customers (law L3).
@@ -254,7 +255,7 @@ export class LearningService {
         .indexDocument(doc)
         .catch(() => undefined);
     } else {
-      throw new BadRequestException(`Unknown learned item kind: ${item.kind}`);
+      throw badRequest("ai.unknownLearnedItemKind", { itemKind: item.kind });
     }
 
     const updated = await this.db().learnedItem.update({
@@ -280,7 +281,7 @@ export class LearningService {
   async reject(organizationId: string, actorId: string, itemId: string, opts: { via?: string } = {}) {
     const item = await this.getItemOrThrow(organizationId, itemId);
     if (item.status !== "suggested") {
-      throw new BadRequestException(`Learned item is already ${item.status}`);
+      throw badRequest("ai.learnedItemIsAlready", { itemStatus: item.status });
     }
     const updated = await this.db().learnedItem.update({
       where: { id: item.id },

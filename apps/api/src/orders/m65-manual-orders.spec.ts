@@ -67,7 +67,7 @@ describe("M65 manual orders", () => {
   it("rejects an empty item list before touching the pipeline", async () => {
     const { svc, upsertOrder } = setup();
     await expect(svc.createManual("org-1", "user-1", { customerPhone: "017", items: [] }))
-      .rejects.toThrow(/At least one item/);
+      .rejects.toMatchObject({ code: "orders.atLeastOneItemRequired" });
     expect(upsertOrder).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { graphDelete, graphGet, graphPost, metaTokenForAccount } from "../common/meta-graph";
@@ -7,6 +7,7 @@ import { computeRfm, RFM_SEGMENTS } from "../messaging/rfm";
 import { decryptJson } from "../integrations/crypto";
 import { GoogleAdsClient, GoogleAdsSecrets } from "../ads/google/google.client";
 import { TikTokManage } from "../ads/tiktok/tiktok.client";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const MAX_CONTACTS = 10000;
 const BATCH = 1000;
@@ -76,12 +77,12 @@ export class AudiencesService {
    *  adAccount.integrationId → integration.credential → decryptJson. */
   private async platformSecrets(organizationId: string, account: any, platform: string): Promise<any> {
     if (!account || this.platformOf(account) !== platform || !account.integrationId) {
-      throw new BadRequestException(`This ad account is not connected to ${platform} via API`);
+      throw badRequest("audiences.thisAdAccountIsNotConnected", { platform: platform });
     }
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException(`${platform} credentials are missing; reconnect the account`);
+    if (!integration?.credential) throw badRequest("audiences.credentialsAreMissingReconnectTheAccount", { platform: platform });
     return decryptJson<any>(integration.credential.encryptedData);
   }
 
@@ -142,7 +143,7 @@ export class AudiencesService {
       let windowDays: number | undefined;
       if (source === "recent_purchasers") {
         if (!segment || !(AudiencesService.RECENT_PURCHASER_WINDOWS as readonly string[]).includes(segment)) {
-          throw new BadRequestException(`recent_purchasers needs a window of ${AudiencesService.RECENT_PURCHASER_WINDOWS.join(", ")} days (segment)`);
+          throw badRequest("audiences.recentPurchasersNeedsAWindowOf", { p1: AudiencesService.RECENT_PURCHASER_WINDOWS.join(", ") });
         }
         windowDays = Number(segment);
       }
@@ -179,7 +180,7 @@ export class AudiencesService {
       });
     } else if (source === "rfm_segment") {
       if (!segment || !(RFM_SEGMENTS as readonly string[]).includes(segment)) {
-        throw new BadRequestException(`segment must be one of ${RFM_SEGMENTS.join(", ")}`);
+        throw badRequest("audiences.segmentMustBeOneOf", { p1: RFM_SEGMENTS.join(", ") });
       }
       const rows = await computeRfm(this.prisma, organizationId);
       const ids = rows.filter((r) => r.segment === segment).map((r) => r.customerId);
@@ -189,7 +190,7 @@ export class AudiencesService {
         });
       }
     } else {
-      throw new BadRequestException("source must be customers, leads, rfm_segment, buyers, recent_purchasers, product_viewers or cart_abandoners");
+      throw badRequest("audiences.sourceMustBeCustomersLeadsRfm");
     }
     const pairs: [string, string][] = [];
     for (const p of people) {
@@ -215,7 +216,7 @@ export class AudiencesService {
     if (platform === "google") return this.createCustomGoogle(organizationId, actorId, dto, account);
     if (platform === "tiktok") return this.createCustomTikTok(organizationId, actorId, dto, account);
     const pairs = await this.contactsFor(organizationId, dto.source, dto.segment);
-    if (pairs.length === 0) throw new BadRequestException("No contacts with an email or phone were found for this source — nothing to upload");
+    if (pairs.length === 0) throw badRequest("audiences.noContactsWithAnEmailOr");
     const { account: metaAccount, token } = await metaTokenForAccount(this.prisma, organizationId, dto.adAccountId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta account resolution failed");
     });
@@ -269,9 +270,9 @@ export class AudiencesService {
     adAccountId: string; name: string; source: string; segment?: string;
   }, account: any) {
     const pairs = await this.contactsFor(organizationId, dto.source, dto.segment);
-    if (pairs.length === 0) throw new BadRequestException("No contacts with an email or phone were found for this source — nothing to upload");
+    if (pairs.length === 0) throw badRequest("audiences.noContactsWithAnEmailOr");
     const secrets = await this.platformSecrets(organizationId, account, "google");
-    if (!account.externalId) throw new BadRequestException("Google ad account has no customer id (externalId); reconnect the account");
+    if (!account.externalId) throw badRequest("audiences.googleAdAccountHasNoCustomer");
     const customerId = String(account.externalId);
     const record = await (this.prisma as any).audienceRecord.create({
       data: {
@@ -306,11 +307,11 @@ export class AudiencesService {
     adAccountId: string; name: string; source: string; segment?: string;
   }, account: any) {
     const pairs = await this.contactsFor(organizationId, dto.source, dto.segment);
-    if (pairs.length === 0) throw new BadRequestException("No contacts with an email or phone were found for this source — nothing to upload");
+    if (pairs.length === 0) throw badRequest("audiences.noContactsWithAnEmailOr");
     const secrets = await this.platformSecrets(organizationId, account, "tiktok");
-    if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+    if (!secrets.accessToken) throw badRequest("audiences.tiktokCredentialsAreMissingAccesstokenReconnect");
     const advertiserId = secrets.advertiserId ?? account.externalId;
-    if (!advertiserId) throw new BadRequestException("TikTok ad account has no advertiser id (externalId); reconnect the account");
+    if (!advertiserId) throw badRequest("audiences.tiktokAdAccountHasNoAdvertiser");
     const record = await (this.prisma as any).audienceRecord.create({
       data: {
         organizationId, adAccountId: dto.adAccountId, name: dto.name, kind: "custom",
@@ -378,7 +379,7 @@ export class AudiencesService {
    *  audience on an empty or failed source read. */
   async refreshMembership(organizationId: string, actorId: string, recordId: string) {
     const record = await (this.prisma as any).audienceRecord.findFirst({ where: { id: recordId, organizationId } });
-    if (!record) throw new NotFoundException("Audience not found");
+    if (!record) throw notFound("audiences.audienceNotFound");
     // OU4: branch by the record's account platform.
     const account = await this.adAccountFor(organizationId, record.adAccountId);
     const platform = this.platformOf(account);
@@ -393,7 +394,7 @@ export class AudiencesService {
     // full-sync below.
     if (platform === "google" || platform === "tiktok") {
       const pairs = await this.contactsFor(organizationId, record.source, record.sourceDetail ?? undefined);
-      if (pairs.length === 0) throw new BadRequestException("No contacts with an email or phone were found for this source — nothing to upload");
+      if (pairs.length === 0) throw badRequest("audiences.noContactsWithAnEmailOr");
       return this.refreshMembershipCrossPlatform(organizationId, actorId, record, account, platform, pairs);
     }
     let pairs: [string, string][];
@@ -416,7 +417,7 @@ export class AudiencesService {
         await this.audit.log({ organizationId, userId: actorId, action: "audience.membership_sync_skipped", entityType: "AudienceRecord", entityId: record.id, metadata: { reason, priorCount } }).catch(() => undefined);
         return { ...record, uploaded: 0, added: 0, removed: 0, receivedByMeta: 0, deletionsSkipped: true, skipReason: reason };
       }
-      throw new BadRequestException("No contacts with an email or phone were found for this source — nothing to upload");
+      throw badRequest("audiences.noContactsWithAnEmailOr");
     }
     const { token } = await metaTokenForAccount(this.prisma, organizationId, record.adAccountId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta account resolution failed");
@@ -555,13 +556,13 @@ export class AudiencesService {
       // Honest limit: Google Ads offers NO API-created lookalike —
       // similar audiences are auto-generated by Google from a
       // Customer Match list, so there is nothing to create here.
-      throw new BadRequestException("Google Ads offers no API-created lookalike audience: similar audiences are auto-generated by Google from a Customer Match list — create a Google Customer Match audience instead and Google will generate similar audiences from it automatically");
+      throw badRequest("audiences.googleAdsOffersNoApiCreated");
     }
     if (destPlatform === "tiktok") return this.createLookalikeTikTok(organizationId, actorId, dto, destAccount);
     const source = await (this.prisma as any).audienceRecord.findFirst({ where: { id: dto.sourceAudienceRecordId, organizationId } });
-    if (!source?.externalAudienceId) throw new BadRequestException("Source audience has no Meta audience id yet (build or refresh it first)");
+    if (!source?.externalAudienceId) throw badRequest("audiences.sourceAudienceHasNoMetaAudience");
     const ratio = dto.ratio ?? 0.01;
-    if (ratio < 0.01 || ratio > 0.20) throw new BadRequestException("ratio must be between 0.01 and 0.20");
+    if (ratio < 0.01 || ratio > 0.20) throw badRequest("audiences.ratioMustBeBetween001");
     const { account, token } = await metaTokenForAccount(this.prisma, organizationId, dto.adAccountId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta account resolution failed");
     });
@@ -597,18 +598,18 @@ export class AudiencesService {
     adAccountId: string; name: string; sourceAudienceRecordId: string; country: string; ratio?: number;
   }, account: any) {
     const source = await (this.prisma as any).audienceRecord.findFirst({ where: { id: dto.sourceAudienceRecordId, organizationId } });
-    if (!source?.externalAudienceId) throw new BadRequestException("Source audience has no TikTok audience id yet (build or refresh it first)");
+    if (!source?.externalAudienceId) throw badRequest("audiences.sourceAudienceHasNoTiktokAudience");
     const sourceAccount = await this.adAccountFor(organizationId, source.adAccountId);
     if (!sourceAccount || this.platformOf(sourceAccount) !== "tiktok") {
-      throw new BadRequestException("Source audience does not belong to a TikTok ad account — a TikTok lookalike needs a TikTok custom audience as its source");
+      throw badRequest("audiences.sourceAudienceDoesNotBelongTo");
     }
     const ratio = dto.ratio ?? 0.01;
-    if (ratio < 0.01 || ratio > 0.20) throw new BadRequestException("ratio must be between 0.01 and 0.20");
+    if (ratio < 0.01 || ratio > 0.20) throw badRequest("audiences.ratioMustBeBetween001");
     const tier: "NARROW" | "BALANCED" | "BROAD" = ratio <= 0.05 ? "NARROW" : ratio <= 0.10 ? "BALANCED" : "BROAD";
     const secrets = await this.platformSecrets(organizationId, account, "tiktok");
-    if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+    if (!secrets.accessToken) throw badRequest("audiences.tiktokCredentialsAreMissingAccesstokenReconnect");
     const advertiserId = secrets.advertiserId ?? account.externalId;
-    if (!advertiserId) throw new BadRequestException("TikTok ad account has no advertiser id (externalId); reconnect the account");
+    if (!advertiserId) throw badRequest("audiences.tiktokAdAccountHasNoAdvertiser");
     const record = await (this.prisma as any).audienceRecord.create({
       data: {
         organizationId, adAccountId: dto.adAccountId, name: dto.name, kind: "lookalike",
@@ -635,14 +636,14 @@ export class AudiencesService {
   /** Pull the platform's own delivery status + approximate count. */
   async refresh(organizationId: string, recordId: string) {
     const record = await (this.prisma as any).audienceRecord.findFirst({ where: { id: recordId, organizationId } });
-    if (!record) throw new NotFoundException("Audience not found");
+    if (!record) throw notFound("audiences.audienceNotFound");
     // OU4: branch by the record's account platform.
     const account = await this.adAccountFor(organizationId, record.adAccountId);
     const platform = this.platformOf(account);
     if (platform === "google") {
-      if (!record.externalAudienceId) throw new BadRequestException("This audience was never confirmed by Google");
+      if (!record.externalAudienceId) throw badRequest("audiences.thisAudienceWasNeverConfirmedBy");
       const secrets = await this.platformSecrets(organizationId, account, "google");
-      if (!account.externalId) throw new BadRequestException("Google ad account has no customer id (externalId); reconnect the account");
+      if (!account.externalId) throw badRequest("audiences.googleAdAccountHasNoCustomer");
       const info = await this.googleManage(secrets).getUserList(String(account.externalId), String(record.externalAudienceId));
       await (this.prisma as any).audienceRecord.update({
         where: { id: record.id },
@@ -658,11 +659,11 @@ export class AudiencesService {
       return (this.prisma as any).audienceRecord.findUnique({ where: { id: record.id } });
     }
     if (platform === "tiktok") {
-      if (!record.externalAudienceId) throw new BadRequestException("This audience was never confirmed by TikTok");
+      if (!record.externalAudienceId) throw badRequest("audiences.thisAudienceWasNeverConfirmedBy3");
       const secrets = await this.platformSecrets(organizationId, account, "tiktok");
-      if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+      if (!secrets.accessToken) throw badRequest("audiences.tiktokCredentialsAreMissingAccesstokenReconnect");
       const advertiserId = secrets.advertiserId ?? account.externalId;
-      if (!advertiserId) throw new BadRequestException("TikTok ad account has no advertiser id (externalId); reconnect the account");
+      if (!advertiserId) throw badRequest("audiences.tiktokAdAccountHasNoAdvertiser");
       const info = await this.tiktokManage(String(secrets.accessToken)).getCustomAudience(String(advertiserId), String(record.externalAudienceId));
       await (this.prisma as any).audienceRecord.update({
         where: { id: record.id },
@@ -674,7 +675,7 @@ export class AudiencesService {
       });
       return (this.prisma as any).audienceRecord.findUnique({ where: { id: record.id } });
     }
-    if (!record.externalAudienceId) throw new BadRequestException("This audience was never confirmed by Meta");
+    if (!record.externalAudienceId) throw badRequest("audiences.thisAudienceWasNeverConfirmedBy2");
     const { token } = await metaTokenForAccount(this.prisma, organizationId, record.adAccountId);
     const res = await graphGet(token, `/${record.externalAudienceId}`, { fields: "approximate_count,delivery_status" });
     const code = Number(res?.delivery_status?.code ?? 0);
@@ -733,12 +734,12 @@ export class AudiencesService {
     return (this.prisma as any).savedAudience.findMany({ where: { organizationId }, orderBy: { createdAt: "desc" }, take: 100 });
   }
   async createSaved(organizationId: string, actorId: string, dto: { name: string; targeting: Record<string, unknown> }) {
-    if (!dto.targeting || typeof dto.targeting !== "object") throw new BadRequestException("targeting must be an object");
+    if (!dto.targeting || typeof dto.targeting !== "object") throw badRequest("audiences.targetingMustBeAnObject");
     return (this.prisma as any).savedAudience.create({ data: { organizationId, name: dto.name, targeting: dto.targeting, createdById: actorId } });
   }
   async deleteSaved(organizationId: string, id: string) {
     const row = await (this.prisma as any).savedAudience.findFirst({ where: { id, organizationId } });
-    if (!row) throw new NotFoundException("Saved audience not found");
+    if (!row) throw notFound("audiences.savedAudienceNotFound");
     await (this.prisma as any).savedAudience.delete({ where: { id } });
     return { deleted: true };
   }

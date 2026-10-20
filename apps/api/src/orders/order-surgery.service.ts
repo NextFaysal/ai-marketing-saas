@@ -10,6 +10,7 @@ import { allocateBundle } from "../commerce/ec29-bundles";
 import { serializeTaxBreakdown } from "../commerce/tax";
 import { normalizeBdPhone } from "./phone-utils";
 import type { EditOrderItemsDto, MergeOrdersDto, SplitOrderDto, SurgeryItemDto } from "./orders.dto";
+import { ApiException, badRequest, notFound } from "../i18n";
 
 /**
  * ON3 — Order Surgery: item edits (+ preview), split and merge
@@ -101,7 +102,7 @@ export class OrderSurgeryService {
       where: { id: orderId, organizationId: orgId },
       include: { items: true, customer: true },
     });
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("commerce.orderNotFoundInOrg");
     // Fake-Prisma / partial deployments may not honour include —
     // fall back to explicit loads so items/customer are real.
     if (!Array.isArray(order.items)) {
@@ -117,19 +118,19 @@ export class OrderSurgeryService {
    * stageGuard). Returns soft warnings (e.g. an in_review
    * shipment whose label/manifest is now stale). */
   private async stageGuard(orgId: string, order: any): Promise<{ warnings: string[] }> {
-    if (order.isPractice) throw new BadRequestException("প্র্যাকটিস অর্ডারে এই কাজ করা যাবে না");
-    if (order.reviewHold) throw new BadRequestException("অর্ডারটি পর্যালোচনার জন্য আটকানো আছে — আগে হোল্ড ছাড়ুন");
+    if (order.isPractice) throw badRequest("orders.practiceOrderActionBlocked");
+    if (order.reviewHold) throw badRequest("orders.orderOnHoldForReview");
     if (STORE_SOURCES.includes(String(order.source))) {
-      throw new BadRequestException("স্টোরের অর্ডারের আইটেম এখান থেকে বদলানো যাবে না — স্টোরের হিসাবের সঙ্গে মিল থাকবে না");
+      throw badRequest("orders.storeOrderItemsLocked");
     }
     if (!EDITABLE_STATUSES.includes(String(order.status))) {
-      throw new BadRequestException(`এই অবস্থার অর্ডারে এই কাজ করা যাবে না (অবস্থা: ${order.status})`);
+      throw badRequest("orders.actionBlockedInStatus", { status: order.status });
     }
     const warnings: string[] = [];
     const shipments = await this.shipmentsFor(orgId, order.id);
     for (const s of shipments) {
       if (SHIPMENT_BLOCKING_STATUSES.includes(String(s.status))) {
-        throw new BadRequestException(`shipment ইতিমধ্যে কুরিয়ারের পথে (অবস্থা: ${s.status}) — এখন আইটেম বদলানো যাবে না`);
+        throw badRequest("orders.shipmentAlreadyWithCourier", { status: s.status });
       }
       if (String(s.status) === "in_review") {
         warnings.push("courier লেবেল/manifest পুরনো হয়ে গেছে — shipment-এর তথ্য আবার যাচাই করুন");
@@ -248,7 +249,7 @@ export class OrderSurgeryService {
         couponMinor = ev.couponDiscountMinor;
         appliedCouponCode = ev.appliedCouponCode;
       } catch (e) {
-        if (e instanceof BadRequestException && String((e as any).message ?? "").startsWith(COUPON_ERROR_PREFIX)) {
+        if ((e instanceof BadRequestException || e instanceof ApiException) && String((e as any).message ?? "").startsWith(COUPON_ERROR_PREFIX)) {
           // The stored/presented coupon no longer validates —
           // drop it (truthfully) instead of blocking the edit.
           ev = await this.promotions.evaluateCheckout(orgId, evalArgs(null));
@@ -274,7 +275,7 @@ export class OrderSurgeryService {
         warnings.push(`অর্ডারে কুপন কোড সংরক্ষিত নেই — আগের কুপন ছাড় ৳${couponMinor.toString()} যাচাই ছাড়াই রাখা হয়েছে`);
       }
     }
-    if (!ev) throw new BadRequestException("মূল্য হিসাব করা যায়নি");
+    if (!ev) throw badRequest("orders.priceCalculationFailed");
 
     const referralDropped = bi(orderLike.referralDiscountMinor) > 0n && ev.referralDiscountMinor === 0n;
 
@@ -416,42 +417,42 @@ export class OrderSurgeryService {
 
     const parseOverride = (raw?: string): bigint | null => {
       if (raw === undefined || raw === null) return null;
-      try { return BigInt(String(raw)); } catch { throw new BadRequestException("unitPriceMinor সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
+      try { return BigInt(String(raw)); } catch { throw badRequest("orders.unitPriceMinorInvalid"); }
     };
 
     for (const entry of items) {
       const qty = Number(entry.quantity);
-      if (!Number.isInteger(qty) || qty < 0) throw new BadRequestException("আইটেমের পরিমাণ সঠিক পূর্ণসংখ্যা হতে হবে");
+      if (!Number.isInteger(qty) || qty < 0) throw badRequest("orders.itemQuantityInvalid");
 
       // ---- bundle-group entry ----
       if (entry.bundleId) {
-        if (qty < 1) throw new BadRequestException("বান্ডেলের পরিমাণ কমপক্ষে ১ হতে হবে — বান্ডেল সরাতে চাইলে গ্রুপটি বাদ দিন");
+        if (qty < 1) throw badRequest("orders.bundleQuantityMin");
         const group = bundleGroups.get(String(entry.bundleId));
-        if (!group || group.length === 0) throw new BadRequestException("এই অর্ডারে বান্ডেল গ্রুপটি পাওয়া যায়নি");
-        if (addressedBundles.has(String(entry.bundleId))) throw new BadRequestException("একই বান্ডেল গ্রুপ দুবার দেওয়া হয়েছে");
+        if (!group || group.length === 0) throw badRequest("orders.bundleGroupNotInOrder");
+        if (addressedBundles.has(String(entry.bundleId))) throw badRequest("orders.duplicateBundleGroup");
         addressedBundles.add(String(entry.bundleId));
         const bundle = await this.t("bundle").findFirst({ where: { id: String(entry.bundleId), organizationId: orgId } }).catch(() => null);
         if (!bundle || bundle.active === false) {
-          throw new BadRequestException("বান্ডেলটি আর পাওয়া যাচ্ছে না — component লাইনগুলো সরাসরি বদলানো যাবে না");
+          throw badRequest("orders.bundleGoneCannotEdit");
         }
         const bundleItems: any[] = Array.isArray(bundle.items) ? bundle.items : [];
         const first = group[0];
         const firstDef = bundleItems.find((b: any) => String(b.productId) === String(first.productId) && (b.variantSku ?? null) === (first.sku ?? null))
           ?? bundleItems.find((b: any) => String(b.productId) === String(first.productId));
-        if (!firstDef || !Number(firstDef.qty)) throw new BadRequestException("বান্ডেলের সংজ্ঞা বদলে গেছে — component লাইনগুলো সরাসরি বদলানো যাবে না");
+        if (!firstDef || !Number(firstDef.qty)) throw badRequest("orders.bundleDefinitionChanged");
         if (Number(first.quantity) % Number(firstDef.qty) !== 0) {
-          throw new BadRequestException("বান্ডেলের সংজ্ঞা বদলে গেছে — component লাইনগুলো সরাসরি বদলানো যাবে না");
+          throw badRequest("orders.bundleDefinitionChanged");
         }
         const currentBundleQty = Number(first.quantity) / Number(firstDef.qty);
         if (!Number.isInteger(currentBundleQty) || currentBundleQty < 1) {
-          throw new BadRequestException("বান্ডেলের সংজ্ঞা বদলে গেছে — component লাইনগুলো সরাসরি বদলানো যাবে না");
+          throw badRequest("orders.bundleDefinitionChanged");
         }
         // EC29 identity: stored component totals sum EXACTLY to
         // bundlePrice × bundleQty, so the implied per-set price
         // is an exact integer division.
         const storedSum = group.reduce((s: bigint, l: any) => s + bi(l.totalMinor), 0n);
         if (storedSum % BigInt(currentBundleQty) !== 0n) {
-          throw new BadRequestException("বান্ডেলের সংজ্ঞা বদলে গেছে — component লাইনগুলো সরাসরি বদলানো যাবে না");
+          throw badRequest("orders.bundleDefinitionChanged");
         }
         const impliedPrice = storedSum / BigInt(currentBundleQty);
         // Re-allocate over the components SCALED to the new
@@ -468,7 +469,7 @@ export class OrderSurgeryService {
         for (const l of group as any[]) {
           const def = bundleItems.find((b: any) => String(b.productId) === String(l.productId) && (b.variantSku ?? null) === (l.sku ?? null))
             ?? bundleItems.find((b: any) => String(b.productId) === String(l.productId));
-          if (!def) throw new BadRequestException("বান্ডেলের সংজ্ঞা বদলে গেছে — component লাইনগুলো সরাসরি বদলানো যাবে না");
+          if (!def) throw badRequest("orders.bundleDefinitionChanged");
           const product = await this.t("product").findFirst({ where: { id: l.productId, organizationId: orgId } }).catch(() => null);
           let variant: any = null;
           if (def.variantSku) {
@@ -511,11 +512,11 @@ export class OrderSurgeryService {
       // ---- existing-line entry ----
       if (entry.orderItemId) {
         const id = String(entry.orderItemId);
-        if (seenItemIds.has(id)) throw new BadRequestException("একই আইটেম দুবার দেওয়া হয়েছে");
+        if (seenItemIds.has(id)) throw badRequest("orders.duplicateItem");
         seenItemIds.add(id);
         const line = byId.get(id);
-        if (!line) throw new BadRequestException(`অর্ডারে এই আইটেমটি নেই: ${id}`);
-        if (line.bundleId) throw new BadRequestException("বান্ডেলের অংশ সরাসরি বদলানো যাবে না — বান্ডেলের পরিমাণ বদলান");
+        if (!line) throw badRequest("orders.itemNotInOrder", { id: id });
+        if (line.bundleId) throw badRequest("orders.bundlePartDirectEditBlocked");
         addressed.add(id);
         if (qty === 0) {
           // Explicit removal (quantity 0) — recorded in the
@@ -524,12 +525,12 @@ export class OrderSurgeryService {
           continue;
         }
         if (line.isGift && qty !== Number(line.quantity)) {
-          throw new BadRequestException("উপহার লাইনের পরিমাণ বদলানো যাবে না — সরাতে চাইলে লাইনটি বাদ দিন");
+          throw badRequest("orders.giftLineQuantityLocked");
         }
         let unit = bi(line.priceMinor);
         const override = parseOverride(entry.unitPriceMinor);
         if (override !== null) {
-          if (line.isGift) throw new BadRequestException("উপহার লাইনের দাম বদলানো যাবে না");
+          if (line.isGift) throw badRequest("orders.giftLinePriceLocked");
           if (override !== unit) { unit = override; priceOverrides++; }
         }
         resolved.push({
@@ -551,15 +552,15 @@ export class OrderSurgeryService {
       }
 
       // ---- NEW line ----
-      if (!entry.productId) throw new BadRequestException("নতুন আইটেমের জন্য productId আবশ্যক");
-      if (qty < 1) throw new BadRequestException("নতুন আইটেমের পরিমাণ কমপক্ষে ১ হতে হবে");
+      if (!entry.productId) throw badRequest("orders.newItemProductIdRequired");
+      if (qty < 1) throw badRequest("orders.newItemQuantityMin");
       const product = await this.t("product").findFirst({ where: { id: String(entry.productId), organizationId: orgId } }).catch(() => null);
-      if (!product) throw new BadRequestException(`পণ্য পাওয়া যায়নি (এই সংস্থার নয়): ${entry.productId}`);
-      if (String(product.status) !== "ACTIVE") throw new BadRequestException(`পণ্যটি সক্রিয় নয়: ${product.name ?? entry.productId}`);
+      if (!product) throw badRequest("commerce.productNotOfOrg", { productId: entry.productId });
+      if (String(product.status) !== "ACTIVE") throw badRequest("orders.productNotActive", { name: product.name ?? entry.productId });
       let variant: any = null;
       if (entry.variantId) {
         variant = await this.t("productVariant").findFirst({ where: { id: String(entry.variantId), productId: product.id } }).catch(() => null);
-        if (!variant) throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        if (!variant) throw badRequest("commerce.variantNotOfProduct");
       }
       const override = parseOverride(entry.unitPriceMinor);
       const unit = override ?? (variant?.priceMinor != null ? bi(variant.priceMinor) : bi(product.priceMinor));
@@ -593,7 +594,7 @@ export class OrderSurgeryService {
     }
 
     if (!resolved.some((l) => !l.isGift)) {
-      throw new BadRequestException("অর্ডারে অন্তত একটি আইটেম থাকতে হবে");
+      throw badRequest("orders.orderNeedsItem");
     }
     return { resolved, priceOverrides, diff: { added: diffAdded, removed: diffRemoved, changed: diffChanged } };
   }
@@ -614,12 +615,12 @@ export class OrderSurgeryService {
       for (const c of coverage) {
         const q = c.perItem.get(id) ?? 0;
         if (q > 0 && String(c.fulfillment.status) !== "pending") {
-          throw new BadRequestException(`এই আইটেমটি ইতিমধ্যে ফুলফিলমেন্টে (${c.fulfillment.status}) আছে — আগে ফুলফিলমেন্ট বাতিল করুন`);
+          throw badRequest("orders.itemAlreadyInFulfillment", { status: c.fulfillment.status });
         }
       }
       const newQty = newQtyById.get(id) ?? 0;
       if (covered > newQty) {
-        throw new BadRequestException("আইটেমের পরিমাণ প্যাক করা পরিমাণের কম করা যাবে না");
+        throw badRequest("orders.quantityBelowPacked");
       }
     }
   }
@@ -789,23 +790,23 @@ export class OrderSurgeryService {
     const { warnings: stageWarnings } = await this.stageGuard(orgId, order);
     const shipments = await this.shipmentsFor(orgId, order.id);
     if (shipments.some((s: any) => String(s.status) !== "cancelled")) {
-      throw new BadRequestException("shipment বুক হয়ে থাকলে split করা যাবে না");
+      throw badRequest("orders.splitBlockedShipmentBooked");
     }
     const moveLines: Array<{ orderItemId: string; quantity: number }> = Array.isArray(dto.lines) ? dto.lines : [];
-    if (moveLines.length === 0) throw new BadRequestException("split করতে অন্তত একটি আইটেম দিন");
+    if (moveLines.length === 0) throw badRequest("orders.splitNeedsItem");
     const byId = new Map<string, any>((order.items ?? []).map((i: any) => [String(i.id), i] as [string, any]));
     const seen = new Set<string>();
     const movedExisting: Array<{ line: any; quantity: number }> = [];
     for (const m of moveLines) {
       const id = String(m.orderItemId);
-      if (seen.has(id)) throw new BadRequestException("একই আইটেম দুবার দেওয়া হয়েছে");
+      if (seen.has(id)) throw badRequest("orders.duplicateItem");
       seen.add(id);
       const line = byId.get(id);
-      if (!line) throw new BadRequestException(`অর্ডারে এই আইটেমটি নেই: ${id}`);
-      if (line.isGift) throw new BadRequestException("উপহার লাইন split করা যাবে না");
+      if (!line) throw badRequest("orders.itemNotInOrder", { id: id });
+      if (line.isGift) throw badRequest("orders.giftLineSplitBlocked");
       const q = Number(m.quantity);
       if (!Number.isInteger(q) || q < 1 || q > Number(line.quantity)) {
-        throw new BadRequestException("split-এর পরিমাণ লাইনের পরিমাণের বেশি হতে পারবে না");
+        throw badRequest("orders.splitQuantityExceedsLine");
       }
       movedExisting.push({ line, quantity: q });
     }
@@ -827,14 +828,14 @@ export class OrderSurgeryService {
           const m = movedExisting.find((x) => String(x.line.id) === String(l.id));
           return m && m.quantity === Number(l.quantity);
         });
-      if (!whole) throw new BadRequestException("বান্ডেল আংশিকভাবে split করা যাবে না");
+      if (!whole) throw badRequest("orders.bundlePartialSplitBlocked");
       void bundleId;
     }
     // Any fulfillment coverage of a moved line blocks the split.
     const coverage = await this.fulfillmentCoverage(orgId, order.id);
     for (const m of movedExisting) {
       if (this.coveredQty(coverage, String(m.line.id)) > 0) {
-        throw new BadRequestException("ফুলফিলমেন্টে থাকা আইটেম split করা যাবে না");
+        throw badRequest("orders.fulfillmentItemSplitBlocked");
       }
     }
     // Something must remain on the original.
@@ -852,7 +853,7 @@ export class OrderSurgeryService {
       }
     }
     if (remainingLines.length === 0) {
-      throw new BadRequestException("সব আইটেম সরিয়ে নিলে split নয় — অন্তত একটি আইটেম মূল অর্ডারে রাখুন");
+      throw badRequest("orders.splitMustKeepItem");
     }
     const movedResolved: ResolvedLine[] = movedExisting.map(({ line, quantity }) => ({
       orderItemId: String(line.id), productId: line.productId ?? null, variantSku: line.sku ?? null,
@@ -863,7 +864,7 @@ export class OrderSurgeryService {
 
     let childShipping = 0n;
     if (dto.deliveryChargeMinor !== undefined && dto.deliveryChargeMinor !== null) {
-      try { childShipping = BigInt(String(dto.deliveryChargeMinor)); } catch { throw new BadRequestException("deliveryChargeMinor সঠিক সংখ্যায় পাঠান (পয়সায়)"); }
+      try { childShipping = BigInt(String(dto.deliveryChargeMinor)); } catch { throw badRequest("orders.deliveryChargeMinorInvalid"); }
     }
 
     // Child totals: a FRESH evaluation context — no coupon, no
@@ -956,22 +957,22 @@ export class OrderSurgeryService {
   async merge(orgId: string, actorId: string, survivorId: string, dto: MergeOrdersDto) {
     const rawIds = Array.isArray(dto.orderIds) ? dto.orderIds.map((x) => String(x)) : [];
     const ids = [...new Set(rawIds)];
-    if (ids.length < 2 || ids.length > 5) throw new BadRequestException("মার্জ করতে ২–৫টি অর্ডার দিন");
-    if (!ids.includes(survivorId)) throw new BadRequestException("survivor অর্ডারটি orderIds-এর মধ্যে থাকতে হবে");
+    if (ids.length < 2 || ids.length > 5) throw badRequest("orders.mergeCountRange");
+    if (!ids.includes(survivorId)) throw badRequest("orders.survivorNotInList");
 
     const participants: any[] = [];
     for (const id of ids) {
       const o = await this.loadOrderOr404(orgId, id);
       await this.stageGuard(orgId, o);
-      if ((o as any).mergedIntoId) throw new BadRequestException(`অর্ডার ${o.externalNumber ?? o.externalId} ইতিমধ্যে অন্য অর্ডারে মার্জ হয়ে গেছে`);
+      if ((o as any).mergedIntoId) throw badRequest("orders.orderAlreadyMerged", { number: o.externalNumber ?? o.externalId });
       const shipments = await this.shipmentsFor(orgId, o.id);
       if (shipments.some((s: any) => String(s.status) !== "cancelled")) {
-        throw new BadRequestException(`অর্ডার ${o.externalNumber ?? o.externalId}-এর shipment বুক হয়ে আছে — মার্জ করা যাবে না`);
+        throw badRequest("orders.orderShipmentBookedNoMerge", { number: o.externalNumber ?? o.externalId });
       }
       const coverage = await this.fulfillmentCoverage(orgId, o.id);
       for (const c of coverage) {
         if (String(c.fulfillment.status) !== "pending") {
-          throw new BadRequestException(`অর্ডার ${o.externalNumber ?? o.externalId}-এর ফুলফিলমেন্ট ${c.fulfillment.status} অবস্থায় আছে — মার্জ করা যাবে না`);
+          throw badRequest("orders.orderFulfillmentBlocksMerge", { number: o.externalNumber ?? o.externalId, status: c.fulfillment.status });
         }
       }
       participants.push(o);
@@ -985,15 +986,15 @@ export class OrderSurgeryService {
     const allSameCustomer = customerIds.every((c) => c !== null) && new Set(customerIds).size === 1;
     if (!allSameCustomer) {
       if (customerIds.some((c) => c === null)) {
-        throw new BadRequestException("গ্রাহক একই নয় — সব অর্ডারে একই গ্রাহক থাকতে হবে");
+        throw badRequest("orders.customerMismatch");
       }
       const phoneKeys = participants.map((o) => normalizeBdPhone(o.customer?.phone ?? null));
       if (phoneKeys.some((k) => !k) || new Set(phoneKeys).size !== 1) {
-        throw new BadRequestException("গ্রাহক একই নয় — সব অর্ডারে একই গ্রাহক থাকতে হবে");
+        throw badRequest("orders.customerMismatch");
       }
     }
     const currencies = new Set(participants.map((o) => String(o.currency ?? "BDT")));
-    if (currencies.size !== 1) throw new BadRequestException("সব অর্ডারের মুদ্রা এক হতে হবে");
+    if (currencies.size !== 1) throw badRequest("orders.mergeCurrencyMismatch");
 
     // Combine lines by (productId, sku, unitPrice, isGift, bundleId).
     const combined = new Map<string, ResolvedLine>();

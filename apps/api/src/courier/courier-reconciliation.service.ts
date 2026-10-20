@@ -11,6 +11,7 @@ import {
   UpdateDisputeDto,
   UploadDisbursementDto,
 } from "./courier-reconciliation.dto";
+import { badRequest, notFound } from "../i18n";
 
 function serializeBatch(batch: any) {
   if (!batch) return null;
@@ -54,7 +55,7 @@ export class CourierReconciliationService {
     uploadedBy?: string,
   ): Promise<any> {
     if (!dto.items || dto.items.length === 0) {
-      throw new BadRequestException("Disbursement statement must contain at least one item");
+      throw badRequest("courier.disbursementStatementEmpty");
     }
 
     // Extract all tracking codes to look up corresponding shipments
@@ -224,7 +225,7 @@ export class CourierReconciliationService {
       },
     });
     if (!batch) {
-      throw new NotFoundException("Disbursement batch not found");
+      throw notFound("courier.disbursementBatchNotFound");
     }
     return serializeBatch(batch);
   }
@@ -313,7 +314,7 @@ export class CourierReconciliationService {
       where: { id: itemId, organizationId },
     });
     if (!item) {
-      throw new NotFoundException("Disbursement item not found");
+      throw notFound("courier.disbursementItemNotFound");
     }
 
     const updated = await this.prisma.courierDisbursementItem.update({
@@ -342,7 +343,7 @@ export class CourierReconciliationService {
       },
     });
     if (!batch) {
-      throw new NotFoundException("Disbursement batch not found");
+      throw notFound("courier.disbursementBatchNotFound");
     }
 
     const claims = batch.items.map((item) => ({

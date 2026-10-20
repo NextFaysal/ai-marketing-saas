@@ -245,8 +245,8 @@ describe("EC6 CustomerPushService", () => {
 
   it("foreign customer / store are 404s", async () => {
     const { svc } = setup("co-manage");
-    await expect(svc.pushToStore("org-2", "u1", "c1", "st1")).rejects.toThrow("not found");
-    await expect(svc.pushToStore("org-1", "u1", "c1", "nope")).rejects.toThrow("not found");
+    await expect(svc.pushToStore("org-2", "u1", "c1", "st1")).rejects.toMatchObject({ code: "commerce.customerNotFoundInOrg", status: 404 });
+    await expect(svc.pushToStore("org-1", "u1", "c1", "nope")).rejects.toMatchObject({ code: "commerce.storeNotFoundInOrg", status: 404 });
   });
 });
 

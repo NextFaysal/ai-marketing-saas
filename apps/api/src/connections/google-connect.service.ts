@@ -49,6 +49,7 @@ import {
 } from "../common/platform-config";
 import { GoogleClient, type GoogleAccountOption, type GoogleConnectKind } from "./google.client";
 import { resolveTenantAppConfig } from "./tenant-app-config";
+import { badRequest } from "../i18n";
 
 export type GoogleAppSource = "platform" | "own";
 
@@ -141,18 +142,18 @@ export class GoogleConnectService {
   private async clientFor(organizationId: string, appSource: GoogleAppSource): Promise<{ clientId: string; clientSecret: string }> {
     if (appSource === "own") {
       const own = await resolveTenantAppConfig(this.prisma as any, organizationId, "google");
-      if (!own) throw new BadRequestException(GOOGLE_OWN_NOT_CONFIGURED_MSG);
+      if (!own) throw badRequest("connections.googleOwnNotConfigured");
       return { clientId: own.appId, clientSecret: own.appSecret };
     }
     await ensurePlatformConfig(this.prisma as any);
     const cfg = effectiveGoogleAppConfig();
-    if (!cfg) throw new BadRequestException(GOOGLE_PACK_NOT_CONFIGURED_MSG);
+    if (!cfg) throw badRequest("connections.googlePackNotConfigured");
     return { clientId: cfg.clientId, clientSecret: cfg.clientSecret };
   }
 
   static assertKind(kind: string): GoogleConnectKind {
     if (kind === "ga4" || kind === "merchant" || kind === "business") return kind;
-    throw new BadRequestException("অজানা Google কানেকশনের ধরন।");
+    throw badRequest("connections.unknownGoogleConnectionKind");
   }
 
   private redirectUri(kind: GoogleConnectKind): string {
@@ -301,12 +302,12 @@ export class GoogleConnectService {
       const row = await this.peekState(state, meta.provider, "account_pick");
       if (!row) continue;
       if (row.organizationId !== organizationId || row.userId !== userId) {
-        throw new BadRequestException("এই account-pick state আপনার নয়।");
+        throw badRequest("connections.accountPickStateNotYours");
       }
       const payload = (row.payload ?? {}) as { options?: GoogleAccountOption[] };
       return { kind, row, options: Array.isArray(payload.options) ? payload.options : [] };
     }
-    throw new BadRequestException("Account-pick state মেয়াদোত্তীর্ণ বা ইতিমধ্যে ব্যবহৃত — আবার কানেক্ট করুন।");
+    throw badRequest("connections.accountPickStateExpired");
   }
 
   /** POST …/connections/google/:kind/select — store EXACTLY the
@@ -316,15 +317,15 @@ export class GoogleConnectService {
     const kind = GoogleConnectService.assertKind(kindRaw);
     const meta = GOOGLE_KIND_META[kind];
     const found = await this.findPickState(organizationId, userId, state);
-    if (found.kind !== kind) throw new BadRequestException("Account-pick state এই ধরনের কানেকশনের নয়।");
+    if (found.kind !== kind) throw badRequest("connections.accountPickStateWrongKind");
     const option = found.options.find((o) => o.id === optionId);
-    if (!option) throw new BadRequestException("বেছে নেওয়া অ্যাকাউন্টটি তালিকায় নেই — আবার কানেক্ট করুন।");
+    if (!option) throw badRequest("connections.pickedAccountNotInList");
     const consumed = await this.consumeState(state, meta.provider, "account_pick");
-    if (!consumed) throw new BadRequestException("Account-pick state ইতিমধ্যে ব্যবহৃত — আবার কানেক্ট করুন।");
+    if (!consumed) throw badRequest("connections.accountPickStateUsed");
     const payload = (consumed.payload ?? {}) as { sealed?: string; appSource?: string };
     const cred = payload.sealed ? (decryptJson(payload.sealed) as unknown as GoogleCredPayload | null) : null;
     if (!cred?.accessToken || !cred.refreshToken) {
-      throw new BadRequestException("সেভ করা Google credential পড়া যায়নি — আবার কানেক্ট করুন।");
+      throw badRequest("connections.googleCredentialUnreadable");
     }
     await this.persist(organizationId, userId, kind, cred, option, payload.appSource === "own" ? "own" : "platform");
     return { connected: true, kind, externalAccountId: option.id, name: option.name };
@@ -389,9 +390,9 @@ export class GoogleConnectService {
     const db = this.prisma as any;
     const row = await db.integrationCredential.findUnique({ where: { integrationId: integration.id } });
     const cred = row?.encryptedData ? (decryptJson(row.encryptedData) as unknown as GoogleCredPayload | null) : null;
-    if (!cred?.accessToken) throw new Error("সেভ করা Google credential পাওয়া যায়নি — আবার কানেক্ট করুন।");
+    if (!cred?.accessToken) throw badRequest("connections.googleCredentialMissing");
     if (cred.expiresAt && cred.expiresAt > Date.now() + 60_000) return cred.accessToken;
-    if (!cred.refreshToken) throw new Error("Google refresh token নেই — আবার কানেক্ট করুন।");
+    if (!cred.refreshToken) throw badRequest("connections.googleRefreshTokenMissing");
     // CC28: refresh with the client of the app this connection
     // was made under (its own recorded appSource). A deleted
     // own-app config surfaces as the honest refusal below, never

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { LearningService } from "./learning.service";
@@ -8,6 +8,7 @@ import type { LlmProvider } from "./llm/llm.types";
 import { resolveOrgLlmConfig } from "./llm/org-llm-config";
 import { effectiveLlmConfig } from "../common/platform-config";
 import { aiPauseReason, killSwitches } from "../common/platform-settings";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SA-B5 (Smart AI Phase 0, P8a): brand voice learning — the
@@ -310,7 +311,7 @@ export class VoiceLearningService {
    * when one waits, otherwise flip suggested -> active. */
   async activate(organizationId: string, actorId: string) {
     const row = await this.getProfile(organizationId);
-    if (!row) throw new NotFoundException("Brand voice profile not found");
+    if (!row) throw notFound("ai.brandVoiceProfileNotFound");
     let updated;
     if (row.pendingTraits) {
       updated = await this.db().aiBrandVoiceProfile.update({
@@ -329,7 +330,7 @@ export class VoiceLearningService {
         data: { status: "active" },
       });
     } else {
-      throw new BadRequestException("Brand voice profile is already active");
+      throw badRequest("ai.brandVoiceProfileIsAlreadyActive");
     }
     await this.audit?.log({
       organizationId, userId: actorId, action: "brand_voice.activate",
@@ -345,7 +346,7 @@ export class VoiceLearningService {
    * suggestion review. */
   async dismissSuggestion(organizationId: string, actorId: string) {
     const row = await this.getProfile(organizationId);
-    if (!row) throw new NotFoundException("Brand voice profile not found");
+    if (!row) throw notFound("ai.brandVoiceProfileNotFound");
     if (row.pendingTraits) {
       const updated = await this.db().aiBrandVoiceProfile.update({
         where: { id: row.id },
@@ -365,7 +366,7 @@ export class VoiceLearningService {
       });
       return { dismissed: true, id: row.id };
     }
-    throw new BadRequestException("Nothing to dismiss: the active profile has no pending suggestion");
+    throw badRequest("ai.nothingToDismissTheActiveProfile");
   }
 
   /** The brand_voice_learning_sweep job body: only opted-in

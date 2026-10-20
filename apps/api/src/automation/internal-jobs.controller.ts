@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Headers, HttpException, HttpStatus, Optional, Post } from "@nestjs/common";
+import { Body, Controller, Headers, HttpException, HttpStatus, Optional, Post } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
 import { Public } from "../common/decorators";
 import { AutomationService } from "./automation.service";
@@ -6,6 +6,7 @@ import { InboxService } from "../inbox/inbox.service";
 import { TelegramService } from "../inbox/channels/telegram.service";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { ShopifyService } from "../integrations/shopify/shopify.service";
+import { ApiException, forbidden } from "../i18n/api-exception";
 
 /**
  * Milestone 57: the dedicated worker's callback surface.
@@ -37,19 +38,19 @@ export class InternalJobsController {
   private checkSecret(header: string | undefined) {
     const expected = process.env.INTERNAL_JOB_SECRET ?? "";
     if (!expected) {
-      throw new HttpException("Internal job surface is not configured (INTERNAL_JOB_SECRET unset)", HttpStatus.SERVICE_UNAVAILABLE);
+      throw new ApiException("automation.internalJobSurfaceIsNotConfigured", undefined, HttpStatus.SERVICE_UNAVAILABLE);
     }
     const given = Buffer.from(header ?? "");
     const want = Buffer.from(expected);
     if (given.length !== want.length || !timingSafeEqual(given, want)) {
-      throw new ForbiddenException("Invalid internal secret");
+      throw forbidden("automation.invalidInternalSecret");
     }
   }
 
   @Post("jobs/execute")
   async execute(@Headers("x-internal-secret") secret: string | undefined, @Body() body: { scheduledJobId?: string }) {
     this.checkSecret(secret);
-    if (!body?.scheduledJobId) throw new HttpException("scheduledJobId is required", HttpStatus.BAD_REQUEST);
+    if (!body?.scheduledJobId) throw new ApiException("automation.scheduledjobidIsRequired", undefined, HttpStatus.BAD_REQUEST);
     try {
       return await this.automation.executeScheduledJobById(body.scheduledJobId);
     } catch (e) {
@@ -65,7 +66,7 @@ export class InternalJobsController {
   @Post("jobs/dlq")
   async dlq(@Headers("x-internal-secret") secret: string | undefined, @Body() body: { scheduledJobId?: string; error?: string; attempts?: number; jobType?: string }) {
     this.checkSecret(secret);
-    if (!body?.scheduledJobId) throw new HttpException("scheduledJobId is required", HttpStatus.BAD_REQUEST);
+    if (!body?.scheduledJobId) throw new ApiException("automation.scheduledjobidIsRequired", undefined, HttpStatus.BAD_REQUEST);
     const row = await this.automation.recordDlq({
       scheduledJobId: body.scheduledJobId,
       error: body.error ?? "unknown error",
@@ -86,7 +87,7 @@ export class InternalJobsController {
     this.checkSecret(secret);
     const source = body?.source as string;
     const integrationId = body?.integrationId as string;
-    if (!source || !integrationId) throw new HttpException("source and integrationId are required", HttpStatus.BAD_REQUEST);
+    if (!source || !integrationId) throw new ApiException("automation.sourceAndIntegrationidAreRequired", undefined, HttpStatus.BAD_REQUEST);
     try {
       switch (source) {
         case "meta": {
@@ -103,14 +104,14 @@ export class InternalJobsController {
         }
         case "woocommerce": {
           if (!this.integrations) throw new Error("Integrations service is not available in this deployment");
-          if (!body.eventId) throw new HttpException("eventId is required for woocommerce", HttpStatus.BAD_REQUEST);
+          if (!body.eventId) throw new ApiException("automation.eventidIsRequiredForWoocommerce", undefined, HttpStatus.BAD_REQUEST);
           return { ok: true, ...(await this.integrations.processWooWebhookEvent(body.eventId)) };
         }
         default:
-          throw new HttpException(`Unknown webhook source: ${source}`, HttpStatus.BAD_REQUEST);
+          throw new ApiException("automation.unknownWebhookSource", { source: source }, HttpStatus.BAD_REQUEST);
       }
     } catch (e) {
-      if (e instanceof HttpException && e.getStatus() === HttpStatus.BAD_REQUEST && /source|integrationId|eventId/.test(e.message)) throw e;
+      if (e instanceof HttpException && e.getStatus() === HttpStatus.BAD_REQUEST && (/source|integrationId|eventId/.test(e.message) || (e instanceof ApiException && /source|integrationId|eventId/i.test(e.code)))) throw e;
       const message = e instanceof Error ? e.message : "Webhook processing failed";
       // Permanent = the payload can never succeed: a signature/
       // secret/not-found failure, or any 4xx the handler raised

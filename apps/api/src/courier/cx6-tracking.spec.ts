@@ -1,4 +1,5 @@
 import { NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CourierService } from "./courier.service";
 import { JOB_TEMPLATES, JOB_TYPES } from "../automation/automation.service";
 
@@ -53,7 +54,7 @@ describe("CX6 tracking + notify", () => {
 
   it("publicTracking: unknown token -> 404", async () => {
     const { svc } = makeSvc();
-    await expect(svc.publicTracking("no-such-token")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publicTracking("no-such-token")).rejects.toBeInstanceOf(ApiException);
   });
 
   it("publicTracking: stored facts only — verbatim status, branding, NO recipient PII", async () => {
@@ -84,7 +85,7 @@ describe("CX6 tracking + notify", () => {
 
   it("trackingLinkForShipment is org-scoped (another org's shipment -> 404)", async () => {
     const { svc } = makeSvc();
-    await expect(svc.trackingLinkForShipment("org-2", "sh-1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.trackingLinkForShipment("org-2", "sh-1")).rejects.toBeInstanceOf(ApiException);
     const out = await svc.trackingLinkForShipment(ORG, "sh-1");
     expect(out.link).toContain("/t/");
     expect(out.link).toContain(out.token);

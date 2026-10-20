@@ -276,7 +276,7 @@ describe("NF6 one-play-per-phone (Fraud Shield key + unique)", () => {
     const campaign = await makeWheel(service);
     await expect(
       service.publicSpinPlay("shop-one", campaign.id, { phone: PHONE_A }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.thisNumberIsBlockedInThis" });
     expect(blockedStub.isBlocked).toHaveBeenCalled();
     expect(tables.promoPlays).toHaveLength(0);
     expect(tables.storeDiscounts).toHaveLength(0);
@@ -287,7 +287,7 @@ describe("NF6 one-play-per-phone (Fraud Shield key + unique)", () => {
     const campaign = await makeWheel(service);
     await expect(
       service.publicSpinPlay("shop-one", campaign.id, { phone: "12345" }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.giveAValidBangladeshiMobileNumber" });
     expect(tables.promoPlays).toHaveLength(0);
   });
 });
@@ -394,7 +394,7 @@ describe("NF6 group buy — threshold math and expiry", () => {
     // joining after the window is refused honestly
     await expect(
       service.publicGroupBuyJoin("shop-one", gb.id, { phone: PHONE_D }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.theCampaignSTimeHasEnded" });
     // and the expired campaign is no longer presented on the shop
     const active = await service.publicActive("shop-one");
     expect(active.campaigns.find((c: any) => c.id === gb.id)).toBeUndefined();
@@ -416,12 +416,12 @@ describe("NF6 group buy — threshold math and expiry", () => {
     await expect(service.createCampaign("org-1", "u1", {
       kind: "group_buy", name: "x",
       config: { productId: "gb-1", requiredBuyers: 3, discountKind: "percent", discountValue: 10 },
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "gamifiedPromotions.anEndTimeWindowIsRequired" });
     await expect(service.createCampaign("org-2", "u2", {
       kind: "group_buy", name: "x",
       endsAt: new Date(Date.now() + 3600_000).toISOString(),
       config: { productId: "gb-1", requiredBuyers: 3, discountKind: "percent", discountValue: 10 },
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ code: "gamifiedPromotions.theProductWasNotFoundIn" });
   });
 });
 
@@ -435,7 +435,7 @@ describe("NF6 org isolation", () => {
     expect(active.campaigns.find((c: any) => c.id === foreign.id)).toBeUndefined();
     await expect(
       service.publicSpinPlay("shop-one", foreign.id, { phone: PHONE_A }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.theCampaignWasNotFound" });
     const mine = await service.publicActive("shop-two");
     expect(mine.campaigns.find((c: any) => c.id === foreign.id)).toBeTruthy();
   });
@@ -445,12 +445,12 @@ describe("NF6 org isolation", () => {
     const mine = await makeWheel(service, "org-1");
     const list2 = await service.listCampaigns("org-2");
     expect(list2.campaigns.find((c: any) => c.id === mine.id)).toBeUndefined();
-    await expect(service.getCampaign("org-2", mine.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.getCampaign("org-2", mine.id)).rejects.toMatchObject({ code: "gamifiedPromotions.theCampaignWasNotFound" });
   });
 
   it("an unknown shop slug is a 404 on every public surface", async () => {
     const { service } = setup();
-    await expect(service.publicActive("no-such-shop")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.publicActive("no-such-shop")).rejects.toMatchObject({ code: "gamifiedPromotions.theShopWasNotFound" });
   });
 });
 
@@ -473,10 +473,10 @@ describe("NF6 quiz — result maps to the org's own products only", () => {
     const quiz = await makeQuiz(service);
     await expect(
       service.publicQuizComplete("shop-one", quiz.id, { phone: PHONE_A, answers: [] }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.allQuestionsMustBeAnswered" });
     await expect(
       service.publicQuizComplete("shop-one", quiz.id, { phone: PHONE_A, answers: [9] }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({ code: "gamifiedPromotions.theAnswerIsNotCorrect" });
     await expect(service.createCampaign("org-1", "u1", {
       kind: "quiz", name: "bad",
       config: { questions: [{ text: "q", options: [{ text: "a" }, { text: "b", categoryId: "cat-1" }] }] },

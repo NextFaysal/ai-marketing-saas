@@ -6,6 +6,7 @@ import { graphGet, metaTokenForAccount } from "../common/meta-graph";
 import { IntegrationsService } from "../integrations/integrations.service";
 import { ShopifyService } from "../integrations/shopify/shopify.service";
 import { SHOPIFY_REQUIRED_SCOPES } from "../integrations/commerce/health.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * CC14/CC15/CC16 (Connect Center Advanced) — provider-reported
@@ -277,9 +278,9 @@ export class ProviderHealthService {
     const account = await (this.prisma as any).socialAccount.findFirst({
       where: { id: socialAccountId, organizationId },
     }).catch(() => null);
-    if (!account) throw new NotFoundException("Social account not found");
+    if (!account) throw notFound("connections.socialAccountNotFound");
     if (account.platform !== "meta_page") {
-      throw new BadRequestException("শুধু Facebook Page (meta_page) অ্যাকাউন্টের completeness আনা যায়।");
+      throw badRequest("connections.completenessMetaPageOnly");
     }
     const integration = account.integrationId
       ? await this.integrationRow(organizationId, account.integrationId)
@@ -307,9 +308,9 @@ export class ProviderHealthService {
   /** CC15 for a messaging/meta_social Integration carrying a Page. */
   async refreshMetaPageIntegrationHealth(organizationId: string, integrationId: string) {
     const integration = await this.integrationRow(organizationId, integrationId);
-    if (!integration) throw new NotFoundException("Integration not found");
+    if (!integration) throw notFound("connections.integrationNotFound");
     if (!["messenger", "meta_social"].includes(String(integration.provider))) {
-      throw new BadRequestException("শুধু Messenger / Meta Social কানেকশনের Page completeness আনা যায়।");
+      throw badRequest("connections.completenessMetaSocialOnly");
     }
     const creds = await this.credentialFor(integration.id);
     const pageId = creds?.pageId ?? integration.externalAccountId;
@@ -346,7 +347,7 @@ export class ProviderHealthService {
     const account = await (this.prisma as any).adAccount.findFirst({
       where: { id: adAccountId, organizationId },
     }).catch(() => null);
-    if (!account) throw new NotFoundException("Ad account not found");
+    if (!account) throw notFound("connections.adAccountNotFound");
     const beside = {
       platformStatusBucket: account.platformStatusBucket ?? null,
       platformStatusRaw: account.platformStatusRaw ?? null,
@@ -394,7 +395,7 @@ export class ProviderHealthService {
     let result: any;
     if (targetType === "integration") {
       const integration = await this.integrationRow(organizationId, targetId);
-      if (!integration) throw new NotFoundException("Integration not found");
+      if (!integration) throw notFound("connections.integrationNotFound");
       if (integration.provider === "whatsapp") {
         const r = await this.refreshWhatsAppHealth(organizationId, targetId);
         const row = await this.integrationRow(organizationId, targetId);
@@ -402,14 +403,14 @@ export class ProviderHealthService {
       } else if (["messenger", "meta_social"].includes(String(integration.provider))) {
         result = await this.refreshMetaPageIntegrationHealth(organizationId, targetId);
       } else {
-        throw new BadRequestException("এই কানেকশনের জন্য provider health refresh সংজ্ঞায়িত নেই।");
+        throw badRequest("connections.healthRefreshNotDefinedConnection");
       }
     } else if (targetType === "social_account") {
       result = await this.refreshMetaPageHealth(organizationId, targetId);
     } else if (targetType === "ad_account") {
       result = await this.refreshAdAccountHealth(organizationId, targetId);
     } else {
-      throw new BadRequestException("এই ধরনের কানেকশনের জন্য provider health refresh সংজ্ঞায়িত নেই।");
+      throw badRequest("connections.healthRefreshNotDefinedKind");
     }
     if (result?.ok) {
       await this.auditRefresh(organizationId, actorId,
@@ -436,9 +437,9 @@ export class ProviderHealthService {
       : await (this.prisma as any).integration.findFirst({
           where: { id: integrationId, organizationId }, include: { store: true, credential: true },
         }).catch(() => null);
-    if (!integration) throw new NotFoundException("Integration not found");
+    if (!integration) throw notFound("connections.integrationNotFound");
     if (!["woocommerce", "shopify"].includes(String(integration.provider))) {
-      throw new BadRequestException("Commerce diagnostics শুধু WooCommerce/Shopify কানেকশনের জন্য।");
+      throw badRequest("connections.commerceDiagnosticsStoresOnly");
     }
     let shopifyScopes: { granted: string[]; required: string[]; missing: string[] } | null = null;
     let shopifyScopesError: string | null = null;
@@ -496,16 +497,16 @@ export class ProviderHealthService {
    * verbatim (re-read from the row).
    */
   async repairWebhooks(organizationId: string, actorId: string, integrationId: string) {
-    if (!this.integrations) throw new BadRequestException("Integrations service unavailable");
+    if (!this.integrations) throw badRequest("connections.integrationsServiceUnavailable");
     const integration = await this.integrations.getIntegration(organizationId, integrationId);
     let result: any;
     if (integration.provider === "shopify") {
-      if (!this.shopify) throw new BadRequestException("Shopify service unavailable");
+      if (!this.shopify) throw badRequest("connections.shopifyServiceUnavailable");
       result = await this.shopify.repairWebhooks(organizationId, actorId, integrationId);
     } else if (integration.provider === "woocommerce") {
       result = await this.integrations.repairWooWebhooks(organizationId, actorId, integrationId);
     } else {
-      throw new BadRequestException("Webhook repair is only available for WooCommerce/Shopify integrations");
+      throw badRequest("connections.webhookRepairStoresOnly");
     }
     const fresh = await this.integrationRow(organizationId, integrationId);
     return {

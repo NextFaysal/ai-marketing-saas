@@ -146,7 +146,7 @@ describe("CN1 targeting v2", () => {
 
   it("targeting search returns Meta rows when connected, and the honest unavailable state when not", async () => {
     const { svc, tables } = setup();
-    await expect(svc.searchTargeting("org", { adAccountId: "acc-1", kind: "bogus", query: "x" })).rejects.toThrow(/kind must be/);
+    await expect(svc.searchTargeting("org", { adAccountId: "acc-1", kind: "bogus", query: "x" })).rejects.toMatchObject({ code: "campaigns.kindMustBeOneOf" });
     const off = await svc.searchTargeting("org", { adAccountId: "acc-1", kind: "interest", query: "Fashion" });
     expect(off.available).toBe(false);
     expect(off.results).toEqual([]);

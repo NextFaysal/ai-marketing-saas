@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { stableContentHash } from "../integrations/commerce/content-hash";
 import { CAPABILITY_NOT_IMPLEMENTED } from "../integrations/commerce/adapter";
 import { CommerceAdapterRegistry, platformKeyForStore } from "../integrations/commerce/adapters";
+import { badRequest, notFound } from "../i18n";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -180,9 +181,9 @@ export class SyncOutboxService {
 
   async replay(organizationId: string, id: string) {
     const row = await (this.prisma as any).syncOutbox.findFirst({ where: { id, organizationId } });
-    if (!row) throw new NotFoundException("Sync outbox item not found");
+    if (!row) throw notFound("commerce.syncOutboxItemNotFound");
     if (row.status !== "failed" && row.status !== "dead") {
-      throw new BadRequestException("Only failed or dead outbox items can be replayed");
+      throw badRequest("commerce.outboxReplayStates");
     }
     return (this.prisma as any).syncOutbox.update({
       where: { id: row.id },

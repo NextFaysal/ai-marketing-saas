@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { isSoldOrder } from "../storefront/ec27-discovery";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * GB6 (GC15) — CRM segments + the shared customer statistics
@@ -187,44 +188,44 @@ export interface SegmentCriteria {
  */
 export function validateSegmentCriteria(raw: unknown): SegmentCriteria {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new BadRequestException("সেগমেন্টের criteria অবশ্যই একটি object হতে হবে");
+    throw badRequest("customers.theSegmentCriteriaMustBeAn");
   }
   const input = raw as Record<string, unknown>;
   for (const key of Object.keys(input)) {
     if (!(SEGMENT_CRITERIA_KEYS as readonly string[]).includes(key)) {
-      throw new BadRequestException(`অজানা segment criteria: "${key}" — অনুমোদিত: ${SEGMENT_CRITERIA_KEYS.join(", ")}`);
+      throw badRequest("customers.unknownSegmentCriteriaAllowed", { key: key, p2: SEGMENT_CRITERIA_KEYS.join(", ") });
     }
   }
   const out: SegmentCriteria = {};
   if (input.tagsAny !== undefined) {
-    if (!Array.isArray(input.tagsAny)) throw new BadRequestException("tagsAny একটি তালিকা (array) হতে হবে");
-    if (input.tagsAny.length > 10) throw new BadRequestException("tagsAny-তে সর্বোচ্চ ১০টি ট্যাগ দেওয়া যাবে");
+    if (!Array.isArray(input.tagsAny)) throw badRequest("customers.tagsanyMustBeAListArray");
+    if (input.tagsAny.length > 10) throw badRequest("customers.atMost10TagsCanBe");
     const tags: string[] = [];
     for (const rawTag of input.tagsAny) {
       const tag = String(rawTag ?? "").trim();
-      if (tag.length < 1 || tag.length > 30) throw new BadRequestException("tagsAny-এর প্রতিটি ট্যাগ ১–৩০ অক্ষরের হতে হবে");
+      if (tag.length < 1 || tag.length > 30) throw badRequest("customers.eachTagInTagsanyMustBe");
       if (!tags.includes(tag)) tags.push(tag);
     }
     out.tagsAny = tags;
   }
   if (input.isVip !== undefined) {
-    if (typeof input.isVip !== "boolean") throw new BadRequestException("isVip অবশ্যই boolean হতে হবে");
+    if (typeof input.isVip !== "boolean") throw badRequest("customers.isvipMustBeBoolean");
     out.isVip = input.isVip;
   }
   if (input.isRepeat !== undefined) {
-    if (typeof input.isRepeat !== "boolean") throw new BadRequestException("isRepeat অবশ্যই boolean হতে হবে");
+    if (typeof input.isRepeat !== "boolean") throw badRequest("customers.isrepeatMustBeBoolean");
     out.isRepeat = input.isRepeat;
   }
   if (input.minSpentMinor !== undefined) {
     const rawMinor = String(input.minSpentMinor).trim();
     if (!/^\d+$/.test(rawMinor)) {
-      throw new BadRequestException("minSpentMinor অবশ্যই শূন্য বা তার বেশি একটি পূর্ণসংখ্যা (পয়সায়) হতে হবে");
+      throw badRequest("customers.minspentminorMustBeAnIntegerOf");
     }
     out.minSpentMinor = rawMinor;
   }
   if (input.district !== undefined) {
     const district = String(input.district ?? "").trim();
-    if (!district || district.length > 100) throw new BadRequestException("district ১–১০০ অক্ষরের হতে হবে");
+    if (!district || district.length > 100) throw badRequest("customers.districtMustBe1100Characters");
     out.district = district;
   }
   return out;
@@ -267,7 +268,7 @@ export class CrmSegmentsService {
     const row = table?.findFirst
       ? await table.findFirst({ where: { id: segmentId, organizationId } }).catch(() => null)
       : null;
-    if (!row) throw new NotFoundException("Segment not found in this organization");
+    if (!row) throw notFound("customers.segmentNotFoundInThisOrganization");
     return row;
   }
 
@@ -327,10 +328,10 @@ export class CrmSegmentsService {
 
   async createSegment(organizationId: string, actorId: string, dto: { name?: unknown; criteria?: unknown }) {
     const name = String(dto?.name ?? "").trim();
-    if (!name || name.length > 120) throw new BadRequestException("সেগমেন্টের নাম ১–১২০ অক্ষরের হতে হবে");
+    if (!name || name.length > 120) throw badRequest("customers.theSegmentNameMustBe1");
     const criteria = validateSegmentCriteria(dto?.criteria ?? {});
     const table = this.table();
-    if (!table?.create) throw new BadRequestException("Segments are not available in this deployment");
+    if (!table?.create) throw badRequest("customers.segmentsAreNotAvailableInThis");
     const row = await table.create({ data: { organizationId, name, criteria, createdById: actorId } });
     const memberCount = (await this.evaluateSegmentMembers(organizationId, criteria)).length;
     await this.audit?.log({
@@ -345,7 +346,7 @@ export class CrmSegmentsService {
     const data: Record<string, unknown> = {};
     if (dto?.name !== undefined) {
       const name = String(dto.name ?? "").trim();
-      if (!name || name.length > 120) throw new BadRequestException("সেগমেন্টের নাম ১–১২০ অক্ষরের হতে হবে");
+      if (!name || name.length > 120) throw badRequest("customers.theSegmentNameMustBe1");
       data.name = name;
     }
     let criteria: SegmentCriteria = (existing.criteria ?? {}) as SegmentCriteria;

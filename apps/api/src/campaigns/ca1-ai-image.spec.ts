@@ -115,7 +115,7 @@ describe("CA1 CreativesService.generateAiImage", () => {
     const generate = jest.fn(async () => ({ bytes: PNG_BYTES, contentType: "image/png", model: "m", inputTokens: 1, outputTokens: 1, tokensEstimated: false }));
     stubProvider(svc, generate);
     await expect(svc.generateAiImage(ORG, ACTOR, { adAccountId: "acct-1", prompt: "পাঞ্জাবি" }))
-      .rejects.toThrow(BadRequestException);
+      .rejects.toMatchObject({ code: "creatives.directFileUploadIsNotOn" });
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -192,7 +192,7 @@ describe("CA1 CampaignsService.generateImage (plan gate + delegation)", () => {
   it("creatives service absent → honest refusal", async () => {
     const { svc } = buildCampaigns(undefined);
     await expect(svc.generateImage(ORG, ACTOR, "plan-1", { prompt: "ছবি" }))
-      .rejects.toThrow("AI image generation is not available in this context");
+      .rejects.toMatchObject({ code: "campaigns.aiImageGenerationIsNotAvailable" });
   });
 
   it("delegates with the plan's ad account by default", async () => {

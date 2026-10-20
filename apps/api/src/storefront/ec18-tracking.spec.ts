@@ -1,4 +1,5 @@
 import { NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 
 /* Fake prisma in the EC spec style (self-contained copy). */
@@ -247,7 +248,7 @@ describe("EC18 StorefrontService.trackOrder", () => {
     expect(msgNumber).toBe(NOT_FOUND_MSG);
     expect(msgPhone).toBe(msgNumber);
     await expect(svc.trackOrder("shop-one", { phone: "01999999999", orderNumber: "ORD-1234-AB" }))
-      .rejects.toBeInstanceOf(NotFoundException);
+      .rejects.toBeInstanceOf(ApiException);
   });
 
   it("trackingPageEnabled=false answers the same constant 404", async () => {

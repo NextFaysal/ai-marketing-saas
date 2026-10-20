@@ -41,7 +41,7 @@ describe("LeadsService", () => {
     const lead = await svc.create("org-1", "user-1", { name: "A" });
     await svc.update("org-1", "user-1", lead.id, { stage: "qualified" });
     expect(prisma.leadActivity.rows.some((a: any) => a.type === "stage_change" && a.content.includes("new -> qualified"))).toBe(true);
-    await expect(svc.update("org-1", "user-1", lead.id, { stage: "banana" })).rejects.toThrow("Invalid stage");
+    await expect(svc.update("org-1", "user-1", lead.id, { stage: "banana" })).rejects.toMatchObject({ code: "crm.invalidStage" });
   });
 
   it("pipeline summary counts stages and excludes lost value from open pipeline", async () => {
@@ -73,6 +73,6 @@ describe("LeadsService", () => {
     const prisma = fakePrisma();
     const svc = new LeadsService(prisma as any);
     const lead = await svc.create("org-1", "u", { name: "A" });
-    await expect(svc.getOne("org-2", lead.id)).rejects.toThrow("not found");
+    await expect(svc.getOne("org-2", lead.id)).rejects.toMatchObject({ code: "crm.leadNotFoundInThisOrganization" });
   });
 });

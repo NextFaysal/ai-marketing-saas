@@ -171,7 +171,7 @@ describe("SN10 createCaptionTest", () => {
     const source = seedPost(db, { status: "published", publishedAt: new Date() });
     const { social } = services(db);
     const err = await social.createCaptionTest(ORG, ACTOR, source.id).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "social.aCaptionTestCanOnlyBe" });
     expect(err.message).toBe("Caption Test শুধু Draft পোস্ট থেকে তৈরি করা যায়।");
     expect(db.socialPosts).toHaveLength(1);
     expect(db.socialPosts[0].captionTestId).toBeNull();
@@ -184,10 +184,10 @@ describe("SN10 createCaptionTest", () => {
     const out = await social.createCaptionTest(ORG, ACTOR, source.id);
     expect(db.socialPosts).toHaveLength(2);
     const errSource = await social.createCaptionTest(ORG, ACTOR, source.id).catch((e) => e);
-    expect(errSource).toBeInstanceOf(BadRequestException);
+    expect(errSource).toMatchObject({ code: "social.theCaptionTestPairIsAlready" });
     expect(errSource.message).toContain("জোড়া");
     const errPartner = await social.createCaptionTest(ORG, ACTOR, out.partner.id).catch((e) => e);
-    expect(errPartner).toBeInstanceOf(BadRequestException);
+    expect(errPartner).toMatchObject({ code: "social.theCaptionTestPairIsAlready" });
     expect(errPartner.message).toContain("জোড়া");
     expect(db.socialPosts).toHaveLength(2);
   });
@@ -208,7 +208,7 @@ describe("SN10 createCaptionTest", () => {
     const db = fakeDb(); seedAccount(db);
     seedPost(db, { organizationId: "org-other" });
     const { social } = services(db);
-    await expect(social.createCaptionTest(ORG, ACTOR, db.socialPosts[0].id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(social.createCaptionTest(ORG, ACTOR, db.socialPosts[0].id)).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 });
 

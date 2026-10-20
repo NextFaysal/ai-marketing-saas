@@ -60,8 +60,8 @@ describe("M15 workflow engine v2: validation", () => {
   it("rejects invalid wait/condition/inbox steps", async () => {
     const { svc } = setup();
     await expect(svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "wait" }] })).rejects.toThrow("minutes");
-    await expect(svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "condition" }] })).rejects.toThrow("field and an operator");
-    await expect(svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "send_inbox_message" }] })).rejects.toThrow("text or a whatsappTemplateId");
+    await expect(svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "condition" }] })).rejects.toMatchObject({ code: "workflows.conditionStepsNeedAFieldAnd" });
+    await expect(svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "send_inbox_message" }] })).rejects.toMatchObject({ code: "workflows.sendInboxMessageStepsNeedText" });
     const ok = await svc.create("org-1", "u", { name: "x", trigger: "inbox_message_received", steps: [{ type: "wait", minutes: 30 }] });
     expect(ok.id).toBeTruthy();
   });

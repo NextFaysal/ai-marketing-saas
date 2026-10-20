@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
 import { DEMO_PACK_SCENARIOS, buildDemoPack } from "./demo-pack";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * CX12a — Practice Mode.
@@ -49,7 +50,7 @@ export class PracticeService {
   /** The org's practice state for the banner / setup page. */
   async getState(organizationId: string) {
     const org = await this.p().organization.findUnique({ where: { id: organizationId } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("inbox.organizationNotFound");
     const [conversations, orders] = await Promise.all([
       this.p().channelConversation.count({ where: { organizationId, isPractice: true } }).catch(() => 0),
       this.p().order.count({ where: { organizationId, isPractice: true } }).catch(() => 0),
@@ -94,7 +95,7 @@ export class PracticeService {
   async loadDemoPack(organizationId: string, actorId: string) {
     const state = await this.getState(organizationId);
     if (!state.practiceMode) {
-      throw new BadRequestException("আগে Practice Mode চালু করুন — তারপর Demo Chat লোড হবে");
+      throw badRequest("inbox.turnOnPracticeModeFirstThen");
     }
     const p = this.p();
     const existing = await p.channelConversation.findMany({
@@ -177,7 +178,7 @@ export class PracticeService {
   /** OWNER/ADMIN only (route guard). Audited both ways. */
   async setPracticeMode(organizationId: string, actorId: string, enabled: boolean) {
     const org = await this.p().organization.findUnique({ where: { id: organizationId } }).catch(() => null);
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("inbox.organizationNotFound");
     const next = Boolean(enabled);
     if (Boolean(org.practiceMode) !== next) {
       await this.p().organization.update({ where: { id: organizationId }, data: { practiceMode: next } });
@@ -200,7 +201,7 @@ export class PracticeService {
   async createPracticeConversation(organizationId: string, actorId: string) {
     const state = await this.getState(organizationId);
     if (!state.practiceMode) {
-      throw new BadRequestException("আগে Practice Mode চালু করুন — তারপর প্র্যাক্টিস কথোপকথন তৈরি হবে");
+      throw badRequest("inbox.turnOnPracticeModeFirstThen2");
     }
     if (state.practiceConversationId) {
       const existing = await this.p().channelConversation.findFirst({
@@ -241,16 +242,16 @@ export class PracticeService {
    */
   async simulateInboundMessage(organizationId: string, actorId: string, conversationId: string, contentRaw: unknown) {
     const content = String(contentRaw ?? "").trim();
-    if (!content) throw new BadRequestException("বার্তা খালি হতে পারবে না");
-    if (content.length > 2000) throw new BadRequestException("বার্তা সর্বোচ্চ ২০০০ অক্ষরের হতে পারবে");
+    if (!content) throw badRequest("inbox.theMessageCannotBeEmpty");
+    if (content.length > 2000) throw badRequest("inbox.theMessageCanBeAtMost");
     const conv = await this.p().channelConversation.findFirst({ where: { id: conversationId, organizationId } });
-    if (!conv) throw new NotFoundException("Conversation not found in this organization");
+    if (!conv) throw notFound("inbox.conversationNotFoundInThisOrganization");
     if (!conv.isPractice) {
-      throw new BadRequestException("এটি প্র্যাক্টিস কথোপকথন নয় — আসল কথোপকথনে এভাবে বার্তা পাঠানো যায় না");
+      throw badRequest("inbox.thisIsNotAPracticeConversation");
     }
     const state = await this.getState(organizationId);
     if (!state.practiceMode) {
-      throw new BadRequestException("Practice Mode বন্ধ আছে — আগে চালু করুন");
+      throw badRequest("inbox.practiceModeIsOffTurnIt");
     }
     const message = await this.p().channelMessage.create({
       data: {

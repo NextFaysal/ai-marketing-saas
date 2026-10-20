@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SyncOutboxService } from "./sync-outbox.service";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * EC6 — customer push orchestration.
@@ -20,12 +21,12 @@ export class CustomerPushService {
 
   async pushToStore(organizationId: string, actorId: string, customerId: string, storeId: string) {
     const customer = await (this.prisma as any).customer.findFirst({ where: { id: customerId, organizationId } });
-    if (!customer) throw new NotFoundException("Customer not found in this organization");
-    if (customer.mergedIntoId) throw new BadRequestException("মার্জ করা কাস্টমার push করা যাবে না");
+    if (!customer) throw notFound("commerce.customerNotFoundInOrg");
+    if (customer.mergedIntoId) throw badRequest("commerce.mergedCustomerPushBlocked");
     const store = await (this.prisma as any).store.findFirst({ where: { id: storeId, organizationId } });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
     if (store.syncMode !== "co-manage" && store.syncMode !== "full-manage") {
-      throw new BadRequestException("এই স্টোরটি mirror মোডে আছে — কাস্টমার push করতে Store-এর sync mode co-manage বা full-manage করুন");
+      throw badRequest("commerce.mirrorModeCustomerPushBlocked");
     }
 
     let identity: any = null;

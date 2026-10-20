@@ -401,7 +401,7 @@ describe("SP7 insights refresh (single)", () => {
     const account = seedAccount(db);
     const post = seedPost(db, account.id, { status: "published", platformPostId: "x1", publishedAt: new Date() });
     const { insights } = services(db);
-    await expect(insights.refreshPostInsights("org-2", OWNER, post.id)).rejects.toThrow("not found");
+    await expect(insights.refreshPostInsights("org-2", OWNER, post.id)).rejects.toMatchObject({ code: "social.socialPostNotFoundInThis" });
   });
 });
 

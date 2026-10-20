@@ -298,7 +298,7 @@ describe("SU11 listPosts", () => {
   it("an invalid status is still a Bengali 400 in cursor mode", async () => {
     const db = fakeDb(); seedOrg(db);
     const { social } = services(db);
-    await expect(social.listPosts(ORG, { status: "bogus", cursor: null })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(social.listPosts(ORG, { status: "bogus", cursor: null })).rejects.toMatchObject({ code: "social.invalidPostStatus" });
   });
 });
 
@@ -311,18 +311,18 @@ describe("SU11 bulkPosts", () => {
     const db = fakeDb(); seedOrg(db);
     const { social } = services(db);
     const cases: any[] = [
-      { ids: [], action: "delete_drafts" },
-      { ids: Array.from({ length: 101 }, (_, i) => `p-${i}`), action: "delete_drafts" },
-      { ids: ["p-1"], action: "explode" },
-      { ids: ["p-1"], action: "reschedule" },
-      { ids: ["p-1"], action: "reschedule", scheduledAt: "not-a-date" },
-      { ids: ["p-1"], action: "reschedule", scheduledAt: "2020-01-01T00:00:00.000Z" },
-      {},
+      [{ ids: [], action: "delete_drafts" }, "social.noPostHasBeenSelectedChoose"],
+      [{ ids: Array.from({ length: 101 }, (_, i) => `p-${i}`), action: "delete_drafts" }, "social.bulkActionsCanBeAppliedTo"],
+      [{ ids: ["p-1"], action: "explode" }, "social.unknownBulkActionSendDeleteDrafts"],
+      [{ ids: ["p-1"], action: "reschedule" }, "social.toRescheduleANewDateAnd"],
+      [{ ids: ["p-1"], action: "reschedule", scheduledAt: "not-a-date" }, "social.giveAValidDateAndTime"],
+      [{ ids: ["p-1"], action: "reschedule", scheduledAt: "2020-01-01T00:00:00.000Z" }, "social.theScheduledTimeCannotBeIn"],
+      [{}, "social.noPostHasBeenSelectedChoose"],
     ];
-    for (const dto of cases) {
+    for (const [dto, code] of cases) {
       let caught: any = null;
       try { await social.bulkPosts(ORG, OWNER, dto); } catch (e) { caught = e; }
-      expect(caught).toBeInstanceOf(BadRequestException);
+      expect(caught).toMatchObject({ code });
       expect(caught.getStatus()).toBe(400);
     }
     expect(db.auditRows).toHaveLength(0);
@@ -443,9 +443,9 @@ describe("SU11 importPostsCsv", () => {
   it("missing caption column → whole-request Bengali 400; empty CSV → 400; >200 rows → 400", async () => {
     const db = fakeDb(); seedOrg(db);
     const { social } = services(db);
-    await expect(social.importPostsCsv(ORG, OWNER, "title,accountId\nx,acct-1")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(social.importPostsCsv(ORG, OWNER, "")).rejects.toBeInstanceOf(BadRequestException);
-    await expect(social.importPostsCsv(ORG, OWNER, "caption,accountId")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(social.importPostsCsv(ORG, OWNER, "title,accountId\nx,acct-1")).rejects.toMatchObject({ code: "social.thereMustBeACaptionColumn" });
+    await expect(social.importPostsCsv(ORG, OWNER, "")).rejects.toMatchObject({ code: "social.thereMustBeACaptionColumn" });
+    await expect(social.importPostsCsv(ORG, OWNER, "caption,accountId")).rejects.toMatchObject({ code: "social.thereIsNoDataRowIn" });
     const big = ["caption,accountId", ...Array.from({ length: 201 }, (_, i) => `ক্যাপশন ${i},acct-1`)].join("\n");
     await expect(social.importPostsCsv(ORG, OWNER, big)).rejects.toThrow("২০০");
   });

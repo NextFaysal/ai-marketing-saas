@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { classifyShipmentStatus } from "./courier-performance";
+import { notFound } from "../i18n";
 
 export interface CourierScorecard {
   provider: "steadfast" | "pathao" | "redx" | string;
@@ -124,7 +125,7 @@ export class CourierOptimizerService {
     });
 
     if (!order) {
-      throw new NotFoundException("অর্ডারটি পাওয়া যায়নি");
+      throw notFound("courier.orderNotFoundShort");
     }
 
     // Determine district

@@ -1,11 +1,8 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
-  InternalServerErrorException,
   Logger,
-  NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -49,6 +46,7 @@ import type {
   UpdateLandingDto,
   UpdateLandingVariantDto,
 } from "./landings.dto";
+import { badRequest, conflict, internalError, notFound } from "../i18n/api-exception";
 
 /**
  * Injection token for the EC15 ProductReviewsService. The reviews
@@ -208,7 +206,7 @@ export class LandingsService {
   private async resolveOnlineSelection(orgId: string, dto: LandingOrderDto) {
     if (!dto.onlinePayment) return null;
     if (!this.tenantPayments?.assertPublicPaymentOption) {
-      throw new BadRequestException("এই অনলাইন পেমেন্টের অপশনটি এই দোকানে উপলব্ধ নয় — অন্য পেমেন্ট পদ্ধতি বেছে নিন।");
+      throw badRequest("landings.thisOnlinePaymentOptionIsNot");
     }
     return this.tenantPayments.assertPublicPaymentOption(orgId, dto.onlinePayment);
   }
@@ -235,21 +233,21 @@ export class LandingsService {
     const landing = await this.t("landingPage").findFirst({
       where: { id: landingId, organizationId },
     });
-    if (!landing) throw new NotFoundException("Landing page not found in this organization");
+    if (!landing) throw notFound("landings.landingPageNotFoundInThis");
     return landing;
   }
 
   private async getPublishedLanding(slug: string): Promise<any> {
     const landing = await this.t("landingPage").findFirst({ where: { slug } });
     if (!landing || landing.status !== "published") {
-      throw new NotFoundException("ল্যান্ডিং পেজটি পাওয়া যায়নি");
+      throw notFound("landings.theLandingPageWasNotFound");
     }
     return landing;
   }
 
   private async getProductOr404(organizationId: string, productId: string): Promise<any> {
     const p = await this.t("product").findFirst({ where: { id: productId, organizationId } });
-    if (!p) throw new NotFoundException("Product not found in this organization");
+    if (!p) throw notFound("landings.productNotFoundInThisOrganization");
     return p;
   }
 
@@ -266,8 +264,8 @@ export class LandingsService {
    * degrades to nulls (the web hides empty trust blocks). */
   private async storefrontTrust(
     organizationId: string,
-  ): Promise<{ returnPolicyText: string | null; deliveryPromiseText: string | null; supportPhone: string | null }> {
-    const empty = { returnPolicyText: null, deliveryPromiseText: null, supportPhone: null };
+  ): Promise<{ returnPolicyText: string | null; deliveryPromiseText: string | null; supportPhone: string | null; locale: string | null }> {
+    const empty = { returnPolicyText: null, deliveryPromiseText: null, supportPhone: null, locale: null };
     try {
       const s = await this.t("storefrontSetting")
         .findFirst({ where: { organizationId } })
@@ -277,6 +275,9 @@ export class LandingsService {
         returnPolicyText: s.returnPolicyText ?? null,
         deliveryPromiseText: s.deliveryPromiseText ?? null,
         supportPhone: s.supportPhone ?? null,
+        // MB4 (CD-3): the shop locale the web landing page reads
+        // defensively (defaults bn when unset).
+        locale: s.locale ?? null,
       };
     } catch {
       return empty;
@@ -343,11 +344,11 @@ export class LandingsService {
       ? await table.findFirst({ where: { id: slotId, organizationId } }).catch(() => null)
       : null;
     if (!slot || slot.active === false) {
-      throw new BadRequestException("ডেলিভারি স্লটটি পাওয়া যায়নি বা বন্ধ আছে");
+      throw badRequest("landings.theDeliverySlotWasNotFound");
     }
     const scope: string[] = Array.isArray(slot.districtScope) ? slot.districtScope.map((d: any) => String(d)) : [];
     if (scope.length > 0 && (district === null || !scope.includes(district))) {
-      throw new BadRequestException("এই স্লটটি আপনার এলাকার জন্য প্রযোজ্য নয়");
+      throw badRequest("landings.thisSlotDoesNotApplyTo");
     }
     const dateMsg = "ডেলিভারির তারিখ আজ থেকে আগামী ৭ দিনের মধ্যে হতে হবে";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr ?? ""))) {
@@ -375,7 +376,7 @@ export class LandingsService {
           }).catch(() => 0)
         : 0;
       if (Number(count) >= Number(slot.capacityPerDay)) {
-        throw new BadRequestException("এই স্লটটি পূর্ণ — অন্য স্লট বা তারিখ বেছে নিন");
+        throw badRequest("landings.thisSlotIsFullChooseAnother");
       }
     }
     return slot;
@@ -428,16 +429,14 @@ export class LandingsService {
   private async assertSlugAvailable(slug: string, exceptLandingId?: string): Promise<void> {
     const existing = await this.t("landingPage").findFirst({ where: { slug } });
     if (existing && existing.id !== exceptLandingId) {
-      throw new ConflictException(`A landing page with slug "${slug}" already exists`);
+      throw conflict("landings.aLandingPageWithSlugAlready", { slug: slug });
     }
   }
 
   private validateSlug(slug: string): string {
     const s = slug.trim();
     if (!SLUG_PATTERN.test(s)) {
-      throw new BadRequestException(
-        "slug অবশ্যই URL-বান্ধব হতে হবে (ছোট হাতের অক্ষর, সংখ্যা ও হাইফেন)",
-      );
+      throw badRequest("landings.slugMustBeUrlFriendlyLowercase");
     }
     return s;
   }
@@ -458,7 +457,7 @@ export class LandingsService {
 
   private validateStatus(status: string): string {
     if (!["draft", "published", "archived"].includes(status)) {
-      throw new BadRequestException(`অজানা landing status: ${status}`);
+      throw badRequest("landings.unknownLandingStatus", { status: status });
     }
     return status;
   }
@@ -466,7 +465,7 @@ export class LandingsService {
   private validateWeight(weight: unknown): number {
     const w = weight === undefined || weight === null ? 100 : Number(weight);
     if (!Number.isInteger(w) || w < 0 || w > 100) {
-      throw new BadRequestException("weight অবশ্যই ০ থেকে ১০০-এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("landings.weightMustBeAnIntegerBetween");
     }
     return w;
   }
@@ -650,7 +649,7 @@ export class LandingsService {
     const variant = await this.t("landingVariant").findFirst({
       where: { id: variantId, landingId },
     });
-    if (!variant) throw new NotFoundException("Variant not found for this landing page");
+    if (!variant) throw notFound("landings.variantNotFoundForThisLanding");
     return variant;
   }
 
@@ -855,7 +854,7 @@ export class LandingsService {
     const p = await this.t("product").findFirst({
       where: { id: landing.productId, organizationId, status: "ACTIVE" },
     });
-    if (!p) throw new NotFoundException("ল্যান্ডিং পেজটি পাওয়া যায়নি");
+    if (!p) throw notFound("landings.theLandingPageWasNotFound");
 
     const org = await this.t("organization")
       .findFirst({ where: { id: organizationId } })
@@ -953,6 +952,7 @@ export class LandingsService {
         returnPolicyText: trust.returnPolicyText,
         deliveryPromiseText: trust.deliveryPromiseText,
         supportPhone: trust.supportPhone,
+        locale: trust.locale ?? "bn",
       },
       sections,
       variant: assigned
@@ -1005,7 +1005,7 @@ export class LandingsService {
     // GB3 (GC8): terms consent.
     const termsTrust = await this.loadTermsTrust(organizationId);
     if (termsTrust.required && dto.termsAccepted !== true) {
-      throw new BadRequestException("অর্ডার সম্পূর্ণ করতে শর্তাবলি পড়ে সম্মতি দেওয়া বাধ্যতামূলক");
+      throw badRequest("landings.readingTheTermsAndAgreeingIs");
     }
     // AB8 (AX27): normalized device hash (invalid/absent = null).
     const deviceHash = normalizeDeviceHash((dto as any).deviceHash);
@@ -1027,7 +1027,7 @@ export class LandingsService {
     const p = await this.t("product").findFirst({
       where: { id: landing.productId, organizationId, status: "ACTIVE" },
     });
-    if (!p) throw new NotFoundException("Product is unavailable or out of stock");
+    if (!p) throw notFound("landings.productIsUnavailableOrOutOf");
 
     const qty = Math.max(1, dto.quantity ?? 1);
     // EC24a: preorder-enabled products pass at zero stock; only
@@ -1043,7 +1043,7 @@ export class LandingsService {
         where: { id: dto.variantId, productId: p.id },
       });
       if (!productVariant) {
-        throw new BadRequestException("ভ্যারিয়েন্টটি এই পণ্যের নয়");
+        throw badRequest("landings.theVariantDoesNotBelongTo");
       }
     }
     // AB5 (AX7) PRICE SOURCE precedence (variant-aware here):
@@ -1088,9 +1088,7 @@ export class LandingsService {
     if (this.inventory?.checkAvailability) {
       const verdict = await this.inventory.checkAvailability(organizationId, p, productVariant, qty);
       if (!verdict.ok) {
-        throw new BadRequestException(
-          `দুঃখিত, "${p.name}"-এর স্টকে মাত্র ${Math.max(0, verdict.available)}টি আছে — এর বেশি অর্ডার করা যাবে না`,
-        );
+        throw badRequest("landings.sorryHasOnlyInStockMore", { pName: p.name, p2: Math.max(0, verdict.available) });
       }
     }
 
@@ -1193,7 +1191,7 @@ export class LandingsService {
       appliedDiscountId = ec16Evaluation.appliedDiscountId;
     } else if (dto.couponCode?.trim()) {
       if (!this.discounts) {
-        throw new BadRequestException("কুপন সুবিধা এই deployment-এ নেই");
+        throw badRequest("landings.theCouponFacilityIsNotAvailable");
       }
       const v = await this.discounts.validateForCheckout(organizationId, dto.couponCode, {
         subtotalMinor: subtotal,
@@ -1210,9 +1208,7 @@ export class LandingsService {
         customerId: buyerCustomerId,
       });
       if (!v.valid) {
-        throw new BadRequestException(
-          `কুপন প্রয়োগ করা যায়নি: ${DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason}`,
-        );
+        throw badRequest("landings.theCouponCouldNotBeApplied", { p1: DISCOUNT_REASON_MESSAGES[v.reason ?? ""] ?? v.reason });
       }
       discountMinor = v.discountMinor;
       freeShippingApplied = v.freeShipping;
@@ -1230,16 +1226,14 @@ export class LandingsService {
     if (await this.hasActiveZones(organizationId)) {
       const district = dto.district?.trim();
       if (!district) {
-        throw new BadRequestException("ডেলিভারি জোন নির্ধারণে আপনার জেলা দিতে হবে");
+        throw badRequest("landings.yourDistrictMustBeGivenTo");
       }
       if (!this.storefront) {
-        throw new InternalServerErrorException("Delivery zones are unavailable (storefront service missing)");
+        throw internalError("landings.deliveryZonesAreUnavailableStorefrontService");
       }
       const zone = await this.storefront.matchZone(organizationId, district);
       if (!zone) {
-        throw new BadRequestException(
-          "এই এলাকায় ডেলিভারি সেট করা নেই — অন্য জেলা বেছে নিন অথবা দোকানে যোগাযোগ করুন",
-        );
+        throw badRequest("landings.deliveryIsNotSetUpFor");
       }
       const discountedSubtotal = subtotal - discountMinor;
       // EC30: the charge resolves through the ONE storefront
@@ -1293,7 +1287,7 @@ export class LandingsService {
     let chosenSlot: any = null;
     if (dto.deliverySlotId || dto.deliveryDate) {
       if (!dto.deliverySlotId || !dto.deliveryDate) {
-        throw new BadRequestException("স্লট বেছে নিলে তারিখও দিতে হবে");
+        throw badRequest("landings.ifASlotIsChosenThe");
       }
       chosenSlot = await this.validateDeliverySlotChoice(
         organizationId, dto.deliverySlotId, dto.deliveryDate, dto.district?.trim() || null,
@@ -1320,7 +1314,7 @@ export class LandingsService {
         parsedConfidence: parsed.confidence,
       });
       if (codEval.refused) {
-        throw new BadRequestException("দুঃখিত, এই অর্ডারের জন্য ক্যাশ অন ডেলিভারি প্রযোজ্য নয়");
+        throw badRequest("landings.sorryCashOnDeliveryDoesNot");
       }
       codAdvanceRequired = codEval.advanceRequired;
     }
@@ -1342,10 +1336,10 @@ export class LandingsService {
     });
 
     if (!this.integrations) {
-      throw new InternalServerErrorException("Checkout ordering is unavailable (integrations service missing)");
+      throw internalError("landings.checkoutOrderingIsUnavailableIntegrationsService");
     }
     // ON4: blocklist refusal — generic message, never reveals the blocklist.
-    if (this.blockedPhones && (await this.blockedPhones.isBlocked(organizationId, cleanPhone))) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+    if (this.blockedPhones && (await this.blockedPhones.isBlocked(organizationId, cleanPhone))) throw badRequest("landings.sorryTheOrderCannotBeTaken");
     // GB3 (GC9): block_checkout fraud rules (guard writes the
     // hit + attempt rows itself; the caller only refuses).
     if (this.checkoutGuard) {
@@ -1360,7 +1354,7 @@ export class LandingsService {
         phone: cleanPhone,
         channel: "landing",
       });
-      if (blockedBy) throw new BadRequestException("দুঃখিত, এই মুহূর্তে অর্ডারটি নেওয়া যাচ্ছে না");
+      if (blockedBy) throw badRequest("landings.sorryTheOrderCannotBeTaken");
     }
     // GC22: plan/order blocks on this PUBLIC landing checkout
     // surface ONLY as the generic shopper message.
@@ -1615,47 +1609,45 @@ export class LandingsService {
    */
   async addUpsell(slug: string, orderId: string) {
     const landing = await this.t("landingPage").findFirst({ where: { slug } });
-    if (!landing) throw new NotFoundException("ল্যান্ডিং পেজটি পাওয়া যায়নি");
+    if (!landing) throw notFound("landings.theLandingPageWasNotFound");
 
     const order = await this.t("order").findFirst({ where: { id: orderId } });
     if (!order) {
-      throw new BadRequestException("অর্ডারটি পাওয়া যায়নি");
+      throw badRequest("landings.theOrderWasNotFound");
     }
     if (order.landingPageId !== landing.id) {
-      throw new BadRequestException("এই অর্ডারটি এই ল্যান্ডিং পেজ থেকে আসেনি");
+      throw badRequest("landings.thisOrderDidNotComeFrom");
     }
     if (order.organizationId !== landing.organizationId) {
-      throw new BadRequestException("অর্ডারটি এই ল্যান্ডিং পেজের সংস্থার নয়");
+      throw badRequest("landings.theOrderDoesNotBelongTo");
     }
     if (!OPEN_ORDER_STATUSES.includes(order.status)) {
-      throw new BadRequestException(
-        `অর্ডারটি এখন "${order.status}" অবস্থায় আছে — আপসেল শুধু খোলা (pending/processing/on-hold) অর্ডারে যোগ করা যায়`,
-      );
+      throw badRequest("landings.theOrderIsNowInStatus", { orderStatus: order.status });
     }
     const fulfillments: any[] =
       (await this.t("fulfillment")
         ?.findMany({ where: { orderId: order.id } })
         .catch(() => [])) ?? [];
     if (fulfillments.length > 0) {
-      throw new BadRequestException("অর্ডারটির ফুলফিলমেন্ট শুরু হয়ে গেছে — এখন আপসেল যোগ করা যাবে না");
+      throw badRequest("landings.theOrderSFulfillmentHasStarted");
     }
     const placedAt = order.placedAt ?? order.createdAt;
     if (placedAt && Date.now() - new Date(placedAt).getTime() > UPSELL_WINDOW_MS) {
-      throw new BadRequestException("আপসেলের সময়সীমা (২ ঘণ্টা) পার হয়ে গেছে");
+      throw badRequest("landings.theUpsellTimeLimit2Hours");
     }
     if (!landing.upsellProductId) {
-      throw new BadRequestException("এই ল্যান্ডিং পেজে কোনো আপসেল পণ্য সেট করা নেই");
+      throw badRequest("landings.noUpsellProductIsSetOn");
     }
     const upsellProduct = await this.t("product").findFirst({
       where: { id: landing.upsellProductId, organizationId: landing.organizationId },
     });
     if (!upsellProduct || upsellProduct.status !== "ACTIVE") {
-      throw new BadRequestException("আপসেল পণ্যটি এখন পাওয়া যাচ্ছে না");
+      throw badRequest("landings.theUpsellProductIsNotAvailable");
     }
     const existingItems: any[] =
       (await this.t("orderItem").findMany({ where: { orderId: order.id } }).catch(() => [])) ?? [];
     if (existingItems.some((i) => i.productId === upsellProduct.id)) {
-      throw new BadRequestException("এই আপসেল পণ্যটি ইতিমধ্যে অর্ডারে যোগ করা হয়েছে");
+      throw badRequest("landings.thisUpsellProductHasAlreadyBeen");
     }
 
     // Stock FIRST (see the documented choice above).
@@ -1669,7 +1661,7 @@ export class LandingsService {
         this.logger.warn(
           `upsell stock step failed for order ${order.id}: ${e instanceof Error ? e.message : String(e)}`,
         );
-        throw new BadRequestException("স্টক আপডেট করা যায়নি — আপসেল যোগ করা হয়নি");
+        throw badRequest("landings.theStockCouldNotBeUpdated");
       }
     }
 

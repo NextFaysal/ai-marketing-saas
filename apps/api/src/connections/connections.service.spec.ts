@@ -191,7 +191,7 @@ describe("CC2 setDefault (category-group scoped)", () => {
     const { svc } = buildService((t) => {
       t.integration.rows.push({ id: "wa-x", organizationId: "org-2", provider: "whatsapp", status: "CONNECTED", createdAt: NOW });
     });
-    await expect(svc.setDefault("org-1", "owner-1", "wa-x")).rejects.toThrow(/not found/i);
+    await expect(svc.setDefault("org-1", "owner-1", "wa-x")).rejects.toMatchObject({ code: "connections.integrationNotFound" });
   });
 });
 

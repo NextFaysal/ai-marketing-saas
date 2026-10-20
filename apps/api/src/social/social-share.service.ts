@@ -1,11 +1,10 @@
-import {
-  BadRequestException, GoneException, Injectable, NotFoundException,
-} from "@nestjs/common";
+import { Injectable, HttpStatus,} from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { SocialService } from "./social.service";
 import { apiPublicBase } from "./social-link.service";
+import { ApiException, badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * SN2 — Client approval share links + public review.
@@ -86,7 +85,7 @@ export class SocialShareService {
     if (raw === undefined || raw === null) return SHARE_LINK_DEFAULT_EXPIRY_DAYS;
     const days = typeof raw === "number" ? raw : Number(raw);
     if (!Number.isInteger(days) || days < 1 || days > SHARE_LINK_MAX_EXPIRY_DAYS) {
-      throw new BadRequestException(`মেয়াদ ১ থেকে ${SHARE_LINK_MAX_EXPIRY_DAYS} দিনের মধ্যে হতে হবে।`);
+      throw badRequest("social.theExpiryMustBeBetween1", { SHARE_LINK_MAX_EXPIRY_DAYS: SHARE_LINK_MAX_EXPIRY_DAYS });
     }
     return days;
   }
@@ -122,14 +121,14 @@ export class SocialShareService {
     const postId = typeof scope?.postId === "string" && scope.postId ? scope.postId : null;
     const groupId = typeof scope?.groupId === "string" && scope.groupId ? scope.groupId : null;
     if ((postId === null) === (groupId === null)) {
-      throw new BadRequestException("শেয়ার লিংক একটি পোস্ট অথবা একটি গ্রুপের জন্য হবে — ঠিক একটি বেছে দিন।");
+      throw badRequest("social.aShareLinkIsForOne");
     }
     if (postId) {
       const post = await this.p().socialPost.findFirst({ where: { id: postId, organizationId } });
-      if (!post) throw new NotFoundException("Social post not found in this organization");
+      if (!post) throw notFound("social.socialPostNotFoundInThis");
     } else {
       const group = await this.p().socialPostGroup.findFirst({ where: { id: groupId, organizationId } });
-      if (!group) throw new NotFoundException("Social post group not found in this organization");
+      if (!group) throw notFound("social.socialPostGroupNotFoundIn");
     }
     const days = this.validateExpiryDays(dto?.expiresInDays);
     const expiresAt = new Date(Date.now() + days * 86_400_000);
@@ -147,7 +146,7 @@ export class SocialShareService {
         throw e;
       }
     }
-    if (!row) throw new BadRequestException("শেয়ার লিংক তৈরি করা যায়নি — আবার চেষ্টা করুন।");
+    if (!row) throw badRequest("social.theShareLinkCouldNotBe");
     await this.audit.log({
       organizationId, userId: actorId, action: "social.share_link_created",
       entityType: "SocialPostShareLink", entityId: row.id,
@@ -161,7 +160,7 @@ export class SocialShareService {
    * the full token is never returned again after creation. */
   async listShareLinksForPost(organizationId: string, postId: string) {
     const post = await this.p().socialPost.findFirst({ where: { id: postId, organizationId } });
-    if (!post) throw new NotFoundException("Social post not found in this organization");
+    if (!post) throw notFound("social.socialPostNotFoundInThis");
     const rows = await this.p().socialPostShareLink.findMany({ where: { organizationId, postId } });
     return (Array.isArray(rows) ? rows : [])
       .slice()
@@ -175,7 +174,7 @@ export class SocialShareService {
    * an already-revoked link is idempotent. Audited. */
   async revokeShareLink(organizationId: string, actorId: string, linkId: string) {
     const row = await this.p().socialPostShareLink.findFirst({ where: { id: linkId, organizationId } });
-    if (!row) throw new NotFoundException("Share link not found in this organization");
+    if (!row) throw notFound("social.shareLinkNotFoundInThis");
     const updated = row.revokedAt
       ? row
       : await this.p().socialPostShareLink.update({
@@ -198,14 +197,14 @@ export class SocialShareService {
    * link behaves identically on both.
    */
   private async resolveLiveLink(token: string) {
-    if (!token || typeof token !== "string") throw new NotFoundException("শেয়ার লিংকটি পাওয়া যায়নি।");
+    if (!token || typeof token !== "string") throw notFound("social.theShareLinkWasNotFound");
     const link = await this.p().socialPostShareLink.findFirst({ where: { token } });
-    if (!link) throw new NotFoundException("শেয়ার লিংকটি পাওয়া যায়নি।");
+    if (!link) throw notFound("social.theShareLinkWasNotFound");
     if (link.revokedAt) {
-      throw new GoneException("এই শেয়ার লিংকটি বাতিল করা হয়েছে — এটি আর কাজ করবে না। নতুন লিংকের জন্য পাঠানো দলের সঙ্গে যোগাযোগ করুন।");
+      throw new ApiException("social.thisShareLinkHasBeenRevoked", undefined, HttpStatus.GONE);
     }
     if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) {
-      throw new GoneException("এই শেয়ার লিংকটির মেয়াদ শেষ হয়ে গেছে। নতুন লিংকের জন্য পাঠানো দলের সঙ্গে যোগাযোগ করুন।");
+      throw new ApiException("social.thisShareLinkHasExpiredContact", undefined, HttpStatus.GONE);
     }
     return link;
   }
@@ -297,15 +296,15 @@ export class SocialShareService {
     const link = await this.resolveLiveLink(token);
     const postId = typeof dto?.postId === "string" ? dto.postId.trim() : "";
     if (!postId) {
-      throw new BadRequestException("কোন পোস্টের রিভিউ তা জানাতে হবে (postId আবশ্যক)।");
+      throw badRequest("social.sayWhichPostThisReviewIs");
     }
     const reviewerName = typeof dto?.reviewerName === "string" ? dto.reviewerName.trim() : "";
     if (!reviewerName) {
-      throw new BadRequestException("আপনার নাম দিন — নাম ছাড়া রিভিউ গ্রহণ করা যাবে না।");
+      throw badRequest("social.giveYourNameAReviewCannot");
     }
     const decision = typeof dto?.decision === "string" ? dto.decision.trim() : "";
     if (decision !== "approved" && decision !== "changes_requested") {
-      throw new BadRequestException("সিদ্ধান্ত হিসেবে শুধু approved অথবা changes_requested দেওয়া যাবে।");
+      throw badRequest("social.asADecisionOnlyApprovedOr");
     }
     const commentRaw = typeof dto?.comment === "string" ? dto.comment.trim() : "";
     const comment = commentRaw ? commentRaw : null;
@@ -316,7 +315,7 @@ export class SocialShareService {
           where: { id: postId, organizationId: link.organizationId, postGroupId: link.groupId },
         }));
     if (!inScope) {
-      throw new BadRequestException("এই পোস্টটি এই শেয়ার লিংকের আওতায় নেই — এই লিংক দিয়ে ওই পোস্টে রিভিউ দেওয়া যাবে না।");
+      throw badRequest("social.thisPostIsNotCoveredBy");
     }
 
     const row = await this.p().socialPostClientReview.create({

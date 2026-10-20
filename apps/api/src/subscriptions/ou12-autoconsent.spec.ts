@@ -135,7 +135,7 @@ describe("OU12 consent capture at creation", () => {
     const svc = makeSvc(prisma);
     await expect(svc.create("org-1", "staff-1", {
       customerId: "c-1", productId: "p-1", autoChargeConsentGiven: true,
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toMatchObject({ code: "subscriptions.consentMethodRequired", status: 400 });
     expect(prisma.customerSubscription.rows).toHaveLength(0);
   });
 
@@ -144,10 +144,10 @@ describe("OU12 consent capture at creation", () => {
     const svc = makeSvc(prisma);
     await expect(svc.create("org-1", "staff-1", {
       customerId: "c-1", productId: "p-1", autoChargeConsentMethod: "written",
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toMatchObject({ code: "subscriptions.consentMethodWithoutConsent", status: 400 });
     await expect(svc.create("org-1", "staff-1", {
       customerId: "c-1", productId: "p-1", autoChargeConsentGiven: false, autoChargeConsentNote: "x",
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toMatchObject({ code: "subscriptions.consentMethodWithoutConsent", status: 400 });
     expect(prisma.customerSubscription.rows).toHaveLength(0);
   });
 
@@ -156,7 +156,7 @@ describe("OU12 consent capture at creation", () => {
     const svc = makeSvc(prisma);
     await expect(svc.create("org-1", "staff-1", {
       customerId: "c-1", productId: "p-1", autoChargeConsentGiven: true, autoChargeConsentMethod: "telepathy",
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toMatchObject({ code: "subscriptions.consentMethodRequired", status: 400 });
     expect(prisma.customerSubscription.rows).toHaveLength(0);
   });
 });
@@ -188,7 +188,7 @@ describe("OU12 consent endpoint (record / withdraw later)", () => {
     await svc.cancel("org-1", "staff-1", subscription.id);
     await expect(svc.setAutoChargeConsent("org-1", "staff-1", subscription.id, {
       autoChargeConsentGiven: true, autoChargeConsentMethod: "written",
-    } as any)).rejects.toBeInstanceOf(BadRequestException);
+    } as any)).rejects.toMatchObject({ code: "subscriptions.consentOnCancelledSubscription", status: 400 });
   });
 });
 

@@ -117,9 +117,9 @@ describe("M68 assignment skips off-shift agents", () => {
     };
     const svc = new InboxService(db as any, { log: jest.fn(async () => undefined) } as any, {} as any);
     await expect(svc.setAgentSchedule("org-1", "agent-on", "boss", { windows: { mon: [["09:00", "17:00"]] } }))
-      .rejects.toThrow(/only set their own/);
+      .rejects.toMatchObject({ code: "inbox.agentsCanOnlySetTheirOwn" });
     await expect(svc.setAgentSchedule("org-1", "boss", "agent-on", { windows: { mon: [["09:00", "09:00"]] } }))
-      .rejects.toThrow(/Invalid windows/);
+      .rejects.toMatchObject({ code: "inbox.invalidWindowsUseWeekdayKeysMon" });
     const ok: any = await svc.setAgentSchedule("org-1", "boss", "agent-on", { windows: { wed: [["09:00", "18:00"]] } });
     expect(ok.userId).toBe("agent-on");
     expect(ok.onShift).toBe(true); // Wednesday noon is inside 09–18

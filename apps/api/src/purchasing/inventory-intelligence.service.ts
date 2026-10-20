@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { toCsv } from "../imports/csv";
+import { badRequest } from "../i18n/api-exception";
 
 /**
  * EC33 — Inventory Intelligence.
@@ -124,28 +125,27 @@ export class InventoryIntelligenceService {
     const hasLead = "leadTimeDays" in d;
     const hasBackorder = "allowBackorder" in d;
     const hasReserve = "reserveMinutes" in d;
-    const LEAD_MSG = "লিড টাইম (leadTimeDays) অবশ্যই ১ থেকে ১৮০ দিনের মধ্যে পূর্ণসংখ্যা হতে হবে";
     if (!hasLead && !hasBackorder && !hasReserve) {
-      throw new BadRequestException(LEAD_MSG);
+      throw badRequest("purchasing.leadTimeDaysMustBeIntegerBetween1And180");
     }
     const data: Record<string, unknown> = {};
     if (hasLead) {
       const leadTimeDays = d.leadTimeDays;
       if (!Number.isInteger(leadTimeDays) || (leadTimeDays as number) < 1 || (leadTimeDays as number) > 180) {
-        throw new BadRequestException(LEAD_MSG);
+        throw badRequest("purchasing.leadTimeDaysMustBeIntegerBetween1And180");
       }
       data.leadTimeDays = leadTimeDays;
     }
     if (hasBackorder) {
       if (typeof d.allowBackorder !== "boolean") {
-        throw new BadRequestException("allowBackorder অবশ্যই true/false হতে হবে");
+        throw badRequest("purchasing.allowbackorderMustBeTrueFalse");
       }
       data.allowBackorder = d.allowBackorder;
     }
     if (hasReserve) {
       const rm = d.reserveMinutes;
       if (!Number.isInteger(rm) || (rm as number) < 0 || (rm as number) > 1440) {
-        throw new BadRequestException("রিজার্ভ সময় (reserveMinutes) অবশ্যই ০ থেকে ১৪৪০ মিনিটের মধ্যে পূর্ণসংখ্যা হতে হবে");
+        throw badRequest("purchasing.theReserveTimeReserveminutesMustBe");
       }
       data.reserveMinutes = rm;
     }
@@ -224,7 +224,7 @@ export class InventoryIntelligenceService {
     const fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 86_400_000);
     const toDate = to ? new Date(to) : new Date();
     if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
-      throw new BadRequestException("তারিখ সঠিক নয়");
+      throw badRequest("purchasing.theDateIsNotValid");
     }
     const movements: any[] = ((await (this.prisma as any).stockMovement
       .findMany({
@@ -537,7 +537,7 @@ export class InventoryIntelligenceService {
    */
   async velocity(orgId: string, windowDays: number, nowOverride?: Date) {
     if (!(VELOCITY_WINDOWS as readonly number[]).includes(windowDays)) {
-      throw new BadRequestException("উইন্ডো (windowDays) অবশ্যই ৩০, ৬০ বা ৯০ দিনের একটি হতে হবে");
+      throw badRequest("purchasing.theWindowWindowdaysMustBeOne");
     }
     const now = nowOverride ?? new Date();
     const startMs = now.getTime() - windowDays * DAY_MS;
@@ -718,7 +718,7 @@ export class InventoryIntelligenceService {
    */
   async reorderSuggestionsV2(orgId: string, mode?: string) {
     if (mode !== undefined && mode !== "velocity") {
-      throw new BadRequestException("mode অবশ্যই simple বা velocity হতে হবে — simple মোডের জন্য বিদ্যমান সাজেশন ব্যবহার করুন");
+      throw badRequest("purchasing.modeMustBeSimpleOrVelocity2");
     }
     const settings = await this.getSettings(orgId);
     const leadTimeDays = settings.leadTimeDays;
@@ -771,7 +771,7 @@ export class InventoryIntelligenceService {
    */
   async deadStock(orgId: string, days: number = 90, nowOverride?: Date) {
     if (!Number.isInteger(days) || days < 1 || days > 365) {
-      throw new BadRequestException("দিনের সংখ্যা (days) অবশ্যই ১ থেকে ৩৬৫-এর মধ্যে পূর্ণসংখ্যা হতে হবে");
+      throw badRequest("purchasing.theNumberOfDaysDaysMust");
     }
     const now = nowOverride ?? new Date();
     const startMs = now.getTime() - days * DAY_MS;

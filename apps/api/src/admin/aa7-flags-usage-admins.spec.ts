@@ -184,10 +184,10 @@ describe("AA7 (1) — orgFlagEnabled resolution matrix", () => {
 describe("AA7 (1) — write path: validation + settings round-trip", () => {
   it("rejects unknown flag / unknown tier / non-boolean / non-object with 400", async () => {
     const svc = new AdminService(makePrisma(), mkAudit());
-    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { nope: { FREE: true } } })).rejects.toThrow(/unknown flag/);
-    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { order_bot: { PLATINUM: true } } })).rejects.toThrow(/unknown tier/);
-    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { order_bot: { FREE: "yes" } } })).rejects.toThrow(/must be a boolean/);
-    await expect(svc.updateSettings(SUPER, { planFlagDefaults: [] as any })).rejects.toThrow(/must be an object/);
+    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { nope: { FREE: true } } })).rejects.toMatchObject({ code: "admin.planflagdefaultsUnknownFlagKnown" });
+    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { order_bot: { PLATINUM: true } } })).rejects.toMatchObject({ code: "admin.planflagdefaultsUnknownTier" });
+    await expect(svc.updateSettings(SUPER, { planFlagDefaults: { order_bot: { FREE: "yes" } } })).rejects.toMatchObject({ code: "admin.planflagdefaultsMustBeABoolean" });
+    await expect(svc.updateSettings(SUPER, { planFlagDefaults: [] as any })).rejects.toMatchObject({ code: "admin.planflagdefaultsMustBeAnObject" });
     await expect(svc.updateSettings(SUPER, { planFlagDefaults: { order_bot: true as any } })).rejects.toThrow(/tier -> boolean/);
   });
 

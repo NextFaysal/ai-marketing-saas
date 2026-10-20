@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "<MASKED_SECRET_001>";
 
 import { createHash } from "node:crypto";
+import { ApiException } from "../i18n";
 import { ForbiddenException } from "@nestjs/common";
 import { StepUpService } from "./step-up.service";
 import { TenantPaymentsService } from "./tenant-payments.service";
@@ -141,8 +142,8 @@ describe("CC23 StepUpService (M35 verifier reuse)", () => {
     const tables = baseTables();
     await seedTotpUser(tables);
     const svc = new StepUpService(tables as any);
-    await expect(svc.check("owner-1")).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.check("owner-1", wrongCode())).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.check("owner-1")).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.check("owner-1", wrongCode())).rejects.toBeInstanceOf(ApiException);
     await expect(svc.check("owner-1", validCode())).resolves.toBe("verified");
   });
 });
@@ -165,7 +166,7 @@ describe("CC23 step-up on tenant gateway disable/delete", () => {
 
   it("disable without a code is refused for a TOTP user and changes nothing", async () => {
     const { tables, svc } = await setup();
-    await expect(svc.setGatewayEnabled("org-1", "owner-1", "sslcommerz", false, "live")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.setGatewayEnabled("org-1", "owner-1", "sslcommerz", false, "live")).rejects.toBeInstanceOf(ApiException);
     expect(tables.tenantPaymentGateway.rows[0].isEnabled).toBe(true);
   });
 
@@ -193,7 +194,7 @@ describe("CC23 step-up on tenant gateway disable/delete", () => {
 
   it("delete without a code is refused; with a code it deletes", async () => {
     const { tables, svc } = await setup();
-    await expect(svc.deleteGateway("org-1", "owner-1", "sslcommerz", "live")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.deleteGateway("org-1", "owner-1", "sslcommerz", "live")).rejects.toBeInstanceOf(ApiException);
     expect(tables.tenantPaymentGateway.rows).toHaveLength(1);
     const out: any = await svc.deleteGateway("org-1", "owner-1", "sslcommerz", "live", validCode());
     expect(out.deleted).toBe(true);
@@ -225,7 +226,7 @@ describe("CC23 step-up on payout create + four-eyes mark-paid", () => {
     snapshot(null);
     const { tables, svc, wallet } = await setupWallet();
     const dto = { amountMinor: "5000", method: "bkash", destination: { number: "01700000000" } };
-    await expect(svc.createPayoutRequest("org-1", "owner-1", dto)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.createPayoutRequest("org-1", "owner-1", dto)).rejects.toBeInstanceOf(ApiException);
     expect(tables.payoutRequest.rows).toHaveLength(0);
     const created: any = await svc.createPayoutRequest("org-1", "owner-1", { ...dto, totpCode: validCode() });
     expect(created.status).toBe("pending");

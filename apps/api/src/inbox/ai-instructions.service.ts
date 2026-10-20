@@ -1,10 +1,11 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { HttpException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { InboxService } from "./inbox.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
 import { matchKnowledge } from "./business-brain";
 import { parseUnansweredDraft, type UnansweredDraftProposal } from "./in7-ai";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
 
 export const UNANSWERED_STATUSES = ["open", "resolved", "ignored"] as const;
 
@@ -68,8 +69,8 @@ export class AiInstructionsService {
   /** Save the working draft. NEVER touches the published text —
    * customers keep getting the old instructions until publish. */
   async saveDraft(organizationId: string, instructions: string) {
-    if (typeof instructions !== "string") throw new BadRequestException("instructions must be a string");
-    if (instructions.length > 2000) throw new BadRequestException("instructions must be at most 2000 characters");
+    if (typeof instructions !== "string") throw badRequest("inbox.instructionsMustBeAString");
+    if (instructions.length > 2000) throw badRequest("inbox.instructionsMustBeAtMost2000");
     await (this.prisma as any).businessProfile.upsert({
       where: { organizationId },
       update: { aiInstructionsDraft: instructions },
@@ -124,7 +125,7 @@ export class AiInstructionsService {
     const v = await (this.prisma as any).aiInstructionVersion
       .findFirst({ where: { id: versionId, organizationId } })
       .catch(() => null);
-    if (!v) throw new NotFoundException("Version not found in this organization");
+    if (!v) throw notFound("inbox.versionNotFoundInThisOrganization");
     await (this.prisma as any).businessProfile.upsert({
       where: { organizationId },
       update: { aiInstructions: v.instructions, aiInstructionsDraft: v.instructions, aiReplyLanguage: v.replyLanguage ?? null },
@@ -168,7 +169,7 @@ export class AiInstructionsService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "inbox.aiFeaturesTemporarilyPausedPlatformWide" : "inbox.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -178,10 +179,7 @@ export class AiInstructionsService {
       where: { organizationId, feature, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("inbox.dailyAiGenerationLimitReachedFor", { limit: limit }, 429);
     }
   }
 
@@ -192,7 +190,7 @@ export class AiInstructionsService {
   async test(organizationId: string, dto: { question: string; useDraft: boolean }) {
     await this.checkTestLimit(organizationId);
     const question = typeof dto?.question === "string" ? dto.question.trim() : "";
-    if (!question || question.length > 500) throw new BadRequestException("question is required (1..500 characters)");
+    if (!question || question.length > 500) throw badRequest("inbox.questionIsRequired1500Characters");
     const profile = await this.getProfile(organizationId);
     const published: string | null = profile?.aiInstructions ?? null;
     const effectiveDraft: string | null = profile?.aiInstructionsDraft ?? published;
@@ -236,7 +234,7 @@ export class AiInstructionsService {
     const row = await (this.prisma as any).aiUnansweredQuestion
       .findFirst({ where: { id, organizationId } })
       .catch(() => null);
-    if (!row) throw new NotFoundException("Unanswered question not found in this organization");
+    if (!row) throw notFound("inbox.unansweredQuestionNotFoundInThis");
     const question = { id: row.id, questionText: row.questionText };
     let provider: any;
     try { provider = this.llm ? await providerForOrg(this.llm, organizationId) : null; } catch { provider = null; }
@@ -271,12 +269,12 @@ export class AiInstructionsService {
 
   async updateUnansweredStatus(organizationId: string, actorId: string, id: string, status: string) {
     if (!(UNANSWERED_STATUSES as readonly string[]).includes(status)) {
-      throw new BadRequestException(`status must be one of: ${UNANSWERED_STATUSES.join(" | ")}`);
+      throw badRequest("inbox.statusMustBeOneOf", { p1: UNANSWERED_STATUSES.join(" | ") });
     }
     const row = await (this.prisma as any).aiUnansweredQuestion
       .findFirst({ where: { id, organizationId } })
       .catch(() => null);
-    if (!row) throw new NotFoundException("Unanswered question not found in this organization");
+    if (!row) throw notFound("inbox.unansweredQuestionNotFoundInThis");
     const updated = await (this.prisma as any).aiUnansweredQuestion.update({
       where: { id: row.id },
       data: { status },

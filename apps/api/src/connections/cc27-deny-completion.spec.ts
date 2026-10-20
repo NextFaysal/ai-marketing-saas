@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "cc27-spec-secret";
 
 import { ForbiddenException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { ConnectionsService } from "./connections.service";
 import { SocialService } from "../social/social.service";
 import { SocialPublishService } from "../social/social-publish.service";
@@ -270,7 +271,7 @@ describe("CC27 comment replies — acting member + configuring actor", () => {
 
   it("human reply by a denied member → Forbidden before any Graph call; the comment is untouched", async () => {
     const { db, svc } = build({ humanDenied: true });
-    await expect(svc.sendReply(ORG, MEMBER, "cmt-1", { replyText: "দাম ৫০০ টাকা" } as any)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.sendReply(ORG, MEMBER, "cmt-1", { replyText: "দাম ৫০০ টাকা" } as any)).rejects.toBeInstanceOf(ApiException);
     const c = db.socialComment.rows[0];
     expect(c.status).toBe("PENDING");
     expect(c.metadata?.graph?.replyId).toBeUndefined();
@@ -372,14 +373,14 @@ describe("CC27 inbox autopilot + system sends — assignee ?? configuring actor"
 
   it("sendAutomatedMessage (the system-send funnel): denied governing actor → Forbidden, no message row, refusal audited", async () => {
     const { db, svc, entries } = build({ assignee: MEMBER, deniedFor: [MEMBER] });
-    await expect(svc.sendAutomatedMessage(ORG, "conv-1", "আপনার অর্ডারটি পাঠানো হয়েছে", "courier_update")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.sendAutomatedMessage(ORG, "conv-1", "আপনার অর্ডারটি পাঠানো হয়েছে", "courier_update")).rejects.toBeInstanceOf(ApiException);
     expect(db.channelMessage.rows).toHaveLength(0);
     expect(entries.some((e: any) => e.action === "inbox.system_send.suppressed_denied")).toBe(true);
   });
 
   it("sendAutomatedMessage control: allowed actor passes the gate (and then fails honestly on the missing integration)", async () => {
     const { svc } = build({ assignee: MEMBER, deniedFor: [] });
-    await expect(svc.sendAutomatedMessage(ORG, "conv-1", "hello", "courier_update")).rejects.toThrow(/No connected messenger integration/);
+    await expect(svc.sendAutomatedMessage(ORG, "conv-1", "hello", "courier_update")).rejects.toMatchObject({ code: "inbox.noConnectedIntegrationForThisOrganization2" });
   });
 
   it("updateSettings records the configuring actor on InboxSetting (the CC27 fallback actor source)", async () => {
@@ -425,7 +426,7 @@ describe("CC27 WhatsApp broadcasts — creator re-checked at send time", () => {
 
   it("createWhatsAppSender: denied creator → Forbidden; allowed creator → a sender is built", async () => {
     const denied = build(true);
-    await expect((denied.svc as any).createWhatsAppSender(ORG, denied.db.broadcast.rows[0], "bc-1", MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect((denied.svc as any).createWhatsAppSender(ORG, denied.db.broadcast.rows[0], "bc-1", MEMBER)).rejects.toBeInstanceOf(ApiException);
     const allowed = build(false);
     const sender = await (allowed.svc as any).createWhatsAppSender(ORG, allowed.db.broadcast.rows[0], "bc-1", MEMBER);
     expect(typeof sender).toBe("function");
@@ -447,9 +448,9 @@ describe("CC27 ad syncs — manual gated, scheduled job not gated", () => {
 
   it("manual Meta sync by a denied member → Forbidden before any platform work", async () => {
     const { svc } = build(true);
-    await expect(svc.syncMetaInsights(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.syncMetaAdInsights(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.syncMetaBreakdowns(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.syncMetaInsights(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.syncMetaAdInsights(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.syncMetaBreakdowns(ORG, MEMBER, "ad-1", {})).rejects.toBeInstanceOf(ApiException);
   });
 
   it("manual Google sync by a denied member → Forbidden (deny is checked against the account, whatever its platform)", async () => {
@@ -459,12 +460,12 @@ describe("CC27 ad syncs — manual gated, scheduled job not gated", () => {
 
   it("control: allowed member passes the gate and fails honestly downstream (account not API-connected)", async () => {
     const { svc } = build(false);
-    await expect(svc.syncMetaInsights(ORG, MEMBER, "ad-1", {})).rejects.toThrow(/not connected to Meta via API/);
+    await expect(svc.syncMetaInsights(ORG, MEMBER, "ad-1", {})).rejects.toMatchObject({ code: "ads.thisAdAccountIsNotConnected" });
   });
 
   it("the SCHEDULED job path is deliberately not deny-gated (documented): same member, job entry → downstream error, not a deny", async () => {
     const { svc } = build(true);
-    await expect(svc.syncInsightsJob("meta", ORG, MEMBER, "ad-1")).rejects.toThrow(/not connected to Meta via API/);
+    await expect(svc.syncInsightsJob("meta", ORG, MEMBER, "ad-1")).rejects.toMatchObject({ code: "ads.thisAdAccountIsNotConnected" });
   });
 
   it("sync-all records a denied account as skipped_denied and still attempts the others", async () => {
@@ -505,20 +506,20 @@ describe("CC27 campaigns — publish/activate gated, pause never gated", () => {
 
   it("publish by a denied member → Forbidden; the plan never leaves approved", async () => {
     const { db, svc } = build(true);
-    await expect(svc.publish(ORG, MEMBER, "plan-1")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.publish(ORG, MEMBER, "plan-1")).rejects.toBeInstanceOf(ApiException);
     expect(db.campaignPlan.rows[0].status).toBe("approved");
   });
 
   it("publish control: allowed member on a non-approved plan gets the APPROVAL refusal, not the deny refusal", async () => {
     const { db, svc } = build(false);
     db.campaignPlan.rows[0].status = "draft";
-    await expect(svc.publish(ORG, MEMBER, "plan-1")).rejects.toThrow(/must be approved before publishing/);
+    await expect(svc.publish(ORG, MEMBER, "plan-1")).rejects.toMatchObject({ code: "campaigns.planMustBeApprovedBeforePublishing" });
   });
 
   it("ACTIVATE by a denied member → Forbidden; PAUSE by the same denied member is NOT gated (reaches the Meta attempt)", async () => {
     const { db, svc } = build(true);
     db.campaignPlan.rows[0].status = "published"; // setMetaStatus operates on published plans
-    await expect(svc.setMetaStatus(ORG, MEMBER, "plan-1", "ACTIVE")).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.setMetaStatus(ORG, MEMBER, "plan-1", "ACTIVE")).rejects.toBeInstanceOf(ApiException);
     // pause: the gate is skipped by design → publishClient builds
     // → Meta call attempted → provider failure surfaces verbatim.
     await expect(svc.setMetaStatus(ORG, MEMBER, "plan-1", "PAUSED")).rejects.toThrow(/Meta did NOT confirm/);
@@ -526,12 +527,12 @@ describe("CC27 campaigns — publish/activate gated, pause never gated", () => {
 
   it("cross-platform draft onto a denied target account → Forbidden before the publishing service is touched", async () => {
     const { svc, publishing } = build(true);
-    await expect(svc.crossPlatformDraft(ORG, "plan-1", MEMBER, { platform: "meta" as any, targetAdAccountId: "ad-1" })).rejects.toThrow(/platform must be google or tiktok/);
+    await expect(svc.crossPlatformDraft(ORG, "plan-1", MEMBER, { platform: "meta" as any, targetAdAccountId: "ad-1" })).rejects.toMatchObject({ code: "campaigns.platformMustBeGoogleOrTiktok" });
     // google target: seed a google account denied for the member
     const { db } = { db: (svc as any).prisma };
     db.adAccount.rows.push({ id: "ad-g1", organizationId: ORG, platform: "google", integrationId: "int-1", externalId: "123", name: "G" });
     db.membership.rows[0].deniedConnections = ["ad-g1"];
-    await expect(svc.crossPlatformDraft(ORG, "plan-1", MEMBER, { platform: "google", targetAdAccountId: "ad-g1" })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.crossPlatformDraft(ORG, "plan-1", MEMBER, { platform: "google", targetAdAccountId: "ad-g1" })).rejects.toBeInstanceOf(ApiException);
     expect(publishing.createGoogleCampaign).not.toHaveBeenCalled();
   });
 });

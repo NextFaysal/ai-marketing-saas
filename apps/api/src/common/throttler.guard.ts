@@ -2,6 +2,7 @@ import {
   CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, Logger, SetMetadata,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import { ApiException } from "../i18n";
 
 /**
  * Milestone 61 — public-surface rate limiting ("abuse shield").
@@ -159,10 +160,9 @@ export class ThrottlerGuard implements CanActivate {
       rateLimitStats.noteBlocked(ip);
       res.setHeader?.("Retry-After", String(retryAfterSeconds));
       res.setHeader?.("X-RateLimit-Limit", String(spec.limit));
-      throw new HttpException(
-        { message: `Too many requests — please retry after ${retryAfterSeconds}s`, retryAfterSeconds },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+      const tooMany = new ApiException("common.tooManyRequests", { seconds: retryAfterSeconds }, HttpStatus.TOO_MANY_REQUESTS);
+      tooMany.extra = { retryAfterSeconds };
+      throw tooMany;
     }
     res.setHeader?.("X-RateLimit-Limit", String(spec.limit));
     res.setHeader?.("X-RateLimit-Remaining", String(Math.max(0, spec.limit - count)));

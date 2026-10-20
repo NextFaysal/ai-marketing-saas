@@ -736,7 +736,7 @@ describe("AB3 re-allocation (§5.3) + the §1.5 family pin", () => {
     await expect(svc.reallocateOrderBins("org-1", "order-none", wh2.id, "owner-1"))
       .rejects.toThrow(/সক্রিয় স্টক বরাদ্দ নেই/);
     await expect(svc.reallocateOrderBins("org-1", "order-1", "wh-nope", "owner-1"))
-      .rejects.toThrow(/not found/i);
+      .rejects.toMatchObject({ code: "inventory.targetWarehouseNotFoundInThis" });
     prisma.warehouse.rows.find((w: any) => w.id === wh2.id).active = false;
     await expect(svc.reallocateOrderBins("org-1", "order-1", wh2.id, "owner-1"))
       .rejects.toThrow(/নিষ্ক্রিয়/);

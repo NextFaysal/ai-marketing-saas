@@ -139,11 +139,11 @@ describe("folders", () => {
     const { svc } = buildLibrary(prisma);
     const foreign: any = await svc.createFolder("org-2", "user-9", { name: "Theirs" });
     await expect(svc.updateFolder("org-1", "user-1", foreign.id, { name: "X" }))
-      .rejects.toThrow("Media folder not found in this organization");
+      .rejects.toMatchObject({ code: "social.mediaFolderNotFoundInThis" });
     await expect(svc.deleteFolder("org-1", "user-1", foreign.id))
-      .rejects.toThrow("Media folder not found in this organization");
+      .rejects.toMatchObject({ code: "social.mediaFolderNotFoundInThis" });
     await expect(svc.updateFolder("org-1", "user-1", "missing", { name: "X" }))
-      .rejects.toThrow("Media folder not found in this organization");
+      .rejects.toMatchObject({ code: "social.mediaFolderNotFoundInThis" });
   });
 });
 
@@ -171,7 +171,7 @@ describe("updateMedia + listMedia", () => {
     await expect(svc.updateMedia("org-1", "user-1", asset.id, { name: "   " }))
       .rejects.toThrow("মিডিয়ার নাম খালি রাখা যাবে না।");
     await expect(svc.updateMedia("org-1", "user-1", "missing", { name: "X" }))
-      .rejects.toThrow("Media asset not found in this organization");
+      .rejects.toMatchObject({ code: "social.mediaAssetNotFoundInThis" });
   });
 
   it("listMedia filters by folder, folderless, tag (case-insensitive) and name query", async () => {

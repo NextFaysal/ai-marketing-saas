@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { StorefrontService } from "./storefront.service";
 import { ShopAccountService } from "./shop-account.service";
 import { hashShopSecret } from "./shop-auth.util";
@@ -250,7 +251,7 @@ describe("EC25 (a) OTP happy path — hashes only", () => {
 
   it("disabled / unknown shop 404s", async () => {
     const { accounts } = makeWorld();
-    await expect(accounts.requestOtp("no-such-shop", "01711111111")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(accounts.requestOtp("no-such-shop", "01711111111")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -342,21 +343,21 @@ describe("EC25 (f)(g) session scoping + logout", () => {
     const { token } = await login(accounts, sms);
     const me: any = await accounts.me("shop-one", token);
     expect(me.customer.phone).toBe("01711111111");
-    await expect(accounts.me("shop-two", token)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(accounts.me("shop-two", token)).rejects.toBeInstanceOf(ApiException);
 
     const out: any = await accounts.logout("shop-one", token);
     expect(out).toEqual({ loggedOut: true });
-    await expect(accounts.me("shop-one", token)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(accounts.me("shop-one", token)).rejects.toBeInstanceOf(ApiException);
     // logout with the dead token still answers loggedOut:true
     await expect(accounts.logout("shop-one", token)).resolves.toEqual({ loggedOut: true });
     // unknown org still 404s
-    await expect(accounts.logout("no-such-shop", token)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(accounts.logout("no-such-shop", token)).rejects.toBeInstanceOf(ApiException);
   });
 
   it("missing / garbage token is a 401 on account routes", async () => {
     const { accounts } = makeWorld();
-    await expect(accounts.me("shop-one", undefined)).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(accounts.me("shop-one", "deadbeef")).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(accounts.me("shop-one", undefined)).rejects.toBeInstanceOf(ApiException);
+    await expect(accounts.me("shop-one", "deadbeef")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -396,7 +397,7 @@ describe("EC25 (h) account order isolation", () => {
     const detail: any = await accounts.getOrder("shop-one", a.token, "ord-a1");
     expect(detail).toMatchObject({ id: "ord-a1", subtotalMinor: "50000", deliveryMinor: "6000", shippingMinor: "6000", discountMinor: "0", address: "বাড়ি ১", giftSkipped: false });
 
-    await expect(accounts.getOrder("shop-one", a.token, "ord-b1")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(accounts.getOrder("shop-one", a.token, "ord-b1")).rejects.toBeInstanceOf(ApiException);
     await expect(accounts.reorder("shop-one", a.token, "ord-b1")).rejects.toThrow("অর্ডারটি পাওয়া যায়নি");
     const listB: any = await accounts.listOrders("shop-one", b.token, 1, 20);
     expect(listB.items.map((o: any) => o.id)).toEqual(["ord-b1"]);
@@ -483,7 +484,7 @@ describe("EC25 (k) addresses", () => {
 
     // foreign address: b cannot touch a's address
     await expect(accounts.updateAddress("shop-one", b.token, first.id, { addressLine: "হ্যাক" })).rejects.toThrow("ঠিকানাটি পাওয়া যায়নি");
-    await expect(accounts.deleteAddress("shop-one", b.token, first.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(accounts.deleteAddress("shop-one", b.token, first.id)).rejects.toBeInstanceOf(ApiException);
 
     // deleting the default promotes the oldest remaining
     await accounts.deleteAddress("shop-one", a.token, second.id);

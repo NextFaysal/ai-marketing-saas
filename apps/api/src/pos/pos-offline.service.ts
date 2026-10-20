@@ -1,5 +1,4 @@
-import {
-  BadRequestException, Injectable, NotFoundException, Optional,
+import { Injectable, Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -8,6 +7,7 @@ import { PosService } from "./pos.service";
 import type {
   CreatePosSaleDto, DiscardOfflineSyncDto, OfflineSyncDto, RepostOfflineSyncDto,
 } from "./pos.dto";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * AB4 (AX6) — offline POS sales sync ledger.
@@ -272,9 +272,9 @@ export class PosOfflineService {
 
   async repost(orgId: string, actorId: string, id: string, dto: RepostOfflineSyncDto) {
     const row = await this.findById(orgId, id);
-    if (!row) throw new NotFoundException("সিঙ্ক রেকর্ডটি পাওয়া যায়নি");
+    if (!row) throw notFound("pos.msg11");
     if (row.status !== "conflict") {
-      throw new BadRequestException("শুধু দ্বন্দ্ব (conflict) অবস্থার রেকর্ড আবার পোস্ট করা যায়");
+      throw badRequest("pos.conflict");
     }
     const forced = dto?.force === true;
     const localTotal = toBigIntOrNull(row.localTotalMinor);
@@ -305,12 +305,12 @@ export class PosOfflineService {
 
   async discard(orgId: string, actorId: string, id: string, dto: DiscardOfflineSyncDto) {
     const row = await this.findById(orgId, id);
-    if (!row) throw new NotFoundException("সিঙ্ক রেকর্ডটি পাওয়া যায়নি");
+    if (!row) throw notFound("pos.msg11");
     if (row.status === "synced") {
-      throw new BadRequestException("সিঙ্ক হয়ে গেছে — বাদ দেওয়া যাবে না");
+      throw badRequest("pos.msg12");
     }
     if (!["conflict", "rejected", "pending"].includes(row.status)) {
-      throw new BadRequestException("এই অবস্থার রেকর্ড বাদ দেওয়া যাবে না");
+      throw badRequest("pos.aRecordInThisStatusCannot");
     }
     const saved = await this.saveRow(row.id, {
       status: "discarded",

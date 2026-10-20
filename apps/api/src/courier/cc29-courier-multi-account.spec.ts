@@ -2,6 +2,7 @@ process.env.ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.JWT_SECRET = "cc29-spec-secret";
 
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { CourierService, courierAccountKey, pickPrimaryCourierAccount } from "./courier.service";
 import { SteadfastClient } from "./steadfast.client";
 import { PathaoClient } from "./pathao.client";
@@ -271,7 +272,7 @@ describe("CC29 booking — account resolution + recorded on the shipment", () =>
     const { svc, b } = await twoAccounts();
     await svc.disconnect(ORG, USER, "steadfast", b.id);
     await expect(svc.bookShipment(ORG, USER, { provider: "steadfast", orderId: "ord-1", courierIntegrationId: b.id, ...BOOK }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toBeInstanceOf(ApiException);
     await expect(svc.bookShipment(ORG, USER, { provider: "steadfast", orderId: "ord-2", courierIntegrationId: "no-such-id", ...BOOK }))
       .rejects.toThrow(/পাওয়া যায়নি/);
     expect(createOrderCalls).toHaveLength(0);

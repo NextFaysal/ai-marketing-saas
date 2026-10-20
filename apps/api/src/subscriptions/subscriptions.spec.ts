@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { SubscriptionsService } from "./subscriptions.service";
 
 /** EC24c — subscriptions: snapshots, sweep, failure discipline. */
@@ -115,9 +116,9 @@ describe("EC24c create", () => {
     prisma.product.rows.push({ id: "p-2", organizationId: "org-1", name: "সাধারণ", priceMinor: 1000n, subscriptionEnabled: false, subscriptionIntervalDays: null });
     const svc = new SubscriptionsService(prisma, fakeAudit(prisma), fakeIntegrations(prisma));
     await expect(svc.create("org-1", "s", { customerId: "c-1", productId: "p-2" } as any)).rejects.toThrow(/এই পণ্যে সাবস্ক্রিপশন চালু নেই/);
-    await expect(svc.create("org-1", "s", { customerId: "foreign", productId: "p-1" } as any)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.create("org-2", "s", { customerId: "c-1", productId: "p-1" } as any)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(svc.create("org-1", "s", { customerId: "c-1", productId: "p-1", qty: 0 } as any)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.create("org-1", "s", { customerId: "foreign", productId: "p-1" } as any)).rejects.toMatchObject({ code: "commerce.customerNotFoundInOrg", status: 404 });
+    await expect(svc.create("org-2", "s", { customerId: "c-1", productId: "p-1" } as any)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.create("org-1", "s", { customerId: "c-1", productId: "p-1", qty: 0 } as any)).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -210,10 +211,10 @@ describe("EC24c transitions", () => {
     const prisma = fakePrisma(); seedBase(prisma);
     const svc = new SubscriptionsService(prisma, fakeAudit(prisma), fakeIntegrations(prisma));
     const { subscription }: any = await svc.create("org-1", "s", { customerId: "c-1", productId: "p-1", startAt: "2026-10-01T00:00:00Z" } as any);
-    await expect(svc.resume("org-1", "s", subscription.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.resume("org-1", "s", subscription.id)).rejects.toMatchObject({ code: "subscriptions.resumePausedOnly", status: 400 });
     const paused: any = await svc.pause("org-1", "s", subscription.id);
     expect(paused.subscription.status).toBe("paused");
-    await expect(svc.pause("org-1", "s", subscription.id)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.pause("org-1", "s", subscription.id)).rejects.toBeInstanceOf(ApiException);
     const before = Date.now();
     const resumed: any = await svc.resume("org-1", "s", subscription.id);
     expect(resumed.subscription.status).toBe("active");
@@ -222,7 +223,7 @@ describe("EC24c transitions", () => {
     expect(next).toBeLessThanOrEqual(Date.now() + 31 * 86400000);
     const cancelled: any = await svc.cancel("org-1", "s", subscription.id);
     expect(cancelled.subscription.status).toBe("cancelled");
-    await expect(svc.cancel("org-1", "s", subscription.id)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.getOne("org-2", subscription.id)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.cancel("org-1", "s", subscription.id)).rejects.toBeInstanceOf(ApiException);
+    await expect(svc.getOne("org-2", subscription.id)).rejects.toBeInstanceOf(ApiException);
   });
 });

@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { decryptJson } from "../integrations/crypto";
 import { GoogleAdsClient } from "../ads/google/google.client";
 import { TikTokManage } from "../ads/tiktok/tiktok.client";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * Direct publishing to Google Ads and TikTok (Phase I).
@@ -24,14 +25,14 @@ export class PublishingService {
 
   private async accountSecrets(organizationId: string, adAccountId: string, platform: string): Promise<any> {
     const account = await (this.prisma as any).adAccount.findFirst({ where: { id: adAccountId, organizationId } });
-    if (!account) throw new NotFoundException("Ad account not found");
+    if (!account) throw notFound("publishing.adAccountNotFound");
     if (account.platform !== platform || !account.integrationId) {
-      throw new BadRequestException(`This ad account is not connected to ${platform} via API`);
+      throw badRequest("publishing.thisAdAccountIsNotConnected", { platform: platform });
     }
     const integration = await (this.prisma as any).integration.findFirst({
       where: { id: account.integrationId, organizationId }, include: { credential: true },
     });
-    if (!integration?.credential) throw new BadRequestException(`${platform} credentials are missing; reconnect the account`);
+    if (!integration?.credential) throw badRequest("publishing.credentialsAreMissingReconnectTheAccount", { platform: platform });
     return { account, secrets: decryptJson<any>(integration.credential.encryptedData) };
   }
 
@@ -65,11 +66,11 @@ export class PublishingService {
    */
   async crossPlatformCampaignStatus(organizationId: string, adAccountId: string, platform: string, externalCampaignId: string) {
     const p = String(platform ?? "").toLowerCase();
-    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to read campaign status");
+    if (!externalCampaignId) throw badRequest("publishing.externalcampaignidIsRequiredToReadCampaign");
     if (p === "google") {
       const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
       if (!secrets.clientId || !secrets.clientSecret || !secrets.refreshToken || !secrets.developerToken) {
-        throw new BadRequestException("google credentials are missing clientId/clientSecret/refreshToken/developerToken; reconnect the account");
+        throw badRequest("publishing.googleCredentialsAreMissingClientidClientsecret");
       }
       const customerId = String(account.externalId).replace(/-/g, "");
       const client = new GoogleAdsClient({
@@ -89,7 +90,7 @@ export class PublishingService {
     }
     if (p === "tiktok") {
       const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
-      if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+      if (!secrets.accessToken) throw badRequest("publishing.tiktokCredentialsAreMissingAccesstokenReconnect");
       const advertiserId = String(secrets.advertiserId ?? account.externalId);
       const info = await new TikTokManage(secrets.accessToken).getCampaign(advertiserId, externalCampaignId);
       if (!info) throw new Error(`TikTok returned no campaign with id ${externalCampaignId}; status is NOT confirmed`);
@@ -101,7 +102,7 @@ export class PublishingService {
         providerStatusRaw: info.operationStatus,
       };
     }
-    throw new BadRequestException(`Unsupported cross-platform status platform: ${platform} (google | tiktok)`);
+    throw badRequest("publishing.unsupportedCrossPlatformStatusPlatformGoogle", { platform: platform });
   }
 
   /**
@@ -117,12 +118,12 @@ export class PublishingService {
   async crossPlatformSetCampaignStatus(organizationId: string, actorId: string, adAccountId: string, platform: string, externalCampaignId: string, target: "ACTIVE" | "PAUSED") {
     void actorId;
     const p = String(platform ?? "").toLowerCase();
-    if (!externalCampaignId) throw new BadRequestException("externalCampaignId is required to change campaign status");
-    if (target !== "ACTIVE" && target !== "PAUSED") throw new BadRequestException(`target must be ACTIVE or PAUSED (got "${target}")`);
+    if (!externalCampaignId) throw badRequest("publishing.externalcampaignidIsRequiredToChangeCampaign");
+    if (target !== "ACTIVE" && target !== "PAUSED") throw badRequest("publishing.targetMustBeActiveOrPaused", { target: target });
     if (p === "google") {
       const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "google");
       if (!secrets.clientId || !secrets.clientSecret || !secrets.refreshToken || !secrets.developerToken) {
-        throw new BadRequestException("google credentials are missing clientId/clientSecret/refreshToken/developerToken; reconnect the account");
+        throw badRequest("publishing.googleCredentialsAreMissingClientidClientsecret");
       }
       const customerId = String(account.externalId).replace(/-/g, "");
       const client = new GoogleAdsClient({
@@ -136,13 +137,13 @@ export class PublishingService {
     }
     if (p === "tiktok") {
       const { account, secrets } = await this.accountSecrets(organizationId, adAccountId, "tiktok");
-      if (!secrets.accessToken) throw new BadRequestException("tiktok credentials are missing accessToken; reconnect the account");
+      if (!secrets.accessToken) throw badRequest("publishing.tiktokCredentialsAreMissingAccesstokenReconnect");
       const advertiserId = String(secrets.advertiserId ?? account.externalId);
       const raw = target === "ACTIVE" ? "ENABLE" : "DISABLE";
       await new TikTokManage(secrets.accessToken).setCampaignStatus(advertiserId, externalCampaignId, raw as "ENABLE" | "DISABLE");
       return { platform: "tiktok", externalCampaignId, providerStatus: target === "ACTIVE" ? "active" : "paused", providerStatusRaw: raw };
     }
-    throw new BadRequestException(`Unsupported cross-platform lifecycle platform: ${platform} (google | tiktok)`);
+    throw badRequest("publishing.unsupportedCrossPlatformLifecyclePlatformGoogle", { platform: platform });
   }
 
   private async startRecord(organizationId: string, actorId: string, platform: string, adAccountId: string, name: string) {
@@ -170,26 +171,26 @@ export class PublishingService {
     sitelinks?: { text: string; url: string }[];
     callouts?: string[];
   }) {
-    if (!dto.headlines || dto.headlines.length < 3) throw new BadRequestException("Google RSA needs at least 3 headlines");
-    if (!dto.descriptions || dto.descriptions.length < 2) throw new BadRequestException("Google RSA needs at least 2 descriptions");
-    if (dto.headlines.some((h) => h.length > 30)) throw new BadRequestException("Google headlines are limited to 30 characters");
-    if (dto.descriptions.some((d) => d.length > 90)) throw new BadRequestException("Google descriptions are limited to 90 characters");
+    if (!dto.headlines || dto.headlines.length < 3) throw badRequest("publishing.googleRsaNeedsAtLeast3");
+    if (!dto.descriptions || dto.descriptions.length < 2) throw badRequest("publishing.googleRsaNeedsAtLeast2");
+    if (dto.headlines.some((h) => h.length > 30)) throw badRequest("publishing.googleHeadlinesAreLimitedTo30");
+    if (dto.descriptions.some((d) => d.length > 90)) throw badRequest("publishing.googleDescriptionsAreLimitedTo90");
     const daily = Number(dto.dailyBudget);
-    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("dailyBudget must be a positive amount");
-    if (!dto.countryCodes?.length) throw new BadRequestException("At least one country is required");
-    if (!dto.keywords?.length) throw new BadRequestException("A Search campaign needs at least 1 keyword — without keywords it cannot serve");
-    if (dto.keywords.length > 100) throw new BadRequestException("At most 100 keywords per ad group in this flow");
+    if (!Number.isFinite(daily) || daily <= 0) throw badRequest("publishing.dailybudgetMustBeAPositiveAmount");
+    if (!dto.countryCodes?.length) throw badRequest("publishing.atLeastOneCountryIsRequired");
+    if (!dto.keywords?.length) throw badRequest("publishing.aSearchCampaignNeedsAtLeast");
+    if (dto.keywords.length > 100) throw badRequest("publishing.atMost100KeywordsPerAd");
     for (const kw of dto.keywords) {
-      if (!kw.text?.trim() || kw.text.length > 80) throw new BadRequestException("Each keyword needs text of at most 80 characters");
+      if (!kw.text?.trim() || kw.text.length > 80) throw badRequest("publishing.eachKeywordNeedsTextOfAt");
       const mt = String(kw.matchType ?? "EXACT").toUpperCase();
-      if (!["BROAD", "EXACT", "PHRASE"].includes(mt)) throw new BadRequestException(`Invalid match type: ${kw.matchType}`);
+      if (!["BROAD", "EXACT", "PHRASE"].includes(mt)) throw badRequest("publishing.invalidMatchType", { kwMatchType: kw.matchType });
     }
     for (const s of dto.sitelinks ?? []) {
-      if (!s.text?.trim() || s.text.length > 25) throw new BadRequestException("Sitelink text is limited to 25 characters");
-      if (!s.url?.startsWith("http")) throw new BadRequestException("Sitelink URL must be an http(s) URL");
+      if (!s.text?.trim() || s.text.length > 25) throw badRequest("publishing.sitelinkTextIsLimitedTo25");
+      if (!s.url?.startsWith("http")) throw badRequest("publishing.sitelinkUrlMustBeAnHttp");
     }
     for (const c of dto.callouts ?? []) {
-      if (c.length > 25) throw new BadRequestException("Callout text is limited to 25 characters");
+      if (c.length > 25) throw badRequest("publishing.calloutTextIsLimitedTo25");
     }
 
     const { account, secrets } = await this.accountSecrets(organizationId, dto.adAccountId, "google");
@@ -311,18 +312,18 @@ export class PublishingService {
     objectiveType?: string; pixelId?: string; optimizationEvent?: string;
   }) {
     const daily = Number(dto.dailyBudget);
-    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("dailyBudget must be a positive amount");
-    if (!dto.countryCodes?.length) throw new BadRequestException("At least one country is required");
-    if (!dto.videoUrl && !dto.imageUrl) throw new BadRequestException("Provide an image URL or a video URL for the creative");
+    if (!Number.isFinite(daily) || daily <= 0) throw badRequest("publishing.dailybudgetMustBeAPositiveAmount");
+    if (!dto.countryCodes?.length) throw badRequest("publishing.atLeastOneCountryIsRequired");
+    if (!dto.videoUrl && !dto.imageUrl) throw badRequest("publishing.provideAnImageUrlOrA");
     const objective = String(dto.objectiveType ?? "TRAFFIC").trim().toUpperCase() || "TRAFFIC";
     if (!["TRAFFIC", "WEB_CONVERSIONS", "LEAD_GENERATION"].includes(objective)) {
-      throw new BadRequestException(`Unsupported TikTok objective for this flow: ${objective} (TRAFFIC | WEB_CONVERSIONS | LEAD_GENERATION)`);
+      throw badRequest("publishing.unsupportedTiktokObjectiveForThisFlow", { objective: objective });
     }
     if (objective === "LEAD_GENERATION") {
-      throw new BadRequestException("TikTok LEAD_GENERATION needs an Instant Form bound to the ad — this publishing flow creates website creatives and cannot supply one, so the create call is refused rather than sent to fail");
+      throw badRequest("publishing.tiktokLeadGenerationNeedsAnInstant");
     }
     if (objective === "WEB_CONVERSIONS" && (!dto.pixelId?.trim() || !dto.optimizationEvent?.trim())) {
-      throw new BadRequestException("TikTok WEB_CONVERSIONS needs a pixelId and an optimizationEvent (the ad group optimizes on that pixel event)");
+      throw badRequest("publishing.tiktokWebConversionsNeedsAPixelid");
     }
     const { account, secrets } = await this.accountSecrets(organizationId, dto.adAccountId, "tiktok");
     const advertiserId = String(secrets.advertiserId ?? account.externalId);
@@ -442,19 +443,19 @@ export class PublishingService {
     headlines: string[]; longHeadlines: string[]; descriptions: string[];
     logoUrl: string; imageUrls: string[];
   }) {
-    if (!dto.headlines || dto.headlines.length < 3 || dto.headlines.length > 15) throw new BadRequestException("Performance Max needs 3-15 headlines");
-    if (dto.headlines.some((h) => !h?.trim() || h.length > 30)) throw new BadRequestException("PMax headlines are limited to 30 characters");
-    if (!dto.longHeadlines?.length || dto.longHeadlines.length > 5) throw new BadRequestException("Performance Max needs 1-5 long headlines");
-    if (dto.longHeadlines.some((h) => h.length > 90)) throw new BadRequestException("PMax long headlines are limited to 90 characters");
-    if (!dto.descriptions || dto.descriptions.length < 2 || dto.descriptions.length > 5) throw new BadRequestException("Performance Max needs 2-5 descriptions");
-    if (dto.descriptions.some((d) => d.length > 90)) throw new BadRequestException("PMax descriptions are limited to 90 characters");
-    if (!dto.businessName?.trim() || dto.businessName.length > 25) throw new BadRequestException("Business name is required (max 25 characters)");
-    if (!dto.logoUrl?.startsWith("http")) throw new BadRequestException("A logo image URL is required");
-    if (!dto.imageUrls?.length || dto.imageUrls.length > 20) throw new BadRequestException("Performance Max needs 1-20 marketing image URLs");
-    if (dto.imageUrls.some((u) => !u?.startsWith("http"))) throw new BadRequestException("Image URLs must be http(s) URLs");
+    if (!dto.headlines || dto.headlines.length < 3 || dto.headlines.length > 15) throw badRequest("publishing.performanceMaxNeeds315Headlines");
+    if (dto.headlines.some((h) => !h?.trim() || h.length > 30)) throw badRequest("publishing.pmaxHeadlinesAreLimitedTo30");
+    if (!dto.longHeadlines?.length || dto.longHeadlines.length > 5) throw badRequest("publishing.performanceMaxNeeds15Long");
+    if (dto.longHeadlines.some((h) => h.length > 90)) throw badRequest("publishing.pmaxLongHeadlinesAreLimitedTo");
+    if (!dto.descriptions || dto.descriptions.length < 2 || dto.descriptions.length > 5) throw badRequest("publishing.performanceMaxNeeds25Descriptions");
+    if (dto.descriptions.some((d) => d.length > 90)) throw badRequest("publishing.pmaxDescriptionsAreLimitedTo90");
+    if (!dto.businessName?.trim() || dto.businessName.length > 25) throw badRequest("publishing.businessNameIsRequiredMax25");
+    if (!dto.logoUrl?.startsWith("http")) throw badRequest("publishing.aLogoImageUrlIsRequired");
+    if (!dto.imageUrls?.length || dto.imageUrls.length > 20) throw badRequest("publishing.performanceMaxNeeds120Marketing");
+    if (dto.imageUrls.some((u) => !u?.startsWith("http"))) throw badRequest("publishing.imageUrlsMustBeHttpS");
     const daily = Number(dto.dailyBudget);
-    if (!Number.isFinite(daily) || daily <= 0) throw new BadRequestException("dailyBudget must be a positive amount");
-    if (!dto.countryCodes?.length) throw new BadRequestException("At least one country is required");
+    if (!Number.isFinite(daily) || daily <= 0) throw badRequest("publishing.dailybudgetMustBeAPositiveAmount");
+    if (!dto.countryCodes?.length) throw badRequest("publishing.atLeastOneCountryIsRequired");
 
     const { account, secrets } = await this.accountSecrets(organizationId, dto.adAccountId, "google");
     const record = await this.startRecord(organizationId, actorId, "google", dto.adAccountId, dto.name);

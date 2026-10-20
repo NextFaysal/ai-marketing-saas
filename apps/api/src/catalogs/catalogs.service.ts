@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { graphDelete, graphPost, metaTokenForOrg } from "../common/meta-graph";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * Build the Meta catalog product-set filter from a local set
@@ -127,9 +128,9 @@ export class CatalogsService {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta token resolution failed");
     });
     const res = await graphPost(token, `/${dto.businessId}/owned_product_catalogs`, { name: dto.name }).catch((e) => {
-      throw new BadRequestException(`Meta catalog creation failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("catalogs.metaCatalogCreationFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     });
-    if (!res?.id) throw new BadRequestException("Meta returned no catalog id; creation is NOT confirmed");
+    if (!res?.id) throw badRequest("catalogs.metaReturnedNoCatalogIdCreation");
     const record = await (this.prisma as any).catalogRecord.create({
       data: {
         organizationId, name: dto.name, externalCatalogId: String(res.id), businessId: dto.businessId,
@@ -151,7 +152,7 @@ export class CatalogsService {
    * failures are recorded on the set with Meta's own error. */
   private async getCatalogOrThrow(organizationId: string, catalogId: string) {
     const record = await (this.prisma as any).catalogRecord.findFirst({ where: { id: catalogId, organizationId } });
-    if (!record) throw new NotFoundException("Catalog not found");
+    if (!record) throw notFound("catalogs.catalogNotFound");
     return record;
   }
 
@@ -176,7 +177,7 @@ export class CatalogsService {
 
   async createProductSet(organizationId: string, actorId: string, catalogId: string, dto: { name: string; category?: string; maxPriceMajor?: string; inStockOnly?: boolean }) {
     await this.getCatalogOrThrow(organizationId, catalogId);
-    if (!dto.name?.trim()) throw new BadRequestException("Product set name is required");
+    if (!dto.name?.trim()) throw badRequest("catalogs.productSetNameIsRequired");
     const set = await (this.prisma as any).productSet.create({
       data: {
         organizationId, catalogRecordId: catalogId, name: dto.name.trim(),
@@ -197,10 +198,10 @@ export class CatalogsService {
   async publishProductSet(organizationId: string, actorId: string, catalogId: string, setId: string) {
     const catalog = await this.getCatalogOrThrow(organizationId, catalogId);
     const set = await (this.prisma as any).productSet.findFirst({ where: { id: setId, organizationId, catalogRecordId: catalogId } });
-    if (!set) throw new NotFoundException("Product set not found");
+    if (!set) throw notFound("catalogs.productSetNotFound");
     if (set.externalSetId && set.status === "created") return { ...set, maxPriceMinor: set.maxPriceMinor?.toString() ?? null, alreadyCreated: true };
     const filter = buildMetaProductSetFilter(set);
-    if (!filter) throw new BadRequestException("This set has no filter criterion Meta can use (add a category, a max price, or in-stock-only)");
+    if (!filter) throw badRequest("catalogs.thisSetHasNoFilterCriterion");
     const token = await metaTokenForOrg(this.prisma, organizationId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta token resolution failed");
     });
@@ -215,14 +216,14 @@ export class CatalogsService {
     } catch (e) {
       const message = e instanceof Error ? e.message : "Meta product set creation failed";
       await (this.prisma as any).productSet.update({ where: { id: setId }, data: { status: "failed", error: message } }).catch(() => undefined);
-      throw new BadRequestException(`Meta product set creation did NOT succeed: ${message}`);
+      throw badRequest("catalogs.metaProductSetCreationDidNot", { message: message });
     }
   }
 
   async deleteProductSet(organizationId: string, catalogId: string, setId: string) {
     await this.getCatalogOrThrow(organizationId, catalogId);
     const set = await (this.prisma as any).productSet.findFirst({ where: { id: setId, organizationId, catalogRecordId: catalogId } });
-    if (!set) throw new NotFoundException("Product set not found");
+    if (!set) throw notFound("catalogs.productSetNotFound");
     let metaDeleted: boolean | null = null;
     if (set.externalSetId) {
       // Best-effort Meta cleanup; the outcome is reported, and a
@@ -281,10 +282,10 @@ export class CatalogsService {
    * from the batch response handles/errors, nothing is assumed. */
   async pushProducts(organizationId: string, actorId: string, catalogRecordId: string) {
     const catalog = await (this.prisma as any).catalogRecord.findFirst({ where: { id: catalogRecordId, organizationId } });
-    if (!catalog) throw new NotFoundException("Catalog not found");
+    if (!catalog) throw notFound("catalogs.catalogNotFound");
     const profile = await (this.prisma as any).businessProfile.findFirst({ where: { organizationId } });
     const website = (profile?.websiteUrl ?? "").replace(/\/$/, "");
-    if (!website) throw new BadRequestException("Business Profile এ Website URL নেই — Catalog আইটেমের জন্য প্রতিটি প্রোডাক্টের URL দরকার। আগে Settings এ ওয়েবসাইট সেট করুন।");
+    if (!website) throw badRequest("catalogs.thereIsNoWebsiteUrlIn");
     const token = await metaTokenForOrg(this.prisma, organizationId).catch((e) => {
       throw new BadRequestException(e instanceof Error ? e.message : "Meta token resolution failed");
     });
@@ -294,7 +295,7 @@ export class CatalogsService {
       // variants pushes one item PER VARIANT (see the builder).
       include: { variants: { orderBy: { createdAt: "asc" } } },
     });
-    if (products.length === 0) throw new BadRequestException("No active products to push");
+    if (products.length === 0) throw badRequest("catalogs.noActiveProductsToPush");
     // AB5 (AX10): the payload comes from buildBatchRequests with
     // "CREATE" — for a variant-less product the request is
     // byte-identical to the pre-AX10 inline builder. A manual
@@ -304,7 +305,7 @@ export class CatalogsService {
     const res = await graphPost(token, `/${catalog.externalCatalogId}/batch`, {
       requests: JSON.stringify(requests), item_type: "PRODUCT_ITEM",
     }).catch((e) => {
-      throw new BadRequestException(`Catalog batch failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("catalogs.catalogBatchFailed", { p1: e instanceof Error ? e.message : "unknown error" });
     });
     const handles: unknown[] = Array.isArray(res?.handles) ? res.handles : [];
     const errors: unknown[] = Array.isArray(res?.errors) ? res.errors : [];

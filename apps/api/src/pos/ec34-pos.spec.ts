@@ -356,7 +356,7 @@ describe("EC34 POS — sale", () => {
     s.pvRows.push({ id: "pv-old", organizationId: "org-1", orderId: "ord-old", trxId: "TXN123", status: "approved", amountMinor: 1000n });
     await expect(s.service.createSale("org-1", "staff-1", {
       items: [{ productId: "p1", quantity: 1 }], payment: { mode: "paid", method: "bkash", reference: "TXN123" },
-    })).rejects.toThrow("already been recorded");
+    })).rejects.toMatchObject({ code: "pos.thisTransactionReferenceHasAlreadyBeen" });
     expect(s.integrations.upsertOrder).not.toHaveBeenCalled();
   });
 
@@ -383,10 +383,10 @@ describe("EC34 POS — sale", () => {
 
   it("empty items / bad quantity are refused", async () => {
     const s = setup();
-    await expect(s.service.createSale("org-1", "staff-1", { items: [], payment: { ...PAID } } as any)).rejects.toThrow(BadRequestException);
+    await expect(s.service.createSale("org-1", "staff-1", { items: [], payment: { ...PAID } } as any)).rejects.toMatchObject({ code: "pos.addAtLeastOneProduct" });
     await expect(s.service.createSale("org-1", "staff-1", {
       items: [{ productId: "p1", quantity: 0 }], payment: { ...PAID },
-    })).rejects.toThrow(BadRequestException);
+    })).rejects.toMatchObject({ code: "pos.eachProductSQuantityMustBe" });
   });
 });
 

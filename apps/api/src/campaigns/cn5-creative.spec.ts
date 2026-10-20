@@ -108,8 +108,8 @@ describe("CN5 text options", () => {
 
   it("refuses over-cap options with the limit named", async () => {
     const { svc } = setup();
-    await expect(draftWithAd(svc, { textOptions: { primaryTexts: ["1", "2", "3", "4", "5", "6"] } })).rejects.toThrow(/At most 5 primary/);
-    await expect(draftWithAd(svc, { textOptions: { descriptions: ["a", "b", "c"] } })).rejects.toThrow(/At most 2 description/);
+    await expect(draftWithAd(svc, { textOptions: { primaryTexts: ["1", "2", "3", "4", "5", "6"] } })).rejects.toMatchObject({ code: "campaigns.atMostPrimaryTextOptionsMeta" });
+    await expect(draftWithAd(svc, { textOptions: { descriptions: ["a", "b", "c"] } })).rejects.toMatchObject({ code: "campaigns.atMostDescriptionOptions" });
   });
 
   it("PATCH replaces options wholesale; a legacy text edit re-syncs index 0; null clears", async () => {
@@ -138,11 +138,11 @@ describe("CN5 text options", () => {
 describe("CN5 validation refusals", () => {
   it("refuses an unmapped enhancement key and a wrong-kind placement override at save", async () => {
     const { svc } = setup();
-    await expect(draftWithAd(svc, { creativeEnhancements: { magic_sparkles: true } })).rejects.toThrow(/not a Meta creative feature/);
-    await expect(draftWithAd(svc, { placementAssets: { feed: { videoAssetId: "v1" } } })).rejects.toThrow(/must be an image/);
-    await expect(draftWithAd(svc, { placementAssets: { sidebar: { imageUrl: "https://x/y.jpg" } } })).rejects.toThrow(/not supported/);
+    await expect(draftWithAd(svc, { creativeEnhancements: { magic_sparkles: true } })).rejects.toMatchObject({ code: "campaigns.creativeenhancementsKeyIsNotAMeta" });
+    await expect(draftWithAd(svc, { placementAssets: { feed: { videoAssetId: "v1" } } })).rejects.toMatchObject({ code: "campaigns.placementassetsALinkAdSPlacement" });
+    await expect(draftWithAd(svc, { placementAssets: { sidebar: { imageUrl: "https://x/y.jpg" } } })).rejects.toMatchObject({ code: "campaigns.placementassetsGroupIsNotSupportedAllowed" });
     const { plan, ad } = await draftWithAd(svc, {});
-    await expect(svc.updateAd("org", plan.id, ad.id, "u", { format: "carousel", carouselCards: [{ title: "a", linkUrl: "https://x/1" }, { title: "b", linkUrl: "https://x/2" }], placementAssets: { feed: { imageUrl: "https://x/y.jpg" } } })).rejects.toThrow(/not supported for format/);
+    await expect(svc.updateAd("org", plan.id, ad.id, "u", { format: "carousel", carouselCards: [{ title: "a", linkUrl: "https://x/1" }, { title: "b", linkUrl: "https://x/2" }], placementAssets: { feed: { imageUrl: "https://x/y.jpg" } } })).rejects.toMatchObject({ code: "campaigns.placementassetsAreNotSupportedForFormat" });
   });
 });
 
@@ -258,7 +258,7 @@ describe("CN5 variants from assets", () => {
     expect(v1.format).toBe("link"); expect(v1.imageAssetId).toBe("ca-img"); expect(v1.adSetId).toBe(ad.adSetId);
     const v2: any = await svc.createAdVariant("org", plan.id, ad.id, "u", { creativeAssetId: "ca-vid" });
     expect(v2.format).toBe("video"); expect(v2.videoAssetId).toBe("ca-vid");
-    await expect(svc.createAdVariant("org", plan.id, ad.id, "u", { creativeAssetId: "ca-img", mediaAssetId: "m1" })).rejects.toThrow(/exactly one/);
+    await expect(svc.createAdVariant("org", plan.id, ad.id, "u", { creativeAssetId: "ca-img", mediaAssetId: "m1" })).rejects.toMatchObject({ code: "campaigns.chooseExactlyOneAssetCreativeassetidCreative" });
   });
 
   it("social/studio media: video refused with the reason; image needs a public token + API_PUBLIC_URL", async () => {

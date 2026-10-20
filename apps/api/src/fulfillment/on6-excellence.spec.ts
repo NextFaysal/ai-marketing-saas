@@ -247,7 +247,7 @@ describe("ON6 pick waves", () => {
 
   it("foreign wave is a 404; suggestions group by provider, then district, then অন্যান্য, and cap at 200", async () => {
     const { svc, tables, ordersStub, courierRulesStub } = setup();
-    await expect(svc.getWave("org-1", "w-foreign")).rejects.toThrow(/not found/i);
+    await expect(svc.getWave("org-1", "w-foreign")).rejects.toMatchObject({ code: "fulfillment.pickWaveNotFoundInThis" });
     tables.order.rows.push(
       { id: "o-a", organizationId: "org-1", status: "processing", customer: { address: { district: "Khulna" } } },
       { id: "o-b", organizationId: "org-1", status: "processing", customer: { address: { district: "Dhaka" } } },

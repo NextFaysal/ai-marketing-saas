@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { validateDiscount, DISCOUNT_REASON_MESSAGES } from "./discounts";
 import { evaluatePromotions, validatePromotionConfig, PROMOTION_CONFIG_MESSAGES } from "./promotions";
 import { DiscountsService } from "./discounts.service";
@@ -392,7 +393,7 @@ describe("GB7 (f) promotionsReport", () => {
       truncated: false,
       note: "এই রিপোর্টে শুধু GB7 (appliedDiscounts স্ট্যাম্প) চালুর পর দেওয়া অর্ডার ধরা হয়েছে; আগের অর্ডারে এই তথ্য নেই।",
     });
-    await expect(promotions.promotionsReport("org-1", "not-a-date")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(promotions.promotionsReport("org-1", "not-a-date")).rejects.toBeInstanceOf(ApiException);
   });
 });
 
@@ -482,13 +483,13 @@ describe("GB7 (g) abandoned recovery coupons", () => {
     });
     await expect(
       service.updateCouponSetting("org-1", "user-1", { enabled: true, kind: "percent", value: 0 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       service.updateCouponSetting("org-1", "user-1", { enabled: true, kind: "percent", value: 95 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     await expect(
       service.updateCouponSetting("org-1", "user-1", { expiryHours: 721 }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(ApiException);
     const saved = await service.updateCouponSetting("org-1", "user-1", {
       enabled: true, kind: "fixed", value: 5000, expiryHours: 24, minOrderMinor: "10000",
     });

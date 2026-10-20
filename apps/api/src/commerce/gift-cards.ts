@@ -153,6 +153,19 @@ export function validateGiftCardConfig(raw: unknown): GiftCardConfig {
   return { presetAmountsMinor, allowCustomAmount, minAmountMinor, maxAmountMinor };
 }
 
+/** ML10: reason key → catalog code (bn text = GIFT_CARD_CONFIG_MESSAGES). */
+export const GIFT_CARD_CONFIG_CODES: Record<string, string> = {
+  gift_card_config_invalid: "commerce.giftCardConfigInvalid",
+  gift_card_presets_invalid: "commerce.giftCardConfigPresetsInvalid",
+  gift_card_allow_custom_invalid: "commerce.giftCardConfigAllowCustomInvalid",
+  gift_card_min_invalid: "commerce.giftCardConfigMinInvalid",
+  gift_card_max_invalid: "commerce.giftCardConfigMaxInvalid",
+  gift_card_min_gt_max: "commerce.giftCardConfigMinGtMax",
+  gift_card_no_amounts: "commerce.giftCardConfigNoAmounts",
+  gift_card_min_required: "commerce.giftCardConfigMinRequired",
+  gift_card_preset_out_of_range: "commerce.giftCardConfigPresetOutOfRange",
+};
+
 export const GIFT_CARD_CONFIG_MESSAGES: Record<string, string> = {
   gift_card_config_invalid: "গিফট কার্ড কনফিগ সঠিক নয়",
   gift_card_presets_invalid:

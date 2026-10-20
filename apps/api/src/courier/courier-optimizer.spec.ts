@@ -2,6 +2,7 @@ import {
   CourierOptimizerService,
   extractDistrictFromAddress,
 } from "./courier-optimizer.service";
+import { ApiException } from "../i18n";
 import { NotFoundException } from "@nestjs/common";
 
 describe("CourierOptimizerService — Smart Courier AI Routing", () => {
@@ -48,7 +49,7 @@ describe("CourierOptimizerService — Smart Courier AI Routing", () => {
 
       await expect(
         service.getSmartRouting("org-1", "non-existent"),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(ApiException);
     });
 
     it("recommends Pathao inside Dhaka by benchmark when no history exists", async () => {

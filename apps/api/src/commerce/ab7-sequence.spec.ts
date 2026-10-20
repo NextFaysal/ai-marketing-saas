@@ -176,8 +176,8 @@ describe("AX18 getCheckoutSequence", () => {
     const prisma = makePrisma();
     prisma.abandonedStoreCheckout.rows.push({ ...CHECKOUT_ROW });
     const svc = new AbandonedCheckoutsService(prisma);
-    await expect(svc.getCheckoutSequence("org-2", "chk-1")).rejects.toThrow("not found");
-    await expect(svc.getCheckoutSequence("org-1", "nope")).rejects.toThrow("not found");
+    await expect(svc.getCheckoutSequence("org-2", "chk-1")).rejects.toMatchObject({ code: "commerce.abandonedCheckoutNotFoundInOrg", status: 404 });
+    await expect(svc.getCheckoutSequence("org-1", "nope")).rejects.toMatchObject({ code: "commerce.abandonedCheckoutNotFoundInOrg", status: 404 });
   });
 });
 

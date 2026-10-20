@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { badRequest } from "../i18n/api-exception";
 
 const DAY_MS = 86_400_000;
 const FEED_KINDS = ["proposal", "learned", "answer", "content"] as const;
@@ -56,7 +57,7 @@ export class AiActivityService {
   private parseDays(raw: string | number | null | undefined, allowed: number[], fallback: number): number {
     const days = raw === undefined || raw === null || raw === "" ? fallback : Number(raw);
     if (!allowed.includes(days)) {
-      throw new BadRequestException(`days must be one of ${allowed.join(", ")}`);
+      throw badRequest("ai.daysMustBeOneOf", { p1: allowed.join(", ") });
     }
     return days;
   }
@@ -64,7 +65,7 @@ export class AiActivityService {
   private parseKind(raw: string | null | undefined): FeedKind | null {
     if (raw === undefined || raw === null || raw === "") return null;
     if (!(FEED_KINDS as readonly string[]).includes(raw)) {
-      throw new BadRequestException(`kind must be one of ${FEED_KINDS.join(", ")}`);
+      throw badRequest("ai.kindMustBeOneOf", { p1: FEED_KINDS.join(", ") });
     }
     return raw as FeedKind;
   }

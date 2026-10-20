@@ -1,3 +1,5 @@
+import { renderMessage } from "../i18n";
+
 /**
  * AB4 (AX5b): custom checkout fields — pure helpers shared by
  * the three placement surfaces (shop | single | landing).
@@ -57,7 +59,14 @@ export type FieldAnswerMap = Record<string, string | boolean>;
 
 export type FieldValidation =
   | { ok: true; values: FieldAnswerMap }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code: string; params: Record<string, unknown> };
+
+/** ML10: a validation failure carries its catalog code + params
+ * (callers throw badRequest(code, params)); `error` keeps the bn
+ * rendering for callers that still read the string. */
+function fail(code: string, params: Record<string, unknown>): FieldValidation {
+  return { ok: false, code, params, error: renderMessage("bn", code, params) };
+}
 
 export function validateFieldAnswers(
   defs: CheckoutFieldDefLike[] | null | undefined,
@@ -71,7 +80,7 @@ export function validateFieldAnswers(
 
   for (const key of Object.keys(raw)) {
     if (!byKey.has(key)) {
-      return { ok: false, error: `চেকআউট ফিল্ড "${key}" এই দোকানে চালু নেই` };
+      return fail("storefront.checkoutFieldNotEnabled", { key });
     }
   }
 
@@ -82,7 +91,7 @@ export function validateFieldAnswers(
     const v = raw[key];
     const missing = v === undefined || v === null || (typeof v === "string" && v.trim() === "");
     if (missing) {
-      if (def.required === true) return { ok: false, error: `"${label}" ঘরটি আবশ্যক — পূরণ করুন` };
+      if (def.required === true) return fail("storefront.checkoutFieldRequired", { label });
       continue;
     }
     if (def.type === "checkbox") {
@@ -90,26 +99,26 @@ export function validateFieldAnswers(
       if (typeof v === "boolean") b = v;
       else if (v === "true") b = true;
       else if (v === "false") b = false;
-      if (b === null) return { ok: false, error: `"${label}" ঘরটিতে সঠিক মান দিন` };
-      if (def.required === true && b !== true) return { ok: false, error: `"${label}" ঘরটি আবশ্যক — পূরণ করুন` };
+      if (b === null) return fail("storefront.checkoutFieldInvalidValue", { label });
+      if (def.required === true && b !== true) return fail("storefront.checkoutFieldRequired", { label });
       values[key] = b;
       continue;
     }
     if (typeof v !== "string") {
-      return { ok: false, error: `"${label}" ঘরটিতে লেখা দিতে হবে` };
+      return fail("storefront.checkoutFieldTextRequired", { label });
     }
     const text = v.trim();
     if (def.type === "select") {
       const options = Array.isArray(def.options) ? def.options.map((o) => String(o)) : [];
       if (!options.includes(text)) {
-        return { ok: false, error: `"${label}" ঘরের মান তালিকার বাইরে — তালিকা থেকে বেছে নিন` };
+        return fail("storefront.checkoutFieldNotInList", { label });
       }
       values[key] = text;
       continue;
     }
     const cap = def.type === "textarea" ? MAX_TEXTAREA_LEN : MAX_TEXT_LEN;
     if (text.length > cap) {
-      return { ok: false, error: `"${label}" ঘরের লেখা খুব বড় (সর্বোচ্চ ${cap} অক্ষর)` };
+      return fail("storefront.checkoutFieldTextTooLong", { label, cap });
     }
     values[key] = text;
   }

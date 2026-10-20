@@ -12,6 +12,7 @@ import { StripeClient, stripeKeyMode, verifyStripeWebhookSignature } from "../co
 import { PLAN_TIERS, planPrices, planYearlyPrices, cycleDays } from "../common/platform-settings";
 import { maybeRewardReferral } from "../common/referral";
 import { buildPdf, saasInvoicePage, moneyText } from "../courier/pdf";
+import { badRequest, notFound } from "../i18n";
 
 /**
  * Milestone 36 + 39: subscription payments (SSLCommerz + bKash).
@@ -102,36 +103,36 @@ export class PaymentsService {
    * discount in minor units. Throws the honest reason. */
   async validateCoupon(codeRaw: string, plan: string, priceMinor: bigint): Promise<{ coupon: any; discountMinor: bigint }> {
     const code = String(codeRaw ?? "").trim().toUpperCase();
-    if (!code) throw new BadRequestException("Coupon code is empty");
+    if (!code) throw badRequest("payments.couponCodeEmpty");
     const coupon = await (this.prisma as any).coupon?.findUnique({ where: { code } }).catch(() => null);
-    if (!coupon) throw new BadRequestException(`Coupon ${code} was not found`);
-    if (!coupon.active) throw new BadRequestException(`Coupon ${code} is not active`);
-    if (coupon.expiresAt && new Date(coupon.expiresAt) <= new Date()) throw new BadRequestException(`Coupon ${code} has expired`);
+    if (!coupon) throw badRequest("payments.couponNotFoundCode", { code: code });
+    if (!coupon.active) throw badRequest("payments.couponNotActive", { code: code });
+    if (coupon.expiresAt && new Date(coupon.expiresAt) <= new Date()) throw badRequest("payments.couponExpiredCode", { code: code });
     if (coupon.maxRedemptions != null && Number(coupon.redeemedCount ?? 0) >= Number(coupon.maxRedemptions)) {
-      throw new BadRequestException(`Coupon ${code} has reached its redemption limit`);
+      throw badRequest("payments.couponRedemptionLimit", { code: code });
     }
     if (coupon.planScope && String(coupon.planScope).toUpperCase() !== plan) {
-      throw new BadRequestException(`Coupon ${code} does not apply to the ${plan} plan`);
+      throw badRequest("payments.couponPlanNotApplicable", { code: code, plan: plan });
     }
     let discount: bigint;
     if (coupon.kind === "percent") {
       const pct = Number(coupon.value);
-      if (!(pct >= 1 && pct <= 90)) throw new BadRequestException(`Coupon ${code} has an invalid percent value`);
+      if (!(pct >= 1 && pct <= 90)) throw badRequest("payments.couponPercentInvalid", { code: code });
       discount = (priceMinor * BigInt(pct)) / 100n;
     } else if (coupon.kind === "fixed") {
       discount = BigInt(coupon.value);
       if (discount > priceMinor) discount = priceMinor;
     } else {
-      throw new BadRequestException(`Coupon ${code} has an unknown kind`);
+      throw badRequest("payments.couponKindUnknown", { code: code });
     }
     return { coupon, discountMinor: discount };
   }
 
   async previewCoupon(organizationId: string, codeRaw: string, planRaw: string) {
     const plan = String(planRaw ?? "").toUpperCase();
-    if (!(PLAN_TIERS as readonly string[]).includes(plan) || plan === "FREE") throw new BadRequestException("Unknown plan");
+    if (!(PLAN_TIERS as readonly string[]).includes(plan) || plan === "FREE") throw badRequest("payments.unknownPlan");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const prices = await planPrices(this.prisma as any);
     const priceMinor = BigInt(prices[plan] ?? 0);
     const { discountMinor } = await this.validateCoupon(codeRaw, plan, priceMinor);
@@ -154,24 +155,24 @@ export class PaymentsService {
   async createCoupon(actor: { userId?: string; id?: string }, dto: { code: string; kind: string; value: number; planScope?: string; expiresAt?: string; maxRedemptions?: number }, ip?: string) {
     const actorId = actor.id ?? actor.userId ?? "";
     const code = String(dto.code ?? "").trim().toUpperCase();
-    if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw new BadRequestException("Coupon code must be 3-24 chars (A-Z, 0-9, dash)");
+    if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw badRequest("payments.couponCodeFormat");
     const kind = String(dto.kind ?? "");
-    if (kind !== "percent" && kind !== "fixed") throw new BadRequestException("kind must be percent | fixed");
+    if (kind !== "percent" && kind !== "fixed") throw badRequest("payments.couponKindEnum");
     const value = Number(dto.value);
-    if (kind === "percent" && (!(value >= 1 && value <= 90))) throw new BadRequestException("percent value must be 1-90");
-    if (kind === "fixed" && (!(value > 0))) throw new BadRequestException("fixed value must be a positive amount in minor units");
+    if (kind === "percent" && (!(value >= 1 && value <= 90))) throw badRequest("payments.couponPercentValueRange");
+    if (kind === "fixed" && (!(value > 0))) throw badRequest("payments.couponFixedValueInvalid");
     let planScope: string | null = null;
     if (dto.planScope) {
       planScope = String(dto.planScope).toUpperCase();
-      if (!(PLAN_TIERS as readonly string[]).includes(planScope)) throw new BadRequestException("planScope must be a plan tier");
+      if (!(PLAN_TIERS as readonly string[]).includes(planScope)) throw badRequest("payments.couponPlanScopeInvalid");
     }
     let expiresAt: Date | null = null;
     if (dto.expiresAt) {
       expiresAt = new Date(dto.expiresAt);
-      if (Number.isNaN(expiresAt.getTime()) || expiresAt <= new Date()) throw new BadRequestException("expiresAt must be a future date");
+      if (Number.isNaN(expiresAt.getTime()) || expiresAt <= new Date()) throw badRequest("payments.couponExpiresAtFuture");
     }
     const existing = await (this.prisma as any).coupon.findUnique({ where: { code } }).catch(() => null);
-    if (existing) throw new BadRequestException(`Coupon ${code} already exists`);
+    if (existing) throw badRequest("payments.couponAlreadyExists", { code: code });
     const coupon = await (this.prisma as any).coupon.create({
       data: {
         code, kind, value: Math.round(value), planScope, expiresAt,
@@ -186,9 +187,9 @@ export class PaymentsService {
   async setCouponActive(actor: { userId?: string; id?: string }, id: string, active: boolean, reasonRaw: string, ip?: string) {
     const actorId = actor.id ?? actor.userId ?? "";
     const reason = String(reasonRaw ?? "").trim();
-    if (reason.length < 3) throw new BadRequestException("A reason is required for this admin action (it is stored in the audit trail)");
+    if (reason.length < 3) throw badRequest("payments.adminActionReasonRequired");
     const coupon = await (this.prisma as any).coupon.findUnique({ where: { id } });
-    if (!coupon) throw new NotFoundException("Coupon not found");
+    if (!coupon) throw notFound("payments.couponNotFound");
     const updated = await (this.prisma as any).coupon.update({ where: { id }, data: { active } });
     await this.audit.log({ userId: actorId, action: "admin.coupon_status_changed", entityType: "Coupon", entityId: id, metadata: { code: coupon.code, active, reason }, ipAddress: ip });
     return updated;
@@ -205,33 +206,33 @@ export class PaymentsService {
   ): Promise<CheckoutResult> {
     await ensurePlatformConfig(this.prisma as any);
     const gateway = String(opts?.gateway ?? "sslcommerz").toLowerCase();
-    if (gateway !== "sslcommerz" && gateway !== "bkash" && gateway !== "stripe") throw new BadRequestException("gateway must be sslcommerz | bkash | stripe");
+    if (gateway !== "sslcommerz" && gateway !== "bkash" && gateway !== "stripe") throw badRequest("payments.gatewayEnumInvalid");
     const sslCfg = gateway === "sslcommerz" ? effectiveSslcommerzConfig() : null;
     const bkashCfg = gateway === "bkash" ? effectiveBkashConfig() : null;
     const stripeCfg = gateway === "stripe" ? effectiveStripeConfig() : null;
     if (gateway === "sslcommerz" && !sslCfg) {
-      throw new BadRequestException("Online payment (SSLCommerz) is not configured by the platform team yet. Please use the plan-change request on the Billing page — the team will confirm your payment manually.");
+      throw badRequest("payments.sslNotConfiguredPlatform");
     }
     if (gateway === "bkash" && !bkashCfg) {
-      throw new BadRequestException("bKash payment is not configured by the platform team yet. Please choose SSLCommerz or use the plan-change request on the Billing page.");
+      throw badRequest("payments.bkashNotConfiguredPlatform");
     }
     if (gateway === "stripe" && !stripeCfg) {
-      throw new BadRequestException("Stripe (international card) payment is not configured by the platform team yet. Please choose SSLCommerz or bKash, or use the plan-change request on the Billing page.");
+      throw badRequest("payments.stripeNotConfiguredPlatform");
     }
     const plan = String(planRaw ?? "").toUpperCase();
-    if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw new BadRequestException("Unknown plan");
-    if (plan === "FREE") throw new BadRequestException("The FREE plan needs no payment.");
+    if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw badRequest("payments.unknownPlan");
+    if (plan === "FREE") throw badRequest("payments.freePlanNoPayment");
     const phone = String(phoneRaw ?? "").trim();
     if (!/^[+\d][\d\s-]{10,14}$/.test(phone)) {
-      throw new BadRequestException("A valid phone number is required for the payment receipt.");
+      throw badRequest("payments.receiptPhoneRequired");
     }
     // Billing Package B3: the cycle picks the price book.
     const cycle = opts?.cycle === "yearly" ? "yearly" : "monthly";
     const prices = cycle === "yearly" ? await planYearlyPrices(this.prisma as any) : await planPrices(this.prisma as any);
     const priceMinor = BigInt(prices[plan] ?? 0);
-    if (priceMinor <= 0n) throw new BadRequestException("This plan has no price configured. Please ask the platform team.");
+    if (priceMinor <= 0n) throw badRequest("payments.planNoPriceConfigured");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } });
-    if (!org) throw new NotFoundException("Organization not found");
+    if (!org) throw notFound("common.orgNotFound");
     const profile = await (this.prisma as any).businessProfile.findUnique({ where: { organizationId } }).catch(() => null);
 
     // Billing Package B2: plan direction + proration. With a
@@ -248,7 +249,7 @@ export class PaymentsService {
     let prorationMinor = 0n;
     if (periodLive) {
       if (rank(plan) < rank(String(currentSub.plan))) {
-        throw new BadRequestException("Downgrades take effect at the period end — use the scheduled plan change on the Billing page (প্ল্যান বদল নির্ধারণ) so no paid days are lost.");
+        throw badRequest("payments.downgradeAtPeriodEnd");
       }
       if (rank(plan) > rank(String(currentSub.plan))) {
         // The unused value is priced in the CURRENT
@@ -347,14 +348,14 @@ export class PaymentsService {
         where: { id: checkout.id },
         data: { status: "failed", gatewayDetail: { error: e instanceof Error ? e.message : "network error" } },
       });
-      throw new BadRequestException("Could not reach the payment gateway. Please try again later.");
+      throw badRequest("payments.gatewayUnreachable");
     }
     if (!gateway || gateway.status !== "SUCCESS" || !gateway.GatewayPageURL) {
       await (this.prisma as any).planCheckout.update({
         where: { id: checkout.id },
         data: { status: "failed", gatewayDetail: gateway ?? { error: "empty gateway response" } },
       });
-      throw new BadRequestException(`The payment gateway refused to start this payment: ${gateway?.failed_reason ?? gateway?.status ?? "unknown error"}`);
+      throw badRequest("payments.gatewayStartRefused", { reason: gateway?.failed_reason ?? gateway?.status ?? "unknown error" });
     }
     await (this.prisma as any).planCheckout.update({
       where: { id: checkout.id },
@@ -385,10 +386,10 @@ export class PaymentsService {
       });
       res = await r.json().catch(() => null);
     } catch (e) {
-      throw new BadRequestException(`Could not reach bKash: ${e instanceof Error ? e.message : "network error"}`);
+      throw badRequest("payments.bkashUnreachable", { detail: e instanceof Error ? e.message : "network error" });
     }
     if (!res?.id_token) {
-      throw new BadRequestException(`bKash token grant failed: ${res?.statusMessage ?? res?.errorMessage ?? "unknown error"}`);
+      throw badRequest("payments.bkashTokenGrantFailed", { reason: res?.statusMessage ?? res?.errorMessage ?? "unknown error" });
     }
     const ttlMs = Math.max(60, Number(res.expires_in ?? 3600) - 120) * 1000;
     this.bkashTokens.set(cfg.appKey, { token: String(res.id_token), expiresAt: Date.now() + ttlMs });
@@ -406,7 +407,7 @@ export class PaymentsService {
       });
       return await r.json().catch(() => null);
     } catch (e) {
-      throw new BadRequestException(`Could not reach bKash: ${e instanceof Error ? e.message : "network error"}`);
+      throw badRequest("payments.bkashUnreachable", { detail: e instanceof Error ? e.message : "network error" });
     }
   }
 
@@ -425,7 +426,7 @@ export class PaymentsService {
         where: { id: checkout.id },
         data: { status: "failed", gatewayDetail: created ?? { error: "empty bKash response" } },
       });
-      throw new BadRequestException(`bKash refused to start this payment: ${created?.statusMessage ?? "unknown error"}`);
+      throw badRequest("payments.bkashStartRefusedPlan", { reason: created?.statusMessage ?? "unknown error" });
     }
     await (this.prisma as any).planCheckout.update({
       where: { id: checkout.id },
@@ -477,7 +478,7 @@ export class PaymentsService {
         where: { id: checkout.id },
         data: { status: "failed", gatewayDetail: { error: e instanceof Error ? e.message : "network error" } },
       });
-      throw new BadRequestException(`Stripe refused to start this payment: ${e instanceof Error ? e.message : "unknown error"}`);
+      throw badRequest("payments.stripeStartRefused", { reason: e instanceof Error ? e.message : "unknown error" });
     }
     const sandbox = stripeKeyMode(cfg.secretKey) === "test";
     await (this.prisma as any).planCheckout.update({
@@ -700,7 +701,7 @@ export class PaymentsService {
    * through the same confirmation path as the live webhook. */
   async reconcileCheckout(checkoutId: string) {
     const checkout = await (this.prisma as any).planCheckout.findUnique({ where: { id: checkoutId } });
-    if (!checkout) throw new NotFoundException("Checkout not found");
+    if (!checkout) throw notFound("payments.checkoutNotFound");
     if (checkout.status === "success") return { ok: true, alreadyProcessed: true, status: checkout.status };
     if (checkout.status !== "initiated") return { ok: false, status: checkout.status, reason: `checkout is ${checkout.status} — nothing to reconcile` };
     await ensurePlatformConfig(this.prisma as any);
@@ -934,16 +935,16 @@ export class PaymentsService {
    */
   async schedulePlanChange(organizationId: string, actorId: string, planRaw: string) {
     const plan = String(planRaw ?? "").toUpperCase();
-    if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw new BadRequestException("Unknown plan");
+    if (!(PLAN_TIERS as readonly string[]).includes(plan)) throw badRequest("payments.unknownPlan");
     const sub = await (this.prisma as any).subscription.findFirst({
       where: { organizationId }, orderBy: { createdAt: "desc" },
     }).catch(() => null);
-    if (!sub) throw new BadRequestException("No subscription to change");
+    if (!sub) throw badRequest("payments.noSubscriptionToChange");
     const rank = (p: string) => (PLAN_TIERS as readonly string[]).indexOf(p);
     if (rank(plan) >= rank(String(sub.plan))) {
-      throw new BadRequestException("Only a lower plan (or FREE to cancel) can be scheduled — upgrades are immediate via checkout.");
+      throw badRequest("payments.scheduleDowngradeOnly");
     }
-    if (!sub.currentPeriodEnd) throw new BadRequestException("There is no live period to schedule against");
+    if (!sub.currentPeriodEnd) throw badRequest("payments.noLivePeriodToSchedule");
     const updated = await (this.prisma as any).subscription.update({
       where: { id: sub.id }, data: { pendingPlan: plan, pendingPlanAt: new Date() },
     });
@@ -959,7 +960,7 @@ export class PaymentsService {
     const sub = await (this.prisma as any).subscription.findFirst({
       where: { organizationId }, orderBy: { createdAt: "desc" },
     }).catch(() => null);
-    if (!sub?.pendingPlan) throw new BadRequestException("No scheduled plan change to cancel");
+    if (!sub?.pendingPlan) throw badRequest("payments.noScheduledChangeToCancel");
     await (this.prisma as any).subscription.update({
       where: { id: sub.id }, data: { pendingPlan: null, pendingPlanAt: null },
     });
@@ -997,16 +998,16 @@ export class PaymentsService {
   async startAutoRenew(organizationId: string, actor: { userId: string }, phoneRaw: string): Promise<{ bkashURL: string }> {
     await ensurePlatformConfig(this.prisma as any);
     const cfg = effectiveBkashConfig();
-    if (!cfg) throw new BadRequestException("bKash is not configured by the platform team yet, so auto-renew cannot be enabled.");
+    if (!cfg) throw badRequest("payments.bkashNotConfiguredAutoRenew");
     const phone = String(phoneRaw ?? "").trim();
-    if (!/^01\d{9}$/.test(phone.replace(/[\s-]/g, ""))) throw new BadRequestException("A valid bKash number (01XXXXXXXXX) is required.");
+    if (!/^01\d{9}$/.test(phone.replace(/[\s-]/g, ""))) throw badRequest("payments.bkashNumberFormatRequired");
     const payerReference = phone.replace(/[\s-]/g, "");
     const created = await this.bkashCall(cfg, "/checkout/agreement/create", {
       payerReference,
       callbackURL: `${this.apiBase()}/public/payments/bkash/agreement/callback`,
     });
     if (!created || String(created.statusCode) !== "0000" || !created.bkashURL || !created.paymentID) {
-      throw new BadRequestException(`bKash refused to start the agreement: ${created?.statusMessage ?? "unknown error"}`);
+      throw badRequest("payments.bkashAgreementRefused", { reason: created?.statusMessage ?? "unknown error" });
     }
     const data = { gateway: "bkash", payerReference, pendingPaymentId: String(created.paymentID), status: "pending", lastError: null as string | null };
     const existing = await (this.prisma as any).autoRenewAgreement.findUnique({ where: { organizationId } }).catch(() => null);
@@ -1062,7 +1063,7 @@ export class PaymentsService {
 
   async cancelAutoRenew(organizationId: string, actorId: string) {
     const row = await (this.prisma as any).autoRenewAgreement.findUnique({ where: { organizationId } }).catch(() => null);
-    if (!row || row.status === "cancelled") throw new BadRequestException("Auto-renew is not active for this workspace");
+    if (!row || row.status === "cancelled") throw badRequest("payments.autoRenewNotActive");
     const cfg = effectiveBkashConfig();
     const agreementID = row.agreementIdSealed ? unseal(row.agreementIdSealed) : undefined;
     let gatewayCancelled = false;
@@ -1181,7 +1182,7 @@ export class PaymentsService {
 
   async invoiceHtmlForOrgPayment(organizationId: string, paymentId: string): Promise<string> {
     const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id: paymentId } });
-    if (!payment || payment.organizationId !== organizationId) throw new NotFoundException("Payment not found");
+    if (!payment || payment.organizationId !== organizationId) throw notFound("payments.paymentNotFound");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
     const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
     return buildInvoiceHtml({ payment, orgName: org?.name ?? organizationId, buyer: { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null } });
@@ -1192,7 +1193,7 @@ export class PaymentsService {
    * HTML path. */
   async invoiceDataForOrgPayment(organizationId: string, paymentId: string): Promise<SaasInvoiceData> {
     const payment = await (this.prisma as any).saasPayment.findUnique({ where: { id: paymentId } });
-    if (!payment || payment.organizationId !== organizationId) throw new NotFoundException("Payment not found");
+    if (!payment || payment.organizationId !== organizationId) throw notFound("payments.paymentNotFound");
     const org = await (this.prisma as any).organization.findUnique({ where: { id: organizationId } }).catch(() => null);
     const profile = await (this.prisma as any).businessProfile?.findUnique?.({ where: { organizationId } })?.catch?.(() => null) ?? null;
     return saasInvoiceData(payment, org?.name ?? organizationId, { address: profile?.billingAddress ?? null, bin: profile?.billingBin ?? null });

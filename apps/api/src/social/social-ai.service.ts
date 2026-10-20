@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, HttpException, Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { LlmFactory, providerForOrg } from "../ai/llm/llm.factory";
@@ -7,6 +7,7 @@ import { policyFindingsForText } from "../campaigns/policy-check";
 import { formatMinor } from "@repo/contracts";
 import { SocialService } from "./social.service";
 import { SocialImportService } from "./social-import.service";
+import { ApiException, badRequest, notFound, forbidden } from "../i18n/api-exception";
 
 /**
  * SU4: numbers in a text, normalized for the grounding guard
@@ -104,7 +105,7 @@ export class SocialAiService {
     const { killSwitches, effectiveLimits, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "social.aiFeaturesTemporarilyPausedPlatformWide" : "social.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
     const baseline = Number(process.env.AI_DAILY_MESSAGE_LIMIT ?? 200);
     const { aiDaily: limit } = await effectiveLimits(this.prisma as any, organizationId, { aiDaily: baseline, broadcastCap: 1000 });
@@ -114,10 +115,7 @@ export class SocialAiService {
       where: { organizationId, feature, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI generation limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("social.dailyAiGenerationLimitReachedFor2", { limit: limit }, 429);
     }
   }
 
@@ -138,9 +136,9 @@ export class SocialAiService {
       product = await (this.prisma as any).product.findFirst({
         where: { id: dto.productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("social.productNotFoundInThisOrganization");
     } else if (!topic) {
-      throw new BadRequestException("Product বেছে নিন অথবা একটা বিষয় (Topic) লিখুন।");
+      throw badRequest("social.productTopic");
     }
 
     const businessProfile = await (this.prisma as any).businessProfile
@@ -235,7 +233,7 @@ export class SocialAiService {
       }
 
       if (captions.length === 0) {
-        throw new BadRequestException("The AI provider returned no usable caption variants. Nothing was saved.");
+        throw badRequest("social.theAiProviderReturnedNoUsable");
       }
     } else {
       // Dev template path — grounded templates from the facts ONLY.
@@ -382,7 +380,7 @@ export class SocialAiService {
 
     const month = typeof dto.month === "string" ? dto.month.trim() : "";
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      throw new BadRequestException("মাস সঠিক YYYY-MM আকারে দিন (যেমন 2026-11)।");
+      throw badRequest("social.giveTheMonthInProperYyyy");
     }
     const focus = dto.focus?.trim() ? dto.focus.trim() : undefined;
 
@@ -393,7 +391,7 @@ export class SocialAiService {
     const businessProfile = await this.loadBusinessProfile(organizationId);
 
     if (products.length === 0 && !focus) {
-      throw new BadRequestException("কোনো সক্রিয় Product নেই — আগে Product যোগ করুন অথবা একটা Focus লিখুন।");
+      throw badRequest("social.thereIsNoActiveProductAdd");
     }
 
     const requested = (Array.isArray(dto.pillars) ? dto.pillars : [])
@@ -422,7 +420,7 @@ export class SocialAiService {
 
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
-      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Content Plan বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে মাসের plan বানানো হবে না।");
+      throw badRequest("social.realAiLlmIsNotConfigured2");
     }
 
     const systemPrompt = [
@@ -496,7 +494,7 @@ export class SocialAiService {
     if (items.length === 0) {
       // The usage row above stands (the provider did the work) —
       // the same accounting as SP3's zero-variants path.
-      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য plan item দেয়নি — আবার চেষ্টা করুন।");
+      throw badRequest("social.theAiReturnedNoUsablePlan");
     }
 
     const plan = await (this.prisma as any).socialContentPlan.create({
@@ -521,7 +519,7 @@ export class SocialAiService {
     const row = await (this.prisma as any).socialContentPlan.findFirst({
       where: { id: planId, organizationId },
     });
-    if (!row) throw new NotFoundException("Content plan not found in this organization");
+    if (!row) throw notFound("social.contentPlanNotFoundInThis");
     return this.serializeContentPlan(row);
   }
 
@@ -542,12 +540,12 @@ export class SocialAiService {
     dto: { itemIndexes: number[]; socialAccountId: string },
   ) {
     if (!this.social || !this.importer) {
-      throw new BadRequestException("Materialize এই deployment-এ উপলব্ধ নয় — পরে আবার চেষ্টা করুন।");
+      throw badRequest("social.materializeDeployment");
     }
     const planRow = await (this.prisma as any).socialContentPlan.findFirst({
       where: { id: planId, organizationId },
     });
-    if (!planRow) throw new NotFoundException("Content plan not found in this organization");
+    if (!planRow) throw notFound("social.contentPlanNotFoundInThis");
     const items: any[] = (Array.isArray(planRow.items) ? planRow.items : []).map((i: any) => ({ ...i }));
 
     const results: { index: number; status: "created" | "skipped" | "failed"; postId?: string; error?: string }[] = [];
@@ -629,7 +627,7 @@ export class SocialAiService {
     await this.checkDailyLimit(organizationId, "social_script");
 
     const topic = dto.topic?.trim() ? dto.topic.trim() : "";
-    if (!topic) throw new BadRequestException("একটা বিষয় (Topic) লিখুন।");
+    if (!topic) throw badRequest("social.writeATopic");
     const language: "bn" | "en" = dto.language === "en" ? "en" : "bn";
 
     let product: any = null;
@@ -637,7 +635,7 @@ export class SocialAiService {
       product = await (this.prisma as any).product.findFirst({
         where: { id: dto.productId, organizationId },
       });
-      if (!product) throw new NotFoundException("Product not found in this organization");
+      if (!product) throw notFound("social.productNotFoundInThisOrganization");
     }
     const businessProfile = await this.loadBusinessProfile(organizationId);
 
@@ -649,7 +647,7 @@ export class SocialAiService {
 
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
-      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Script বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে script বানানো হবে না।");
+      throw badRequest("social.realAiLlmIsNotConfigured4");
     }
 
     const systemPrompt = [
@@ -687,7 +685,7 @@ export class SocialAiService {
     try { parsed = JSON.parse(result.text); } catch { parsed = null; }
     const hook = typeof parsed?.hook === "string" ? parsed.hook.trim() : "";
     if (!hook) {
-      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য script দেয়নি — আবার চেষ্টা করুন।");
+      throw badRequest("social.theAiReturnedNoUsableScript");
     }
     const stringList = (value: unknown): string[] =>
       (Array.isArray(value) ? value : [])
@@ -723,7 +721,7 @@ export class SocialAiService {
     await this.checkDailyLimit(organizationId, "social_variants");
 
     const caption = typeof dto.caption === "string" ? dto.caption.trim() : "";
-    if (!caption) throw new BadRequestException("Caption লিখুন।");
+    if (!caption) throw badRequest("social.writeACaption");
 
     const ALLOWED_PLATFORMS = ["meta_page", "instagram", "tiktok", "youtube", "linkedin"];
     const platforms: string[] = [];
@@ -734,7 +732,7 @@ export class SocialAiService {
       platforms.push(platform);
     }
     if (platforms.length === 0) {
-      throw new BadRequestException("অন্তত একটা সঠিক Platform বেছে নিন (meta_page, instagram, tiktok, youtube অথবা linkedin)।");
+      throw badRequest("social.chooseAtLeastOneValidPlatform");
     }
 
     const allowedNumbers = new Set<string>(extractSocialNumbers(caption));
@@ -742,7 +740,7 @@ export class SocialAiService {
 
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
-      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Platform Variant বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে variant বানানো হবে না।");
+      throw badRequest("social.realAiLlmIsNotConfigured3");
     }
 
     const systemPrompt = [
@@ -808,7 +806,7 @@ export class SocialAiService {
     }
 
     if (variants.length === 0) {
-      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য variant দেয়নি — আবার চেষ্টা করুন।");
+      throw badRequest("social.theAiReturnedNoUsableVariant");
     }
 
     return { variants, droppedCount, provider: provider.name, isRealLlm: true as const };
@@ -822,13 +820,13 @@ export class SocialAiService {
     await this.checkDailyLimit(organizationId, "social_translate");
 
     const text = typeof dto.text === "string" ? dto.text.trim() : "";
-    if (!text) throw new BadRequestException("অনুবাদের জন্য লেখা (Text) দিন।");
+    if (!text) throw badRequest("social.giveTextToTranslate");
     const targetLang = dto.targetLang === "en" ? "en" : dto.targetLang === "bn" ? "bn" : null;
-    if (!targetLang) throw new BadRequestException("Target language শুধু bn অথবা en হতে পারে।");
+    if (!targetLang) throw badRequest("social.targetLanguageCanOnlyBeBn");
 
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
-      throw new BadRequestException("আসল AI (LLM) configure করা নেই — অনুবাদ করতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে অনুবাদ করা হবে না।");
+      throw badRequest("social.realAiLlmIsNotConfigured5");
     }
 
     const systemPrompt = [
@@ -866,10 +864,10 @@ export class SocialAiService {
     try { parsed = JSON.parse(result.text); } catch { parsed = null; }
     const translated = typeof parsed?.text === "string" ? parsed.text.trim() : "";
     if (!translated) {
-      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য অনুবাদ দেয়নি — আবার চেষ্টা করুন।");
+      throw badRequest("social.theAiReturnedNoUsableTranslation");
     }
     if (ungroundedNumbers(translated, new Set<string>(extractSocialNumbers(text))).length > 0) {
-      throw new BadRequestException("অনুবাদে মূল লেখায় নেই এমন সংখ্যা এসেছে — আবার চেষ্টা করুন।");
+      throw badRequest("social.theTranslationContainsANumberThat");
     }
 
     return { text: translated, provider: provider.name, isRealLlm: true as const };
@@ -883,13 +881,13 @@ export class SocialAiService {
     await this.checkDailyLimit(organizationId, "social_carousel_outline");
 
     const caption = typeof dto.caption === "string" ? dto.caption.trim() : "";
-    if (!caption) throw new BadRequestException("Caption লিখুন।");
+    if (!caption) throw badRequest("social.writeACaption");
 
     const allowedNumbers = new Set<string>(extractSocialNumbers(caption));
 
     const provider = await providerForOrg(this.llm, organizationId);
     if (!provider.isRealLlm) {
-      throw new BadRequestException("আসল AI (LLM) configure করা নেই — Carousel Outline বানাতে Admin Panel → Platform Config-এ LLM সেট করুন। Dev template দিয়ে outline বানানো হবে না।");
+      throw badRequest("social.realAiLlmIsNotConfigured");
     }
 
     const systemPrompt = [
@@ -939,7 +937,7 @@ export class SocialAiService {
     }
 
     if (slides.length < 2) {
-      throw new BadRequestException("AI কোনো ব্যবহারযোগ্য carousel outline দেয়নি — আবার চেষ্টা করুন।");
+      throw badRequest("social.theAiReturnedNoUsableCarousel");
     }
 
     return { slides, droppedCount, provider: provider.name, isRealLlm: true as const };

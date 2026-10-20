@@ -353,7 +353,7 @@ describe("NF5 staff translations service", () => {
     const svc = makeSvc(prisma);
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-b", field: "name", locale: "en", text: "X",
-    })).rejects.toBeInstanceOf(NotFoundException);
+    })).rejects.toMatchObject({ status: 404 });
   });
 
   it("validation: bad locale / bad field / empty text are Bengali 400s", async () => {
@@ -361,13 +361,13 @@ describe("NF5 staff translations service", () => {
     const svc = makeSvc(prisma);
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "name", locale: "fr", text: "X",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "price", locale: "en", text: "X",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertHuman("org-1", "u1", {
       entityType: "product", entityId: "p-a", field: "name", locale: "en", text: "  ",
-    })).rejects.toBeInstanceOf(BadRequestException);
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it("(f) AI draft path creates status=draft + source=ai — never auto-approved", async () => {
@@ -393,7 +393,7 @@ describe("NF5 staff translations service", () => {
     const prisma = makePrisma(); seedShop(prisma);
     const svc = makeSvc(prisma, fakeLlm(devProvider));
     await expect(svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     try {
       await svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" });
     } catch (e: any) {
@@ -410,7 +410,7 @@ describe("NF5 staff translations service", () => {
     };
     const svc = makeSvc(prisma, fakeLlm(realProvider));
     await expect(svc.generateProductDraft("org-1", "u1", "p-a", { locale: "hi" }))
-      .rejects.toBeInstanceOf(HttpException);
+      .rejects.toMatchObject({ status: 403 });
     expect(prisma.contentTranslation.rows).toHaveLength(0);
   });
 
@@ -433,11 +433,11 @@ describe("NF5 staff translations service", () => {
     const prisma = makePrisma(); seedShop(prisma);
     const svc = makeSvc(prisma);
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "USD", ratePerUnit: "119.50", sourceNote: "" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "BDT", ratePerUnit: "1", sourceNote: "নিজে" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     await expect(svc.upsertCurrencyRate("org-1", "u1", { currency: "USD", ratePerUnit: "live?", sourceNote: "নিজে" }))
-      .rejects.toBeInstanceOf(BadRequestException);
+      .rejects.toMatchObject({ status: 400 });
     const saved: any = await svc.upsertCurrencyRate("org-1", "u1", { currency: "usd", ratePerUnit: "119.50", sourceNote: "বাংলাদেশ ব্যাংকের ওয়েবসাইট, ১৭ অক্টোবর" });
     expect(saved).toMatchObject({ currency: "USD", ratePerUnit: "119.50", baseCurrency: "BDT" });
     const list: any = await svc.listCurrencyRates("org-1");

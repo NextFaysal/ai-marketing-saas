@@ -305,11 +305,11 @@ describe("AD2 disconnect", () => {
     const manual = seedAccount(db, { sourceType: "manual", platform: "manual", integrationId: null });
     const svc = service(db);
     const err1 = await svc.disconnectAccount(ORG, "owner-1", csv.id).catch((e) => e);
-    expect(err1).toBeInstanceOf(BadRequestException);
+    expect(err1).toMatchObject({ code: "ads.thisAdAccountHasNoApi2" });
     expect(err1.getStatus()).toBe(400);
     expect(err1.message).toContain("কোনো API সংযোগ নেই");
     const err2 = await svc.disconnectAccount(ORG, "owner-1", manual.id).catch((e) => e);
-    expect(err2).toBeInstanceOf(BadRequestException);
+    expect(err2).toMatchObject({ code: "ads.thisAdAccountHasNoApi2" });
     expect(err2.getStatus()).toBe(400);
     expect(db.auditRows.filter((r: Row) => r.action === "ad_account.disconnect")).toHaveLength(0);
   });
@@ -319,7 +319,7 @@ describe("AD2 disconnect", () => {
     const integration = seedIntegration(db, { organizationId: ORG2 });
     const foreign = seedAccount(db, { organizationId: ORG2, integrationId: integration.id });
     const err = await service(db).disconnectAccount(ORG, "owner-1", foreign.id).catch((e) => e);
-    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err).toMatchObject({ code: "ads.adAccountNotFoundInThis" });
     expect(err.getStatus()).toBe(404);
     // nothing was touched
     expect(db.accounts.find((a: Row) => a.id === foreign.id).integrationId).toBe(integration.id);
@@ -333,9 +333,9 @@ describe("AD2 disconnect", () => {
     const svc = service(db);
     await svc.disconnectAccount(ORG, "owner-1", account.id);
     const err = await svc.syncMetaInsights(ORG, "owner-1", account.id, {}).catch((e) => e);
-    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err).toMatchObject({ code: "ads.thisAdAccountIsNotConnected" });
     expect(err.getStatus()).toBe(400);
-    expect(err.message).toContain("not connected to Meta via API");
+    expect(err.message).toContain("API দিয়ে connected নয়");
   });
 });
 

@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus } from "@nestjs/common";
+import { tooManyRequests } from "../i18n";
 import { planResourceLimits } from "./platform-settings";
 import { todayDhakaKey } from "./plan-limit-checks";
 
@@ -59,9 +60,6 @@ export async function assertWithinApiDailyLimit(prisma: any, organizationId: str
   if (limit == null) return;
   const used = await apiUsageToday(prisma, organizationId);
   if (used >= limit) {
-    throw new HttpException(
-      `দৈনিক API সীমা পূর্ণ হয়ে গেছে — আজকের দৈনিক সীমা (daily limit) ${limit}টি অনুরোধ, ইতিমধ্যে ${used}টি ব্যবহৃত হয়েছে। আগামীকাল আবার চেষ্টা করুন অথবা প্ল্যান আপগ্রেড করুন। (Daily API limit of ${limit} requests reached.)`,
-      HttpStatus.TOO_MANY_REQUESTS,
-    );
+    throw tooManyRequests("common.dailyApiLimitReached", { limit, used });
   }
 }

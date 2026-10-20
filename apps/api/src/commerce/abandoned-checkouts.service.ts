@@ -13,6 +13,7 @@ import {
   normalizeShopifyHost,
 } from "../integrations/shopify/shopify-auth";
 import { upsertAbandonedStoreCheckout } from "../integrations/shopify/shopify-checkouts";
+import { badRequest, notFound } from "../i18n";
 
 export const STORE_CHECKOUT_RECOVERY_ACTION = "commerce.store_checkout_recovery_sent";
 export const NATIVE_CART_RECOVERY_ACTION = "commerce.native_cart_recovery_sent";
@@ -90,29 +91,29 @@ export class AbandonedCheckoutsService {
         dto?.minOrderMinor !== undefined ? dto.minOrderMinor : existing.minOrderMinor,
     };
     if (!["percent", "fixed"].includes(merged.kind)) {
-      throw new BadRequestException("কুপনের ধরন percent অথবা fixed হতে হবে");
+      throw badRequest("commerce.couponTypeInvalid");
     }
     if (merged.enabled) {
       if (merged.kind === "percent") {
         if (!Number.isInteger(merged.value) || merged.value < 1 || merged.value > 90) {
-          throw new BadRequestException("শতাংশ কুপনের মান ১–৯০ হতে হবে");
+          throw badRequest("commerce.couponPercentRange");
         }
       } else if (!Number.isInteger(merged.value) || merged.value < 1) {
-        throw new BadRequestException("নির্দিষ্ট পরিমাণ কুপনের মান কমপক্ষে ১ হতে হবে");
+        throw badRequest("commerce.couponFixedMin");
       }
     }
     if (!Number.isInteger(merged.expiryHours) || merged.expiryHours < 1 || merged.expiryHours > 720) {
-      throw new BadRequestException("কুপনের মেয়াদ ১–৭২০ ঘণ্টা হতে হবে");
+      throw badRequest("commerce.couponValidityRange");
     }
     let minOrderMinor: bigint | null = null;
     if (merged.minOrderMinor !== null && merged.minOrderMinor !== undefined && merged.minOrderMinor !== "") {
       try {
         minOrderMinor = BigInt(merged.minOrderMinor as any);
       } catch {
-        throw new BadRequestException("ন্যূনতম অর্ডার পরিমাণ সঠিক সংখ্যা হতে হবে");
+        throw badRequest("commerce.minOrderAmountInvalid");
       }
       if (minOrderMinor < 0n) {
-        throw new BadRequestException("ন্যূনতম অর্ডার পরিমাণ ০ বা তার বেশি হতে হবে");
+        throw badRequest("commerce.minOrderAmountNegative");
       }
     }
     const data = {
@@ -551,14 +552,14 @@ export class AbandonedCheckoutsService {
     const row = await (this.prisma as any).abandonedStoreCheckout.findFirst({
       where: { id: checkoutId, organizationId: orgId },
     });
-    if (!row) throw new NotFoundException("Abandoned checkout not found in this organization");
+    if (!row) throw notFound("commerce.abandonedCheckoutNotFoundInOrg");
 
     const recoveredOrder = await this.findRecoveryOrder(orgId, row);
     if (recoveredOrder) {
-      throw new BadRequestException("এই checkout-এর কাস্টমার ইতিমধ্যে অর্ডার করেছেন — recovery পাঠানোর দরকার নেই");
+      throw badRequest("commerce.checkoutCustomerAlreadyOrdered");
     }
     if (!row.email) {
-      throw new BadRequestException("এই checkout-এ কোনো ইমেইল ঠিকানা নেই — recovery ইমেইল পাঠানো যাবে না");
+      throw badRequest("commerce.checkoutNoEmail");
     }
 
     let marker: any = null;
@@ -574,10 +575,10 @@ export class AbandonedCheckoutsService {
       marker = null;
     }
     if (marker) {
-      throw new BadRequestException("এই checkout-এর জন্য recovery ইমেইল ইতিমধ্যে পাঠানো হয়েছে");
+      throw badRequest("commerce.checkoutRecoveryAlreadySent");
     }
     if (!this.email) {
-      throw new BadRequestException("ইমেইল পাঠানোর সুবিধা এই deployment-এ নেই");
+      throw badRequest("commerce.emailFeatureUnavailable");
     }
 
     // GB7: after the duplicate-send guard, before composing the
@@ -624,7 +625,7 @@ export class AbandonedCheckoutsService {
     } catch (err) {
       // No audit marker and no event on failure — the checkout
       // stays recoverable and the error is surfaced honestly.
-      throw new BadRequestException(`ইমেইল পাঠানো যায়নি: ${errMsg(err)}`);
+      throw badRequest("commerce.emailSendFailed", { detail: errMsg(err) });
     }
 
     if (this.audit) {
@@ -674,12 +675,12 @@ export class AbandonedCheckoutsService {
     const cart = await (this.prisma as any).storeCart.findFirst({
       where: { id: cartId, organizationId: orgId },
     });
-    if (!cart) throw new NotFoundException("Abandoned cart not found in this organization");
+    if (!cart) throw notFound("commerce.abandonedCartNotFoundInOrg");
     if (cart.status !== "open") {
-      throw new BadRequestException("এই কার্টটি ইতিমধ্যে অর্ডারে রূপান্তরিত হয়েছে — recovery পাঠানোর দরকার নেই");
+      throw badRequest("commerce.cartAlreadyConverted");
     }
     if (!cart.email) {
-      throw new BadRequestException("এই কার্টে কোনো ইমেইল ঠিকানা নেই — recovery ইমেইল পাঠানো যাবে না");
+      throw badRequest("commerce.cartNoEmail");
     }
     const lastActivity = toIso(cart.updatedAt);
 
@@ -699,15 +700,15 @@ export class AbandonedCheckoutsService {
       alreadySent = false;
     }
     if (alreadySent) {
-      throw new BadRequestException("এই কার্টের জন্য recovery ইমেইল ইতিমধ্যে পাঠানো হয়েছে");
+      throw badRequest("commerce.cartRecoveryAlreadySent");
     }
     if (!this.email) {
-      throw new BadRequestException("ইমেইল পাঠানোর সুবিধা এই deployment-এ নেই");
+      throw badRequest("commerce.emailFeatureUnavailable");
     }
 
     const { items, totalMinor } = await this.nativeCartItems(cart);
     if (items.length === 0) {
-      throw new BadRequestException("কার্টটি খালি — recovery পাঠানোর কিছু নেই");
+      throw badRequest("commerce.cartEmptyNoRecovery");
     }
 
     // GB7: after the duplicate-send guard, before composing the
@@ -763,7 +764,7 @@ export class AbandonedCheckoutsService {
       const result = await this.email.send({ to: cart.email, subject, text });
       providerMessageId = result.providerMessageId;
     } catch (err) {
-      throw new BadRequestException(`ইমেইল পাঠানো যায়নি: ${errMsg(err)}`);
+      throw badRequest("commerce.emailSendFailed", { detail: errMsg(err) });
     }
 
     if (this.audit) {
@@ -823,7 +824,7 @@ export class AbandonedCheckoutsService {
       nativeRow = null;
     }
     if (nativeRow) return this.sendNativeRecovery(orgId, actorId, id);
-    throw new NotFoundException("Abandoned checkout not found in this organization");
+    throw notFound("commerce.abandonedCheckoutNotFoundInOrg");
   }
 
   /**
@@ -869,7 +870,7 @@ export class AbandonedCheckoutsService {
         checkout = null;
       }
     }
-    if (!checkout) throw new NotFoundException("Abandoned checkout not found in this organization");
+    if (!checkout) throw notFound("commerce.abandonedCheckoutNotFoundInOrg");
 
     let runs: any[] = [];
     try {
@@ -927,13 +928,13 @@ export class AbandonedCheckoutsService {
     const store = await (this.prisma as any).store.findFirst({
       where: { id: storeId, organizationId: orgId },
     });
-    if (!store) throw new NotFoundException("Store not found in this organization");
+    if (!store) throw notFound("commerce.storeNotFoundInOrg");
 
     const integration = await (this.prisma as any).integration.findFirst({
       where: { organizationId: orgId, storeId, provider: "shopify" },
     });
     if (!integration) {
-      throw new BadRequestException("এই স্টোরের কোনো Shopify integration নেই");
+      throw badRequest("commerce.storeNoShopifyIntegration");
     }
 
     let credential = integration.credential ?? null;
@@ -943,7 +944,7 @@ export class AbandonedCheckoutsService {
         .catch(() => null);
     }
     if (!credential?.encryptedData) {
-      throw new BadRequestException("shopify_credentials_missing");
+      throw badRequest("commerce.shopifyCredentialsMissing");
     }
 
     let secrets: any;
@@ -1119,7 +1120,7 @@ export class AbandonedCheckoutsService {
     }
 
     if (!phone) {
-      throw new BadRequestException("এই কার্টে কোনো ফোন নম্বর নেই — WhatsApp রিকভারি সম্ভব নয়");
+      throw badRequest("commerce.cartNoPhoneWhatsapp");
     }
 
     let cleanPhone = String(phone).replace(/\D/g, "");

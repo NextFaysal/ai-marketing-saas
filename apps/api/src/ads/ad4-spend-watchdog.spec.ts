@@ -305,7 +305,7 @@ describe("AD4 updateSpendWatch / getSpendWatch", () => {
     const cleared = await svc.updateSpendWatch("org-1", "owner-1", account.id, { dailyCap: null, anomalyPct: null });
     expect(cleared.dailyCapMinor).toBeNull();
     expect(cleared.anomalyPct).toBeNull();
-    await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { dailyCap: "abc" })).rejects.toThrow(/Invalid dailyCap/);
+    await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { dailyCap: "abc" })).rejects.toMatchObject({ code: "ads.invalid" });
     await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { dailyCap: "0" })).rejects.toThrow(/০-এর বেশি/);
     await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { anomalyPct: 0 })).rejects.toThrow(/১ থেকে ১০০০/);
     await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { anomalyPct: 1001 })).rejects.toThrow(/১ থেকে ১০০০/);
@@ -316,8 +316,8 @@ describe("AD4 updateSpendWatch / getSpendWatch", () => {
     const db = makeDb();
     const account = seedAccount(db, { organizationId: "org-2" });
     const svc = new AdsService(db.prisma, auditFor(db) as any);
-    await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { enabled: true })).rejects.toThrow(/not found/i);
-    await expect(svc.getSpendWatch("org-1", account.id)).rejects.toThrow(/not found/i);
+    await expect(svc.updateSpendWatch("org-1", "owner-1", account.id, { enabled: true })).rejects.toMatchObject({ code: "ads.adAccountNotFoundInThis" });
+    await expect(svc.getSpendWatch("org-1", account.id)).rejects.toMatchObject({ code: "ads.adAccountNotFoundInThis" });
   });
 
   it("getSpendWatch returns the same computation the job uses", async () => {
@@ -377,6 +377,6 @@ describe("AD4 automation job registration", () => {
       {} as any, {} as any, undefined as any, {} as any, {} as any, {} as any,
     );
     await expect(svc.executeJob({ organizationId: "org-9", createdById: "owner", type: "ad_spend_watchdog" }))
-      .rejects.toThrow("Ads service is not available");
+      .rejects.toMatchObject({ code: "automation.adsServiceIsNotAvailableIn" });
   });
 });

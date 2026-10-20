@@ -76,6 +76,8 @@ export interface SlotsResponse {
 export interface PublicServiceList {
   orgSlug: string;
   orgName: string;
+  /** MB4 (CD-3): shop storefront locale from the API (bn default). */
+  locale?: string;
   services: ServiceOfferingView[];
 }
 

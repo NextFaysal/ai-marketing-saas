@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ApiException } from "../i18n";
 import { RolesGuard } from "../common/roles.guard";
 import { PERMISSION_AREA_KEY, ROLES_KEY } from "../common/decorators";
 import { PRESET_ROLE_PROFILES, effectiveAccess, presetProfile } from "../common/permission-catalog";
@@ -33,25 +34,25 @@ describe("GB6 RolesGuard custom-role branch", () => {
 
   it("a custom role refuses areas it does not list, even ones the endpoint would allow lower roles", () => {
     const g = guardWith({ roles: ["ADMIN"], area: "settings" });
-    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(ForbiddenException);
-    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(/custom role does not include/);
+    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(ApiException);
+    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(expect.objectContaining({ code: "common.customRoleLacksArea", status: 403 }));
   });
 
   it("without customRoleAreas the preset role decides exactly as before", () => {
     const g = guardWith({ roles: ["SUPPORT_AGENT"], area: "orders" });
-    expect(() => g.canActivate(ctx(member("VIEWER")))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(member("VIEWER")))).toThrow(ApiException);
     expect(g.canActivate(ctx(member("SUPPORT_AGENT")))).toBe(true);
   });
 
   it("owner-only gates are never opened by a custom role, even when the area is in the role", () => {
     const g = guardWith({ roles: ["OWNER"], area: "orders" });
-    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(member("VIEWER", { customRoleAreas: ["orders"] })))).toThrow(ApiException);
   });
 
   it("a deny override wins over a custom role containing the area", () => {
     const g = guardWith({ roles: ["SUPPORT_AGENT"], area: "orders" });
     const req = member("VIEWER", { customRoleAreas: ["orders"], permissionOverrides: { denies: ["orders"] } });
-    expect(() => g.canActivate(ctx(req))).toThrow(ForbiddenException);
+    expect(() => g.canActivate(ctx(req))).toThrow(ApiException);
   });
 
   it("a per-member grant still adds an area on top of a custom role", () => {
@@ -137,22 +138,22 @@ describe("GB6 custom roles service", () => {
 
   it("presetKey with an explicit name or areas is rejected as ambiguous", async () => {
     const { svc } = db();
-    await expect(svc.createCustomRole("org", "boss", { presetKey: "FINANCE", name: "Money" })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createCustomRole("org", "boss", { presetKey: "FINANCE", areas: ["billing"] })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createCustomRole("org", "boss", { presetKey: "WIZARD" })).rejects.toThrow(/Unknown preset/);
+    await expect(svc.createCustomRole("org", "boss", { presetKey: "FINANCE", name: "Money" })).rejects.toMatchObject({ code: "organizations.presetKeyOnItsOwn", status: 400 });
+    await expect(svc.createCustomRole("org", "boss", { presetKey: "FINANCE", areas: ["billing"] })).rejects.toMatchObject({ code: "organizations.presetKeyOnItsOwn", status: 400 });
+    await expect(svc.createCustomRole("org", "boss", { presetKey: "WIZARD" })).rejects.toMatchObject({ code: "organizations.unknownPresetRole", status: 400 });
   });
 
   it("unknown areas are named in the 400; empty areas and bad names are refused", async () => {
     const { svc } = db();
-    await expect(svc.createCustomRole("org", "boss", { name: "X", areas: ["orders", "mars"] })).rejects.toThrow(/Unknown permission areas: mars/);
-    await expect(svc.createCustomRole("org", "boss", { name: "X", areas: [] })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(svc.createCustomRole("org", "boss", { name: "  ", areas: ["orders"] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.createCustomRole("org", "boss", { name: "X", areas: ["orders", "mars"] })).rejects.toMatchObject({ code: "organizations.unknownPermissionAreas", status: 400 });
+    await expect(svc.createCustomRole("org", "boss", { name: "X", areas: [] })).rejects.toMatchObject({ status: 400 });
+    await expect(svc.createCustomRole("org", "boss", { name: "  ", areas: ["orders"] })).rejects.toMatchObject({ status: 400 });
   });
 
   it("duplicate names are refused per org", async () => {
     const { svc } = db();
     await svc.createCustomRole("org", "boss", { name: "Desk", areas: ["orders"] });
-    await expect(svc.createCustomRole("org", "boss", { name: "Desk", areas: ["inbox"] })).rejects.toThrow(/already exists/);
+    await expect(svc.createCustomRole("org", "boss", { name: "Desk", areas: ["inbox"] })).rejects.toMatchObject({ code: "organizations.customRoleNameExists", status: 400 });
     // the same name in ANOTHER org is fine
     await expect(svc.createCustomRole("org2", "boss", { name: "Desk", areas: ["inbox"] })).resolves.toMatchObject({ name: "Desk" });
   });
@@ -168,7 +169,7 @@ describe("GB6 custom roles service", () => {
 
     const list: any = await svc.listCustomRoles("org");
     expect(list.roles[0].memberCount).toBe(1);
-    await expect(svc.deleteCustomRole("org", "boss", role.id)).rejects.toThrow(/assigned to 1 member/);
+    await expect(svc.deleteCustomRole("org", "boss", role.id)).rejects.toMatchObject({ code: "organizations.customRoleInUse", status: 400 });
 
     const cleared: any = await svc.assignMemberCustomRole("org", "boss", "agent", { customRoleId: null });
     expect(cleared.customRole).toBeNull();
@@ -178,10 +179,10 @@ describe("GB6 custom roles service", () => {
   it("assign: a role from another org is a 404, and the OWNER cannot be customized", async () => {
     const { svc } = db();
     const foreign: any = await svc.createCustomRole("org2", "boss", { name: "Foreign", areas: ["orders"] });
-    await expect(svc.assignMemberCustomRole("org", "boss", "agent", { customRoleId: foreign.id })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.assignMemberCustomRole("org", "boss", "agent", { customRoleId: foreign.id })).rejects.toMatchObject({ code: "organizations.customRoleNotFoundInOrg", status: 404 });
     const own: any = await svc.createCustomRole("org", "boss", { name: "Local", areas: ["orders"] });
-    await expect(svc.assignMemberCustomRole("org", "boss", "boss", { customRoleId: own.id })).rejects.toThrow(/owner's access cannot/);
-    await expect(svc.assignMemberCustomRole("org", "boss", "ghost", { customRoleId: own.id })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.assignMemberCustomRole("org", "boss", "boss", { customRoleId: own.id })).rejects.toMatchObject({ code: "organizations.ownerAccessNotCustomizable", status: 400 });
+    await expect(svc.assignMemberCustomRole("org", "boss", "ghost", { customRoleId: own.id })).rejects.toMatchObject({ status: 404 });
   });
 
   it("patch renames/re-scopes, ignores presetKey, and 404s outside the org", async () => {
@@ -191,13 +192,13 @@ describe("GB6 custom roles service", () => {
     expect(updated.name).toBe("Money Team");
     expect(updated.areas).toEqual(["billing"]);
     expect(updated.presetKey).toBe("FINANCE"); // immutable
-    await expect(svc.updateCustomRole("org2", "boss", role.id, { name: "Nope" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.updateCustomRole("org2", "boss", role.id, { name: "Nope" })).rejects.toMatchObject({ code: "organizations.customRoleNotFoundInOrg", status: 404 });
   });
 
   it("member login history + sessions require membership; revoke-all reports the count", async () => {
     const { svc, memberships } = db();
     void memberships;
-    await expect(svc.getMemberLoginHistory("org", "ghost")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.getMemberLoginHistory("org", "ghost")).rejects.toMatchObject({ status: 404 });
     // tables absent on this fake — defensive reads answer empty
     await expect(svc.getMemberLoginHistory("org", "agent")).resolves.toEqual([]);
     await expect(svc.getMemberSessions("org", "agent")).resolves.toEqual([]);

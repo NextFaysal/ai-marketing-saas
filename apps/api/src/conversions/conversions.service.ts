@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { EventsService } from "../common/events.service";
 import { encryptJson, decryptJson } from "../integrations/crypto";
 import { MetaCapiClient } from "./capi.client";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 export function hashEmail(email?: string | null): string | null {
@@ -49,9 +50,9 @@ export class ConversionsService {
     pixelId: string; accessToken?: string; testEventCode?: string | null;
     purchaseTrigger?: string; enabled?: boolean; sendLeadEvents?: boolean;
   }) {
-    if (!dto.pixelId?.trim()) throw new BadRequestException("pixelId (dataset id) is required");
+    if (!dto.pixelId?.trim()) throw badRequest("conversions.pixelidDatasetIdIsRequired");
     if (dto.purchaseTrigger && !(TRIGGERS as readonly string[]).includes(dto.purchaseTrigger)) {
-      throw new BadRequestException("purchaseTrigger must be placed, cod_confirmed or delivered");
+      throw badRequest("conversions.purchasetriggerMustBePlacedCodConfirmed");
     }
     const data: any = {
       pixelId: dto.pixelId.trim(),
@@ -83,7 +84,7 @@ export class ConversionsService {
     if (integration?.credential) {
       return decryptJson<{ accessToken: string }>(integration.credential.encryptedData).accessToken;
     }
-    throw new BadRequestException("No Conversions API token: set a dedicated token or connect Meta Ads first");
+    throw badRequest("conversions.noConversionsApiTokenSetA");
   }
 
   private async alreadyLogged(organizationId: string, eventId: string): Promise<boolean> {
@@ -197,8 +198,8 @@ export class ConversionsService {
    * watch it land in Meta's Test Events tab. Requires the code. */
   async sendTestEvent(organizationId: string, actorId: string) {
     const setting = await this.settingOrNull(organizationId);
-    if (!setting) throw new NotFoundException("Conversions API is not configured for this organization");
-    if (!setting.testEventCode) throw new BadRequestException("Set a testEventCode first (Meta Events Manager -> Test Events)");
+    if (!setting) throw notFound("conversions.conversionsApiIsNotConfiguredFor");
+    if (!setting.testEventCode) throw badRequest("conversions.setATesteventcodeFirstMetaEvents");
     const event = {
       event_name: "Purchase",
       event_time: Math.floor(Date.now() / 1000),

@@ -19,6 +19,7 @@ import { catalogAction } from "./actions/action-catalog";
 import { extractGuardNumbers } from "../inbox/business-brain";
 import { formatMinor } from "@repo/contracts";
 import { CopilotAskDto } from "./copilot.dto";
+import { ApiException, badRequest, forbidden } from "../i18n/api-exception";
 
 /** The AIUsageRecord feature bucket for the copilot's LLM calls. */
 export const COPILOT_FEATURE = "copilot";
@@ -229,7 +230,7 @@ export class CopilotService {
     const { killSwitches, isAiDisabledForOrg } = await import("../common/platform-settings");
     const ks = await killSwitches(this.prisma as any);
     if (isAiDisabledForOrg(ks, organizationId)) {
-      throw new HttpException(ks.aiGloballyPaused ? "AI features are temporarily paused platform-wide by the platform team." : "AI features are temporarily disabled for this organization by the platform team.", 403);
+      throw forbidden(ks.aiGloballyPaused ? "ai.aiFeaturesTemporarilyPausedPlatformWide" : "ai.aiFeaturesTemporarilyDisabledForThisOrganization");
     }
   }
 
@@ -243,10 +244,7 @@ export class CopilotService {
       where: { organizationId, feature: COPILOT_FEATURE, createdAt: { gte: startOfDay } },
     });
     if (used >= limit) {
-      throw new HttpException(
-        `Daily AI limit reached for this organization (${limit}). Try again tomorrow or ask the platform team to raise your plan limit.`,
-        429,
-      );
+      throw new ApiException("ai.dailyAiLimitReachedForThis", { limit: limit }, 429);
     }
   }
 
@@ -332,7 +330,7 @@ export class CopilotService {
 
   async ask(organizationId: string, userId: string, dto: CopilotAskDto): Promise<CopilotAskResult> {
     const question = typeof dto?.question === "string" ? dto.question.trim() : "";
-    if (!question) throw new BadRequestException("একটি প্রশ্ন বা নির্দেশ লিখুন।");
+    if (!question) throw badRequest("ai.writeAQuestionOrAnInstruction");
     await this.checkKillSwitch(organizationId);
     const language = await this.resolveLanguage(organizationId, dto?.language);
     const bn = language === "bn";
