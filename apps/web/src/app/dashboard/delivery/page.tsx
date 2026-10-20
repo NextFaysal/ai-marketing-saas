@@ -156,7 +156,7 @@ export default function DeliveryFleetPage() {
                     )}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {fixAgeLabel(e.location.ageMs)} · {fmtDateTime(locale, new Date(e.location.recordedAt))}
+                    {fixAgeLabel(e.location.ageMs, locale)} · {fmtDateTime(locale, new Date(e.location.recordedAt))}
                     {e.location.accuracy != null ? <> {dict.delivery.accuracy}{Math.round(e.location.accuracy)} {dict.delivery.meters}</> : null}
                     {" · "}
                     <a href={e.location.mapsUrl} target="_blank" rel="noreferrer" className="font-bold text-indigo-700 underline">{dict.delivery.viewOnMap}</a>

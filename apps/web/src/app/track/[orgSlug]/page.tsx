@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { formatMinor } from "@repo/contracts";
 import { API_URL } from "@/lib/api";
 import { MediaImage } from "@/components/media-image";
-import { COURIER_STEP_LABELS, courierStatusView } from "@/lib/courier-status";
+import { courierStatusView, courierStepLabels } from "@/lib/courier-status";
 import { shopLocaleOf, shopT, type ShopDict, type ShopLocale } from "@/lib/shop-i18n";
 import { fmtDate, fmtDateTime, fmtNumber } from "@repo/contracts";
 
@@ -766,7 +766,7 @@ export default function TrackOrderPage() {
                 {courierView?.kind === "progress" ? (
                   <>
                     <div className="flex items-center gap-1">
-                      {COURIER_STEP_LABELS.map((label, i) => (
+                      {courierStepLabels(locale).map((label, i) => (
                         <div key={label} className="flex flex-1 flex-col items-center gap-1">
                           <div className={`h-2 w-full rounded-full ${i <= courierView.step ? "bg-gradient-to-r from-emerald-500 to-teal-400" : "bg-slate-200"}`} />
                           <span className={`text-center text-[11px] leading-tight ${i === courierView.step ? "font-bold text-emerald-700" : "text-slate-400"}`}>{label}</span>

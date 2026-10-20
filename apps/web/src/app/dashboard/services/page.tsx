@@ -1,9 +1,9 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
+import { fmtMoneyMinor } from "@repo/contracts";
 import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { fmtMoneyBn } from "@/lib/money-bn";
 import {
   WEEKDAY_ROWS, addStaff, apiRowsToEditor, availabilityError, createService,
   editorRowsToApi, fetchAvailability, fetchServices, fetchStaff, saveAvailability,
@@ -26,6 +26,13 @@ interface EditorRow { weekday: number; enabled: boolean; start: string; end: str
 
 export default function ServicesPage() {
   const { dict, t, locale } = useLocale();
+  // MB6: locale-aware replacement for the bn-only money-bn helper
+  // (campaigns-page shadow pattern). No page spec pins the old
+  // fmtMoneyBn output, so the full contracts shadow is used —
+  // bn whole-taka amounts now render without the trailing ".০০"
+  // (e.g. ৳১,৫০০ instead of ৳১,৫০০.০০), same as campaigns.
+  const fmtMoneyBn = (minor: string | bigint | number | null | undefined): string =>
+    minor === null || minor === undefined || minor === "" ? "—" : fmtMoneyMinor(locale, typeof minor === "bigint" ? minor : BigInt(String(minor).trim()));
   const { toast } = useToast();
   const orgId = getOrganizationId();
   const [services, setServices] = useState<ServiceOfferingView[]>([]);

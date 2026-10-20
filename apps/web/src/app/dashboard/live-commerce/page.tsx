@@ -1,10 +1,9 @@
 "use client";
 import React, { useCallback, useEffect, useState } from "react";
-import { fmtDateTime, fmtNumber, fmtTime } from "@repo/contracts";
+import { fmtDateTime, fmtMoneyMinor, fmtNumber, fmtTime } from "@repo/contracts";
 import { useLocale } from "@/lib/i18n/provider";
 import { apiFetch } from "@/lib/api";
 import { getOrganizationId } from "@/lib/org";
-import { fmtMoneyBn } from "@/lib/money-bn";
 import {
   COMMENT_POLL_MS, buildCommentOrderPayload, commentOrderNotice, commentsModeNotice,
   followUpSummary, movePin, nowShowingProductId, recapRows, sessionSourceBadge,
@@ -32,6 +31,11 @@ interface OrderFormState {
 
 export default function LiveCommercePage() {
   const { dict, t, locale } = useLocale();
+  // MB6: locale-aware replacement for the bn-only money-bn helper
+  // (campaigns-page shadow pattern, same route as bookings/services —
+  // no page spec pins this page's money output).
+  const fmtMoneyBn = (minor: string | bigint | number | null | undefined): string =>
+    minor === null || minor === undefined || minor === "" ? "—" : fmtMoneyMinor(locale, typeof minor === "bigint" ? minor : BigInt(String(minor).trim()));
   const { toast } = useToast();
   const [sessions, setSessions] = useState<LiveSessionView[]>([]);
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
@@ -266,7 +270,7 @@ export default function LiveCommercePage() {
       );
       // alreadyExisted=true → the API returned the EXISTING
       // order (exactly-once); the notice says so plainly.
-      setOrderNotice(commentOrderNotice(res));
+      setOrderNotice(commentOrderNotice(res, locale));
       const r = await apiFetch<LiveRecap>(`/organizations/${orgId}/live-sessions/${selectedId}/recap`).catch(() => null);
       if (r) setRecap(r);
     } catch (e) {
@@ -287,7 +291,7 @@ export default function LiveCommercePage() {
     } finally { setBusy(""); }
   };
 
-  const modeNotice = commentsModeNotice(commentsRes);
+  const modeNotice = commentsModeNotice(commentsRes, locale);
   const showingId = nowShowingProductId(detail?.products);
   const comments: LiveComment[] = commentsRes?.comments ?? [];
 
@@ -342,8 +346,8 @@ export default function LiveCommercePage() {
             ) : (
               <ul className="divide-y">
                 {sessions.map((s) => {
-                  const chip = sessionStatusChip(s.status);
-                  const badge = sessionSourceBadge(s);
+                  const chip = sessionStatusChip(s.status, locale);
+                  const badge = sessionSourceBadge(s, locale);
                   return (
                     <li key={s.id}>
                       <button type="button" className={`w-full py-2.5 text-left ${selectedId === s.id ? "font-semibold" : ""}`} onClick={() => selectSession(s.id)}>
@@ -379,8 +383,8 @@ export default function LiveCommercePage() {
                     {detail.externalLiveVideoId ? ` · Live Video: ${detail.externalLiveVideoId}` : ""}
                   </div>
                 </div>
-                <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${sessionStatusChip(detail.status).cls}`}>{sessionStatusChip(detail.status).label}</span>
-                <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${sessionSourceBadge(detail).cls}`}>{sessionSourceBadge(detail).label}</span>
+                <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${sessionStatusChip(detail.status, locale).cls}`}>{sessionStatusChip(detail.status, locale).label}</span>
+                <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${sessionSourceBadge(detail, locale).cls}`}>{sessionSourceBadge(detail, locale).label}</span>
                 {detail.status !== "live" && detail.status !== "ended" ? (
                   <button type="button" className="btn-primary px-3 py-1.5 text-xs" disabled={busy === "start"} onClick={() => changeLifecycle("start")}>{dict.commerce.startLive}</button>
                 ) : null}
@@ -399,7 +403,7 @@ export default function LiveCommercePage() {
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {recapRows(recap).map((row) => (
+                    {recapRows(recap, locale).map((row) => (
                       <div key={row.label} className="rounded-lg bg-slate-50 p-3 text-center">
                         <div className="text-lg font-bold">{row.value}</div>
                         <div className="text-xs text-slate-500">{row.label}</div>
@@ -407,7 +411,7 @@ export default function LiveCommercePage() {
                     ))}
                   </div>
                   {followUp ? (
-                    <p className="mt-3 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">{followUpSummary(followUp)}</p>
+                    <p className="mt-3 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">{followUpSummary(followUp, locale)}</p>
                   ) : null}
                 </div>
               ) : null}

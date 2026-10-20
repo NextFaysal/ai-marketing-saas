@@ -68,6 +68,7 @@ import { organizationsCatalog } from "./organizations";
 import { paymentsCatalog } from "./payments";
 import { portfolioCatalog } from "./portfolio";
 import { posCatalog } from "./pos";
+import { proactiveCatalog } from "./proactive";
 import { productsCatalog } from "./products";
 import { publishingCatalog } from "./publishing";
 import { purchasingCatalog } from "./purchasing";
@@ -146,6 +147,7 @@ export const MESSAGE_CATALOG: CatalogNamespace = {
   ...paymentsCatalog,
   ...portfolioCatalog,
   ...posCatalog,
+  ...proactiveCatalog,
   ...productsCatalog,
   ...publishingCatalog,
   ...purchasingCatalog,

@@ -8,6 +8,8 @@
  * a fix counts as live, and never invents a location.
  */
 
+import type { UiLocale } from "./i18n/dict";
+
 export const RIDER_FIX_STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
 export interface RiderFixView {
@@ -65,8 +67,25 @@ export function bnDigits(value: number | string): string {
   return String(value).replace(/[0-9]/g, (d) => BN_DIGITS[Number(d)]);
 }
 
-/** Human age label for a fix, from the SERVER-provided ageMs. */
-export function fixAgeLabel(ageMs: number | null | undefined): string {
+/**
+ * Human age label for a fix, from the SERVER-provided ageMs.
+ * MB6: optional locale (default "bn") — the bn path is
+ * BYTE-IDENTICAL to the original bn-only rendering (the
+ * bn-by-design rider/[token] page keeps calling it with no
+ * locale); "en" renders the equivalent English with Latin digits.
+ */
+export function fixAgeLabel(ageMs: number | null | undefined, locale: UiLocale = "bn"): string {
+  if (locale === "en") {
+    if (ageMs == null || !Number.isFinite(ageMs)) return "Time unavailable";
+    const seconds = Math.floor(ageMs / 1000);
+    if (seconds < 45) return "Just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} ${days === 1 ? "day" : "days"} ago`;
+  }
   if (ageMs == null || !Number.isFinite(ageMs)) return "সময় পাওয়া যায়নি";
   const seconds = Math.floor(ageMs / 1000);
   if (seconds < 45) return "সবেমাত্র";

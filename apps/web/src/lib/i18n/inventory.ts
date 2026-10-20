@@ -7,7 +7,6 @@
 export const inventoryBn = {
   cancel: "বাতিল",
   total: "মোট",
-  textchvof: "৳{num}",
   currentStock: "বর্তমান স্টক",
   saving: "সংরক্ষণ হচ্ছে...",
   text1qvn: "৳০",
@@ -99,7 +98,6 @@ export const inventoryBn = {
 export const inventoryEn: typeof inventoryBn = {
   cancel: "Cancel",
   total: "Total",
-  textchvof: "{num}",
   currentStock: "Current stock",
   saving: "Saving...",
   text1qvn: "৳0",
