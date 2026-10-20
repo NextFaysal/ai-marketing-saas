@@ -164,7 +164,7 @@ describe("MS10 PATCH: status matrix", () => {
     const b = seedBroadcast(tables, { status: "draft", archivedAt: new Date() });
     const err = await svc.updateBroadcast("org-1", "user-1", b.id, { body: "x" }).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("archived");
+    expect(err.code).toBe("messaging.thisBroadcastIsArchivedUnarchiveIt3");
   });
 });
 
@@ -174,7 +174,7 @@ describe("MS10 PATCH: create-time validation is reused, not weakened", () => {
     const b = seedBroadcast(tables, { channel: "sms", subject: null });
     const err = await svc.updateBroadcast("org-1", "user-1", b.id, { htmlBody: "<p>x</p>" }).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("htmlBody is only allowed for email");
+    expect(err.code).toBe("messaging.htmlBodyIsOnlyAllowedForEmail3");
   });
 
   it("clearing an email subject ⇒ 400 (email always needs a subject)", async () => {
@@ -182,7 +182,7 @@ describe("MS10 PATCH: create-time validation is reused, not weakened", () => {
     const b = seedBroadcast(tables, {});
     const err = await svc.updateBroadcast("org-1", "user-1", b.id, { subject: null }).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("Email broadcasts need a subject");
+    expect(err.code).toBe("messaging.emailBroadcastsNeedASubject");
   });
 
   it("emptying the body ⇒ 400", async () => {
@@ -190,7 +190,7 @@ describe("MS10 PATCH: create-time validation is reused, not weakened", () => {
     const b = seedBroadcast(tables, {});
     const err = await svc.updateBroadcast("org-1", "user-1", b.id, { body: "" }).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("Broadcast body is required");
+    expect(err.code).toBe("messaging.broadcastBodyIsRequiredWriteOne");
   });
 
   it("templateId: foreign template 404s; a channel mismatch 400s; a matching one links", async () => {
@@ -203,7 +203,7 @@ describe("MS10 PATCH: create-time validation is reused, not weakened", () => {
     expect(statusOf(e404)).toBe(404);
     const e400 = await svc.updateBroadcast("org-1", "user-1", b.id, { templateId: "tpl-sms" }).catch((e) => e);
     expect(statusOf(e400)).toBe(400);
-    expect(String(e400.message)).toContain("Template channel does not match");
+    expect(e400.code).toBe("messaging.templateChannelDoesNotMatchThe");
     const ok = await svc.updateBroadcast("org-1", "user-1", b.id, { templateId: "tpl-email" });
     expect(ok.templateId).toBe("tpl-email");
     const cleared = await svc.updateBroadcast("org-1", "user-1", b.id, { templateId: null });
@@ -302,7 +302,7 @@ describe("MS10 delete + archive", () => {
     const sent = seedBroadcast(tables, { status: "sent" });
     const err = await svc.deleteBroadcast("org-1", "user-1", sent.id).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("Archive it instead");
+    expect(err.code).toBe("messaging.aBroadcastStatusBroadcastCannotBeDeleted");
     const scheduled = seedBroadcast(tables, { status: "scheduled" });
     const err2 = await svc.deleteBroadcast("org-1", "user-1", scheduled.id).catch((e) => e);
     expect(statusOf(err2)).toBe(400);
@@ -322,7 +322,7 @@ describe("MS10 delete + archive", () => {
     expect(withArchived.items.map((r: any) => r.id).sort()).toEqual([b.id, other.id].sort());
     const sendErr = await svc.sendBroadcast("org-1", "user-1", b.id).catch((e) => e);
     expect(statusOf(sendErr)).toBe(400);
-    expect(String(sendErr.message)).toContain("archived");
+    expect(sendErr.code).toBe("messaging.thisBroadcastIsArchivedUnarchiveIt");
     const schedErr = await svc.scheduleBroadcast("org-1", "user-1", b.id, new Date(Date.now() + 3600e3).toISOString()).catch((e) => e);
     expect(statusOf(schedErr)).toBe(400);
     const restored = await svc.setBroadcastArchived("org-1", "user-1", b.id, false);

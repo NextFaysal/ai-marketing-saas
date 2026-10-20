@@ -310,7 +310,7 @@ describe("MX9 quality guard enforcement (MessagingService)", () => {
     const view = await svc.getMessagingSettingsView("org-1");
     expect(view.whatsappQualityGuardEnabled).toBe(true);
     await expect(svc.updateMessagingSetting("org-1", "owner", { whatsappQualityGuardEnabled: "yes" as any }))
-      .rejects.toThrow(/must be a boolean/);
+      .rejects.toMatchObject({ code: "messaging.whatsappQualityGuardEnabledMustBeABoolean" });
   });
 });
 
@@ -326,7 +326,7 @@ describe("MX9 per-category rates (MessagingService)", () => {
     });
     expect(tables.messagingSenderConfig.rows[0].whatsappMarketingCostPerMessageMinor).toBe(80);
     await expect(svc.updateSenderRates("org-1", "owner", { whatsappMarketingCostPerMessageMinor: -5 }))
-      .rejects.toThrow(/non-negative integer/);
+      .rejects.toMatchObject({ code: "messaging.keyMustBeANonNegative" });
     expect(senderConfigSafeView(null, { emailConfigured: false, smsConfigured: false }).rates.whatsappMarketingCostPerMessageMinor).toBeNull();
   });
   it("cost estimate: a MARKETING template uses the category rate; no rates at all → null estimate", async () => {

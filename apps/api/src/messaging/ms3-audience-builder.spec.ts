@@ -335,7 +335,7 @@ describe("MS3 saved audiences", () => {
     expect(list).toHaveLength(1);
     const preview = await svc.previewBroadcast("org-1", { channel: "sms", audienceType: "saved", audienceSavedId: created.id });
     expect(preview.total).toBe(2); // c1 + c3 have phones
-    await expect(svc.updateSavedAudience("org-1", "owner", "missing-id", { name: "x" })).rejects.toThrow(/not found/);
+    await expect(svc.updateSavedAudience("org-1", "owner", "missing-id", { name: "x" })).rejects.toMatchObject({ code: "messaging.savedAudienceNotFound" });
   });
 
   it("deleting a saved audience a DRAFT references: allowed; preview + send then fail honestly", async () => {
@@ -348,8 +348,8 @@ describe("MS3 saved audiences", () => {
     expect(bc.audienceSavedId).toBe(created.id);
     await svc.deleteSavedAudience("org-1", "owner", created.id);
     await expect(svc.previewBroadcast("org-1", { channel: "email", audienceType: "saved", audienceSavedId: created.id }))
-      .rejects.toThrow(/Saved audience no longer exists/);
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/Saved audience no longer exists/);
+      .rejects.toMatchObject({ code: "messaging.savedAudienceNoLongerExistsIt" });
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.savedAudienceNoLongerExistsIt" });
   });
 });
 
@@ -414,7 +414,7 @@ describe("MS3 csv audience", () => {
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "Too big", channel: "email", subject: "Hi", body: "Hello",
       audienceType: "csv", audienceCsv: big,
-    })).rejects.toThrow(/cap of 5000/);
+    })).rejects.toMatchObject({ code: "messaging.cSVAudienceHasAudienceCsvLengthAddressesOver" });
   });
 });
 

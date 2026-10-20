@@ -1,3 +1,4 @@
+import { catalogText, type ApiLocale } from "../i18n/catalog/send-locale";
 /**
  * MX9 — WhatsApp Rich v2 pure helpers (no I/O, no prisma).
  *
@@ -105,19 +106,20 @@ export function resolveWhatsAppRateMinor(
 export function qualityGuardDecision(
   guardEnabled: boolean,
   template: { name?: string | null; qualityRating?: string | null; status?: string | null } | null | undefined,
+  locale: ApiLocale = "bn",
 ): { blocked: boolean; reason: string | null } {
   if (!guardEnabled || !template) return { blocked: false, reason: null };
-  const name = template.name ?? "(নামহীন)";
+  const name = template.name ?? catalogText("messaging.unnamedTemplate", locale);
   if (String(template.status ?? "").toUpperCase() === "REJECTED") {
     return {
       blocked: true,
-      reason: `WhatsApp Quality Guard চালু আছে: "${name}" টেমপ্লেটটি Meta প্রত্যাখ্যান করেছে (status: REJECTED) — এই টেমপ্লেট দিয়ে নতুন Broadcast পাঠানো যাবে না। অন্য অনুমোদিত টেমপ্লেট বেছে নিন, অথবা সেটিংসে Quality Guard বন্ধ করুন।`,
+      reason: catalogText("messaging.qualityGuardRejected", locale, { name }),
     };
   }
   if (String(template.qualityRating ?? "").toUpperCase() === "RED") {
     return {
       blocked: true,
-      reason: `WhatsApp Quality Guard চালু আছে: "${name}" টেমপ্লেটের Meta Quality Rating RED (সর্বনিম্ন) — এই টেমপ্লেট দিয়ে নতুন Broadcast পাঠানো যাবে না। Meta-তে মান উন্নত হলে Sync করে আবার চেষ্টা করুন, অথবা সেটিংসে Quality Guard বন্ধ করুন।`,
+      reason: catalogText("messaging.qualityGuardRedRating", locale, { name }),
     };
   }
   return { blocked: false, reason: null };
@@ -135,12 +137,12 @@ export interface CarouselCardInput {
   buttons?: { type: "url" | "quick_reply"; text: string; url?: string }[];
 }
 
-function cardBodyExamples(bodyText: string, exampleValues: string[] | undefined, cardNo: number): string[][] | undefined {
+function cardBodyExamples(bodyText: string, exampleValues: string[] | undefined, cardNo: number, locale: ApiLocale = "bn"): string[][] | undefined {
   const idx = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
   const maxParam = idx.length ? Math.max(...idx) : 0;
   const values = Array.isArray(exampleValues) ? exampleValues.map((v) => String(v)) : [];
   if (maxParam > 0 && values.length !== maxParam) {
-    throw new CarouselValidationError(`কার্ড ${cardNo}: মূল লেখায় {{${maxParam}}} পর্যন্ত প্যারামিটার আছে — প্রতিটির একটি করে উদাহরণ মান (exampleValues) দিতে হবে, মোট ${maxParam}টি।`);
+    throw new CarouselValidationError(catalogText("messaging.carouselParamExamples", locale, { card: cardNo, max: maxParam }));
   }
   return maxParam > 0 ? [values] : undefined;
 }
@@ -156,28 +158,28 @@ function cardBodyExamples(bodyText: string, exampleValues: string[] | undefined,
  * its Resumable Upload example handle — without one the card
  * cannot be authored honestly, exactly like the MS6 image header.
  */
-export function buildCarouselComponent(cards: CarouselCardInput[]): Record<string, unknown> {
+export function buildCarouselComponent(cards: CarouselCardInput[], locale: ApiLocale = "bn"): Record<string, unknown> {
   if (!Array.isArray(cards) || cards.length < 2 || cards.length > 10) {
-    throw new CarouselValidationError("Carousel টেমপ্লেটে ২ থেকে ১০টি কার্ড থাকতে হবে।");
+    throw new CarouselValidationError(catalogText("messaging.carouselCardsCount", locale));
   }
   const builtCards = cards.map((card, i) => {
     const cardNo = i + 1;
     if (card?.headerFormat !== "image" && card?.headerFormat !== "video") {
-      throw new CarouselValidationError(`কার্ড ${cardNo}: হেডার শুধু image বা video হতে হবে।`);
+      throw new CarouselValidationError(catalogText("messaging.carouselHeaderFormat", locale, { card: cardNo }));
     }
     if (!card.headerHandle?.trim()) {
-      throw new CarouselValidationError(`কার্ড ${cardNo}: ছবি/ভিডিও হেডারের জন্য Meta-র Resumable Upload API থেকে পাওয়া উদাহরণ আপলোড হ্যান্ডল (headerHandle) আবশ্যক — হ্যান্ডল ছাড়া কার্ড তৈরি করা যাবে না।`);
+      throw new CarouselValidationError(catalogText("messaging.carouselHeaderHandle", locale, { card: cardNo }));
     }
     const bodyText = String(card.bodyText ?? "").trim();
-    if (!bodyText) throw new CarouselValidationError(`কার্ড ${cardNo}: মূল লেখা (bodyText) আবশ্যক।`);
+    if (!bodyText) throw new CarouselValidationError(catalogText("messaging.carouselBodyRequired", locale, { card: cardNo }));
     const buttons = Array.isArray(card.buttons) ? card.buttons : [];
-    if (buttons.length > 2) throw new CarouselValidationError(`কার্ড ${cardNo}: একটি কার্ডে সর্বোচ্চ ২টি বাটন থাকতে পারে।`);
+    if (buttons.length > 2) throw new CarouselValidationError(catalogText("messaging.carouselMaxButtons", locale, { card: cardNo }));
     for (const b of buttons) {
-      if (!b?.text || String(b.text).length > 25) throw new CarouselValidationError(`কার্ড ${cardNo}: বাটনের লেখা আবশ্যক এবং সর্বোচ্চ ২৫ অক্ষরের হতে হবে।`);
+      if (!b?.text || String(b.text).length > 25) throw new CarouselValidationError(catalogText("messaging.carouselButtonText", locale, { card: cardNo }));
       if (b.type === "url" && !/^https?:\/\//i.test(String(b.url ?? ""))) {
-        throw new CarouselValidationError(`কার্ড ${cardNo}: URL বাটনের জন্য http(s) দিয়ে শুরু হওয়া একটি বৈধ url আবশ্যক।`);
+        throw new CarouselValidationError(catalogText("messaging.carouselButtonUrl", locale, { card: cardNo }));
       }
-      if (b.type !== "url" && b.type !== "quick_reply") throw new CarouselValidationError(`কার্ড ${cardNo}: বাটনের ধরন url বা quick_reply হতে হবে।`);
+      if (b.type !== "url" && b.type !== "quick_reply") throw new CarouselValidationError(catalogText("messaging.carouselButtonType", locale, { card: cardNo }));
     }
     const components: Record<string, unknown>[] = [
       {
@@ -188,8 +190,8 @@ export function buildCarouselComponent(cards: CarouselCardInput[]): Record<strin
       {
         type: "BODY",
         text: bodyText,
-        ...(cardBodyExamples(bodyText, card.exampleValues, cardNo)
-          ? { example: { body_text: cardBodyExamples(bodyText, card.exampleValues, cardNo) } }
+        ...(cardBodyExamples(bodyText, card.exampleValues, cardNo, locale)
+          ? { example: { body_text: cardBodyExamples(bodyText, card.exampleValues, cardNo, locale) } }
           : {}),
       },
     ];

@@ -212,10 +212,10 @@ describe("MX5 v2 install through the port", () => {
 
   it("refuses honestly: unknown key → 404 (even v2-shaped), known v2 key without engine → engine error", async () => {
     const b = build();
-    await expect(b.svc.installJourneyPreset("org-1", "owner", "birthday")).rejects.toThrow("Journey preset not found");
+    await expect(b.svc.installJourneyPreset("org-1", "owner", "birthday")).rejects.toMatchObject({ code: "messaging.journeyPresetNotFound" });
     const noPort = build(false);
-    await expect(noPort.svc.installJourneyPreset("org-1", "owner", "welcome_series")).rejects.toThrow("Workflow engine is not available");
-    await expect(noPort.svc.installJourneyPreset("org-1", "owner", "nope")).rejects.toThrow("Journey preset not found");
+    await expect(noPort.svc.installJourneyPreset("org-1", "owner", "welcome_series")).rejects.toMatchObject({ code: "messaging.workflowEngineIsNotAvailableIn" });
+    await expect(noPort.svc.installJourneyPreset("org-1", "owner", "nope")).rejects.toMatchObject({ code: "messaging.journeyPresetNotFound" });
   });
 });
 

@@ -148,9 +148,9 @@ describe("MX4 journey CRUD through the port", () => {
   it("refuses honestly when no workflow engine is registered", async () => {
     const b = build(false);
     await expect(b.svc.createJourney("org-1", "owner", { name: "X", trigger: "order_created", steps: [{ type: "wait", minutes: 5 }] }))
-      .rejects.toThrow("Workflow engine is not available in this deployment");
-    await expect(b.svc.listJourneys("org-1")).rejects.toThrow("Workflow engine is not available in this deployment");
-    await expect(b.svc.getJourney("org-1", "wf-1")).rejects.toThrow("Workflow engine is not available in this deployment");
+      .rejects.toMatchObject({ code: "messaging.workflowEngineIsNotAvailableIn" });
+    await expect(b.svc.listJourneys("org-1")).rejects.toMatchObject({ code: "messaging.workflowEngineIsNotAvailableIn" });
+    await expect(b.svc.getJourney("org-1", "wf-1")).rejects.toMatchObject({ code: "messaging.workflowEngineIsNotAvailableIn" });
   });
 
   it("create: journey meta rides the port create, then enabled:false via port update; audited", async () => {
@@ -193,9 +193,9 @@ describe("MX4 journey CRUD through the port", () => {
   it("a non-journey workflow and an unknown id are both 404", async () => {
     const b = build();
     b.port.store.push({ id: "wf-plain", organizationId: "org-1", name: "Ops", trigger: "order_created", steps: [], enabled: true, journey: null });
-    await expect(b.svc.getJourney("org-1", "wf-plain")).rejects.toThrow("Journey not found");
-    await expect(b.svc.getJourney("org-1", "wf-nope")).rejects.toThrow("Journey not found");
-    await expect(b.svc.updateJourney("org-1", "owner", "wf-plain", { enabled: true })).rejects.toThrow("Journey not found");
+    await expect(b.svc.getJourney("org-1", "wf-plain")).rejects.toMatchObject({ code: "messaging.journeyNotFound" });
+    await expect(b.svc.getJourney("org-1", "wf-nope")).rejects.toMatchObject({ code: "messaging.journeyNotFound" });
+    await expect(b.svc.updateJourney("org-1", "owner", "wf-plain", { enabled: true })).rejects.toMatchObject({ code: "messaging.journeyNotFound" });
   });
 
   it("list returns only this org's journeys, each with a run summary", async () => {
@@ -221,11 +221,11 @@ describe("MX4 messaging-side step validation", () => {
   it("refuses a bad trigger, an empty name and empty steps", async () => {
     const b = build();
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "schedule", steps: [{ type: "wait", minutes: 5 }] }))
-      .rejects.toThrow(/cannot start a messaging journey/);
+      .rejects.toMatchObject({ code: "messaging.triggerTriggerCannotStartAMessaging" });
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_status_changed", steps: [{ type: "wait", minutes: 5 }] }))
-      .rejects.toThrow(/cannot start a messaging journey/);
+      .rejects.toMatchObject({ code: "messaging.triggerTriggerCannotStartAMessaging" });
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: [] }))
-      .rejects.toThrow(/at least one step/);
+      .rejects.toMatchObject({ code: "messaging.aJourneyNeedsAtLeastOne" });
   });
 
   it("refuses step types outside the journey allowlist", async () => {
@@ -247,7 +247,7 @@ describe("MX4 messaging-side step validation", () => {
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: branch([{ type: "branch", field: "x", op: "eq", value: 1, then: [{ type: "add_tag", tag: "t" }], else: [] }]) }))
       .rejects.toThrow(/Branch arms/);
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: [{ type: "branch", field: "total", op: "gte", value: 100, then: [], else: [] }] }))
-      .rejects.toThrow(/at least one sub-step/);
+      .rejects.toMatchObject({ code: "messaging.branchStepsNeedAtLeastOne" });
     // A legal arm passes validation (send + add_tag).
     const ok: any = await b.svc.createJourney("org-1", "owner", {
       name: "J", trigger: "order_created",
@@ -260,11 +260,11 @@ describe("MX4 messaging-side step validation", () => {
     const b = build();
     const { emailTpl } = await seedTemplates(b);
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: [{ type: "send_sms", templateId: emailTpl.id }] }))
-      .rejects.toThrow(/Template channel \(email\) does not match step \(sms\)/);
+      .rejects.toMatchObject({ code: "messaging.templateChannelChannelDoesNotMatch" });
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: [{ type: "send_email" }] }))
-      .rejects.toThrow(/need a templateId/);
+      .rejects.toMatchObject({ code: "messaging.typeStepsNeedATemplateId" });
     await expect(b.svc.createJourney("org-1", "owner", { name: "J", trigger: "order_created", steps: [{ type: "wait", minutes: 99999 }] }))
-      .rejects.toThrow(/minutes between 1 and 43200/);
+      .rejects.toMatchObject({ code: "messaging.waitStepsNeedMinutesBetween1" });
   });
 
   it("update re-validates steps with the same rules before touching the port", async () => {

@@ -130,7 +130,7 @@ describe("MX6 rule validation", () => {
     for (const kw of ["STOP", "stop all", "Unsubscribe", "start", "বন্ধ করুন", "স্টপ", "চালু করুন"]) {
       const err = await svc.createKeywordRule("org-1", "user-1", { name: "R", kind: "keyword", keyword: kw, tag: "x", applyTagTo: ["customer"] }).catch((e) => e);
       expect(statusOf(err)).toBe(400);
-      expect(String(err.message)).toContain("reserved");
+      expect(err.code).toBe("messaging.keywordIsAReservedKeywordSTOP2");
     }
   });
 
@@ -144,7 +144,7 @@ describe("MX6 rule validation", () => {
       ],
     }).catch((e) => e);
     expect(statusOf(err)).toBe(400);
-    expect(String(err.message)).toContain("reserved");
+    expect(err.code).toBe("messaging.kIsAReservedKeywordSTOP");
   });
 
   it("refuses duplicate claims: against another rule (case-insensitive) and inside another poll's options", async () => {
@@ -152,7 +152,7 @@ describe("MX6 rule validation", () => {
     await svc.createKeywordRule("org-1", "user-1", { name: "Offer", kind: "keyword", keyword: "OFFER", tag: "interested", applyTagTo: ["customer"] });
     const dup = await svc.createKeywordRule("org-1", "user-1", { name: "Offer2", kind: "keyword", keyword: "offer", autoReplyText: "hi" }).catch((e) => e);
     expect(statusOf(dup)).toBe(400);
-    expect(String(dup.message)).toContain("already claimed");
+    expect(dup.code).toBe("messaging.keywordNkIsAlreadyClaimedBy");
     const dupPoll = await svc.createKeywordRule("org-1", "user-1", {
       name: "P", kind: "poll",
       pollOptions: [
@@ -170,7 +170,7 @@ describe("MX6 rule validation", () => {
       ],
     }).catch((e) => e);
     expect(statusOf(selfDup)).toBe(400);
-    expect(String(selfDup.message)).toContain("more than one option");
+    expect(selfDup.code).toBe("messaging.pollKeywordKIsClaimedBy");
   });
 
   it("a DISABLED rule claims nothing — its keyword can be re-claimed", async () => {
@@ -185,18 +185,18 @@ describe("MX6 rule validation", () => {
     const { svc } = build();
     const smsErr = await svc.createKeywordRule("org-1", "user-1", { name: "S", kind: "keyword", channel: "sms", keyword: "OFFER", tag: "x", applyTagTo: ["customer"] }).catch((e) => e);
     expect(statusOf(smsErr)).toBe(400);
-    expect(String(smsErr.message)).toContain("WhatsApp-only");
-    expect(String(smsErr.message)).toContain("no SMS inbound path");
+    expect(smsErr.code).toBe("messaging.keywordCampaignsAreWhatsAppOnlyIn");
+    expect(smsErr.code).toBe("messaging.keywordCampaignsAreWhatsAppOnlyIn");
     const emailErr = await svc.createKeywordRule("org-1", "user-1", { name: "E", kind: "keyword", channel: "email", keyword: "OFFER", tag: "x", applyTagTo: ["customer"] }).catch((e) => e);
     expect(statusOf(emailErr)).toBe(400);
-    expect(String(emailErr.message)).toContain("not hooked");
+    expect(emailErr.code).toBe("messaging.keywordCampaignsAreWhatsAppOnlyIn");
   });
 
   it("refuses a keyword rule with no action, and polls carrying actions", async () => {
     const { svc } = build();
     const noAction = await svc.createKeywordRule("org-1", "user-1", { name: "N", kind: "keyword", keyword: "HELLO" }).catch((e) => e);
     expect(statusOf(noAction)).toBe(400);
-    expect(String(noAction.message)).toContain("at least one action");
+    expect(noAction.code).toBe("messaging.aKeywordRuleNeedsAtLeast");
     const pollTag = await svc.createKeywordRule("org-1", "user-1", {
       name: "P", kind: "poll", tag: "x", applyTagTo: ["customer"],
       pollOptions: [

@@ -203,7 +203,7 @@ describe("MX1 prepare — chunked recipient-table writes", () => {
     // MS5 vars were built per chunk and stored on the row.
     expect(rows[0].vars).toMatchObject({ name: "User1" });
     // A second prepare refuses — the recipient set is frozen.
-    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toThrow(/already sent \(or is sending\)/);
+    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
     expect(recipientRows(tables, bc.id)).toHaveLength(6);
   });
 
@@ -249,7 +249,7 @@ describe("MX1 prepare — chunked recipient-table writes", () => {
     const { svc, tables } = build({ capOverride: 2 });
     const bc = await draftEmailBroadcast(svc);
     await expect(svc.prepareBroadcast("org-1", bc.id, { recipientChunkSize: 2 }))
-      .rejects.toThrow("Audience has 6 recipients, over the per-send cap of 2. Narrow the audience (e.g. a lead stage) instead of silently truncating.");
+      .rejects.toMatchObject({ code: "messaging.audienceHasTotalRecipientsOverThe" });
     expect(recipientRows(tables, bc.id)).toHaveLength(0);
     expect(tables.broadcast.rows[0].status).toBe("draft");
     expect(tables.broadcast.rows[0].recipientSnapshot ?? null).toBeNull();
@@ -258,7 +258,7 @@ describe("MX1 prepare — chunked recipient-table writes", () => {
   it("kill-switch refusal happens before any recipient row is written", async () => {
     const { svc, tables } = build({ killSwitch: true });
     const bc = await draftEmailBroadcast(svc);
-    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toThrow(/paused platform-wide/);
+    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toMatchObject({ code: "messaging.broadcastsAreTemporarilyPausedPlatformWide" });
     expect(recipientRows(tables, bc.id)).toHaveLength(0);
     expect(tables.broadcastRecipient.createManyCalls).toEqual([]);
   });
@@ -272,7 +272,7 @@ describe("MX1 prepare — chunked recipient-table writes", () => {
       });
     }
     const bc = await draftEmailBroadcast(svc);
-    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toThrow(/Audience is empty after exclusions: 6 in the audience, 6 excluded/);
+    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toMatchObject({ code: "messaging.audienceEmptyAfterExclusions" });
     expect(recipientRows(tables, bc.id)).toHaveLength(0);
   });
 });
@@ -352,7 +352,7 @@ describe("MX1 process — chunked, counters derived from rows", () => {
     expect(cancelled.skippedCount).toBe(6);
     const rows = recipientRows(tables, bc.id);
     expect(rows.every((r: any) => r.status === "skipped" && r.error === "cancelled" && r.attempts === 0)).toBe(true);
-    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/cancelled/);
+    await expect(svc.sendBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasCancelledAndCan" });
   });
 
   it("a mid-process external cancel marks the remaining rows skipped and stays cancelled", async () => {
@@ -388,7 +388,7 @@ describe("MX1 process — chunked, counters derived from rows", () => {
     expect(rows.find((r: any) => r.recipientId === "c1").attempts).toBe(1);
     expect(tables.broadcast.rows[0]).toMatchObject({ sentCount: 6, failedCount: 0 });
     // A fully-sent broadcast still refuses retry (double-send guard).
-    await expect(svc.retryFailedBroadcast("org-1", "owner", bc.id)).rejects.toThrow(/no failed recipients/);
+    await expect(svc.retryFailedBroadcast("org-1", "owner", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastHasNoFailedRecipients" });
   });
 });
 
@@ -454,9 +454,9 @@ describe("MX1 dual path — legacy snapshot broadcasts are byte-for-byte", () =>
       recipientSnapshot: null,
     });
     await expect(svc.processBroadcast("org-1", "bc-stuck"))
-      .rejects.toThrow("This broadcast was already sent (or is sending). Create a new broadcast to send again.");
+      .rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
     await expect(svc.sendBroadcast("org-1", "owner", "bc-stuck"))
-      .rejects.toThrow(/already sent \(or is sending\)/);
+      .rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
     expect(calls).toHaveLength(0);
     expect(tables.messageDelivery.rows).toHaveLength(0);
   });

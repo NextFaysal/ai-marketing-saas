@@ -543,7 +543,7 @@ describe("MX11 holdout (same hash bucket as A/B)", () => {
     const partial = await svc.processBroadcast("org-1", bc.id, { chunkSize: 2 });
     expect(partial.stopped).toBe("paused");
     // Re-preparing is refused outright — the set is frozen.
-    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toThrow(/already sent \(or is sending\)/);
+    await expect(svc.prepareBroadcast("org-1", bc.id)).rejects.toMatchObject({ code: "messaging.thisBroadcastWasAlreadySentOr" });
     const resumed: any = await svc.resumeBroadcast("org-1", "u1", bc.id);
     expect(resumed.status).toBe("sent");
     const rowsAfter = tables.broadcastRecipient.rows.filter((r: any) => r.broadcastId === bc.id).map((r: any) => r.recipientId).sort();

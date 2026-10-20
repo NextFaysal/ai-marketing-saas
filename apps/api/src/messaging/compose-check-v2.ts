@@ -1,4 +1,5 @@
 import { composeCheck, SPAM_WORDS_BN, SPAM_WORDS_EN, ComposeWarning } from "./compose-check";
+import { catalogText, normalizeApiLocale, type ApiLocale } from "../i18n/catalog/send-locale";
 import { findLinks } from "./link-tracking";
 import { renderTemplate } from "./render";
 
@@ -36,6 +37,8 @@ export interface ComposeCheckV2Input {
    * rows carry only imageUrl), so the service passes [] and the
    * image check reports not_run with that reason. */
   imageAssets?: { url: string; sizeBytes?: number | null }[];
+  /** MB4: checklist language (default bn — the platform default). */
+  locale?: string;
 }
 
 export const IMAGE_SIZE_WARN_BYTES = 1024 * 1024;
@@ -61,7 +64,8 @@ export function composeCheckV2(input: ComposeCheckV2Input): {
   warnings: ComposeWarning[];
   spamWords: { en: string[]; bn: string[]; label: string };
 } {
-  const warnings = composeCheck({ channel: input.channel, subject: input.subject, body: input.body });
+  const locale: ApiLocale = normalizeApiLocale(input.locale);
+  const warnings = composeCheck({ channel: input.channel, subject: input.subject, body: input.body }, locale);
   const checks: ChecklistItem[] = [];
   const allText = `${input.subject ?? ""}\n${input.body}\n${input.htmlBody ?? ""}`;
   const links = [...new Set([...findLinks(input.body), ...findLinks(input.subject ?? ""), ...findLinks(input.htmlBody ?? "")])];
@@ -70,7 +74,7 @@ export function composeCheckV2(input: ComposeCheckV2Input): {
   // absolute http(s) URL. Verifies FORMAT only — it does not
   // fetch any link, so reachability is never claimed.
   if (!links.length) {
-    checks.push({ code: "URL_FORMAT", label: "Link format", status: "not_run", detail: "No http(s) links were found in the subject/body/HTML, so there was nothing to validate.", verified: "No links present — nothing was fetched or validated." });
+    checks.push({ code: "URL_FORMAT", label: catalogText("messaging.checkUrlLabel", locale), status: "not_run", detail: catalogText("messaging.checkUrlNone", locale), verified: catalogText("messaging.checkUrlNoneVerified", locale) });
   } else {
     const bad: string[] = [];
     for (const link of links) {
@@ -80,8 +84,8 @@ export function composeCheckV2(input: ComposeCheckV2Input): {
       } catch { bad.push(link); }
     }
     checks.push(bad.length
-      ? { code: "URL_FORMAT", label: "Link format", status: "fail", detail: `${bad.length} of ${links.length} link(s) are not valid absolute http(s) URLs: ${bad.join(", ")}`, verified: `Parsed ${links.length} link(s) with the URL parser (format only — no link was fetched, reachability is not claimed).` }
-      : { code: "URL_FORMAT", label: "Link format", status: "pass", detail: `All ${links.length} link(s) parse as valid absolute http(s) URLs.`, verified: `Parsed ${links.length} link(s) with the URL parser (format only — no link was fetched, reachability is not claimed).` });
+      ? { code: "URL_FORMAT", label: catalogText("messaging.checkUrlLabel", locale), status: "fail", detail: catalogText("messaging.checkUrlBad", locale, { bad: bad.length, total: links.length, list: bad.join(", ") }), verified: catalogText("messaging.checkUrlParsedVerified", locale, { total: links.length }) }
+      : { code: "URL_FORMAT", label: catalogText("messaging.checkUrlLabel", locale), status: "pass", detail: catalogText("messaging.checkUrlOk", locale, { total: links.length }), verified: catalogText("messaging.checkUrlParsedVerified", locale, { total: links.length }) });
   }
 
   // 2 — Links present in the tracked-link set: at send time the
@@ -89,19 +93,19 @@ export function composeCheckV2(input: ComposeCheckV2Input): {
   // the tracked set is exactly the found set; when tracking is
   // off the tracked set is empty and that is said out loud.
   if (!links.length) {
-    checks.push({ code: "LINKS_TRACKED", label: "Links tracked", status: "not_run", detail: "No links in the content, so there is no tracked-link set to compare against.", verified: "Compared the content's links against the set the send engine will wrap — no links existed." });
+    checks.push({ code: "LINKS_TRACKED", label: catalogText("messaging.checkLinksLabel", locale), status: "not_run", detail: catalogText("messaging.checkLinksNone", locale), verified: catalogText("messaging.checkLinksNoneVerified", locale) });
   } else if (!input.linkTrackingEnabled) {
-    checks.push({ code: "LINKS_TRACKED", label: "Links tracked", status: "warn", detail: `Link tracking is OFF in Messaging settings: all ${links.length} link(s) will be sent exactly as authored and clicks will not be recorded.`, verified: "Read the org's linkTrackingEnabled setting; the tracked set is empty while it is off." });
+    checks.push({ code: "LINKS_TRACKED", label: catalogText("messaging.checkLinksLabel", locale), status: "warn", detail: catalogText("messaging.checkLinksOff", locale, { total: links.length }), verified: catalogText("messaging.checkLinksOffVerified", locale) });
   } else {
-    checks.push({ code: "LINKS_TRACKED", label: "Links tracked", status: "pass", detail: `All ${links.length} link(s) are in the tracked set: at send time each will gain UTM parameters and the signed redirect wrap (clicks recorded).`, verified: "The send engine wraps every http(s) link in the body when tracking is on — the tracked set equals the found set by construction." });
+    checks.push({ code: "LINKS_TRACKED", label: catalogText("messaging.checkLinksLabel", locale), status: "pass", detail: catalogText("messaging.checkLinksOk", locale, { total: links.length }), verified: catalogText("messaging.checkLinksOkVerified", locale) });
   }
 
   // 3 — Missing/empty variables over a recipient sample.
   const varKeys = extractVariableKeys(allText);
   if (!varKeys.length) {
-    checks.push({ code: "VARIABLES_SAMPLE", label: "Variables filled (sample)", status: "pass", detail: "The content uses no {{variables}}, so no recipient can receive an empty substitution.", verified: "Scanned subject/body/HTML for {{variable}} placeholders — none found." });
+    checks.push({ code: "VARIABLES_SAMPLE", label: catalogText("messaging.checkVarsLabel", locale), status: "pass", detail: catalogText("messaging.checkVarsNone", locale), verified: catalogText("messaging.checkVarsNoneVerified", locale) });
   } else if (!input.sampleVars || !input.sampleVars.length) {
-    checks.push({ code: "VARIABLES_SAMPLE", label: "Variables filled (sample)", status: "not_run", detail: `The content uses ${varKeys.join(", ")}, but no recipient sample was available (the audience resolved to nobody, or no audience was supplied), so fill could not be checked.`, verified: "Not run — no real recipient sample existed to render against." });
+    checks.push({ code: "VARIABLES_SAMPLE", label: catalogText("messaging.checkVarsLabel", locale), status: "not_run", detail: catalogText("messaging.checkVarsNotRun", locale, { keys: varKeys.join(", ") }), verified: catalogText("messaging.checkVarsNotRunVerified", locale) });
   } else {
     const sampleVars: Record<string, unknown>[] = input.sampleVars;
     const emptyByKey = new Map<string, number>();
@@ -113,38 +117,38 @@ export function composeCheckV2(input: ComposeCheckV2Input): {
     }
     const empties = [...emptyByKey.entries()];
     checks.push(empties.length
-      ? { code: "VARIABLES_SAMPLE", label: "Variables filled (sample)", status: "warn", detail: `In a sample of ${sampleVars.length} real recipient(s), these variables render EMPTY: ${empties.map(([k, n]) => `{{${k}}} (${n}/${sampleVars.length})`).join(", ")}. Those recipients would receive the message with that part blank — nothing is invented to fill it.`, verified: `Rendered each variable against the real per-recipient vars of ${sampleVars.length} sampled recipient(s) (the same vars a send builds).` }
-      : { code: "VARIABLES_SAMPLE", label: "Variables filled (sample)", status: "pass", detail: `All variables (${varKeys.join(", ")}) render non-empty for every one of the ${sampleVars.length} sampled recipient(s). Recipients outside the sample were not checked.`, verified: `Rendered each variable against the real per-recipient vars of ${sampleVars.length} sampled recipient(s).` });
+      ? { code: "VARIABLES_SAMPLE", label: catalogText("messaging.checkVarsLabel", locale), status: "warn", detail: catalogText("messaging.checkVarsEmpty", locale, { sample: sampleVars.length, empties: empties.map(([k, n]) => `{{${k}}} (${n}/${sampleVars.length})`).join(", ") }), verified: catalogText("messaging.checkVarsEmptyVerified", locale, { sample: sampleVars.length }) }
+      : { code: "VARIABLES_SAMPLE", label: catalogText("messaging.checkVarsLabel", locale), status: "pass", detail: catalogText("messaging.checkVarsOk", locale, { keys: varKeys.join(", "), sample: sampleVars.length }), verified: catalogText("messaging.checkVarsOkVerified", locale, { sample: sampleVars.length }) });
   }
 
   // 4 — Image size, only where asset metadata exists.
   const images = extractImageUrls(input);
   if (!images.length) {
-    checks.push({ code: "IMAGE_SIZE", label: "Image size", status: "not_run", detail: "No image URLs were found in the HTML/body, so there was no image to size-check.", verified: "Scanned the HTML for <img> tags and the body for image-file links — none found." });
+    checks.push({ code: "IMAGE_SIZE", label: catalogText("messaging.checkImageLabel", locale), status: "not_run", detail: catalogText("messaging.checkImageNone", locale), verified: catalogText("messaging.checkImageNoneVerified", locale) });
   } else {
     const withMeta = (input.imageAssets ?? []).filter((a) => images.includes(a.url) && typeof a.sizeBytes === "number");
     if (!withMeta.length) {
-      checks.push({ code: "IMAGE_SIZE", label: "Image size", status: "not_run", detail: `${images.length} image(s) found, but no size metadata is stored for them anywhere in this system (product/catalog rows carry only the image URL, never byte size), so sizes could not be verified and no image was fetched to measure it.`, verified: "Not run — no asset metadata exists for these images; fetching them to measure would be a network claim this check does not make." });
+      checks.push({ code: "IMAGE_SIZE", label: catalogText("messaging.checkImageLabel", locale), status: "not_run", detail: catalogText("messaging.checkImageNoMeta", locale, { images: images.length }), verified: catalogText("messaging.checkImageNoMetaVerified", locale) });
     } else {
       const big = withMeta.filter((a) => (a.sizeBytes ?? 0) > IMAGE_SIZE_WARN_BYTES);
       checks.push(big.length
-        ? { code: "IMAGE_SIZE", label: "Image size", status: "warn", detail: `${big.length} image(s) exceed 1 MB by their stored metadata: ${big.map((a) => `${a.url} (${a.sizeBytes} bytes)`).join(", ")}. Large images slow email loading and can trigger clipping.`, verified: `Compared stored size metadata for ${withMeta.length} of ${images.length} image(s) against the 1 MB threshold.` }
-        : { code: "IMAGE_SIZE", label: "Image size", status: "pass", detail: `All ${withMeta.length} image(s) with stored size metadata are at or under 1 MB. ${images.length - withMeta.length > 0 ? `${images.length - withMeta.length} image(s) had no metadata and were not checked.` : ""}`.trim(), verified: `Compared stored size metadata for ${withMeta.length} image(s) against the 1 MB threshold.` });
+        ? { code: "IMAGE_SIZE", label: catalogText("messaging.checkImageLabel", locale), status: "warn", detail: catalogText("messaging.checkImageBig", locale, { big: big.length, list: big.map((a) => `${a.url} (${a.sizeBytes} bytes)`).join(", ") }), verified: catalogText("messaging.checkImageBigVerified", locale, { withMeta: withMeta.length, images: images.length }) }
+        : { code: "IMAGE_SIZE", label: catalogText("messaging.checkImageLabel", locale), status: "pass", detail: catalogText("messaging.checkImageOk", locale, { withMeta: withMeta.length, unchecked: images.length - withMeta.length > 0 ? catalogText("messaging.checkImageUncheckedSuffix", locale, { count: images.length - withMeta.length }) : "" }).trim(), verified: catalogText("messaging.checkImageOkVerified", locale, { withMeta: withMeta.length }) });
     }
   }
 
   // 5 — Spam-word heuristic with the org-visible word list.
   const spamWarning = warnings.find((w) => w.code === "SPAM_WORD");
   checks.push(spamWarning
-    ? { code: "SPAM_HEURISTIC", label: "Spam words (heuristic)", status: "warn", detail: spamWarning.message, verified: "HEURISTIC ONLY: matched the content against the fixed word list below (the MS5 list). It predicts nothing about any provider's filter — no deliverability guarantee is made." }
-    : { code: "SPAM_HEURISTIC", label: "Spam words (heuristic)", status: "pass", detail: "No word from the spam-word list below appears in the subject/body.", verified: "HEURISTIC ONLY: matched the content against the fixed word list below (the MS5 list). A pass means only that none of these listed words matched — it is not a deliverability guarantee." });
+    ? { code: "SPAM_HEURISTIC", label: catalogText("messaging.checkSpamLabel", locale), status: "warn", detail: spamWarning.message, verified: catalogText("messaging.checkSpamWarnVerified", locale) }
+    : { code: "SPAM_HEURISTIC", label: catalogText("messaging.checkSpamLabel", locale), status: "pass", detail: catalogText("messaging.checkSpamPass", locale), verified: catalogText("messaging.checkSpamPassVerified", locale) });
 
   return {
     checks,
     warnings,
     spamWords: {
       en: [...SPAM_WORDS_EN], bn: [...SPAM_WORDS_BN],
-      label: "Heuristic word list (org-visible) — matching these words is a risk hint, not a provider verdict.",
+      label: catalogText("messaging.spamListLabel", locale),
     },
   };
 }

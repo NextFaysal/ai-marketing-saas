@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
+import { notFound } from "../i18n";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { ShopAccountService } from "../storefront/shop-account.service";
@@ -13,9 +14,14 @@ import {
   formatTakaMinor,
   mergeConfig,
   renderTemplate,
-  templateFor,
+  templateForLocale,
   validateConfig,
 } from "./order-notifications";
+import {
+  catalogText,
+  resolveCustomerLocale,
+  type ApiLocale,
+} from "../i18n/catalog/send-locale";
 
 /**
  * ON5 — Transactional Notification Engine (the single entry is
@@ -48,8 +54,9 @@ import {
  *
  * Email subject: EmailProvider requires a subject and the ON5
  * config shape carries only a body template per channel, so the
- * subject is the fixed `অর্ডার {orderNumber} — {shopName}` line
- * and the rendered template is the body (documented choice).
+ * subject is the catalog `orderNotification.emailSubject` line
+ * rendered in the recipient locale (MB4/ML11) and the rendered
+ * template is the body (documented choice).
  *
  * Channel loop: channels are tried in the event's configured
  * order; the loop STOPS after the first "sent" — channels after
@@ -161,7 +168,7 @@ export class OrderNotificationService {
 
   async listLogs(orgId: string, orderId: string) {
     const order = await this.t("order").findFirst({ where: { id: orderId, organizationId: orgId } }).catch(() => null);
-    if (!order) throw new NotFoundException("Order not found in this organization");
+    if (!order) throw notFound("orderNotification.orderNotFound");
     const rows = await this.t("orderNotificationLog").findMany({
       where: { organizationId: orgId, orderId },
       orderBy: { createdAt: "desc" },
@@ -348,6 +355,17 @@ export class OrderNotificationService {
       vars.rescheduleDate = data?.rescheduleDate ?? "";
       const phone = customer?.phone ? String(customer.phone) : shipment?.recipientPhone ? String(shipment.recipientPhone) : null;
       const email = customer?.email ? String(customer.email) : null;
+      // ML11: the platform default renders at SEND time in the
+      // CUSTOMER recipient's locale — CustomerMemory.languagePref
+      // (mixed → bn) → org dashboardLocale → bn (D-MB4-7).
+      // Merchant overrides and automation-rule custom messages
+      // are merchant-authored and never translated (D-MB4-5).
+      const recipientLocale: ApiLocale = isAutomationRule
+        ? "bn"
+        : await resolveCustomerLocale(this.prisma as any, orgId, {
+            customerId: order.customerId ?? customer?.id ?? null,
+            conversationId: order.conversationId ?? null,
+          });
       // f. channel loop, in configured order
       const statuses: string[] = [];
       let rowsWritten = 0;
@@ -364,7 +382,7 @@ export class OrderNotificationService {
         }
         const text = isAutomationRule
           ? String(data?.customMessage ?? "")
-          : renderTemplate(templateFor(config, ev, channel), vars);
+          : renderTemplate(templateForLocale(config, ev, channel, recipientLocale), vars);
         if (channel === "sms") {
           if (!this.shopAccount) {
             await this.writeLog(orgId, orderId, event, "sms", "skipped_no_channel"); rowsWritten++; statuses.push("skipped_no_channel"); continue;
@@ -399,7 +417,7 @@ export class OrderNotificationService {
             await this.writeLog(orgId, orderId, event, "email", "skipped_no_channel"); rowsWritten++; statuses.push("skipped_no_channel"); continue;
           }
           try {
-            const subject = `অর্ডার ${vars.orderNumber} — ${vars.shopName}`;
+            const subject = catalogText("orderNotification.emailSubject", recipientLocale, vars);
             // AB8 (AX24): a white-label org's order email carries
             // the org's own brand as the sender display name.
             // Failure-isolated: any load error ⇒ no fromName,

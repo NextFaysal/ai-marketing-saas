@@ -203,16 +203,16 @@ describe("MX12 create validation", () => {
     const { svc } = build();
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "push", body: "b", audienceType: "push_subscribers",
-    } as any)).rejects.toThrow(/need a title/);
+    } as any)).rejects.toMatchObject({ code: "messaging.pushBroadcastsNeedATitleSubject" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "push", subject: "t", body: "b", audienceType: "push_subscribers", pushUrl: "https://evil.example.com/x",
     } as any)).rejects.toThrow(/shop-relative/);
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "push", subject: "t", body: "b", audienceType: "leads_stage", audienceStage: "new",
-    } as any)).rejects.toThrow(/not available for the push channel/);
+    } as any)).rejects.toMatchObject({ code: "messaging.audienceTypeAudienceTypeIsNotAvailableFor" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "email", subject: "t", body: "b", audienceType: "customers", pushUrl: "/sale",
-    } as any)).rejects.toThrow(/only allowed for push broadcasts/);
+    } as any)).rejects.toMatchObject({ code: "messaging.pushUrlIsOnlyAllowedForPush" });
   });
 
   it("refuses an enabled cascade on a push broadcast (cascade channels stay email/sms/whatsapp)", async () => {
@@ -286,7 +286,7 @@ describe("MX12 preference stages apply to push (address = endpoint)", () => {
     expect(row.channel).toBe("push");
     expect(row.address).toBe(EP("9"));
     await expect(svc.addPreference("org-1", "owner", { channel: "push", address: "not-a-url", status: "opted_out" }))
-      .rejects.toThrow(/Invalid push subscription endpoint/);
+      .rejects.toMatchObject({ code: "messaging.invalidPushSubscriptionEndpointRaw" });
   });
 });
 
@@ -389,6 +389,6 @@ describe("MX12 report funnel — honest null stages for push", () => {
     const { svc } = build();
     const bc: any = await draftPush(svc);
     await expect(svc.testSendBroadcast("org-1", "owner", bc.id, "01712345671"))
-      .rejects.toThrow(/cannot be test-sent to a typed address/);
+      .rejects.toMatchObject({ code: "messaging.pushBroadcastsCannotBeTestSent" });
   });
 });

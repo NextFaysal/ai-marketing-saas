@@ -213,18 +213,18 @@ describe("MX13 create validation", () => {
   it("refuses: a subject, a template, an http button URL, >4 buttons, an over-long body, a csv audience, buttons on email, an enabled cascade", async () => {
     const { svc } = build();
     const base = { name: "x", channel: "telegram", body: "b", audienceType: "telegram_subscribers" } as any;
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: "hi" })).rejects.toThrow(/no subject/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, templateId: "tpl-1" })).rejects.toThrow(/do not use message templates/);
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, subject: "hi" })).rejects.toMatchObject({ code: "messaging.telegramBroadcastsHaveNoSubjectThe" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, templateId: "tpl-1" })).rejects.toMatchObject({ code: "messaging.telegramBroadcastsDoNotUseMessage" });
     await expect(svc.createBroadcast("org-1", "owner", { ...base, telegramButtons: [{ label: "x", url: "http://shop.example.com" }] })).rejects.toThrow(/https URL/);
     await expect(svc.createBroadcast("org-1", "owner", {
       ...base, telegramButtons: [1, 2, 3, 4, 5].map((n) => ({ label: `b${n}`, url: "https://shop.example.com" })),
-    })).rejects.toThrow(/at most 4/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, body: "x".repeat(4097) })).rejects.toThrow(/4096/);
-    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "csv", audienceCsv: "a@b.com" })).rejects.toThrow(/not available for the telegram channel/);
+    })).rejects.toMatchObject({ code: "messaging.telegramButtonsMayCarryAtMost4" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, body: "x".repeat(4097) })).rejects.toMatchObject({ code: "messaging.telegramMessageTextMustBeAt" });
+    await expect(svc.createBroadcast("org-1", "owner", { ...base, audienceType: "csv", audienceCsv: "a@b.com" })).rejects.toMatchObject({ code: "messaging.audienceTypeAudienceTypeIsNotAvailableFor3" });
     await expect(svc.createBroadcast("org-1", "owner", {
       name: "x", channel: "email", subject: "t", body: "b", audienceType: "customers",
       telegramButtons: [{ label: "x", url: "https://shop.example.com" }],
-    } as any)).rejects.toThrow(/only allowed for telegram broadcasts/);
+    } as any)).rejects.toMatchObject({ code: "messaging.telegramButtonsIsOnlyAllowedForTelegram" });
     await expect(svc.createBroadcast("org-1", "owner", {
       ...base, cascade: { enabled: true, channels: ["telegram", "sms"], smsBody: "fallback" },
     })).rejects.toThrow(/cascade/);
@@ -272,9 +272,9 @@ describe("MX13 resolution — from telegram conversations only", () => {
     const none: any = await svc.resolveBroadcastRecipients("org-1", { channel: "telegram", audienceType: "leads_stage", audienceStage: "new" });
     expect(none.recipients).toHaveLength(0);
     await expect(svc.resolveBroadcastRecipients("org-1", { channel: "telegram", audienceType: "leads_stage" }))
-      .rejects.toThrow(/audienceStage is required/);
+      .rejects.toMatchObject({ code: "messaging.audienceStageIsRequiredForTheLeads" });
     await expect(svc.resolveBroadcastRecipients("org-1", { channel: "telegram", audienceType: "custom", audienceDefinition: { entity: "customers", match: "all", conditions: [] } }))
-      .rejects.toThrow(/cannot resolve telegram chats/);
+      .rejects.toMatchObject({ code: "messaging.customSavedAndCSVAudiencesAre" });
   });
 
   it("preview: counts come from conversations, the sample masks chat ids, and NO cost figure is produced (no org rate exists for telegram)", async () => {
@@ -333,7 +333,7 @@ describe("MX13 STOP/START — inbound keyword → preference store → resolver 
     const row: any = await svc.addPreference("org-1", "owner", { channel: "telegram", address: "123456", status: "opted_out" });
     expect(row.address).toBe("123456");
     await expect(svc.addPreference("org-1", "owner", { channel: "telegram", address: "not-a-chat", status: "opted_out" }))
-      .rejects.toThrow(/Invalid Telegram chat id/);
+      .rejects.toMatchObject({ code: "messaging.invalidTelegramChatIdRaw" });
   });
 });
 

@@ -1,5 +1,6 @@
 import { smsSegments } from "./sms-segments";
 import { findLinks } from "./link-tracking";
+import { catalogText, type ApiLocale } from "../i18n/catalog/send-locale";
 
 /**
  * MS5 — compose check: deterministic, advisory-only warnings for
@@ -23,7 +24,7 @@ export const COMPOSE_MAX_SMS_PARTS = 3;
 
 export interface ComposeWarning { code: string; message: string }
 
-export function composeCheck(input: { channel: string; subject?: string; body: string }): ComposeWarning[] {
+export function composeCheck(input: { channel: string; subject?: string; body: string }, locale: ApiLocale = "bn"): ComposeWarning[] {
   const warnings: ComposeWarning[] = [];
   const body = String(input.body ?? "");
   const subject = String(input.subject ?? "");
@@ -36,7 +37,7 @@ export function composeCheck(input: { channel: string; subject?: string; body: s
   if (matched.length) {
     warnings.push({
       code: "SPAM_WORD",
-      message: `স্প্যাম-ঝুঁকির শব্দ পাওয়া গেছে: ${matched.join(", ")} — এসব শব্দ ডেলিভারি কমিয়ে দিতে পারে।`,
+      message: catalogText("messaging.composeSpamWords", locale, { words: matched.join(", ") }),
     });
   }
 
@@ -47,7 +48,7 @@ export function composeCheck(input: { channel: string; subject?: string; body: s
     if (upper / letters.length > 0.6) {
       warnings.push({
         code: "CAPS_SUBJECT",
-        message: "বিষয়ের বেশিরভাগ অক্ষর বড় হাতের (ALL CAPS) — স্প্যাম ফিল্টরে আটকে যাওয়ার ঝুঁকি থাকে।",
+        message: catalogText("messaging.composeCapsSubject", locale),
       });
     }
   }
@@ -56,14 +57,14 @@ export function composeCheck(input: { channel: string; subject?: string; body: s
   if (linkCount > COMPOSE_MAX_LINKS) {
     warnings.push({
       code: "MANY_LINKS",
-      message: `বার্তায় ${linkCount}টি লিংক আছে — ${COMPOSE_MAX_LINKS}টির বেশি লিংক স্প্যাম-ঝুঁকি বাড়ায়।`,
+      message: catalogText("messaging.composeManyLinks", locale, { count: linkCount, max: COMPOSE_MAX_LINKS }),
     });
   }
 
   if (input.channel === "email" && !subject.trim()) {
     warnings.push({
       code: "MISSING_SUBJECT",
-      message: "ইমেইলের বিষয় (subject) খালি — একটি বিষয় যোগ করুন।",
+      message: catalogText("messaging.composeMissingSubject", locale),
     });
   }
 
@@ -72,7 +73,7 @@ export function composeCheck(input: { channel: string; subject?: string; body: s
     if (seg.parts > COMPOSE_MAX_SMS_PARTS) {
       warnings.push({
         code: "SMS_PARTS",
-        message: `এই SMS-টি ${seg.parts} পার্টে পাঠানো হবে — ${COMPOSE_MAX_SMS_PARTS} পার্টের বেশি হলে খরচ বেড়ে যায়।`,
+        message: catalogText("messaging.composeSmsParts", locale, { parts: seg.parts, max: COMPOSE_MAX_SMS_PARTS }),
       });
     }
   }
@@ -80,7 +81,7 @@ export function composeCheck(input: { channel: string; subject?: string; body: s
   if (body.length > COMPOSE_BODY_MAX) {
     warnings.push({
       code: "BODY_TOO_LONG",
-      message: `বার্তাটি ${body.length} অক্ষরের — ${COMPOSE_BODY_MAX} অক্ষরের বেশি লম্বা বার্তা অনেক প্রোভাইডারে কেটে যেতে পারে।`,
+      message: catalogText("messaging.composeBodyTooLong", locale, { length: body.length, max: COMPOSE_BODY_MAX }),
     });
   }
 

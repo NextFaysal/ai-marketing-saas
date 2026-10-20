@@ -282,8 +282,8 @@ describe("MS8 journey presets through the real WorkflowsService", () => {
 
   it("install refuses honestly when no workflow engine is registered", async () => {
     const b = build();
-    await expect(b.messaging.installJourneyPreset("org-1", "owner", "cart_recovery")).rejects.toThrow("Workflow engine is not available");
-    await expect(b.messaging.installJourneyPreset("org-1", "owner", "nope")).rejects.toThrow("Journey preset not found");
+    await expect(b.messaging.installJourneyPreset("org-1", "owner", "cart_recovery")).rejects.toMatchObject({ code: "messaging.workflowEngineIsNotAvailableIn" });
+    await expect(b.messaging.installJourneyPreset("org-1", "owner", "nope")).rejects.toMatchObject({ code: "messaging.journeyPresetNotFound" });
   });
 
   it("install creates a real template + a validator-checked workflow, then disables it; twice = two sets, no dedupe", async () => {

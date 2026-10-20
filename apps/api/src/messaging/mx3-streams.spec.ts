@@ -367,12 +367,12 @@ describe("MX3 settings validation + round-trip", () => {
     const { svc } = build({ setting: {} });
     await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursStart: "9pm" })).rejects.toThrow(/HH:mm/);
     await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursEnd: "24:00" })).rejects.toThrow(/HH:mm/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursEnabled: true, quietHoursStart: "22:00" })).rejects.toThrow(/both required/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursEnabled: true, quietHoursStart: "22:00", quietHoursEnd: "22:00" })).rejects.toThrow(/must differ/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxBroadcastsPerSweep: 0 })).rejects.toThrow(/between 1 and 50/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxBroadcastsPerSweep: 51 })).rejects.toThrow(/between 1 and 50/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxEntriesPerSweep: 5001 })).rejects.toThrow(/between 1 and 5000/);
-    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxEntriesPerSweep: 2.5 })).rejects.toThrow(/between 1 and 5000/);
+    await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursEnabled: true, quietHoursStart: "22:00" })).rejects.toMatchObject({ code: "messaging.quietHoursStartAndQuietHoursEndAreBothRequired" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { quietHoursEnabled: true, quietHoursStart: "22:00", quietHoursEnd: "22:00" })).rejects.toMatchObject({ code: "messaging.quietHoursStartAndQuietHoursEndMustDifferAn" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxBroadcastsPerSweep: 0 })).rejects.toMatchObject({ code: "messaging.marketingMaxBroadcastsPerSweepMustBeNullPlatformDefa" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxBroadcastsPerSweep: 51 })).rejects.toMatchObject({ code: "messaging.marketingMaxBroadcastsPerSweepMustBeNullPlatformDefa" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxEntriesPerSweep: 5001 })).rejects.toMatchObject({ code: "messaging.marketingMaxEntriesPerSweepMustBeNullPlatformDefault" });
+    await expect(svc.updateMessagingSetting("org-1", "owner", { marketingMaxEntriesPerSweep: 2.5 })).rejects.toMatchObject({ code: "messaging.marketingMaxEntriesPerSweepMustBeNullPlatformDefault" });
   });
 
   it("round-trips caps + quiet hours through PATCH → GET; null clears a cap back to the default", async () => {

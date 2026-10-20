@@ -60,26 +60,34 @@ export interface EventConfig {
 }
 export type NotificationConfig = Record<NotificationEvent, EventConfig>;
 
-/** Built-in Bengali default templates per event (used when the
- * org has no override for that event+channel). */
-export const DEFAULT_TEMPLATES: Record<NotificationEvent, string> = {
-  order_placed:
-    "আসসালামু আলাইকুম {{customerName}}, {{shopName}} থেকে আপনার অর্ডার {{orderNumber}} গ্রহণ করা হয়েছে। মোট: {{total}}। ধন্যবাদ!",
-  order_packed:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} প্যাক করা হয়েছে — শীঘ্রই কুরিয়ারে দেওয়া হবে। — {{shopName}}",
-  handed_to_courier:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} {{courierName}} কুরিয়ারে দেওয়া হয়েছে। ট্র্যাকিং কোড: {{trackingCode}}। ট্র্যাক করুন: {{trackingUrl}} — {{shopName}}",
-  out_for_delivery:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} আজ ডেলিভারির জন্য বের হয়েছে ({{courierName}})। বকেয়া: {{due}}। — {{shopName}}",
-  delivered:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}} ডেলিভারি সম্পন্ন হয়েছে। {{shopName}} থেকে কেনাকাটা করার জন্য ধন্যবাদ!",
-  delivery_failed:
-    "আসসালামু আলাইকুম {{customerName}}, দুঃখিত — আপনার অর্ডার {{orderNumber}} ডেলিভারি করা যায়নি। বিস্তারিত জানতে {{shopName}}-এ যোগাযোগ করুন।",
-  parcel_stuck:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}}-এর পার্সেলটি ({{courierName}}, ট্র্যাকিং: {{trackingCode}}) আটকে আছে বলে মনে হচ্ছে — আমরা খোঁজ নিচ্ছি। — {{shopName}}",
-  delivery_rescheduled:
-    "আসসালামু আলাইকুম {{customerName}}, আপনার অর্ডার {{orderNumber}}-এর ডেলিভারি পুনঃনির্ধারণ করা হয়েছে। ট্র্যাক করুন: {{trackingUrl}} — {{shopName}}",
-};
+/**
+ * MB4 (ML11): the platform default templates live in the API
+ * catalog (i18n/catalog/notifications.ts, bn+en) and render at
+ * SEND time in the recipient's locale. DEFAULT_TEMPLATES keeps
+ * its historical shape — the bn rendering of the catalog
+ * entries — for existing callers/specs; DEFAULT_TEMPLATES_EN is
+ * the en rendering. Merchant overrides stored on
+ * OrderNotificationSetting are merchant-authored and are NEVER
+ * translated (D-MB4-5): an override wins in every locale.
+ */
+import { NOTIFICATIONS_CATALOG } from "../i18n/catalog/notifications";
+import type { ApiLocale } from "../i18n/catalog/send-locale";
+
+const defaultKey = (event: NotificationEvent) =>
+  `orderNotification.default.${event}` as keyof typeof NOTIFICATIONS_CATALOG;
+
+export const DEFAULT_TEMPLATES: Record<NotificationEvent, string> = Object.fromEntries(
+  NOTIFICATION_EVENTS.map((e) => [e, NOTIFICATIONS_CATALOG[defaultKey(e)].bn]),
+) as Record<NotificationEvent, string>;
+
+export const DEFAULT_TEMPLATES_EN: Record<NotificationEvent, string> = Object.fromEntries(
+  NOTIFICATION_EVENTS.map((e) => [e, NOTIFICATIONS_CATALOG[defaultKey(e)].en]),
+) as Record<NotificationEvent, string>;
+
+/** The platform default template for an event in a locale. */
+export function defaultTemplateFor(event: NotificationEvent, locale: ApiLocale): string {
+  return NOTIFICATIONS_CATALOG[defaultKey(event)][locale] ?? DEFAULT_TEMPLATES[event];
+}
 
 function defaultEventConfig(event: NotificationEvent): EventConfig {
   return {
@@ -130,45 +138,51 @@ export function renderTemplate(text: string, vars: Record<string, unknown>): str
   });
 }
 
-/** Returns a human (Bengali) error string, or null when valid.
+/** Returns a human error string, or null when valid. The text
+ * is the bn rendering of the notifications catalog entries
+ * (CD-1: service-layer messages render in bn; the request
+ * locale is applied by the global filter for coded errors).
  * A partial config is valid — missing events/channels/templates
  * fall back to defaults at merge time. */
 export function validateConfig(config: unknown): string | null {
+  const t = (key: keyof typeof NOTIFICATIONS_CATALOG, params: Record<string, unknown> = {}) =>
+    NOTIFICATIONS_CATALOG[key].bn.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_m, n: string) =>
+      params[n] === undefined || params[n] === null ? "" : String(params[n]));
   if (config === null || config === undefined) return null;
-  if (typeof config !== "object" || Array.isArray(config)) return "notification config একটি object হতে হবে";
+  if (typeof config !== "object" || Array.isArray(config)) return t("orderNotification.config.notObject");
   for (const [eventKey, raw] of Object.entries(config as Record<string, unknown>)) {
     if (!(NOTIFICATION_EVENTS as readonly string[]).includes(eventKey)) {
-      return `অজানা notification event: "${eventKey}" — সঠিক event: ${NOTIFICATION_EVENTS.join(", ")}`;
+      return t("orderNotification.config.unknownEvent", { eventKey, events: NOTIFICATION_EVENTS.join(", ") });
     }
     if (raw === null || raw === undefined) continue;
-    if (typeof raw !== "object" || Array.isArray(raw)) return `"${eventKey}" event-এর config একটি object হতে হবে`;
+    if (typeof raw !== "object" || Array.isArray(raw)) return t("orderNotification.config.eventNotObject", { eventKey });
     const ev = raw as Record<string, unknown>;
     if (ev.enabled !== undefined && typeof ev.enabled !== "boolean") {
-      return `"${eventKey}" event-এর enabled boolean হতে হবে`;
+      return t("orderNotification.config.enabledNotBoolean", { eventKey });
     }
     if (ev.channels !== undefined) {
-      if (!Array.isArray(ev.channels)) return `"${eventKey}" event-এর channels একটি array হতে হবে`;
+      if (!Array.isArray(ev.channels)) return t("orderNotification.config.channelsNotArray", { eventKey });
       for (const ch of ev.channels) {
         if (!(NOTIFICATION_CHANNELS as readonly string[]).includes(String(ch))) {
-          return `"${eventKey}" event-এ অজানা channel: "${String(ch)}" — সঠিক channel: ${NOTIFICATION_CHANNELS.join(", ")}`;
+          return t("orderNotification.config.unknownChannel", { eventKey, channel: String(ch), channels: NOTIFICATION_CHANNELS.join(", ") });
         }
       }
     }
     if (ev.templates !== undefined) {
       if (ev.templates === null || typeof ev.templates !== "object" || Array.isArray(ev.templates)) {
-        return `"${eventKey}" event-এর templates একটি object হতে হবে`;
+        return t("orderNotification.config.templatesNotObject", { eventKey });
       }
       for (const [channel, tpl] of Object.entries(ev.templates as Record<string, unknown>)) {
         if (!(NOTIFICATION_CHANNELS as readonly string[]).includes(channel)) {
-          return `"${eventKey}" event-এর templates-এ অজানা channel: "${channel}"`;
+          return t("orderNotification.config.templatesUnknownChannel", { eventKey, channel });
         }
         if (tpl !== null && tpl !== undefined && typeof tpl !== "string") {
-          return `"${eventKey}" event-এর ${channel} template string অথবা null হতে হবে`;
+          return t("orderNotification.config.templateNotString", { eventKey, channel });
         }
         if (typeof tpl === "string") {
           for (const v of extractVariables(tpl)) {
             if (!(TEMPLATE_VARIABLES as readonly string[]).includes(v)) {
-              return `"${eventKey}" event-এর ${channel} template-এ অজানা variable: "{{${v}}}" — সঠিক variable: ${TEMPLATE_VARIABLES.join(", ")}`;
+              return t("orderNotification.config.unknownVariable", { eventKey, channel, variable: v, variables: TEMPLATE_VARIABLES.join(", ") });
             }
           }
         }
@@ -210,4 +224,20 @@ export function templateFor(config: NotificationConfig, event: NotificationEvent
   const override = config?.[event]?.templates?.[channel];
   if (typeof override === "string" && override.trim()) return override;
   return DEFAULT_TEMPLATES[event];
+}
+
+/**
+ * ML11 send-time variant: a merchant override (merchant-authored,
+ * D-MB4-5) is used verbatim in EVERY locale; only the platform
+ * default follows the recipient locale.
+ */
+export function templateForLocale(
+  config: NotificationConfig,
+  event: NotificationEvent,
+  channel: NotificationChannel,
+  locale: ApiLocale,
+): string {
+  const override = config?.[event]?.templates?.[channel];
+  if (typeof override === "string" && override.trim()) return override;
+  return defaultTemplateFor(event, locale);
 }
