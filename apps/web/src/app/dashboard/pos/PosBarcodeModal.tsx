@@ -172,7 +172,7 @@ export function PosBarcodeModal({
                 value={barcodeLabelData.category || ""}
                 onChange={(e) => setBarcodeLabelData((d) => ({ ...d, category: e.target.value }))}
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                placeholder="যেমন: জেন্টসওয়্যার"
+                placeholder={dict.pos.categoryPlaceholder}
               />
             </div>
 
@@ -188,7 +188,7 @@ export function PosBarcodeModal({
                   className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-center"
                 />
                 <span className="text-xs text-slate-500">
-                  {barcodeLayout === "a4_sheet_24" ? "(A4 শীটের ২৪টি গ্রিডে সাজানো হবে)" : "টি স্টিকার"}
+                  {barcodeLayout === "a4_sheet_24" ? dict.pos.a4GridNote : dict.pos.stickerSuffix}
                 </span>
               </div>
             </div>
