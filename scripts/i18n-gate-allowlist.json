@@ -3486,15 +3486,6 @@
       "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
     },
     {
-      "path": "/apps/web/src/app/dashboard/campaign-builder/ExperimentsDrawer.tsx",
-      "caps": {
-        "bengali": 0,
-        "english": 2,
-        "localeCalls": 0
-      },
-      "reason": "Component extracted by the remote perf pass (dynamic-import refactor) and localized in the int12 union with existing dictionary keys; remainder is English-heuristic noise / non-UI strings only — zero Bengali literals."
-    },
-    {
       "path": "/apps/web/src/app/dashboard/campaign-builder/page.tsx",
       "caps": {
         "bengali": 0,
@@ -3974,20 +3965,20 @@
     {
       "path": "/apps/web/src/app/features/features-client.tsx",
       "caps": {
-        "bengali": 31,
-        "english": 22,
+        "bengali": 8,
+        "english": 6,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = showcase Visual Frame SAMPLE data (mock ad/chat/courier/profit screens) — sample content per the MB3 classification, not UI chrome."
     },
     {
       "path": "/apps/web/src/app/features/page.tsx",
       "caps": {
-        "bengali": 6,
+        "bengali": 0,
         "english": 1,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = code values (og type/card/siteName) — metadata copy is dictionary-converted."
     },
     {
       "path": "/apps/web/src/app/l/[slug]/ConversionBoosters.tsx",
@@ -4019,11 +4010,11 @@
     {
       "path": "/apps/web/src/app/landing-client.tsx",
       "caps": {
-        "bengali": 52,
-        "english": 9,
+        "bengali": 17,
+        "english": 7,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union). (Entry previously covered showcase SAMPLE content only.)"
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = showcase SAMPLE content only (sample chats/ads/AI replies/demo data, MB3 classification) — all UI chrome is dictionary-converted."
     },
     {
       "path": "/apps/web/src/app/layout.tsx",
@@ -4033,15 +4024,6 @@
         "localeCalls": 0
       },
       "reason": "English-heuristic noise only (Tailwind class strings / data strings) in a fully converted surface — zero Bengali literals, zero direct locale calls (the class MB3 spot-verified in shop components)"
-    },
-    {
-      "path": "/apps/web/src/app/login/page.tsx",
-      "caps": {
-        "bengali": 5,
-        "english": 1,
-        "localeCalls": 0
-      },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
     },
     {
       "path": "/apps/web/src/app/manifest.ts",
@@ -4073,29 +4055,20 @@
     {
       "path": "/apps/web/src/app/page.tsx",
       "caps": {
-        "bengali": 6,
+        "bengali": 0,
         "english": 6,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union). (Entry previously covered static Next metadata copy only.)"
-    },
-    {
-      "path": "/apps/web/src/app/pricing/layout.tsx",
-      "caps": {
-        "bengali": 4,
-        "english": 0,
-        "localeCalls": 0
-      },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = the SEO keywords array (code/data strings) — metadata copy is dictionary-converted."
     },
     {
       "path": "/apps/web/src/app/pricing/page.tsx",
       "caps": {
-        "bengali": 29,
-        "english": 7,
+        "bengali": 0,
+        "english": 2,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = English code/data strings only — zero Bengali literals."
     },
     {
       "path": "/apps/web/src/app/privacy/page.tsx",
@@ -4104,16 +4077,7 @@
         "english": 1,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
-    },
-    {
-      "path": "/apps/web/src/app/register/page.tsx",
-      "caps": {
-        "bengali": 8,
-        "english": 0,
-        "localeCalls": 0
-      },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = static Next metadata copy + the last-updated date VALUE (data; its label is dictionary-converted)."
     },
     {
       "path": "/apps/web/src/app/shop/[orgSlug]/AutomotiveTheme.tsx",
@@ -4410,7 +4374,7 @@
         "english": 1,
         "localeCalls": 0
       },
-      "reason": "Owner marketing overhaul on remote main (33276bbd, 2026-10-20): brand-new marketing/legal copy that has no dictionary counterpart yet — pinned at the union count so any growth fails the gate; dictionary conversion is a recorded follow-up (int12 union)."
+      "reason": "Converted to the public dictionary 2026-10-20 (int12 union, owner directive): all user-visible copy now resolves from apps/web/src/lib/i18n/public.ts. Remainder = static Next metadata copy + the last-updated date VALUE (data; its label is dictionary-converted)."
     },
     {
       "path": "/apps/web/src/components/connect/courier-connect-panel.tsx",

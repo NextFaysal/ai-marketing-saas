@@ -78,58 +78,58 @@ interface FaqItem {
 const FAQS: FaqItem[] = [
   {
     cat: "general",
-    q: "শুরু করতে কী কী লাগবে?",
-    a: "শুধু একটি ইমেইল দিয়ে রেজিস্টার করলেই Organization তৈরি হয়ে যাবে। এরপর যেসব চ্যানেল ব্যবহার করতে চান (Facebook Page, WooCommerce স্টোর, কুরিয়ার মার্চেন্ট অ্যাকাউন্ট) সেগুলো আপনার নিজের অ্যাকাউন্ট দিয়ে সরাসরি কানেক্ট করবেন।",
+    q: t.landing.q1,
+    a: t.landing.faqA1V2,
   },
   {
     cat: "courier",
-    q: "Facebook বা কুরিয়ার অ্যাকাউন্ট কি আপনারা দেন?",
-    a: "না। সব ইন্টিগ্রেশন আপনার নিজের ব্যবসায়িক অ্যাকাউন্ট দিয়ে চলে — Meta অ্যাপ/পেজ, WooCommerce/Shopify স্টোর, Steadfast/Pathao/RedX মার্চেন্ট অ্যাকাউন্ট আপনার নিজের নামেই থাকে। আমরা কোনো তৃতীয় পক্ষের অ্যাকাউন্ট বা ক্রেডেনশিয়াল সরবরাহ করি না।",
+    q: t.landing.q2,
+    a: t.landing.faqA2V2,
   },
   {
     cat: "courier",
-    q: "COD Return Risk Score কীভাবে কাজ করে?",
-    a: "কাস্টমারের ফোন নম্বরের বিগত ডেলিভারি রেকর্ড বিশ্লেষণ করে সিস্টেম ঝুঁকি স্কোর (Safe, Medium, High Risk) তৈরি করে। ঝুঁকিপূর্ণ অর্ডারে অগ্রিম কুরিয়ার চার্জ নেওয়ার অটোমেটেড পেমেন্ট লিংক সুপারিশ করা হয়।",
+    q: t.landing.faqRiskQ,
+    a: t.landing.faqRiskA,
   },
   {
     cat: "courier",
-    q: "বাল্ক কুরিয়ার বুকিং ও ইনভয়েস স্টিকার প্রিন্ট কীভাবে হয়?",
-    a: "Steadfast, Pathao ও RedX-এ ইনবক্স বা অর্ডার লিস্ট থেকে এক ক্লিকে ১০০+ পার্সেল বুকিং করা যায় এবং সরাসরি প্রিন্ট-রেডি A4 সাইজ বারকোড লেবেল ও ইনভয়েস PDF ডাউনলোড হয়।",
+    q: t.landing.faqBulkQ,
+    a: t.landing.faqBulkA,
   },
   {
     cat: "ai",
-    q: "AI কি ভুল বা বানোয়াট তথ্য বলতে পারে?",
-    a: "কখনোই না। Strict Grounding মোডে এআই আপনার দেওয়া পণ্যের আসল ক্যাটালগ, লাইভ স্টক, দাম ও ডেলিভারি পলিসি থেকে সত্য যাচাই করে উত্তর দেয়। বানিয়ে কোনো ফেক অফার তৈরি করে না।",
+    q: t.landing.faqAiWrongQ,
+    a: t.landing.faqAiWrongA,
   },
   {
     cat: "ai",
-    q: "ফেসবুক, হোয়াটসঅ্যাপ ও ইনস্টাগ্রামের মেসেজ কি অটোমেটিক উত্তর দেওয়া যায়?",
-    a: "হ্যাঁ। এআই ড্রাফট রিপ্লাই সাজিয়ে রাখে যা টিম মেম্বার রিভিউ করে ১-ক্লিকে পাঠাতে পারে, অথবা চাইলে রুটিন প্রশ্নের ক্ষেত্রে ফুল অটো-পাইলট মোড চালু রাখা যায়।",
+    q: t.landing.faqAutoReplyQ,
+    a: t.landing.faqAutoReplyA,
   },
   {
     cat: "billing",
-    q: "দাম কি এখানে যা দেখছি সেটাই?",
-    a: "হ্যাঁ। এই পেজের মূল্য সরাসরি প্ল্যাটফর্ম অপারেটরের লাইভ সেটিংস থেকে আসে — /pricing পেজেও হুবহু একই উৎস থেকে একই দাম দেখানো হয়। কোনো লুকানো চার্জ বা সেটআপ ফি নেই।",
+    q: t.landing.q3,
+    a: t.landing.faqPriceAV2,
   },
   {
     cat: "billing",
-    q: "ট্রায়াল সুবিধা আছে কি?",
-    a: "হ্যাঁ, সব পেইড প্ল্যানে অপারেটর-নির্ধারিত ফ্রি ট্রায়াল পিরিয়ড থাকে। ট্রায়াল চলাকালে ক্রেডিট কার্ড বা পেমেন্ট তথ্যের প্রয়োজন হয় না।",
+    q: t.landing.faqTrialQV2,
+    a: t.landing.faqTrialAV2,
   },
   {
     cat: "billing",
-    q: "আমার কাস্টমার বা স্টোরের ডেটা কি অন্য দোকান দেখতে পাবে?",
-    a: "কখনোই না। প্রতিটি Organization-এর ডেটা সম্পূর্ণ আলাদা (Strict Tenant Isolation) — প্রোডাক্ট, অর্ডার, গ্রাহক, মেসেজ সবকিছু সুরক্ষিত এবং শুধু আপনার পারমিশনপ্রাপ্ত টিমই দেখতে পারে।",
+    q: t.landing.faqDataQV2,
+    a: t.landing.faqDataAV2,
   },
   {
     cat: "general",
-    q: "বাংলা ভাষায় কি ব্যবহার করা যাবে?",
-    a: "হ্যাঁ! পুরো ইন্টারফেস বাংলা-প্রথম, এবং AI বাংলা ও ইংরেজি উভয় ভাষাতেই কাস্টমারদের প্রশ্নের প্রাসঙ্গিক ও নির্ভুল উত্তর দিতে পারে।",
+    q: t.landing.faqBanglaQV2,
+    a: t.landing.faqBanglaAV2,
   },
   {
     cat: "general",
-    q: "এজেন্সি হিসেবে একাধিক ক্লায়েন্টের অ্যাকাউন্ট একসাথে চালানো যাবে?",
-    a: "হ্যাঁ, AGENCY প্ল্যানে পোর্টফোলিও ভিউতে সব ক্লায়েন্টের ফলাফল একসাথে দেখা যায়, হোয়াইট-লেবেল ব্র্যান্ডিং সুবিধা রয়েছে এবং পাসওয়ার্ড ছাড়া Read-only ক্লায়েন্ট রিপোর্ট লিংক শেয়ার করা যায়।",
+    q: t.landing.faqAgencyQV2,
+    a: t.landing.faqAgencyAV2,
   },
 ];
 
@@ -143,7 +143,7 @@ function CompetitorSpyHeroFrame() {
       <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
         <div className="flex items-center gap-2">
           <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="font-bold text-slate-100">Live Competitor Spy & Intelligence</span>
+          <span className="font-bold text-slate-100">{t.landing.spyFrameTitle}</span>
         </div>
         <div className="flex gap-1.5 text-[10px] font-semibold">
           <span className="rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5">Meta</span>
@@ -216,16 +216,16 @@ function UnifiedInboxHeroFrame() {
       <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-3.5 w-3.5 text-indigo-400" />
-          <span className="font-bold text-slate-100">Unified Omnichannel Inbox</span>
+          <span className="font-bold text-slate-100">{t.landing.inboxFrameTitle}</span>
         </div>
         <span className="rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold">
-          ● Strict Grounding AI Active
+          {t.landing.inboxGroundingBadge}
         </span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.6fr] gap-3">
         <div className="space-y-1.5 border-b sm:border-b-0 sm:border-r border-slate-800 pb-2 sm:pb-0 sm:pr-3">
-          <div className="text-[10px] font-semibold text-slate-500 mb-1">কাস্টমার সিলেক্ট করুন:</div>
+          <div className="text-[10px] font-semibold text-slate-500 mb-1">{t.landing.inboxSelectCustomer}</div>
           {chats.map((item, i) => (
             <button
               key={i}
@@ -270,7 +270,7 @@ function CodFraudHeroFrame() {
       <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
         <div className="flex items-center gap-2">
           <ShieldAlert className={`h-3.5 w-3.5 ${profile === "risky" ? "text-rose-400" : "text-emerald-400"}`} />
-          <span className="font-bold text-slate-100">COD Return Risk Evaluator</span>
+          <span className="font-bold text-slate-100">{t.landing.fraudFrameTitle}</span>
         </div>
         <div className="flex gap-1.5">
           <button
@@ -282,7 +282,7 @@ function CodFraudHeroFrame() {
                 : "bg-slate-900 text-slate-500 hover:text-slate-300"
             }`}
           >
-            ⚠️ টেস্ট: ঝুঁকিপূর্ণ কাস্টমার
+            {t.landing.fraudTestRisky}
           </button>
           <button
             type="button"
@@ -293,7 +293,7 @@ function CodFraudHeroFrame() {
                 : "bg-slate-900 text-slate-500 hover:text-slate-300"
             }`}
           >
-            ✓ টেস্ট: নিরাপদ কাস্টমার
+            {t.landing.fraudTestSafe}
           </button>
         </div>
       </div>
@@ -359,9 +359,9 @@ function CourierHubHeroFrame() {
       <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
         <div className="flex items-center gap-2">
           <Truck className="h-3.5 w-3.5 text-indigo-400" />
-          <span className="font-bold text-slate-100">Multi-Courier Rate Comparison</span>
+          <span className="font-bold text-slate-100">{t.landing.courierFrameTitle}</span>
         </div>
-        <span className="text-[10px] text-slate-400">Live API Sync</span>
+        <span className="text-[10px] text-slate-400">{t.landing.courierLiveSync}</span>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -416,27 +416,27 @@ function RoiCalculator() {
     <div className="mx-auto max-w-4xl rounded-3xl border border-slate-800 bg-slate-900/70 p-6 sm:p-10 shadow-2xl backdrop-blur-md text-left">
       {/* Quick business presets */}
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-slate-400 font-semibold mr-1">দ্রুত সেট করুন:</span>
+        <span className="text-xs text-slate-400 font-semibold mr-1">{t.landing.roiPresetLabel}</span>
         <button
           type="button"
           onClick={() => { setOrders(300); setReturnCost(120); setCurrentPct(25); setTargetPct(12); }}
           className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1 text-[11px] font-semibold text-slate-200 hover:border-indigo-500 hover:text-white transition"
         >
-          ছোট স্টোর (৩০০ অর্ডার)
+          {t.landing.roiPresetSmall}
         </button>
         <button
           type="button"
           onClick={() => { setOrders(1200); setReturnCost(130); setCurrentPct(24); setTargetPct(10); }}
           className="rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold text-indigo-300 hover:border-indigo-500 transition"
         >
-          গ্রোথ শপ (১,২০০ অর্ডার)
+          {t.landing.roiPresetGrowth}
         </button>
         <button
           type="button"
           onClick={() => { setOrders(4500); setReturnCost(130); setCurrentPct(22); setTargetPct(8); }}
           className="rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1 text-[11px] font-semibold text-slate-200 hover:border-indigo-500 hover:text-white transition"
         >
-          বড় ব্র্যান্ড (৪,৫০০ অর্ডার)
+          {t.landing.roiPresetLarge}
         </button>
       </div>
 
@@ -444,7 +444,7 @@ function RoiCalculator() {
         <div className="space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-300">
             <span>{t.landing.roiOrdersLabel}</span>
-            <span className="text-indigo-400 font-bold">{num(orders)} টি</span>
+            <span className="text-indigo-400 font-bold">{num(orders)} {t.landing.roiOrdersUnit}</span>
           </div>
           <input
             type="range"
@@ -459,7 +459,7 @@ function RoiCalculator() {
 
         <div className="space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-300">
-            <span>প্রতি রিটার্নে গড় কুরিয়ার খরচ (আসা-যাওয়া)</span>
+            <span>{t.landing.roiReturnCostShort}</span>
             <span className="text-indigo-400 font-bold">৳{num(returnCost)}</span>
           </div>
           <input
@@ -475,7 +475,7 @@ function RoiCalculator() {
 
         <div className="space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-300">
-            <span>আপনার বর্তমান রিটার্ন হার (%)</span>
+            <span>{t.landing.roiCurrentShort}</span>
             <span className="text-rose-400 font-bold">{currentPct}%</span>
           </div>
           <input
@@ -490,7 +490,7 @@ function RoiCalculator() {
 
         <div className="space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-300">
-            <span>লক্ষ্য রিটার্ন হার (%)</span>
+            <span>{t.landing.roiTargetShort}</span>
             <span className="text-emerald-400 font-bold">{targetPct}%</span>
           </div>
           <input
@@ -507,22 +507,22 @@ function RoiCalculator() {
       <div className="mt-8 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">
-            মাসে সম্ভাব্য প্রত্যক্ষ নগদ সাশ্রয়
+            {t.landing.roiSavingTitleV2}
           </div>
           <div className="mt-1 text-3xl sm:text-4xl font-black text-emerald-400">
             {fmtMoney("bn", Math.round(result.saving))}
           </div>
           <div className="mt-1 text-xs text-slate-300">
-            মাসে আনুমানিক <b className="text-white">{num(Math.round(result.savedReturns))}টি</b> পার্সেল রিটার্ন থেকে বাঁচবে।
+            {t.landing.roiSavingLinePrefix}<b className="text-white">{num(Math.round(result.savedReturns))}{t.landing.roiCountUnit}</b>{t.landing.roiSavingLineSuffix}
           </div>
         </div>
 
         <div className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-xs text-slate-300 max-w-xs">
           <div className="font-semibold text-white mb-1 flex items-center gap-1.5">
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
-            <span>কীভাবে সাশ্রয় হয়?</span>
+            <span>{t.landing.roiHowTitle}</span>
           </div>
-          COD রিটার্ন-রিস্ক স্কোর ও অ্যাডভান্স কুরিয়ার পেমেন্ট রুলসের কারণে ফেক ও ঝুঁকিপূর্ণ অর্ডার পূর্বেই শনাক্ত করা সম্ভব হয়।
+          {t.landing.roiHowBody}
         </div>
       </div>
 
@@ -649,10 +649,10 @@ export default function Landing() {
 
           <nav className="hidden items-center gap-7 text-sm font-medium text-slate-300 md:flex">
             <Link href="/features" className="text-indigo-400 font-semibold hover:text-indigo-300 flex items-center gap-1">
-              ফিচারসমূহ <span className="rounded bg-indigo-500/20 px-1 text-[10px]">New</span>
+              {t.landing.navFeaturesFull} <span className="rounded bg-indigo-500/20 px-1 text-[10px]">{t.landing.navNewBadge}</span>
             </Link>
             <a href="#how" className="transition hover:text-white">{t.landing.navHow}</a>
-            <a href="#calculator" className="transition hover:text-white">সাশ্রয় ক্যালকুলেটর</a>
+            <a href="#calculator" className="transition hover:text-white">{t.landing.navCalculator}</a>
             <a href="#pricing" className="transition hover:text-white">{t.landing.navPricing}</a>
             <a href="#faq" className="transition hover:text-white">{t.landing.navFaq}</a>
           </nav>
@@ -684,7 +684,7 @@ export default function Landing() {
               onClick={() => setMobileMenuOpen(false)}
               className="block py-1 text-indigo-400 font-semibold"
             >
-              ফিচারসমূহ (All Features)
+              {t.landing.mobileFeaturesFull}
             </Link>
             <a
               href="#how"
@@ -698,21 +698,21 @@ export default function Landing() {
               onClick={() => setMobileMenuOpen(false)}
               className="block py-1 text-slate-300 hover:text-white"
             >
-              সাশ্রয় ক্যালকুলেটর
+              {t.landing.navCalculator}
             </a>
             <Link
               href="/pricing"
               onClick={() => setMobileMenuOpen(false)}
               className="block py-1 text-slate-300 hover:text-white"
             >
-              মূল্য (Pricing)
+              {t.landing.mobilePricingFull}
             </Link>
             <a
               href="#faq"
               onClick={() => setMobileMenuOpen(false)}
               className="block py-1 text-slate-300 hover:text-white"
             >
-              সাধারণ জিজ্ঞাসা (FAQ)
+              {t.landing.mobileFaqFull}
             </a>
             <div className="pt-2 flex gap-2">
               <Link
@@ -731,38 +731,37 @@ export default function Landing() {
       <section className="relative z-10 mx-auto max-w-6xl px-6 pt-16 pb-16 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1.5 text-xs font-semibold text-indigo-300 shadow-inner">
           <Sparkles className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
-          <span>বাংলাদেশের ১ম অল-ইন-ওয়ান AI কমার্স ও মার্কেটিং অপারেটিং সিস্টেম</span>
+          <span>{t.landing.heroBadge}</span>
         </div>
 
         <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
           {t.landing.heroTitlePrefix}
           <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
-            মেসেজ, বিজ্ঞাপন আর ডেলিভারি
+            {t.landing.heroTitleAccentV2}
           </span>
           {t.landing.heroTitleSuffix}
         </h1>
 
         <p className="mx-auto mt-5 max-w-3xl text-base sm:text-lg leading-relaxed text-slate-400">
-          Facebook, WhatsApp, Instagram-এর সব মেসেজ এক ইনবক্সে; যাচাই করা প্রোডাক্ট তথ্য থেকে নির্ভরযোগ্য AI রিপ্লাই;
-          Meta/Google/TikTok বিজ্ঞাপন অটোমেশন; Steadfast/Pathao/RedX কুরিয়ার বুকিং আর COD রিটার্ন-ঝুঁকির সতর্কতা।
+          {t.landing.heroBodyV2}
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
           <RegisterCta
-            label="১৪ দিনের ফ্রি ট্রায়াল শুরু করুন"
+            label={t.landing.heroTrialCta}
             className="rounded-2xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-indigo-500/25 transition hover:brightness-110 active:scale-[0.98]"
           />
           <Link
             href="/features"
             className="rounded-2xl border border-slate-800 bg-slate-900/80 px-8 py-4 text-base font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white flex items-center gap-2"
           >
-            <span>সব ফিচার এক্সপ্লোর করুন</span>
+            <span>{t.landing.heroExploreFeatures}</span>
             <ArrowRight className="h-4 w-4 text-indigo-400" />
           </Link>
         </div>
 
         <p className="mt-4 text-xs text-slate-500">
-          ক্রেডিট কার্ডের প্রয়োজন নেই · সম্পূর্ণ নিজস্ব ফেসবুক ও কুরিয়ার মার্চেন্ট অ্যাকাউন্ট দিয়েই চলে
+          {t.landing.heroNoCardNote}
         </p>
 
         {/* Dynamic Interactive Hero Showcase Console */}
@@ -770,10 +769,10 @@ export default function Landing() {
           {/* Tabs */}
           <div className="flex overflow-x-auto border-b border-slate-800/80 bg-slate-900/60 p-1.5 rounded-2xl gap-1">
             {[
-              { id: "spy", label: "Competitor Spy", short: "Spy", icon: Search },
-              { id: "inbox", label: "Unified AI Inbox", short: "AI Inbox", icon: MessageSquare },
-              { id: "fraud", label: "COD Fraud Shield", short: "COD Shield", icon: ShieldAlert },
-              { id: "courier", label: "Courier Dispatch", short: "Courier", icon: Truck },
+              { id: "spy", label: t.landing.tabSpyLabel, short: t.landing.tabSpyShort, icon: Search },
+              { id: "inbox", label: t.landing.tabInboxLabel, short: t.landing.tabInboxShort, icon: MessageSquare },
+              { id: "fraud", label: t.landing.tabFraudLabel, short: t.landing.tabFraudShort, icon: ShieldAlert },
+              { id: "courier", label: t.landing.tabCourierLabel, short: t.landing.tabCourierShort, icon: Truck },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = heroTab === tab.id;
@@ -810,16 +809,16 @@ export default function Landing() {
       <section className="relative z-10 border-y border-slate-800/80 bg-slate-900/40 py-10">
         <div className="mx-auto max-w-6xl px-6 text-center">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            আপনার পছন্দের সব চ্যানেল ও প্ল্যাটফর্মের সাথে সরাসরি কানেক্টেড
+            {t.landing.marqueeTitle}
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-6 sm:gap-10 text-slate-300 font-semibold text-sm">
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">Meta Ads & Pages</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">WhatsApp Cloud</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">Instagram DM</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">Google & TikTok Ads</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">Steadfast Courier</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">Pathao Logistics</span>
-            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">WooCommerce & Shopify</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeMeta}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeWhatsApp}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeInstagram}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeGoogleTikTok}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeSteadfast}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueePathao}</span>
+            <span className="rounded-xl border border-slate-800 bg-slate-950/80 px-4 py-2">{t.landing.marqueeStores}</span>
           </div>
         </div>
       </section>
@@ -827,10 +826,10 @@ export default function Landing() {
       {/* THE BROKEN WAY VS MARKETING OS WAY */}
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-20 text-center">
         <h2 className="text-3xl font-black text-white sm:text-4xl">
-          কেন সনাতন পদ্ধতি বাদ দিয়ে <span className="text-indigo-400">Marketing OS</span> বেছে নেবেন?
+          {t.landing.cmpTitlePrefix}<span className="text-indigo-400">{t.landing.cmpTitleAccent}</span>{t.landing.cmpTitleSuffix}
         </h2>
         <p className="mx-auto mt-3 max-w-2xl text-base text-slate-400">
-          প্রতিদিনের ফ্রাস্ট্রেশন বনাম সেন্ট্রালাইজড আধুনিক সমাধান।
+          {t.landing.comparisonSubtitle}
         </p>
 
         <div className="mt-12 grid gap-8 md:grid-cols-2 text-left">
@@ -838,24 +837,24 @@ export default function Landing() {
           <div className="rounded-3xl border border-rose-500/20 bg-rose-500/5 p-8 space-y-4">
             <div className="flex items-center gap-2 text-rose-400 font-bold text-lg">
               <span>✕</span>
-              <h3>সনাতন এলোমেলো পদ্ধতি</h3>
+              <h3>{t.landing.oldWayTitle}</h3>
             </div>
             <ul className="space-y-3.5 text-sm text-slate-300">
               <li className="flex gap-2.5">
                 <span className="text-rose-400 shrink-0 font-bold">✕</span>
-                <span>পেজ, হোয়াটসঅ্যাপ, ইনস্টাগ্রাম — ৩টি আলাদা অ্যাপে মেসেজ চেক করতে গিয়ে কাস্টমার হারানো।</span>
+                <span>{t.landing.oldWay1}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-rose-400 shrink-0 font-bold">✕</span>
-                <span>কোন পার্সেল কোন কুরিয়ারে গেল, কোনটা রিটার্ন এলো — এক্সেল শিট আর ফোন কলে দিনভর সময় নষ্ট।</span>
+                <span>{t.landing.oldWay2}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-rose-400 shrink-0 font-bold">✕</span>
-                <span>ফেক অর্ডার ও বারবার পার্সেল রিটার্নে প্রতি মাসে হাজার হাজার টাকা কুরিয়ার লস।</span>
+                <span>{t.landing.oldWay3}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-rose-400 shrink-0 font-bold">✕</span>
-                <span>অ্যাড অ্যাকাউন্টে কোন বিজ্ঞাপনে আসলে ক্যাশ লাভ হচ্ছে তার পরিষ্কার ধারণা না থাকা।</span>
+                <span>{t.landing.oldWay4}</span>
               </li>
             </ul>
           </div>
@@ -864,24 +863,24 @@ export default function Landing() {
           <div className="rounded-3xl border border-emerald-500/30 bg-emerald-500/5 p-8 space-y-4">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-lg">
               <CheckCircle2 className="h-5 w-5" />
-              <h3>AI Marketing OS পদ্ধতি</h3>
+              <h3>{t.landing.newWayTitle}</h3>
             </div>
             <ul className="space-y-3.5 text-sm text-slate-300">
               <li className="flex gap-2.5">
                 <span className="text-emerald-400 shrink-0 font-bold">✓</span>
-                <span>সব মেসেজ এক সেন্ট্রাল ইনবক্সে — সত্য ডেটা থেকে এআই তাৎক্ষণিক নির্ভুল ড্রাফট রিপ্লাই দেয়।</span>
+                <span>{t.landing.newWay1}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-emerald-400 shrink-0 font-bold">✓</span>
-                <span>চ্যাট থেকেই ১-ক্লিকে অর্ডার, কুরিয়ার বাল্ক বুকিং ও সরাসরি প্রিন্ট-রেডি বারকোড স্টিকার।</span>
+                <span>{t.landing.newWay2}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-emerald-400 shrink-0 font-bold">✓</span>
-                <span>পার্সেল বুক করার আগেই ফোন নম্বরের ডেলিভারি হিস্ট্রি স্ক্যান করে রিটার্ন রিস্ক স্কোর অ্যালার্ট।</span>
+                <span>{t.landing.newWay3}</span>
               </li>
               <li className="flex gap-2.5">
                 <span className="text-emerald-400 shrink-0 font-bold">✓</span>
-                <span>বিক্রি থেকে পণ্যের ক্রয়মূল্য, ডেলিভারি ফি ও অ্যাড স্পেন্ড বাদ দিয়ে রিয়েল নেট প্রফিট দৃশ্যমান।</span>
+                <span>{t.landing.newWay4}</span>
               </li>
             </ul>
           </div>
@@ -892,14 +891,14 @@ export default function Landing() {
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-16 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
           <Layers className="h-3.5 w-3.5 text-indigo-400" />
-          <span>Complete Feature Matrix</span>
+          <span>{t.landing.bentoBadge}</span>
         </div>
 
         <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">
-          আপনার ব্যবসার প্রতিটি ডিপার্টমেন্টের পাওয়ারফুল টুলস
+          {t.landing.bentoTitle}
         </h2>
         <p className="mx-auto mt-2 max-w-2xl text-slate-400 text-sm">
-          নিচের প্রতিটি মডিউল বর্তমান সিস্টেমে লাইভ সংযুক্ত — কোনো ভবিষ্যতের প্রতিশ্রুতি নয়।
+          {t.landing.bentoSubtitle}
         </p>
 
         {/* Bento Grid */}
@@ -909,12 +908,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
               <Search className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">Omnichannel Competitor Spy</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento1Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Meta, Google, TikTok ও Bing থেকে প্রতিদ্বন্দীর সক্রিয় ও Winning বিজ্ঞাপন ট্র্যাক করুন। স্টকআউট হলে তৎক্ষণাৎ অ্যালার্ট এবং এক ক্লিকে AI কাউন্টার ক্যাম্পেইন তৈরি করুন।
+              {t.landing.bento1Body}
             </p>
             <Link href="/features#spy" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
@@ -923,12 +922,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
               <MessageSquare className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">Unified Inbox & Strict AI</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento2Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Facebook Page, WhatsApp, Instagram, Telegram ও Live Chat এক ইনবক্সে। যাচাই করা আসল পণ্যের তথ্য ছাড়া AI বানোয়াট কিছু বলতে পারে না (Strict Grounding)।
+              {t.landing.bento2Body}
             </p>
             <Link href="/features#inbox" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
@@ -937,12 +936,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
               <ShieldAlert className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">COD Return Risk Score</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento3Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              একই ফোন নম্বরের আগের ডেলিভারি ইতিহাস থেকে রিটার্ন ঝুঁকির স্কোর ও কারণ। ঝুঁকিপূর্ণ অর্ডারে অগ্রিম কুরিয়ার ফি গ্রহণের অটোমেটেড পরামর্শ।
+              {t.landing.bento3Body}
             </p>
             <Link href="/features#fraud" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
@@ -951,12 +950,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
               <Truck className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">Multi-Courier Hub</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento4Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Steadfast, Pathao ও RedX — বুকিংয়ের আগেই চার্জ কোট, ৫০+ পার্সেল Bulk Booking, Barcode-সহ Label ও Invoice PDF এবং লাইভ স্ট্যাটাস অটো-সিঙ্ক।
+              {t.landing.bento4Body}
             </p>
             <Link href="/features#courier" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
@@ -965,12 +964,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 border border-violet-500/20 text-violet-400">
               <GitFork className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">Visual Workflows & Bots</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento5Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              কন্ডিশনাল ব্রাঞ্চিং ও ড্র্যাগ-অ্যান্ড-ড্রপ নো-কোড ভিজ্যুয়াল ক্যানভাস। নতুন অর্ডার, পরিত্যক্ত কার্ট রিকভারি ও সেলফ-চেকআউট WhatsApp ক্যাটালগ বোট।
+              {t.landing.bento5Body}
             </p>
             <Link href="/features#workflows" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
 
@@ -979,12 +978,12 @@ export default function Landing() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400">
               <TrendingUp className="h-6 w-6" />
             </div>
-            <h3 className="text-xl font-bold text-white">True Net Profit & Attribution</h3>
+            <h3 className="text-xl font-bold text-white">{t.landing.bento6Title}</h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              বিক্রি থেকে পণ্যের দাম (COGS), অ্যাড স্পেন্ড ও কুরিয়ার রিটার্ন ক্ষতি বাদ দিয়ে রিয়েল নেট প্রফিট। মাল্টি-টাচ অ্যাট্রিবিউশন ও Cohort LTV ট্র্যাকিং।
+              {t.landing.bento6Body}
             </p>
             <Link href="/features#profit" className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-400 hover:text-indigo-300">
-              বিস্তারিত দেখুন <ArrowRight className="h-3.5 w-3.5" />
+              {t.landing.bentoDetailLink} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
         </div>
@@ -992,14 +991,14 @@ export default function Landing() {
         {/* Feature Banner CTA */}
         <div className="mt-10 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-6 flex flex-wrap items-center justify-between gap-4">
           <div className="text-left">
-            <div className="font-bold text-white text-base">সবগুলো ফিচারের টেকনিক্যাল স্পেসিফিকেশন জানতে চান?</div>
-            <div className="text-xs text-slate-400 mt-0.5">প্রতিটি ফিচারের বিস্তারিত ও আর্কিটেকচার আমাদের ফিচার ডিরেক্টরিতে দেখুন।</div>
+            <div className="font-bold text-white text-base">{t.landing.bentoBannerTitle}</div>
+            <div className="text-xs text-slate-400 mt-0.5">{t.landing.bentoBannerBody}</div>
           </div>
           <Link
             href="/features"
             className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-5 py-2.5 text-xs font-bold text-white flex items-center gap-2"
           >
-            <span>সম্পূর্ণ ফিচার পেজ খুলুন</span>
+            <span>{t.landing.bentoBannerCta}</span>
             <ArrowUpRight className="h-4 w-4" />
           </Link>
         </div>
@@ -1008,9 +1007,9 @@ export default function Landing() {
       {/* HOW IT WORKS SECTION */}
       <section id="how" className="relative z-10 border-y border-slate-800/80 bg-slate-900/40 py-20">
         <div className="mx-auto max-w-6xl px-6 text-center">
-          <h2 className="text-3xl font-black text-white sm:text-4xl">শুরু করা মাত্র ৩টি সহজ ধাপে</h2>
+          <h2 className="text-3xl font-black text-white sm:text-4xl">{t.landing.howTitleV2}</h2>
           <p className="mx-auto mt-2 max-w-xl text-slate-400 text-sm">
-            ১০ মিনিটের মধ্যেই আপনার পুরো টিম নতুন অটোমেশনে কাজ শুরু করতে পারবে।
+            {t.landing.howSubtitle}
           </p>
 
           <div className="mt-12 grid gap-8 md:grid-cols-3 text-left">
@@ -1018,17 +1017,17 @@ export default function Landing() {
               {
                 n: "০১",
                 t: t.landing.step1Title,
-                b: "ইমেইল দিয়ে অ্যাকাউন্ট খুলুন এবং আপনার ব্যবসার Organization সেট করুন। ট্রায়াল তাৎক্ষণিক শুরু হয়ে যাবে।",
+                b: t.landing.step1BodyV2,
               },
               {
                 n: "০২",
-                t: "নিজের চ্যানেল কানেক্ট করুন",
-                b: "Facebook Page, WooCommerce/Shopify এবং Steadfast/Pathao মার্চেন্ট অ্যাকাউন্ট নিরাপদভাবে সিঙ্ক করুন।",
+                t: t.landing.step2TitleV2,
+                b: t.landing.step2BodyV2,
               },
               {
                 n: "০৩",
-                t: "অটো-পাইলটে চালান",
-                b: "ইনবক্সে এআই ড্রাফট রিপ্লাই, ১-ক্লিকে কুরিয়ার বুকিং, বিজ্ঞাপন অটোমেশন ও নেট প্রফিট ট্র্যাকিং উপভোগ করুন।",
+                t: t.landing.step3TitleV2,
+                b: t.landing.step3BodyV2,
               },
             ].map((step) => (
               <div key={step.n} className="rounded-3xl border border-slate-800 bg-slate-950 p-7 space-y-3">
@@ -1045,13 +1044,13 @@ export default function Landing() {
       <section id="calculator" className="relative z-10 mx-auto max-w-6xl px-6 py-20 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-300">
           <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Interactive Savings Simulator</span>
+          <span>{t.landing.roiBadge}</span>
         </div>
         <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">
-          রিটার্ন কমলে আপনার প্রতি মাসে কত টাকা সাশ্রয় হবে?
+          {t.landing.roiTitleV2}
         </h2>
         <p className="mx-auto mt-2 max-w-xl text-slate-400 text-sm">
-          আপনার ব্যবসার নিজস্ব সংখ্যাগুলো দিয়ে নিজেই তাৎক্ষণিক ফলাফল দেখে নিন।
+          {t.landing.roiSubtitleV2}
         </p>
 
         <div className="mt-10">
@@ -1064,15 +1063,15 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl px-6 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
             <Zap className="h-3.5 w-3.5 text-indigo-400" />
-            <span>Transparent Pricing</span>
+            <span>{t.landing.pricingBadge}</span>
           </div>
-          <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">সহজ ও স্বচ্ছ মূল্যতালিকা</h2>
+          <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">{t.landing.pricingTitleV2}</h2>
           <p className="mx-auto mt-2 max-w-xl text-slate-400 text-sm">
-            সব প্ল্যানে {fmtNumber("bn", pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। এই মূল্য সরাসরি প্ল্যাটফর্মের লাইভ সেটিংস থেকে সিঙ্ক করা।
+            {t.landing.pricingSubtitlePrefixV2}{fmtNumber("bn", pricing?.trialDays ?? 14)}{t.landing.pricingSubtitleSuffixV2}
           </p>
 
           {!pricing ? (
-            <p className="mt-10 text-center text-slate-500 text-sm">মূল্যতালিকা লোড হচ্ছে…</p>
+            <p className="mt-10 text-center text-slate-500 text-sm">{t.landing.pricingLoadingV2}</p>
           ) : (
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4 text-left">
               {pricing.plans.map((p) => {
@@ -1088,7 +1087,7 @@ export default function Landing() {
                   >
                     {isGrowth ? (
                       <span className="rounded-full bg-indigo-500 px-2.5 py-0.5 text-[10px] font-bold text-white">
-                        সবচেয়ে জনপ্রিয়
+                        {t.landing.pricingPopularBadge}
                       </span>
                     ) : null}
                     <div className="text-xs font-bold uppercase tracking-wider text-indigo-400 mt-2">
@@ -1102,15 +1101,15 @@ export default function Landing() {
                     <ul className="mt-6 space-y-2.5 text-xs text-slate-300">
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>{fmtNumber("bn", p.limits.seats)} জন টিম মেম্বার সিট</span>
+                        <span>{fmtNumber("bn", p.limits.seats)}{t.landing.pricingSeatsSuffix}</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>প্রতিদিন {fmtNumber("bn", p.limits.aiDaily)}টি AI ভেরিফাইড মেসেজ</span>
+                        <span>{t.landing.pricingAiDailyPrefix}{fmtNumber("bn", p.limits.aiDaily)}{t.landing.pricingAiDailySuffix}</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>ব্রডকাস্ট ক্যাপাসিটি {fmtNumber("bn", p.limits.broadcastCap)} জন</span>
+                        <span>{t.landing.pricingBroadcastPrefix}{fmtNumber("bn", p.limits.broadcastCap)}{t.landing.pricingBroadcastSuffix}</span>
                       </li>
                     </ul>
 
@@ -1129,7 +1128,7 @@ export default function Landing() {
 
           {signupClosed ? (
             <p className="mt-6 text-center text-xs font-semibold text-amber-400">
-              নতুন সাইনআপ সাময়িকভাবে বন্ধ আছে — এডমিন টিম শীঘ্রই পুনরায় উন্মুক্ত করবে।
+              {t.landing.signupClosedNoteV2}
             </p>
           ) : null}
         </div>
@@ -1140,11 +1139,11 @@ export default function Landing() {
         <div className="text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
             <HelpCircle className="h-3.5 w-3.5 text-indigo-400" />
-            <span>Frequently Asked Questions</span>
+            <span>{t.landing.faqBadge}</span>
           </div>
           <h2 className="mt-4 text-3xl font-black text-white sm:text-4xl">{t.landing.faqTitle}</h2>
           <p className="mx-auto mt-2 max-w-lg text-slate-400 text-xs sm:text-sm">
-            মার্চেন্টদের সবচেয়ে সাধারণ প্রশ্ন ও উত্তর এক নজরে।
+            {t.landing.faqSubtitle}
           </p>
         </div>
 
@@ -1154,7 +1153,7 @@ export default function Landing() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="যেকোনো প্রশ্ন লিখে খুঁজুন (যেমন: কুরিয়ার, ট্রায়াল, বাংলা)..."
+              placeholder={t.landing.faqSearchPlaceholder}
               value={faqSearch}
               onChange={(e) => setFaqSearch(e.target.value)}
               className="w-full rounded-2xl border border-slate-800 bg-slate-900/80 pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1173,11 +1172,11 @@ export default function Landing() {
           {/* Category Filter Pills */}
           <div className="flex flex-wrap justify-center gap-1.5 sm:gap-2">
             {[
-              { id: "all", label: "সবগুলো" },
-              { id: "courier", label: "কুরিয়ার ও রিটার্ন" },
-              { id: "ai", label: "এআই ও ইনবক্স" },
-              { id: "billing", label: "বিলিং ও নিরাপত্তা" },
-              { id: "general", label: "সাধারণ ও অনবোর্ডিং" },
+              { id: "all", label: t.landing.faqCatAll },
+              { id: "courier", label: t.landing.faqCatCourier },
+              { id: "ai", label: t.landing.faqCatAi },
+              { id: "billing", label: t.landing.faqCatBilling },
+              { id: "general", label: t.landing.faqCatGeneral },
             ].map((cat) => (
               <button
                 key={cat.id}
@@ -1199,7 +1198,7 @@ export default function Landing() {
         <div className="mt-8 space-y-3.5 text-left">
           {filteredFaqs.length === 0 ? (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-8 text-center text-slate-400 text-xs">
-              দুঃখিত, আপনার সার্চ অনুযায়ী কোনো প্রশ্ন পাওয়া যায়নি।
+              {t.landing.faqNoResults}
             </div>
           ) : (
             filteredFaqs.map((f, i) => (
@@ -1229,8 +1228,8 @@ export default function Landing() {
                 14
               </span>
               <div>
-                <div className="text-xs font-bold text-white">১৪ দিনের ফ্রি ট্রায়াল</div>
-                <div className="text-[11px] text-slate-400">কোনো বাধ্যবাধকতা নেই</div>
+                <div className="text-xs font-bold text-white">{t.landing.trustTrialTitle}</div>
+                <div className="text-[11px] text-slate-400">{t.landing.trustTrialBody}</div>
               </div>
             </div>
 
@@ -1239,8 +1238,8 @@ export default function Landing() {
                 <CheckCircle2 className="h-5 w-5" />
               </span>
               <div>
-                <div className="text-xs font-bold text-white">কার্ড ছাড়া রেজিস্ট্রেশন</div>
-                <div className="text-[11px] text-slate-400">শুধুমাত্র ইমেইল প্রয়োজন</div>
+                <div className="text-xs font-bold text-white">{t.landing.trustNoCardTitle}</div>
+                <div className="text-[11px] text-slate-400">{t.landing.trustNoCardBody}</div>
               </div>
             </div>
 
@@ -1249,8 +1248,8 @@ export default function Landing() {
                 <ShieldCheck className="h-5 w-5" />
               </span>
               <div>
-                <div className="text-xs font-bold text-white">১০০% ডেটা আইসোলেশন</div>
-                <div className="text-[11px] text-slate-400">কঠোর টেন্যান্ট গার্ড সিকিউরিটি</div>
+                <div className="text-xs font-bold text-white">{t.landing.trustIsolationTitle}</div>
+                <div className="text-[11px] text-slate-400">{t.landing.trustIsolationBody}</div>
               </div>
             </div>
 
@@ -1259,8 +1258,8 @@ export default function Landing() {
                 <Zap className="h-5 w-5" />
               </span>
               <div>
-                <div className="text-xs font-bold text-white">ইনস্ট্যান্ট সেটআপ</div>
-                <div className="text-[11px] text-slate-400">১০ মিনিটে লাইভ অটোমেশন</div>
+                <div className="text-xs font-bold text-white">{t.landing.trustSetupTitle}</div>
+                <div className="text-[11px] text-slate-400">{t.landing.trustSetupBody}</div>
               </div>
             </div>
           </div>
@@ -1271,22 +1270,21 @@ export default function Landing() {
       <section className="relative overflow-hidden border-t border-slate-800 bg-gradient-to-br from-indigo-950 via-slate-950 to-violet-950 py-20 text-center">
         <div className="mx-auto max-w-4xl px-6 relative z-10 space-y-6">
           <h2 className="text-3xl font-black text-white sm:text-5xl">
-            আজই আপনার ব্যবসার সবকিছু আনুন এক কেন্দ্রীয় ড্যাশবোর্ডে
+            {t.landing.ctaTitleV2}
           </h2>
           <p className="mx-auto max-w-2xl text-base text-slate-300">
-            {fmtNumber("bn", pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল দিয়ে শুরু করুন — কোনো বাধ্যবাধকতা নেই।
-            বিজ্ঞাপন, কুরিয়ার ও কাস্টমার মেসেজ হ্যান্ডল করুন আধুনিকতম উপায়ে।
+            {fmtNumber("bn", pricing?.trialDays ?? 14)}{t.landing.ctaBodySuffixV2}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <RegisterCta
-              label="ফ্রি ট্রায়াল শুরু করুন"
+              label={t.landing.ctaTrialCta}
               className="rounded-2xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 px-9 py-4 text-base font-bold text-white shadow-xl shadow-indigo-500/30 transition hover:brightness-110 active:scale-[0.98]"
             />
             <Link
               href="/features"
               className="rounded-2xl border border-slate-700 bg-slate-900/80 px-8 py-4 text-base font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
             >
-              ফিচার পরিচিতি দেখুন
+              {t.landing.ctaFeaturesLink}
             </Link>
           </div>
         </div>
@@ -1295,12 +1293,12 @@ export default function Landing() {
       {/* FOOTER */}
       <footer className="border-t border-slate-800 bg-slate-950 py-10">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 text-xs text-slate-500">
-          <div>© {new Date().getFullYear()} Qosprey — AI Marketing OS. সর্বস্বত্ব সংরক্ষিত।</div>
+          <div>© {new Date().getFullYear()} Qosprey — AI Marketing OS.{t.landing.footerRightsSuffix}</div>
           <div className="flex flex-wrap gap-5 sm:gap-6">
-            <Link href="/features" className="hover:text-slate-300">ফিচারসমূহ</Link>
+            <Link href="/features" className="hover:text-slate-300">{t.landing.navFeaturesFull}</Link>
             <Link href="/pricing" className="hover:text-slate-300">{t.landing.footerPricing}</Link>
-            <Link href="/privacy" className="hover:text-slate-300">গোপনীয়তা নীতি</Link>
-            <Link href="/terms" className="hover:text-slate-300">শর্তাবলি</Link>
+            <Link href="/privacy" className="hover:text-slate-300">{t.landing.footerPrivacy}</Link>
+            <Link href="/terms" className="hover:text-slate-300">{t.landing.footerTerms}</Link>
             <Link href="/login" className="hover:text-slate-300">{t.landing.footerLogin}</Link>
             <Link href="/register" className="hover:text-slate-300">{t.landing.footerRegister}</Link>
           </div>

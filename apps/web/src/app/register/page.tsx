@@ -12,16 +12,16 @@ const t = pubT();
 
 const HIGHLIGHTS = [
   {
-    title: "১৪ দিনের ফ্রি ট্রায়াল",
-    text: "কোনো ক্রেডিট কার্ডের প্রয়োজন নেই। সাইনআপ করলেই সাথে সাথে ফুল অ্যাক্সেস।",
+    title: t.auth.regHighlightTrialTitle,
+    text: t.auth.regHighlightTrialText,
   },
   {
-    title: "সব চ্যানেল ও কুরিয়ার এক জায়গায়",
-    text: "Facebook, WhatsApp, Steadfast, Pathao ও RedX এক ড্যাশবোর্ডে কানেক্টেড।",
+    title: t.auth.regHighlightChannelsTitle,
+    text: t.auth.regHighlightChannelsText,
   },
   {
-    title: "১০০% ডেটা আইসোলেশন ও নিরাপত্তা",
-    text: "প্রতিটি ব্যবসার ডেটা সম্পূর্ণ আলাদা সুরক্ষিত। কোনো ডেটা শেয়ারিং নেই।",
+    title: t.auth.regHighlightIsolationTitle,
+    text: t.auth.regHighlightIsolationText,
   },
 ];
 
@@ -110,13 +110,13 @@ export default function RegisterPage() {
         <div className="relative space-y-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
             <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-            <span>স্মার্ট ই-কমার্স অটোমেশন প্ল্যাটফর্ম</span>
+            <span>{t.auth.registerBadge}</span>
           </div>
 
           <h2 className="max-w-md text-4xl font-black leading-tight text-white">
-            ব্যবসার সব জটিলতা বাদ দিয়ে{" "}
+            {t.auth.registerHeroPrefix}{" "}
             <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
-              অটো-পাইলটে চালান
+              {t.auth.registerHeroAccent}
             </span>
           </h2>
 
@@ -136,7 +136,7 @@ export default function RegisterPage() {
         </div>
 
         <div className="relative text-xs text-slate-500">
-          © {new Date().getFullYear()} Qosprey · Bangladesh থেকে, অনলাইন বিক্রেতাদের জন্য
+          © {new Date().getFullYear()} Qosprey ·{t.auth.registerCopyrightSuffix}
         </div>
       </section>
 
@@ -155,17 +155,17 @@ export default function RegisterPage() {
           <div>
             <h1 className="text-2xl sm:text-3xl font-black text-white">{t.auth.registerTitle}</h1>
             <p className="mt-1.5 text-xs text-slate-400">
-              ১৪ দিনের ফ্রি ট্রায়াল দিয়ে শুরু করুন — ক্রেডিট কার্ড লাগবে না।
+              {t.auth.registerTrialSubtitle}
             </p>
           </div>
 
           <form onSubmit={onSubmit} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 sm:p-7 space-y-4 shadow-xl">
             <div>
-              <label className="block text-xs font-semibold text-slate-300">আপনার পুরো নাম</label>
+              <label className="block text-xs font-semibold text-slate-300">{t.auth.fullNameLabel}</label>
               <input
                 type="text"
                 className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                placeholder="যেমন: রহিম উদ্দিন"
+                placeholder={t.auth.namePlaceholder}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
@@ -173,7 +173,7 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300">ইমেইল অ্যাড্রেস</label>
+              <label className="block text-xs font-semibold text-slate-300">{t.auth.emailAddressLabel}</label>
               <input
                 type="email"
                 className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -211,7 +211,7 @@ export default function RegisterPage() {
               disabled={loading}
               className="w-full rounded-xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition hover:brightness-110 active:scale-[0.99] disabled:opacity-50"
             >
-              {loading ? t.auth.pleaseWait : "বিনামূল্যে অ্যাকাউন্ট খুলুন"}
+              {loading ? t.auth.pleaseWait : t.auth.registerFreeButton}
             </button>
 
             <p className="text-center text-xs text-slate-400 pt-1">

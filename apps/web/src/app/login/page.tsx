@@ -9,9 +9,9 @@ import { pubT } from "@/lib/i18n/public";
 const t = pubT();
 
 const HIGHLIGHTS = [
-  { title: "Omnichannel Competitor Spy", text: "Meta, Google ও TikTok-এ প্রতিদ্বন্দীর Winning বিজ্ঞাপন ও স্টকআউট লাইভ ট্র্যাক।" },
-  { title: "Unified Inbox ও ভেরিফাইড AI", text: "Facebook, WhatsApp ও Instagram চ্যাট এক ইনবক্সে; আসল ডাটাবেজ থেকে নির্ভুল উত্তর।" },
-  { title: "COD Fraud Shield ও কুরিয়ার অটোমেশন", text: "ডেলিভারি হিস্ট্রি থেকে রিটার্ন রিস্ক স্কোরিং এবং Steadfast/Pathao-এ ১-ক্লিকে বাল্ক বুকিং।" },
+  { title: t.auth.loginHighlightSpyTitle, text: t.auth.loginHighlightSpyText },
+  { title: t.auth.loginHighlightInboxTitle, text: t.auth.loginHighlightInboxText },
+  { title: t.auth.loginHighlightFraudTitle, text: t.auth.loginHighlightFraudText },
 ];
 
 interface LoginResponse { accessToken?: string; requiresTotp?: boolean; challengeToken?: string }
@@ -77,10 +77,10 @@ export default function LoginPage() {
         setChallengeToken(data.challengeToken);
         return;
       }
-      if (!data.accessToken) throw new Error("Login failed");
+      if (!data.accessToken) throw new Error(t.auth.loginFailed);
       localStorage.setItem("accessToken", data.accessToken);
       router.push("/dashboard");
-    } catch (err) { setError(err instanceof Error ? err.message : "Login failed"); }
+    } catch (err) { setError(err instanceof Error ? err.message : t.auth.loginFailed); }
     finally { setLoading(false); }
   }
 

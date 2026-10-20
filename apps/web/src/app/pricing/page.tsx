@@ -44,21 +44,21 @@ const TIER_BN: Record<string, string> = {
 };
 
 const FEATURE_MATRIX: { name: string; free: boolean | string; starter: boolean | string; growth: boolean | string; agency: boolean | string }[] = [
-  { name: "টিম মেম্বার সিট (Seats)", free: "১ জন", starter: "৩ জন", growth: "১০ জন", agency: "আনলিমিটেড" },
-  { name: "প্রতিদিন AI ভেরিফাইড মেসেজ", free: "৫০টি", starter: "৩০০টি", growth: "১,৫০০টি", agency: "১০,০০০টি" },
-  { name: "কাস্টমার ব্রডকাস্ট ক্যাপাসিটি", free: "১০০ জন", starter: "১,০০০ জন", growth: "১০,০০০ জন", agency: "৫০,০০০+ জন" },
-  { name: "Unified Inbox (FB, WhatsApp, IG)", free: true, starter: true, growth: true, agency: true },
-  { name: "Strict Grounding AI (জিরো হ্যালুসিনেশন)", free: true, starter: true, growth: true, agency: true },
-  { name: "Steadfast, Pathao ও RedX বাল্ক বুকিং", free: true, starter: true, growth: true, agency: true },
-  { name: "বারকোড স্টিকার ও ইনভয়েস PDF জেনারেশন", free: true, starter: true, growth: true, agency: true },
-  { name: "COD Return Risk Score (ফ্রড শিল্ড)", free: false, starter: true, growth: true, agency: true },
-  { name: "অ্যাডভান্স ডেলিভারি চার্জ রিকমেন্ডেশন", free: false, starter: true, growth: true, agency: true },
-  { name: "Omnichannel Competitor Spy", free: false, starter: "বেসিক (Meta)", growth: "ফুল (Meta, Google, TikTok)", agency: "ফুল + আনলিমিটেড ট্র্যাকিং" },
-  { name: "Visual Workflow Canvas Builder", free: false, starter: "৩টি ফ্লো", growth: "আনলিমিটেড ফ্লো", agency: "আনলিমিটেড ফ্লো" },
-  { name: "WhatsApp Interactive Catalog Bot", free: false, starter: false, growth: true, agency: true },
-  { name: "True Net Profit & Multi-Touch Attribution", free: false, starter: false, growth: true, agency: true },
-  { name: "হোয়াইট-লেবেল ব্র্যান্ডিং ও ক্লায়েন্ট রিপোর্ট", free: false, starter: false, growth: false, agency: true },
-  { name: "ডেডিকেটেড একাউন্ট ম্যানেজার ও অনবোর্ডিং", free: false, starter: false, growth: true, agency: true },
+  { name: t.pricing.featureSeats, free: t.pricing.matrixOnePerson, starter: t.pricing.matrixThreePeople, growth: t.pricing.matrixTenPeople, agency: t.pricing.matrixUnlimited },
+  { name: t.pricing.featureAiMessages, free: t.pricing.matrixFifty, starter: t.pricing.matrixThreeHundred, growth: t.pricing.matrixFifteenHundred, agency: t.pricing.matrixTenThousand },
+  { name: t.pricing.featureBroadcast, free: t.pricing.matrixHundredPeople, starter: t.pricing.matrixThousandPeople, growth: t.pricing.matrixTenThousandPeople, agency: t.pricing.matrixFiftyThousandPlusPeople },
+  { name: t.pricing.featureUnifiedInbox, free: true, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureGrounding, free: true, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureCourierBulk, free: true, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureBarcodeInvoice, free: true, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureFraudShield, free: false, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureDeliveryCharge, free: false, starter: true, growth: true, agency: true },
+  { name: t.pricing.featureCompetitorSpy, free: false, starter: t.pricing.matrixBasicMeta, growth: t.pricing.matrixFullMetaGoogleTiktok, agency: t.pricing.matrixFullUnlimitedTracking },
+  { name: t.pricing.featureWorkflowCanvas, free: false, starter: t.pricing.matrixThreeFlows, growth: t.pricing.matrixUnlimitedFlows, agency: t.pricing.matrixUnlimitedFlows },
+  { name: t.pricing.featureWhatsappCatalog, free: false, starter: false, growth: true, agency: true },
+  { name: t.pricing.featureNetProfit, free: false, starter: false, growth: true, agency: true },
+  { name: t.pricing.featureWhiteLabel, free: false, starter: false, growth: false, agency: true },
+  { name: t.pricing.featureAccountManager, free: false, starter: false, growth: true, agency: true },
 ];
 
 const DEFAULT_PRICING: Pricing = {
@@ -129,7 +129,7 @@ export default function PricingPage() {
               <div className="text-base font-bold leading-tight text-white flex items-center gap-1.5">
                 AI Marketing OS
                 <span className="rounded-full bg-indigo-500/20 border border-indigo-500/30 px-1.5 py-0.2 text-[9px] font-semibold text-indigo-300">
-                  Pricing
+                  {t.pricing.headerPricingBadge}
                 </span>
               </div>
               <div className="text-xs text-slate-400">by Qosprey</div>
@@ -137,11 +137,11 @@ export default function PricingPage() {
           </Link>
 
           <nav className="hidden items-center gap-7 text-sm font-medium text-slate-300 md:flex">
-            <Link href="/" className="transition hover:text-white">হোম</Link>
-            <Link href="/features" className="transition hover:text-white">ফিচারসমূহ</Link>
-            <Link href="/#calculator" className="transition hover:text-white">সাশ্রয় ক্যালকুলেটর</Link>
+            <Link href="/" className="transition hover:text-white">{t.pricing.navHome}</Link>
+            <Link href="/features" className="transition hover:text-white">{t.pricing.navFeaturesFull}</Link>
+            <Link href="/#calculator" className="transition hover:text-white">{t.pricing.navCalculator}</Link>
             <Link href="/pricing" className="text-indigo-400 font-bold">{t.landing.navPricing}</Link>
-            <Link href="/#faq" className="transition hover:text-white">জিজ্ঞাসা</Link>
+            <Link href="/#faq" className="transition hover:text-white">{t.landing.navFaq}</Link>
           </nav>
 
           <div className="hidden sm:flex items-center gap-3">
@@ -158,7 +158,7 @@ export default function PricingPage() {
             type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="md:hidden rounded-xl border border-slate-800 p-2 text-slate-400 hover:bg-slate-900 hover:text-white"
-            aria-label="Toggle navigation menu"
+            aria-label={t.pricing.navToggleLabel}
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -166,11 +166,11 @@ export default function PricingPage() {
 
         {mobileMenuOpen && (
           <div className="md:hidden border-b border-slate-800 bg-slate-950 px-6 py-4 space-y-3 text-sm">
-            <Link href="/" className="block py-1 text-slate-300 hover:text-white">হোম</Link>
-            <Link href="/features" className="block py-1 text-slate-300 hover:text-white">ফিচারসমূহ</Link>
-            <Link href="/#calculator" className="block py-1 text-slate-300 hover:text-white">সাশ্রয় ক্যালকুলেটর</Link>
+            <Link href="/" className="block py-1 text-slate-300 hover:text-white">{t.pricing.navHome}</Link>
+            <Link href="/features" className="block py-1 text-slate-300 hover:text-white">{t.pricing.navFeaturesFull}</Link>
+            <Link href="/#calculator" className="block py-1 text-slate-300 hover:text-white">{t.pricing.navCalculator}</Link>
             <Link href="/pricing" className="block py-1 text-indigo-400 font-bold">{t.landing.navPricing}</Link>
-            <Link href="/#faq" className="block py-1 text-slate-300 hover:text-white">জিজ্ঞাসা</Link>
+            <Link href="/#faq" className="block py-1 text-slate-300 hover:text-white">{t.landing.navFaq}</Link>
             <div className="pt-2 flex gap-2">
               <Link href="/login" className="flex-1 text-center py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold">{t.landing.login}</Link>
               <RegisterCta className="flex-1 text-center py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold" />
@@ -183,18 +183,18 @@ export default function PricingPage() {
       <section className="relative z-10 mx-auto max-w-5xl px-6 pt-16 pb-12 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1.5 text-xs font-semibold text-indigo-300 shadow-inner">
           <Sparkles className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
-          <span>স্বচ্ছ ও লাইভ মূল্যতালিকা • কোনো লুকানো চার্জ নেই</span>
+          <span>{t.pricing.heroBadge}</span>
         </div>
 
         <h1 className="mx-auto mt-6 max-w-3xl text-4xl font-black tracking-tight text-white sm:text-5xl">
-          আপনার ব্যবসার পরিধি অনুযায়ী{" "}
+          {t.pricing.heroTitlePrefix}
           <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
-            সেরা প্ল্যানটি বেছে নিন
+            {t.pricing.heroTitleAccent}
           </span>
         </h1>
 
         <p className="mx-auto mt-4 max-w-2xl text-base text-slate-400">
-          সব পেইড প্ল্যানে {fmtNumber(LOCALE, pricing?.trialDays ?? 14)} দিনের ফ্রি ট্রায়াল অন্তর্ভুক্ত। কোনো ক্রেডিট কার্ডের তথ্য লাগবে না।
+          {t.pricing.heroTrialPrefix}{fmtNumber(LOCALE, pricing?.trialDays ?? 14)}{t.pricing.heroTrialSuffix}
         </p>
 
         {/* Billing cycle toggle */}
@@ -206,7 +206,7 @@ export default function PricingPage() {
               billingCycle === "monthly" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-white"
             }`}
           >
-            মাসিক বিলিং
+            {t.pricing.billingMonthly}
           </button>
           <button
             type="button"
@@ -215,9 +215,9 @@ export default function PricingPage() {
               billingCycle === "annual" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-white"
             }`}
           >
-            <span>বার্ষিক বিলিং</span>
+            <span>{t.pricing.billingAnnual}</span>
             <span className="rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold">
-              ২ মাস ফ্রি
+              {t.pricing.billingAnnualFree}
             </span>
           </button>
         </div>
@@ -226,7 +226,7 @@ export default function PricingPage() {
       {/* Pricing Cards */}
       <section className="relative z-10 mx-auto max-w-6xl px-6 pb-20">
         {!pricing ? (
-          <p className="text-center text-slate-500 text-sm">মূল্যতালিকা লোড হচ্ছে…</p>
+          <p className="text-center text-slate-500 text-sm">{t.pricing.loadingPriceList}</p>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4 text-left">
             {pricing.plans.map((p) => {
@@ -250,7 +250,7 @@ export default function PricingPage() {
                 >
                   {isGrowth ? (
                     <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 px-3 py-1 text-[10px] font-bold text-white shadow-md">
-                      🔥 সবচেয়ে জনপ্রিয় প্ল্যান
+                      {t.pricing.popularBadge}
                     </span>
                   ) : null}
 
@@ -266,7 +266,7 @@ export default function PricingPage() {
 
                     {billingCycle === "annual" && monthlyAmount > 0 ? (
                       <div className="text-[10px] text-emerald-400 font-semibold mt-1">
-                        বার্ষিক বিলে {fmtMoney(LOCALE, monthlyAmount * 2)} সরাসরি সেভ
+                        {t.pricing.annualSavingPrefix}{fmtMoney(LOCALE, monthlyAmount * 2)}{t.pricing.annualSavingSuffix}
                       </div>
                     ) : null}
 
@@ -275,33 +275,33 @@ export default function PricingPage() {
                     <ul className="space-y-3 text-xs text-slate-300">
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>{fmtNumber(LOCALE, p.limits.seats)} জন টিম মেম্বার সিট</span>
+                        <span>{fmtNumber(LOCALE, p.limits.seats)}{t.pricing.cardSeatsSuffix}</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>প্রতিদিন {fmtNumber(LOCALE, p.limits.aiDaily)}টি AI ভেরিফাইড মেসেজ</span>
+                        <span>{t.pricing.cardAiDailyPrefix}{fmtNumber(LOCALE, p.limits.aiDaily)}{t.pricing.cardAiDailySuffix}</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>ব্রডকাস্ট ক্যাপাসিটি {fmtNumber(LOCALE, p.limits.broadcastCap)} জন</span>
+                        <span>{t.pricing.cardBroadcastPrefix}{fmtNumber(LOCALE, p.limits.broadcastCap)}{t.pricing.cardBroadcastSuffix}</span>
                       </li>
                       <li className="flex items-center gap-2">
                         <Check className="h-4 w-4 text-emerald-400 shrink-0" />
-                        <span>Unified Inbox & মাল্টি-কুরিয়ার হাব</span>
+                        <span>{t.pricing.cardInboxCourier}</span>
                       </li>
                       {isGrowth || isAgency ? (
                         <>
                           <li className="flex items-center gap-2 text-indigo-300 font-medium">
                             <Check className="h-4 w-4 text-indigo-400 shrink-0" />
-                            <span>COD Return Risk Fraud Shield</span>
+                            <span>{t.pricing.cardFraudShield}</span>
                           </li>
                           <li className="flex items-center gap-2 text-indigo-300 font-medium">
                             <Check className="h-4 w-4 text-indigo-400 shrink-0" />
-                            <span>Omnichannel Competitor Spy</span>
+                            <span>{t.pricing.featureCompetitorSpy}</span>
                           </li>
                           <li className="flex items-center gap-2 text-indigo-300 font-medium">
                             <Check className="h-4 w-4 text-indigo-400 shrink-0" />
-                            <span>True Net Profit & Attribution</span>
+                            <span>{t.pricing.cardNetProfit}</span>
                           </li>
                         </>
                       ) : null}
@@ -309,7 +309,7 @@ export default function PricingPage() {
                   </div>
 
                   <RegisterCta
-                    label={isGrowth ? "গ্রোথ প্ল্যানে শুরু করুন" : t.pricing.startButton}
+                    label={isGrowth ? t.pricing.growthStartButton : t.pricing.startButton}
                     className={`mt-8 block rounded-xl py-3 text-center text-xs font-bold transition ${
                       isGrowth
                         ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-600/30 hover:brightness-110 active:scale-[0.98]"
@@ -326,19 +326,19 @@ export default function PricingPage() {
       {/* COMPREHENSIVE FEATURE COMPARISON MATRIX TABLE */}
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-16">
         <div className="text-center mb-10">
-          <h2 className="text-2xl sm:text-3xl font-black text-white">বিস্তারিত ফিচার তুলনা তালিকা</h2>
-          <p className="mt-2 text-xs sm:text-sm text-slate-400">প্রতিটি প্ল্যানে অন্তর্ভুক্ত সব সুবিধার স্বচ্ছ তুলনামূলক বিবরণ।</p>
+          <h2 className="text-2xl sm:text-3xl font-black text-white">{t.pricing.compareTitle}</h2>
+          <p className="mt-2 text-xs sm:text-sm text-slate-400">{t.pricing.compareSubtitle}</p>
         </div>
 
         <div className="overflow-x-auto rounded-3xl border border-slate-800 bg-slate-900/60 backdrop-blur-md">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-slate-300">
-                <th className="p-4 font-bold sm:w-1/3">ফিচারের নাম</th>
-                <th className="p-4 font-bold text-center">ফ্রি (Free)</th>
-                <th className="p-4 font-bold text-center">স্টার্টার</th>
-                <th className="p-4 font-bold text-center text-indigo-400">গ্রোথ (Growth)</th>
-                <th className="p-4 font-bold text-center">এজেন্সি</th>
+                <th className="p-4 font-bold sm:w-1/3">{t.pricing.compareFeatureHeader}</th>
+                <th className="p-4 font-bold text-center">{t.pricing.compareFreeHeader}</th>
+                <th className="p-4 font-bold text-center">{t.pricing.tierSTARTER}</th>
+                <th className="p-4 font-bold text-center text-indigo-400">{t.pricing.compareGrowthHeader}</th>
+                <th className="p-4 font-bold text-center">{t.pricing.tierAGENCY}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 text-slate-300">
@@ -388,13 +388,13 @@ export default function PricingPage() {
       {/* FOOTER */}
       <footer className="border-t border-slate-800 bg-slate-950 py-10">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 text-xs text-slate-500">
-          <div>© {new Date().getFullYear()} Qosprey — AI Marketing OS. সর্বস্বত্ব সংরক্ষিত।</div>
+          <div>© {new Date().getFullYear()}{t.pricing.footerCopyrightSuffix}</div>
           <div className="flex flex-wrap gap-5 sm:gap-6">
-            <Link href="/" className="hover:text-slate-300">হোম</Link>
-            <Link href="/features" className="hover:text-slate-300">ফিচারসমূহ</Link>
+            <Link href="/" className="hover:text-slate-300">{t.pricing.navHome}</Link>
+            <Link href="/features" className="hover:text-slate-300">{t.pricing.navFeaturesFull}</Link>
             <Link href="/pricing" className="hover:text-slate-300">{t.landing.footerPricing}</Link>
-            <Link href="/privacy" className="hover:text-slate-300">গোপনীয়তা নীতি</Link>
-            <Link href="/terms" className="hover:text-slate-300">শর্তাবলি</Link>
+            <Link href="/privacy" className="hover:text-slate-300">{t.pricing.footerPrivacy}</Link>
+            <Link href="/terms" className="hover:text-slate-300">{t.pricing.footerTerms}</Link>
             <Link href="/login" className="hover:text-slate-300">{t.landing.footerLogin}</Link>
           </div>
         </div>

@@ -110,8 +110,8 @@ export default function ExperimentsDrawer({
         {rb.localNumbers ? (
           <div className="space-y-1">
             <div className="grid gap-2 sm:grid-cols-2 text-xs text-slate-700">
-              {totalsCol("Variant A — Local Totals", rb.localNumbers.planA)}
-              {totalsCol("Variant B — Local Totals", rb.localNumbers.planB)}
+              {totalsCol(t("campaignBuilder.expVariantALocalTotals"), rb.localNumbers.planA)}
+              {totalsCol(t("campaignBuilder.expVariantBLocalTotals"), rb.localNumbers.planB)}
             </div>
             {rb.localNumbers.note ? <p className="text-xs text-slate-500">{rb.localNumbers.note}</p> : null}
           </div>

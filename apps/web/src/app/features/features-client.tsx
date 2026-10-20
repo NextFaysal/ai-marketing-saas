@@ -28,6 +28,9 @@ import {
   X,
 } from "lucide-react";
 import { API_URL, publicApiBase, getToken } from "@/lib/api";
+import { pubT } from "@/lib/i18n/public";
+
+const t = pubT();
 
 interface SysStatus {
   signupOpen: boolean;
@@ -50,7 +53,7 @@ export default function FeaturesClient() {
   const signupClosed = status?.signupOpen === false;
   const RegisterCta = ({
     className,
-    label = "ফ্রি ট্রায়াল শুরু করুন",
+    label = t.features.registerCtaDefault,
   }: {
     className: string;
     label?: string;
@@ -58,9 +61,9 @@ export default function FeaturesClient() {
     signupClosed ? (
       <span
         className={`${className} cursor-not-allowed opacity-60`}
-        title="নতুন সাইনআপ সাময়িক বন্ধ আছে"
+        title={t.features.signupClosedTitle}
       >
-        সাইনআপ সাময়িক বন্ধ
+        {t.landing.signupClosedCta}
       </span>
     ) : (
       <a href="/register" className={className}>
@@ -72,7 +75,7 @@ export default function FeaturesClient() {
     <main className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white">
       {status?.maintenanceMode ? (
         <div className="bg-amber-400 px-4 py-2 text-center text-sm font-semibold text-amber-950">
-          🔧 প্ল্যাটফর্ম রক্ষণাবেক্ষণ চলছে — কিছু ফিচার সাময়িকভাবে বিলম্বিত হতে পারে।
+          {t.features.maintenanceBanner}
         </div>
       ) : null}
 
@@ -95,7 +98,7 @@ export default function FeaturesClient() {
               <div className="text-base font-bold tracking-tight text-white flex items-center gap-2">
                 AI Marketing OS
                 <span className="rounded-full bg-indigo-500/20 border border-indigo-500/40 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
-                  Features
+                  {t.features.headerBadge}
                 </span>
               </div>
               <div className="text-xs text-slate-400">by Qosprey</div>
@@ -104,28 +107,28 @@ export default function FeaturesClient() {
 
           <nav className="hidden items-center gap-6 text-sm font-medium text-slate-300 md:flex">
             <Link href="/" className="transition hover:text-white">
-              হোম
+              {t.features.navHome}
             </Link>
             <a href="#spy" className="transition hover:text-indigo-400">
-              কম্পিটিটর স্পাই
+              {t.features.navSpy}
             </a>
             <a href="#inbox" className="transition hover:text-indigo-400">
-              ইউনিফাইড ইনবক্স
+              {t.features.navInbox}
             </a>
             <a href="#fraud" className="transition hover:text-indigo-400">
-              COD ফ্রড শিল্ড
+              {t.features.navFraud}
             </a>
             <a href="#courier" className="transition hover:text-indigo-400">
-              কুরিয়ার হাব
+              {t.features.navCourier}
             </a>
             <a href="#workflows" className="transition hover:text-indigo-400">
-              ওয়ার্কফ্লো
+              {t.features.navWorkflows}
             </a>
             <a href="#profit" className="transition hover:text-indigo-400">
-              প্রফিট ওএস
+              {t.features.navProfit}
             </a>
             <Link href="/pricing" className="transition hover:text-white">
-              মূল্য
+              {t.landing.navPricing}
             </Link>
           </nav>
 
@@ -134,7 +137,7 @@ export default function FeaturesClient() {
               href="/login"
               className="rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
             >
-              লগইন
+              {t.landing.login}
             </Link>
             <RegisterCta className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-500/20 transition hover:brightness-110 active:scale-[0.98]" />
           </div>
@@ -143,7 +146,7 @@ export default function FeaturesClient() {
             type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="md:hidden rounded-xl border border-slate-800 p-2 text-slate-400 hover:bg-slate-900 hover:text-white"
-            aria-label="Toggle navigation menu"
+            aria-label={t.features.toggleMenuAria}
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
@@ -152,32 +155,32 @@ export default function FeaturesClient() {
         {mobileMenuOpen && (
           <div className="md:hidden border-b border-slate-800 bg-slate-950 px-6 py-4 space-y-3 text-sm">
             <Link href="/" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              হোম (Home)
+              {t.features.mobileNavHome}
             </Link>
             <a href="#spy" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-indigo-400 font-semibold">
-              কম্পিটিটর স্পাই
+              {t.features.navSpy}
             </a>
             <a href="#inbox" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              ইউনিফাইড ইনবক্স
+              {t.features.navInbox}
             </a>
             <a href="#fraud" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              COD ফ্রড শিল্ড
+              {t.features.navFraud}
             </a>
             <a href="#courier" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              কুরিয়ার হাব
+              {t.features.navCourier}
             </a>
             <a href="#workflows" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              ওয়ার্কফ্লো ও বোট
+              {t.features.mobileNavWorkflows}
             </a>
             <a href="#profit" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              প্রফিট ওএস
+              {t.features.navProfit}
             </a>
             <Link href="/pricing" onClick={() => setMobileMenuOpen(false)} className="block py-1 text-slate-300 hover:text-white">
-              মূল্য (Pricing)
+              {t.features.mobileNavPricing}
             </Link>
             <div className="pt-2 flex gap-2">
               <Link href="/login" className="flex-1 text-center py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold text-white">
-                লগইন
+                {t.landing.login}
               </Link>
               <RegisterCta className="flex-1 text-center py-2.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold" />
             </div>
@@ -189,44 +192,42 @@ export default function FeaturesClient() {
       <section className="relative z-10 mx-auto max-w-6xl px-6 pt-16 pb-12 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1.5 text-xs font-semibold text-indigo-300 shadow-inner">
           <Sparkles className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
-          <span>The Next-Generation E-Commerce & Marketing OS Architecture</span>
+          <span>{t.features.heroBadge}</span>
         </div>
 
         <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
-          ই-কমার্স বিজনেসের প্রতিটি ধাপের জন্য{" "}
+          {t.features.heroTitlePrefix}{" "}
           <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
-            পূর্ণাঙ্গ অটোমেশন ও এআই ইঞ্জিন
+            {t.features.heroTitleAccent}
           </span>
         </h1>
 
         <p className="mx-auto mt-5 max-w-3xl text-base sm:text-lg leading-relaxed text-slate-400">
-          প্রতিযোগীদের সিক্রেট বিজ্ঞাপন ট্র্যাক করা থেকে শুরু করে — কাস্টমার মেসেজে স্বয়ংক্রিয় এআই রিপ্লাই,
-          ফেক অর্ডার প্রিভেনশন, ৩টি কুরিয়ারে অটো বুকিং এবং রিয়েল নেট প্রফিট অ্যানালিটিক্স।
-          সবকিছু একটি সমন্বিত ও সিকিউরড প্ল্যাটফর্মে।
+          {t.features.heroBody}
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
           <RegisterCta
-            label="১৪ দিনের ফ্রি ট্রায়ালে শুরু করুন"
+            label={t.features.heroTrialCta}
             className="rounded-2xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-indigo-500/25 transition hover:brightness-110 active:scale-[0.98]"
           />
           <Link
             href="/#pricing"
             className="rounded-2xl border border-slate-800 bg-slate-900/80 px-8 py-4 text-base font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
           >
-            প্ল্যান ও মূল্য দেখুন
+            {t.features.heroPricingCta}
           </Link>
         </div>
 
         {/* Quick Anchor Switcher Bar */}
         <div className="mx-auto mt-12 flex max-w-4xl flex-wrap justify-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-2 backdrop-blur-md">
           {[
-            { id: "spy", label: "Spy Intelligence", icon: Search },
-            { id: "inbox", label: "Unified AI Inbox", icon: MessageSquare },
-            { id: "fraud", label: "COD Fraud Shield", icon: ShieldAlert },
-            { id: "courier", label: "Courier Engine", icon: Truck },
-            { id: "workflows", label: "Visual Workflows", icon: GitFork },
-            { id: "profit", label: "Profit Analytics", icon: TrendingUp },
+            { id: "spy", label: t.features.anchorSpy, icon: Search },
+            { id: "inbox", label: t.features.anchorInbox, icon: MessageSquare },
+            { id: "fraud", label: t.features.anchorFraud, icon: ShieldAlert },
+            { id: "courier", label: t.features.anchorCourier, icon: Truck },
+            { id: "workflows", label: t.features.anchorWorkflows, icon: GitFork },
+            { id: "profit", label: t.features.anchorProfit, icon: TrendingUp },
           ].map((item) => {
             const Icon = item.icon;
             const isActive = activePillar === item.id;
@@ -258,21 +259,20 @@ export default function FeaturesClient() {
             <div className="space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-1 text-xs font-bold text-amber-400">
                 <Search className="h-3.5 w-3.5" />
-                <span>PILLAR 01: COMPETITOR INTELLIGENCE</span>
+                <span>{t.features.spyBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                Omnichannel Competitor Spy & Winning Ads Tracker
+                {t.features.spyTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                প্রতিদ্বন্দী ব্র্যান্ডগুলো ঠিক কোন অ্যাড দিয়ে হাজার হাজার অর্ডার তুলছে তা অনুমান নয়, সরাসরি লাইভ ডেটায় দেখুন।
-                মেটা, গুগল, টিকটক ও বিং লাইব্রেরি থেকে টানা চলমান লাভজনক বিজ্ঞাপন ট্র্যাক করুন এবং তাদের দুর্বলতা কাজে লাগিয়ে এআই দিয়ে সাথে সাথে কাউন্টার ক্যাম্পেইন ড্রাফট করুন।
+                {t.features.spyBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "Winning Ad Longevity Detector", desc: "যে বিজ্ঞাপনগুলো ৩০+ দিন ধরে লাইভ রয়েছে সেগুলো স্বয়ংক্রিয়ভাবে 'Winning' চিহ্নিত হয়।" },
-                  { title: "Live Stock-out & Price Drop Radar", desc: "প্রতিদ্বন্দী কোনো সাইজে স্টকআউট হলে বা দাম কমালে সাথে সাথে অ্যালার্ট পান।" },
-                  { title: "1-Click AI Counter Strategy", desc: "প্রতিদ্বন্দীর অফারের ফাঁক (যেমন: ডেলিভারি চার্জ বেশি) ধরে এআই আপনার জন্য বিজয়ী কাউন্টার-কপি লিখে দেবে।" },
+                  { title: t.features.spyF1Title, desc: t.features.spyF1Desc },
+                  { title: t.features.spyF2Title, desc: t.features.spyF2Desc },
+                  { title: t.features.spyF3Title, desc: t.features.spyF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -368,20 +368,20 @@ export default function FeaturesClient() {
             <div className="order-1 lg:order-2 space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-xs font-bold text-indigo-400">
                 <MessageSquare className="h-3.5 w-3.5" />
-                <span>PILLAR 02: OMNICHANNEL CHAT & AI</span>
+                <span>{t.features.inboxBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                সব মেসেজ এক ইনবক্সে — সাথে জিরো-হ্যালুসিনেশন এআই
+                {t.features.inboxTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                Facebook Page, Messenger, WhatsApp, Instagram DM, Telegram এবং ওয়েবসাইটের লাইভ চ্যাট — কাস্টমার যেখান থেকেই মেসেজ দিক না কেন, পুরো টিম হ্যান্ডেল করবে এক সেন্ট্রাল ইনবক্স থেকে।
+                {t.features.inboxBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "Strict Grounding AI (কোনো ভুল উত্তর নয়)", desc: "এআই শুধুমাত্র আপনার দেওয়া আসল প্রোডাক্ট, দাম, স্টক ও পলিসি দেখে উত্তর দেয়। বানিয়ে কোনো মিথ্যা কথা বা ভুল দাম বলে না।" },
-                  { title: "In-Chat 1-Click Order Placement", desc: "কথা বলার সময় চ্যাট উইন্ডো থেকেই সরাসরি কাস্টমারের জন্য অর্ডার ক্রিয়েট ও কুরিয়ার পার্সেল তৈরি হয়ে যায়।" },
-                  { title: "Customer 360 Profile", desc: "মেসেজ দেওয়ার সাথে সাথেই ডানপাশে কাস্টমারের পুরনো অর্ডারের সংখ্যা, মোট কেনাকাটা এবং রিটার্ন হিস্ট্রি ভেসে ওঠে।" },
+                  { title: t.features.inboxF1Title, desc: t.features.inboxF1Desc },
+                  { title: t.features.inboxF2Title, desc: t.features.inboxF2Desc },
+                  { title: t.features.inboxF3Title, desc: t.features.inboxF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -402,21 +402,20 @@ export default function FeaturesClient() {
             <div className="space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-rose-500/10 border border-rose-500/20 px-3 py-1 text-xs font-bold text-rose-400">
                 <ShieldAlert className="h-3.5 w-3.5" />
-                <span>PILLAR 03: FRAUD PREVENTION & COD SHIELD</span>
+                <span>{t.features.fraudBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                COD Return Risk Score — পার্সেল পাঠানোর আগেই রিটার্ন প্রতিরোধ
+                {t.features.fraudTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                বাংলাদেশে ই-কমার্স ব্যবসার সবচেয়ে বড় লোকসান হয় কুরিয়ার রিটার্ন ও ফেক অর্ডারে।
-                আমাদের স্মার্ট অ্যালগরিদম ফোন নম্বরের পূর্ববর্তী ডেলিভারি আচরণ স্ক্যান করে পার্সেল বুক করার আগেই আপনাকে সতর্ক করে।
+                {t.features.fraudBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "Delivery History Risk Analysis", desc: "পূর্বে কতটি পার্সেল রিসিভ করেছে আর কতটি রিজেক্ট করেছে তার ভিত্তিতে ৩ স্তরের স্কোর (Green, Yellow, Red)।" },
-                  { title: "Advance Courier Charge Recommendation", desc: "ঝুঁকিপূর্ণ অর্ডারে স্বয়ংক্রিয়ভাবে অগ্রিম ডেলিভারি চার্জ চেয়ে WhatsApp/SMS পেমেন্ট লিংক পাঠানো।" },
-                  { title: "Fraud Lock & Honest Empty States", desc: "কোনো ফেক বা বানোয়াট মেট্রিক নেই — আসল ডেটা এবং ক্লিয়ার কারণ প্রদর্শন করা হয়।" },
+                  { title: t.features.fraudF1Title, desc: t.features.fraudF1Desc },
+                  { title: t.features.fraudF2Title, desc: t.features.fraudF2Desc },
+                  { title: t.features.fraudF3Title, desc: t.features.fraudF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -537,21 +536,20 @@ export default function FeaturesClient() {
             <div className="order-1 lg:order-2 space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400">
                 <Truck className="h-3.5 w-3.5" />
-                <span>PILLAR 04: MULTI-COURIER ENGINE</span>
+                <span>{t.features.courierBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                এক জায়গায় ৩ কুরিয়ার — বাল্ক বুকিং ও লাইভ স্ট্যাটাস ট্র্যাকিং
+                {t.features.courierTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                প্রতিদিন ৩টা কুরিয়ারের পোর্টালে আলাদা আলাদা ঢুকে পার্সেল এন্ট্রি দেওয়ার দিন শেষ।
-                সরাসরি আপনার নিজের Steadfast, Pathao ও RedX মার্চেন্ট অ্যাকাউন্ট ইন্টিগ্রেট করে এক ক্লিকে বাল্ক বুকিং করুন।
+                {t.features.courierBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "Real-time Charge Quote", desc: "পার্সেল বুক করার আগেই কোন কুরিয়ারে কত চার্জ কাটবে তা তুলনা করে দেখানো।" },
-                  { title: "Bulk Barcode Labels & Invoice PDF", desc: "এক ক্লিকে ৫০+ পার্সেলের জন্য সরাসরি প্রিন্ট-রেডি বারকোড স্টিকার এবং ইনভয়েস জেনারেশন।" },
-                  { title: "Automated Status Synchronization", desc: "কুরিয়ারের পিক-আপ, ইন-ট্রানজিট, ডেলিভার্ড কিংবা রিটার্ন স্ট্যাটাস অটোমেটিক ড্যাশবোর্ডে সিঙ্ক হয়।" },
+                  { title: t.features.courierF1Title, desc: t.features.courierF1Desc },
+                  { title: t.features.courierF2Title, desc: t.features.courierF2Desc },
+                  { title: t.features.courierF3Title, desc: t.features.courierF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -572,20 +570,20 @@ export default function FeaturesClient() {
             <div className="space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-violet-500/10 border border-violet-500/20 px-3 py-1 text-xs font-bold text-violet-400">
                 <GitFork className="h-3.5 w-3.5" />
-                <span>PILLAR 05: VISUAL WORKFLOWS & BOTS</span>
+                <span>{t.features.workflowsBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                ড্র্যাগ-অ্যান্ড-ড্রপ নো-কোড ওয়ার্কফ্লো এবং সেলফ-চেকআউট বোট
+                {t.features.workflowsTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                কোনো কোডিং ছাড়া কাস্টম অটোমেশন তৈরি করুন। নতুন অর্ডার এলে স্বয়ংক্রিয় SMS কনফার্মেশন, কার্ট ফেলে রেখে চলে গেলে WhatsApp রিমাইন্ডার এবং ডেলিভারি সফল হলে রিভিউ রিকোয়েস্ট — সব চলবে অটো-পাইলটে।
+                {t.features.workflowsBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "Graph Visual Canvas Engine", desc: "ট্রিগার, ওয়েট স্টেপ (Wait 2 hrs) এবং কন্ডিশনাল ব্রাঞ্চিং (If Return Risk > 50%) ড্র্যাগ অ্যান্ড ড্রপ করে সেট করুন।" },
-                  { title: "WhatsApp Interactive Catalog Bot", desc: "কাস্টমার হোয়াটসঅ্যাপে চ্যাট করেই পুরো প্রোডাক্ট ক্যাটালগ দেখতে এবং অর্ডার কনফার্ম করতে পারে।" },
-                  { title: "Abandoned Cart Recovery", desc: "চেকআউট পেজ থেকে ফিরে যাওয়া কাস্টমারদের স্বয়ংক্রিয় ডিসকাউন্ট মেসেজ পাঠিয়ে সেলসে ফিরিয়ে আনা।" },
+                  { title: t.features.workflowsF1Title, desc: t.features.workflowsF1Desc },
+                  { title: t.features.workflowsF2Title, desc: t.features.workflowsF2Desc },
+                  { title: t.features.workflowsF3Title, desc: t.features.workflowsF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -680,21 +678,20 @@ export default function FeaturesClient() {
             <div className="order-1 lg:order-2 space-y-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-400">
                 <TrendingUp className="h-3.5 w-3.5" />
-                <span>PILLAR 06: PROFIT OS & ATTRIBUTION</span>
+                <span>{t.features.profitBadge}</span>
               </div>
               <h2 className="text-3xl font-black text-white sm:text-4xl">
-                সত্যিকারের নেট প্রফিট ও মাল্টি-টাচ অ্যাট্রিবিউশন
+                {t.features.profitTitle}
               </h2>
               <p className="text-base text-slate-300 leading-relaxed">
-                শুধু লাখ টাকার বিক্রি দেখে ব্যবসা চালানো যায় না; পকেটে দিনশেষে কত টাকা লাভ থাকছে সেটাই আসল।
-                আমাদের সিস্টেম অ্যাড খরচ, পণ্যের ক্রয়মূল্য (COGS), কুরিয়ার চার্জ এবং রিটার্ন ড্যামেজ বাদ দিয়ে আসল নেট প্রফিট বের করে দেয়।
+                {t.features.profitBody}
               </p>
 
               <div className="space-y-3 pt-2">
                 {[
-                  { title: "True Net Profit Equation", desc: "বিক্রি থেকে অ্যাড খরচ ও কুরিয়ার রিটার্ন ক্ষতি স্বয়ংক্রিয়ভাবে বিয়োগ করে রিয়েল প্রফিট প্রকাশ।" },
-                  { title: "Multi-Touch Attribution", desc: "কাস্টমার ফেসবুক অ্যাড, গুগল সার্চ নাকি হোয়াটসঅ্যাপ মেসেজ দেখে কিনল—তার স্বচ্ছ অ্যাট্রিবিউশন ট্র্যাক।" },
-                  { title: "Cohort Retention & LTV", desc: "কোন মাসের কাস্টমাররা বারবার ফিরে আসছে এবং কাস্টমারপ্রতি লাইফটাইম ভ্যালু (LTV) কত তা দৃশ্যমান।" },
+                  { title: t.features.profitF1Title, desc: t.features.profitF1Desc },
+                  { title: t.features.profitF2Title, desc: t.features.profitF2Desc },
+                  { title: t.features.profitF3Title, desc: t.features.profitF3Desc },
                 ].map((f, i) => (
                   <div key={i} className="flex gap-3 items-start">
                     <CheckCircle2 className="h-5 w-5 text-indigo-400 shrink-0 mt-0.5" />
@@ -716,35 +713,35 @@ export default function FeaturesClient() {
         <div className="mx-auto max-w-5xl px-6 text-center space-y-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-300">
             <Lock className="h-3.5 w-3.5 text-indigo-400" />
-            <span>Enterprise Security & Data Isolation</span>
+            <span>{t.features.securityBadge}</span>
           </div>
 
           <h2 className="text-3xl font-black text-white sm:text-4xl">
-            আপনার ব্যবসার ডেটা শতভাগ সুরক্ষিত ও প্রাইভেট
+            {t.features.securityTitle}
           </h2>
 
           <div className="grid gap-6 sm:grid-cols-3 text-left">
             <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 space-y-2">
               <ShieldCheck className="h-7 w-7 text-indigo-400" />
-              <h3 className="font-bold text-white text-base">Tenant Isolation Guard</h3>
+              <h3 className="font-bold text-white text-base">{t.features.securityCard1Title}</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                প্রতিটি অর্গানাইজেশনের ডেটাবেজ কুয়েরি আলাদা আইসোলেটেড। এক দোকানের কাস্টমার বা প্রোডাক্ট ডেটা অন্য দোকানের দেখতে পাওয়ার বিন্দুমাত্র সুযোগ নেই।
+                {t.features.securityCard1Text}
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 space-y-2">
               <Bot className="h-7 w-7 text-violet-400" />
-              <h3 className="font-bold text-white text-base">No Direct DB Access for AI</h3>
+              <h3 className="font-bold text-white text-base">{t.features.securityCard2Title}</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                এআই ইঞ্জিন কোনো সরাসরি ডেটাবেজ ক্রেডেনশিয়াল পায় না। অনুমতি-যাচাইকৃত ব্যাকএন্ড টুলের মাধ্যমেই কেবল কাস্টমার প্রশ্নের প্রাসঙ্গিক তথ্য পায়।
+                {t.features.securityCard2Text}
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 space-y-2">
               <Lock className="h-7 w-7 text-emerald-400" />
-              <h3 className="font-bold text-white text-base">আপনার নিজের অ্যাকাউন্টেই চলবে</h3>
+              <h3 className="font-bold text-white text-base">{t.features.securityCard3Title}</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Meta App, WooCommerce কিংবা Steadfast — সবকিছু আপনার নিজের বিজনেস অ্যাকাউন্ট দিয়েই সরাসরি অথেনটিকেটেড থাকে।
+                {t.features.securityCard3Text}
               </p>
             </div>
           </div>
@@ -755,22 +752,21 @@ export default function FeaturesClient() {
       <section className="relative overflow-hidden border-t border-slate-800 bg-gradient-to-br from-indigo-950 via-slate-950 to-violet-950 py-20 text-center">
         <div className="mx-auto max-w-4xl px-6 relative z-10 space-y-6">
           <h2 className="text-3xl font-black text-white sm:text-5xl">
-            আজই আপনার ই-কমার্স ব্যবসাকে দিন সম্পূর্ণ আধুনিক রূপ
+            {t.features.ctaTitle}
           </h2>
           <p className="mx-auto max-w-2xl text-base text-slate-300">
-            ১৪ দিনের ট্রায়াল দিয়ে শুরু করুন। কোনো ক্রেডিট কার্ড লাগবে না।
-            আপনার টিমকে দিন একটি পাওয়ারফুল মার্কেটিং ও কমার্স কমান্ড সেন্টার।
+            {t.features.ctaBody}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
             <RegisterCta
-              label="বিনামূল্যে ট্রায়াল শুরু করুন"
+              label={t.features.ctaTrialLabel}
               className="rounded-2xl bg-gradient-to-r from-indigo-500 via-violet-600 to-fuchsia-600 px-9 py-4 text-base font-bold text-white shadow-xl shadow-indigo-500/30 transition hover:brightness-110 active:scale-[0.98]"
             />
             <Link
               href="/"
               className="rounded-2xl border border-slate-700 bg-slate-900/80 px-8 py-4 text-base font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white"
             >
-              মূল পাতা (Home) এ ফিরে যান
+              {t.features.ctaHomeLabel}
             </Link>
           </div>
         </div>
@@ -779,14 +775,14 @@ export default function FeaturesClient() {
       {/* FOOTER */}
       <footer className="border-t border-slate-800 bg-slate-950 py-10">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 text-xs text-slate-500">
-          <div>© {new Date().getFullYear()} Qosprey — AI Marketing OS. সর্বস্বত্ব সংরক্ষিত।</div>
+          <div>© {new Date().getFullYear()} {t.features.footerCopyright}</div>
           <div className="flex flex-wrap gap-5 sm:gap-6">
-            <Link href="/" className="hover:text-slate-300">হোম</Link>
-            <Link href="/pricing" className="hover:text-slate-300">মূল্য</Link>
-            <Link href="/privacy" className="hover:text-slate-300">গোপনীয়তা নীতি</Link>
-            <Link href="/terms" className="hover:text-slate-300">শর্তাবলি</Link>
-            <Link href="/login" className="hover:text-slate-300">লগইন</Link>
-            <Link href="/register" className="hover:text-slate-300">রেজিস্টার</Link>
+            <Link href="/" className="hover:text-slate-300">{t.features.navHome}</Link>
+            <Link href="/pricing" className="hover:text-slate-300">{t.landing.footerPricing}</Link>
+            <Link href="/privacy" className="hover:text-slate-300">{t.features.footerPrivacy}</Link>
+            <Link href="/terms" className="hover:text-slate-300">{t.features.footerTerms}</Link>
+            <Link href="/login" className="hover:text-slate-300">{t.landing.footerLogin}</Link>
+            <Link href="/register" className="hover:text-slate-300">{t.landing.footerRegister}</Link>
           </div>
         </div>
       </footer>
