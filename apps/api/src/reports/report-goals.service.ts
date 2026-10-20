@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnalyticsService } from "../analytics/analytics.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * Reports Advanced RP5 — monthly goals. Actuals come
@@ -16,7 +17,7 @@ export const GOAL_METRICS = ["revenue", "orders", "spend"] as const;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function monthWindow(month: string, now = new Date()): { from: string; to: string; daysInMonth: number; elapsedDays: number } {
-  if (!MONTH_RE.test(month)) throw new BadRequestException("month must be YYYY-MM");
+  if (!MONTH_RE.test(month)) throw badRequest("reports.monthMustBeYyyyMm");
   const [y, m] = month.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const first = new Date(Date.UTC(y, m - 1, 1));
@@ -75,10 +76,10 @@ export class ReportGoalsService {
 
   async set(organizationId: string, actorId: string, dto: { month: string; metric: string; target: string }) {
     monthWindow(dto.month);
-    if (!(GOAL_METRICS as readonly string[]).includes(dto.metric)) throw new BadRequestException(`metric must be one of ${GOAL_METRICS.join(", ")}`);
+    if (!(GOAL_METRICS as readonly string[]).includes(dto.metric)) throw badRequest("reports.metricMustBeOneOf", { p1: GOAL_METRICS.join(", ") });
     let target: bigint;
-    try { target = BigInt(dto.target); } catch { throw new BadRequestException("target must be an integer (minor units for money, count for orders)"); }
-    if (target < 0n) throw new BadRequestException("target cannot be negative");
+    try { target = BigInt(dto.target); } catch { throw badRequest("reports.targetMustBeAnIntegerMinor"); }
+    if (target < 0n) throw badRequest("reports.targetCannotBeNegative");
     const row = await (this.prisma as any).reportGoal.upsert({
       where: { organizationId_month_metric: { organizationId, month: dto.month, metric: dto.metric } },
       create: { organizationId, month: dto.month, metric: dto.metric, target, createdById: actorId },
@@ -90,7 +91,7 @@ export class ReportGoalsService {
 
   async remove(organizationId: string, actorId: string, id: string) {
     const row = await (this.prisma as any).reportGoal.findFirst({ where: { id, organizationId } });
-    if (!row) throw new NotFoundException("Goal not found");
+    if (!row) throw notFound("reports.goalNotFound");
     await (this.prisma as any).reportGoal.delete({ where: { id } });
     await this.audit.log({ organizationId, userId: actorId, action: "report_goal_deleted", entityType: "report_goal", entityId: id, metadata: {} }).catch(() => undefined);
     return { deleted: true };

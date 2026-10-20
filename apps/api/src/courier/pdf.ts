@@ -11,6 +11,15 @@
  * machine-critical value on the label/invoice (tracking id, order
  * number, amounts, phone) is ASCII and renders exactly. The data
  * itself in the app is unaffected.
+ *
+ * MB4 / D-MB4-6 (document locale): PDFs produced here stay
+ * EN/ASCII in every org locale — this writer cannot render
+ * Bengali, so NO Bengali label is ever passed to it (a Bengali
+ * string would silently degrade to "?"s). Bengali documents are
+ * served through the locale-aware print-HTML surfaces instead
+ * (reports print HTML, web print pages). BN PDF is therefore a
+ * documented PARTIAL in MB4, not a silent gap: it needs a
+ * font-embedding writer, which MB4 deliberately does not build.
  */
 import { encodeCode128 } from "./barcode";
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Injectable } from "@nestjs/common";
+import { badRequest, notFound } from "../i18n";
 import Papa from "papaparse";
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -50,7 +51,7 @@ export function suggestMatchesFor(line: { amountMinor: bigint; dateKey: string }
 export function parseMoneyToMinor(raw: unknown): bigint {
   const s = String(raw ?? "").replace(/[,\s৳]/g, "");
   const m = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(s);
-  if (!m) throw new Error(`পরিমাণটি সঠিক নয়: ${String(raw ?? "")}`);
+  if (!m) throw badRequest("finance.bankRecon.amountInvalid", { raw: String(raw ?? "") });
   const minor = BigInt(m[2]) * 100n + BigInt((m[3] ?? "").padEnd(2, "0") || "0");
   return m[1] === "-" ? -minor : minor;
 }
@@ -95,11 +96,11 @@ export class BankReconService {
   }
 
   async importStatement(organizationId: string, actorId: string | undefined, csvText: unknown) {
-    if (typeof csvText !== "string" || !csvText.trim()) throw new Error("স্টেটমেন্ট CSV টেক্সট দিন");
+    if (typeof csvText !== "string" || !csvText.trim()) throw badRequest("finance.bankRecon.csvTextRequired");
     const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: "greedy" });
     const fields = (parsed.meta.fields ?? []).map((f) => String(f).trim().toLowerCase());
     for (const required of ["date", "description", "amount"]) {
-      if (!fields.includes(required)) throw new Error(`CSV-তে '${required}' কলামটি থাকতে হবে (date, description, amount[, reference])`);
+      if (!fields.includes(required)) throw badRequest("finance.bankRecon.csvColumnRequired", { column: required });
     }
     const records = (parsed.data as any[]).slice(0, 1000);
     const importId = randomUUID();
@@ -111,9 +112,9 @@ export class BankReconService {
       try {
         const statementDate = parseSpentAt(rec.date);
         const amountMinor = parseMoneyToMinor(rec.amount);
-        if (amountMinor === 0n) throw new Error("পরিমাণ শূন্য হতে পারে না");
+        if (amountMinor === 0n) throw badRequest("finance.bankRecon.amountZero");
         const description = String(rec.description ?? "").trim().slice(0, 500);
-        if (!description) throw new Error("বিবরণ খালি");
+        if (!description) throw badRequest("finance.bankRecon.descriptionEmpty");
         await this.t("bankStatementLine").create({
           data: {
             organizationId, importId, statementDate, description, amountMinor,
@@ -126,7 +127,7 @@ export class BankReconService {
         errors.push({ row: i + 2, message: String(e?.message ?? e) });
       }
     }
-    if (!created) throw new Error(`একটি সারিও import হয়নি — প্রথম ত্রুটি: ${errors[0]?.message ?? "অজানা"}`);
+    if (!created) throw badRequest("finance.bankRecon.noRowImported", { error: errors[0]?.message ?? "অজানা" });
     await this.audit.log({ organizationId, userId: actorId, action: "finance.bank_statement_imported", entityType: "BankStatementLine", entityId: importId, metadata: { created, errors: errors.length } }).catch(() => undefined);
     return { importId, created, errors, note: "সব সারি 'unmatched' অবস্থায় এসেছে — প্রস্তাবিত মিল দেখে প্রতিটি নিজে নিশ্চিত করুন; স্বয়ংক্রিয়ভাবে কোনো মিল ধরা হয়নি।" };
   }
@@ -168,12 +169,12 @@ export class BankReconService {
    * the current suggestions (exact amount, ±7 days). */
   async confirmMatch(organizationId: string, actorId: string | undefined, lineId: string, body: any) {
     const line = await this.t("bankStatementLine").findFirst({ where: { id: lineId, organizationId } });
-    if (!line) throw new Error("স্টেটমেন্ট সারিটি পাওয়া যায়নি");
-    if (String(line.status) === "matched") throw new Error("এই সারিটি ইতিমধ্যে মেলানো হয়েছে");
+    if (!line) throw notFound("finance.bankRecon.lineNotFound");
+    if (String(line.status) === "matched") throw badRequest("finance.bankRecon.lineAlreadyMatched");
     const pool = await this.candidates(organizationId);
     const suggestions = suggestMatchesFor({ amountMinor: toBig(line.amountMinor), dateKey: dhakaDateKey(new Date(line.statementDate)) }, pool);
     const chosen = suggestions.find((s) => s.sourceType === String(body?.sourceType ?? "") && s.sourceId === String(body?.sourceId ?? ""));
-    if (!chosen) throw new Error("প্রস্তাবিত মিলটি পাওয়া যায়নি — পরিমাণ হুবহু ও তারিখ ±৭ দিনের মধ্যে থাকতে হবে");
+    if (!chosen) throw badRequest("finance.bankRecon.suggestedMatchNotFound");
     const row = await this.t("bankStatementLine").update({
       where: { id: lineId },
       data: { status: "matched", matchedSourceType: chosen.sourceType, matchedSourceId: chosen.sourceId, confirmedById: actorId ?? null, confirmedAt: new Date() },
@@ -184,8 +185,8 @@ export class BankReconService {
 
   async unmatch(organizationId: string, actorId: string | undefined, lineId: string) {
     const line = await this.t("bankStatementLine").findFirst({ where: { id: lineId, organizationId } });
-    if (!line) throw new Error("স্টেটমেন্ট সারিটি পাওয়া যায়নি");
-    if (String(line.status) !== "matched") throw new Error("এই সারিটি মেলানো অবস্থায় নেই");
+    if (!line) throw notFound("finance.bankRecon.lineNotFound");
+    if (String(line.status) !== "matched") throw badRequest("finance.bankRecon.lineNotMatched");
     const row = await this.t("bankStatementLine").update({
       where: { id: lineId },
       data: { status: "unmatched", matchedSourceType: null, matchedSourceId: null, confirmedById: null, confirmedAt: null },

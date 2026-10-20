@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AnalyticsService, parseRange } from "../analytics/analytics.service";
+import { badRequest, notFound } from "../i18n/api-exception";
 
 /**
  * Reports Advanced RP2 — the custom report engine.
@@ -27,11 +28,11 @@ export function metricsFor(dimension: string): readonly string[] {
   return dimension === "day" ? DAY_METRICS : ADS_METRICS;
 }
 export function validateDefinition(dimension: string, metrics: string[]) {
-  if (!(DIMENSIONS as readonly string[]).includes(dimension)) throw new BadRequestException(`dimension must be one of ${DIMENSIONS.join(", ")}`);
-  if (!Array.isArray(metrics) || !metrics.length) throw new BadRequestException("অন্তত একটি metric বেছে নিন");
+  if (!(DIMENSIONS as readonly string[]).includes(dimension)) throw badRequest("reports.dimensionMustBeOneOf", { p1: DIMENSIONS.join(", ") });
+  if (!Array.isArray(metrics) || !metrics.length) throw badRequest("reports.selectAtLeastOneMetric");
   const allowed = metricsFor(dimension);
   const bad = metrics.filter((m) => !allowed.includes(m));
-  if (bad.length) throw new BadRequestException(`এই dimension-এ এই metric পাওয়া যায় না: ${bad.join(", ")}। পাওয়া যায়: ${allowed.join(", ")}`);
+  if (bad.length) throw badRequest("reports.thisMetricIsNotAvailableIn", { p1: bad.join(", "), p2: allowed.join(", ") });
 }
 export function presetRange(preset: string): { from: string; to: string } {
   const now = new Date();
@@ -46,7 +47,7 @@ export function presetRange(preset: string): { from: string; to: string } {
       const firstLast = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
       return { from: iso(firstLast), to: iso(new Date(firstThis.getTime() - 86400000)) };
     }
-    default: throw new BadRequestException(`rangePreset must be one of ${RANGE_PRESETS.join(", ")}`);
+    default: throw badRequest("reports.rangepresetMustBeOneOf", { p1: RANGE_PRESETS.join(", ") });
   }
 }
 
@@ -160,7 +161,7 @@ export class CustomReportsService {
   async create(organizationId: string, actorId: string, dto: { name: string; metrics: string[]; dimension: string; rangePreset?: string; recipients?: string[] }) {
     validateDefinition(dto.dimension, dto.metrics);
     const preset = dto.rangePreset ?? "last_30d";
-    if (!(RANGE_PRESETS as readonly string[]).includes(preset)) throw new BadRequestException(`rangePreset must be one of ${RANGE_PRESETS.join(", ")}`);
+    if (!(RANGE_PRESETS as readonly string[]).includes(preset)) throw badRequest("reports.rangepresetMustBeOneOf", { p1: RANGE_PRESETS.join(", ") });
     const row = await (this.prisma as any).savedReport.create({ data: {
       organizationId, name: String(dto.name ?? "").slice(0, 120) || "Untitled report",
       metrics: dto.metrics, dimension: dto.dimension, rangePreset: preset,
@@ -176,7 +177,7 @@ export class CustomReportsService {
   }
   async get(organizationId: string, id: string) {
     const row = await (this.prisma as any).savedReport.findFirst({ where: { id, organizationId } });
-    if (!row) throw new NotFoundException("Saved report not found");
+    if (!row) throw notFound("reports.savedReportNotFound");
     return row;
   }
   async update(organizationId: string, actorId: string, id: string, dto: { name?: string; metrics?: string[]; dimension?: string; rangePreset?: string; recipients?: string[] }) {

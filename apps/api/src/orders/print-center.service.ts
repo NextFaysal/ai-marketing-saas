@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { badRequest, notFound } from "../i18n";
+import { catalogTextBn } from "../i18n/catalog/send-locale";
 import { ModuleRef } from "@nestjs/core";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
@@ -120,11 +122,11 @@ export class PrintCenterService {
 
   private cleanTemplateField(field: keyof typeof TEMPLATE_CAPS, value: unknown): string | null {
     if (value === null || value === undefined) return null;
-    if (typeof value !== "string") throw new BadRequestException(`${field} লেখা (string) হতে হবে`);
+    if (typeof value !== "string") throw badRequest("print.templateMustBeString", { field });
     const trimmed = value.trim();
     if (!trimmed) return null;
     if (trimmed.length > TEMPLATE_CAPS[field]) {
-      throw new BadRequestException(`${field} সর্বোচ্চ ${TEMPLATE_CAPS[field]} অক্ষর হতে পারবে`);
+      throw badRequest("print.templateTooLong", { field, max: TEMPLATE_CAPS[field] });
     }
     return trimmed;
   }
@@ -132,10 +134,10 @@ export class PrintCenterService {
   async updateTemplate(organizationId: string, actorId: string, dto: {
     logoUrl?: unknown; footerText?: unknown; termsText?: unknown; invoiceNote?: unknown;
   }) {
-    if (!dto || typeof dto !== "object") throw new BadRequestException("টেমপ্লেট সেটিংস দরকার");
+    if (!dto || typeof dto !== "object") throw badRequest("print.templateSettingsRequired");
     const logoUrl = this.cleanTemplateField("logoUrl", dto.logoUrl);
     if (logoUrl !== null && !/^https?:\/\/\S+$/.test(logoUrl)) {
-      throw new BadRequestException("লোগোর URL অবশ্যই http:// বা https:// দিয়ে শুরু হতে হবে");
+      throw badRequest("print.logoUrlMustBeHttp");
     }
     const data = {
       logoUrl,
@@ -220,8 +222,8 @@ export class PrintCenterService {
         .filter((s: any) => String(s.orderId) === String(orderId) && String(s.organizationId) === String(organizationId))
         .sort((a: any, b: any) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
       const latest = rows[0];
-      if (!latest) { failedReasons[orderId] = "কুরিয়ার বুকিং নেই"; continue; }
-      if (!latest.trackingCode && !latest.consignmentId) { failedReasons[orderId] = "শিপমেন্টে এখনো ট্র্যাকিং কোড আসেনি"; continue; }
+      if (!latest) { failedReasons[orderId] = catalogTextBn("print.noCourierBooking"); continue; }
+      if (!latest.trackingCode && !latest.consignmentId) { failedReasons[orderId] = catalogTextBn("print.noTrackingCodeYet"); continue; }
       shipmentIds.push(String(latest.id));
     }
     return { shipmentIds, failedReasons };
@@ -233,12 +235,12 @@ export class PrintCenterService {
     // ---- whole-request validation (BEFORE any job row) ----
     const type = String(dto?.type ?? "") as PrintJobType;
     if (!(PRINT_JOB_TYPES as readonly string[]).includes(type)) {
-      throw new BadRequestException(`অজানা প্রিন্ট ধরন "${String(dto?.type ?? "")}" — সঠিক ধরন: ${PRINT_JOB_TYPES.join(", ")}`);
+      throw badRequest("print.unknownType", { type: String(dto?.type ?? ""), types: PRINT_JOB_TYPES.join(", ") });
     }
-    if (!Array.isArray(dto?.orderIds)) throw new BadRequestException("১–১০০টি অর্ডার বেছে নিন");
+    if (!Array.isArray(dto?.orderIds)) throw badRequest("print.pickOrders");
     const orderIds = [...new Set(dto.orderIds.map((x) => String(x ?? "").trim()).filter(Boolean))];
     if (orderIds.length < 1 || orderIds.length > MAX_ORDERS_PER_JOB) {
-      throw new BadRequestException("১–১০০টি অর্ডার বেছে নিন");
+      throw badRequest("print.pickOrders");
     }
     const found: any[] = ((await this.t("order")?.findMany({
       where: { id: { in: orderIds }, organizationId }, select: { id: true },
@@ -257,7 +259,7 @@ export class PrintCenterService {
     }
     const missing = orderIds.filter((id) => !foundIds.has(id));
     if (missing.length) {
-      throw new BadRequestException(`এই অর্ডারগুলো এই সংস্থায় পাওয়া যায়নি: ${missing.join(", ")}`);
+      throw badRequest("print.ordersNotFoundInOrg", { ids: missing.join(", ") });
     }
 
     // ---- per-order preparation (labels resolve shipments) ----
@@ -270,7 +272,7 @@ export class PrintCenterService {
       if (labelShipmentIds.length === 0) {
         const job = await this.writeJob(organizationId, actorId, {
           type, orderIds, failedOrderIds: orderIds, status: "failed",
-          error: "কোনো অর্ডারেরই লেবেল ছাপানো যায়নি — কোনোটিরই ব্যবহারযোগ্য কুরিয়ার শিপমেন্ট নেই",
+          error: catalogTextBn("print.noLabelPrintable"),
         });
         return { job, pdf: null, failedReasons };
       }
@@ -319,7 +321,7 @@ export class PrintCenterService {
   async getJob(organizationId: string, jobId: string) {
     const row = await this.t("printJob")?.findFirst({ where: { id: jobId, organizationId } }).catch(() => null);
     if (!row || String(row.organizationId) !== String(organizationId)) {
-      throw new NotFoundException("প্রিন্ট জব পাওয়া যায়নি");
+      throw notFound("print.jobNotFound");
     }
     return this.pubJob(row);
   }

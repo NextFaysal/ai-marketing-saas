@@ -3,8 +3,15 @@ import { AuditService } from "../audit/audit.service";
 import { EmailProvider } from "../messaging/email.provider";
 import { OrderProfitService } from "../orders/order-profit.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { FinanceReportsService, REPORT_LABELS_BN } from "./finance-reports.service";
-import { aggregateFunnels, ASSOCIATION_LABEL_BN, type BroadcastFunnelShape } from "../messaging/analytics";
+import { FinanceReportsService, reportLabelFor } from "./finance-reports.service";
+import { badRequest, notFound } from "../i18n";
+import {
+  catalogList,
+  catalogText,
+  resolveDocumentLocale,
+  type ApiLocale,
+} from "../i18n/catalog/send-locale";
+import { aggregateFunnels, type BroadcastFunnelShape } from "../messaging/analytics";
 import {
   buildFileFromSections,
   dhakaDateKey,
@@ -88,26 +95,26 @@ export class ScheduledReportsService {
   }
 
   private validateRecipients(raw: unknown): string[] {
-    if (!Array.isArray(raw)) throw new Error("প্রাপকের ইমেইল তালিকা দিন");
+    if (!Array.isArray(raw)) throw badRequest("finance.scheduled.recipientsListRequired");
     const cleaned = [...new Set(raw.map((r) => String(r ?? "").trim().toLowerCase()).filter(Boolean))];
-    if (!cleaned.length) throw new Error("অন্তত একজন প্রাপকের ইমেইল দিন");
-    if (cleaned.length > 10) throw new Error("সর্বোচ্চ ১০ জন প্রাপক যোগ করা যাবে");
-    for (const e of cleaned) if (!EMAIL_RE.test(e)) throw new Error(`ইমেইল ঠিকানাটি সঠিক নয়: ${e}`);
+    if (!cleaned.length) throw badRequest("finance.scheduled.atLeastOneRecipient");
+    if (cleaned.length > 10) throw badRequest("finance.scheduled.maxRecipients");
+    for (const e of cleaned) if (!EMAIL_RE.test(e)) throw badRequest("finance.scheduled.emailInvalid", { email: e });
     return cleaned;
   }
 
   private validateConfigBody(body: any, partial: boolean): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (!partial || body.reportType !== undefined) {
-      if (!SCHEDULED_REPORT_TYPES.includes(body.reportType)) throw new Error("রিপোর্টের ধরনটি তালিকা থেকে বেছে নিন");
+      if (!SCHEDULED_REPORT_TYPES.includes(body.reportType)) throw badRequest("finance.scheduled.reportTypeFromList");
       out.reportType = body.reportType;
     }
     if (!partial || body.cadence !== undefined) {
-      if (!CADENCES.includes(body.cadence)) throw new Error("পাঠানোর ব্যবধান daily বা weekly হতে হবে");
+      if (!CADENCES.includes(body.cadence)) throw badRequest("finance.scheduled.cadenceInvalid");
       out.cadence = body.cadence;
     }
     if (body.format !== undefined) {
-      if (!FORMATS.includes(body.format)) throw new Error("ফরম্যাট csv বা xlsx হতে হবে");
+      if (!FORMATS.includes(body.format)) throw badRequest("finance.scheduled.formatInvalid");
       out.format = body.format;
     }
     if (!partial || body.recipients !== undefined) out.recipients = this.validateRecipients(body.recipients);
@@ -122,7 +129,7 @@ export class ScheduledReportsService {
 
   private async findConfig(organizationId: string, id: string) {
     const row = await this.t("scheduledReport").findFirst({ where: { id, organizationId } });
-    if (!row) throw new Error("নির্ধারিত রিপোর্টটি পাওয়া যায়নি");
+    if (!row) throw notFound("finance.scheduled.notFound");
     return row;
   }
 
@@ -162,24 +169,26 @@ export class ScheduledReportsService {
 
   // ---------------- generation ----------------
 
-  private async buildProfitFile(organizationId: string, from: string, to: string, format: "csv" | "xlsx"): Promise<BuiltFile> {
+  private async buildProfitFile(organizationId: string, from: string, to: string, format: "csv" | "xlsx", locale: ApiLocale = "bn"): Promise<BuiltFile> {
+    const T = (key: string, params?: Record<string, unknown>) => catalogText(key, locale, params);
+    const H = (key: string) => catalogList(key, locale);
     const report = await this.profit.getProfitReport(organizationId, { from, to });
     const totals = report.totals ?? {};
     const fin = report.finance;
     const sections: ReportSection[] = [
-      { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
-        ["মোট অর্ডার", totals.orders ?? 0],
-        ["মোট বিক্রি (টাকা)", takaCell(toBig(totals.revenueMinor ?? 0))],
-        ["পণ্যের খরচ (টাকা)", takaCell(toBig(totals.productCostMinor ?? 0))],
-        ["খরচ-কভারেজ (%)", totals.costCoveragePercent ?? ""],
-        ["মোট মার্জিন (টাকা)", totals.grossMarginMinor == null ? "" : takaCell(toBig(totals.grossMarginMinor))],
+      { title: T("finance.section.summary"), headers: H("finance.headers.descriptionAmount"), rows: [
+        [T("finance.profit.totalOrders"), totals.orders ?? 0],
+        [T("finance.profit.totalSales"), takaCell(toBig(totals.revenueMinor ?? 0))],
+        [T("finance.profit.productCost"), takaCell(toBig(totals.productCostMinor ?? 0))],
+        [T("finance.profit.costCoverage"), totals.costCoveragePercent ?? ""],
+        [T("finance.profit.grossMargin"), totals.grossMarginMinor == null ? "" : takaCell(toBig(totals.grossMarginMinor))],
         ...(fin ? [
-          ["সময়সীমার খরচ (টাকা)", takaCell(toBig(fin.periodExpensesMinor ?? 0))],
-          ["গেটওয়ে ফি (টাকা)", fin.gatewayFeesMinor == null ? "" : takaCell(toBig(fin.gatewayFeesMinor))],
-          ["আনুমানিক নিট লাভ (টাকা)", fin.estimatedNetMinor == null ? "" : takaCell(toBig(fin.estimatedNetMinor))],
+          [T("finance.profit.periodExpenses"), takaCell(toBig(fin.periodExpensesMinor ?? 0))],
+          [T("finance.profit.gatewayFees"), fin.gatewayFeesMinor == null ? "" : takaCell(toBig(fin.gatewayFeesMinor))],
+          [T("finance.profit.estimatedNet"), fin.estimatedNetMinor == null ? "" : takaCell(toBig(fin.estimatedNetMinor))],
         ] : []),
       ] },
-      { title: "পণ্য অনুযায়ী", headers: ["পণ্য", "বিক্রীত পরিমাণ", "আয় (টাকা)", "খরচ (টাকা)", "মার্জিন (টাকা)"], rows: (report.perProduct ?? []).map((p: any) => [
+      { title: T("finance.section.byProduct"), headers: H("finance.headers.productProfit"), rows: (report.perProduct ?? []).map((p: any) => [
         String(p.name ?? p.productId ?? "—"), Number(p.quantity ?? 0),
         takaCell(toBig(p.revenueMinor ?? 0)),
         p.costMinor == null ? "" : takaCell(toBig(p.costMinor)),
@@ -187,11 +196,11 @@ export class ScheduledReportsService {
       ]) },
     ];
     const summary = [
-      `লাভের রিপোর্ট · ${from} — ${to}`,
-      `অর্ডার: ${totals.orders ?? 0}টি · বিক্রি: ${takaText(toBig(totals.revenueMinor ?? 0))} · মোট মার্জিন: ${totals.grossMarginMinor == null ? "হিসাব হয়নি (খরচ অজানা)" : takaText(toBig(totals.grossMarginMinor))} (কভারেজ ${totals.costCoveragePercent ?? "—"}%)`,
-      ...(fin?.estimatedNetMinor != null ? [`আনুমানিক নিট লাভ: ${takaText(toBig(fin.estimatedNetMinor))}`] : []),
+      T("finance.summary.profitHead", { from, to }),
+      T("finance.summary.profitLine", { orders: totals.orders ?? 0, revenue: takaText(toBig(totals.revenueMinor ?? 0)), margin: totals.grossMarginMinor == null ? T("finance.notCalculatedCostUnknown") : takaText(toBig(totals.grossMarginMinor)), coverage: totals.costCoveragePercent ?? "—" }),
+      ...(fin?.estimatedNetMinor != null ? [T("finance.summary.profitNetLine", { net: takaText(toBig(fin.estimatedNetMinor)) })] : []),
     ].join("\n");
-    return buildFileFromSections(`profit-${from}-to-${to}`, sections, format, summary, [`লাভের রিপোর্ট · সময়সীমা: ${from} থেকে ${to} (ঢাকা) · ভিত্তি: পণ্যের লাইন-মোট (ছাড়ের আগে)`]);
+    return buildFileFromSections(`profit-${from}-to-${to}`, sections, format, summary, [T("finance.profitFileNote", { from, to })]);
   }
 
   /**
@@ -209,7 +218,9 @@ export class ScheduledReportsService {
    * AttributionCredit join for messaging, so no attribution
    * figure appears anywhere in this file.
    */
-  private async buildMessagingFile(organizationId: string, from: string, to: string, format: "csv" | "xlsx"): Promise<BuiltFile> {
+  private async buildMessagingFile(organizationId: string, from: string, to: string, format: "csv" | "xlsx", locale: ApiLocale = "bn"): Promise<BuiltFile> {
+    const T = (key: string, params?: Record<string, unknown>) => catalogText(key, locale, params);
+    const H = (key: string) => catalogList(key, locale);
     const fromDate = new Date(`${from}T00:00:00+06:00`);
     const toDate = new Date(`${to}T23:59:59.999+06:00`);
     const allBroadcasts: any[] = await this.t("broadcast").findMany({
@@ -294,19 +305,19 @@ export class ScheduledReportsService {
     const totAssocTotal = rows.reduce((s, r) => s + r.assocTotal, BigInt(0));
     const cell = (v: number | null) => (v === null ? "" : v);
     const sections: ReportSection[] = [
-      { title: "সারসংক্ষেপ", headers: ["বিবরণ", "পরিমাণ"], rows: [
-        ["এই সময়ে পাঠানো Broadcast", rows.length],
-        ["মোট Sent (Delivery রেকর্ড থেকে)", totSent],
-        ["মোট Failed", totFailed],
-        ["মোট Skipped", totSkipped],
-        ["সম্পর্কিত অর্ডার (Association — কারণের প্রমাণ নয়)", totAssocOrders],
-        ["সম্পর্কিত অর্ডারের মোট (টাকা)", takaCell(totAssocTotal)],
+      { title: T("finance.section.summary"), headers: H("finance.headers.descriptionAmount"), rows: [
+        [T("finance.messaging.broadcastsSentInPeriod"), rows.length],
+        [T("finance.messaging.totalSent"), totSent],
+        [T("finance.messaging.totalFailed"), totFailed],
+        [T("finance.messaging.totalSkipped"), totSkipped],
+        [T("finance.messaging.associatedOrders"), totAssocOrders],
+        [T("finance.messaging.associatedOrderTotal"), takaCell(totAssocTotal)],
       ] },
-      { title: "Channel অনুযায়ী Funnel", headers: ["Channel", "Broadcast", "Sent", "Failed", "Skipped", "Delivered", "Read", "Opened", "Clicked (প্রাপক)", "মোট Click"], rows: channels.map((c) => [
+      { title: T("finance.section.funnelByChannel"), headers: H("finance.headers.funnelByChannel"), rows: channels.map((c) => [
         c.channel, c.broadcasts, c.sent, c.failed, c.skipped,
         cell(c.delivered), cell(c.read), cell(c.opened), cell(c.clickedRecipients), cell(c.totalClicks),
       ]) },
-      { title: "Broadcast অনুযায়ী", headers: ["Broadcast", "Channel", "Status", "Sent", "Failed", "Skipped", "Delivered", "Read", "Opened", "Clicked (প্রাপক)", "সম্পর্কিত অর্ডার", "সম্পর্কিত মোট (টাকা)"], rows: rows.map((r) => [
+      { title: T("finance.section.byBroadcast"), headers: H("finance.headers.byBroadcast"), rows: rows.map((r) => [
         String(r.broadcast.name ?? ""), String(r.broadcast.channel), String(r.broadcast.status),
         r.funnel.sent, r.funnel.failed, r.funnel.skipped,
         cell(r.funnel.delivered), cell(r.funnel.read), cell(r.funnel.opened), cell(r.funnel.clickedRecipients),
@@ -314,30 +325,32 @@ export class ScheduledReportsService {
       ]) },
     ];
     const summary = [
-      `মেসেজিং সারসংক্ষেপ · ${from} — ${to}`,
-      `Broadcast: ${rows.length}টি · Sent: ${totSent} · Failed: ${totFailed} · Skipped: ${totSkipped}`,
-      `সম্পর্কিত অর্ডার (Association): ${totAssocOrders}টি · ${takaText(totAssocTotal)}`,
+      T("finance.summary.messagingHead", { from, to }),
+      T("finance.summary.messagingLine", { broadcasts: rows.length, sent: totSent, failed: totFailed, skipped: totSkipped }),
+      T("finance.summary.messagingAssocLine", { orders: totAssocOrders, total: takaText(totAssocTotal) }),
     ].join("\n");
     return buildFileFromSections(`messaging_summary-${from}-to-${to}`, sections, format, summary, [
-      `মেসেজিং সারসংক্ষেপ · সময়সীমা: ${from} থেকে ${to} (ঢাকা) · ভিত্তি: Broadcast-এর sentAt + MessageDelivery/MessageLinkClick রেকর্ড`,
-      `অর্ডারের সংখ্যা: ${ASSOCIATION_LABEL_BN}`,
-      "যে ধাপ কোনো Channel রিপোর্ট করতে পারে না, সেই ঘর খালি (null) — কখনো বানানো ০ নয়।",
+      T("finance.messagingFileNote", { from, to }),
+      T("finance.associationNote", { label: T("finance.associationLabel") }),
+      T("finance.messagingNullStageNote"),
     ]);
   }
 
-  private async buildFile(organizationId: string, config: any, now: Date): Promise<{ file: BuiltFile; periodLabel: string }> {
+  private async buildFile(organizationId: string, config: any, now: Date): Promise<{ file: BuiltFile; periodLabel: string; locale: ApiLocale }> {
     const range = String(config.cadence) === "weekly"
       ? FinanceReportsService.lastWeekRange(now)
       : FinanceReportsService.yesterdayRange(now);
     const periodLabel = String(config.cadence) === "weekly" ? `${range.from}..${range.to}` : range.from;
     const format = (String(config.format ?? "csv") === "xlsx" ? "xlsx" : "csv") as "csv" | "xlsx";
     const type = String(config.reportType);
+    // ML12: scheduled documents render in the org document locale.
+    const locale = await resolveDocumentLocale(this.prisma as any, organizationId);
     const file = type === "profit"
-      ? await this.buildProfitFile(organizationId, range.from, range.to, format)
+      ? await this.buildProfitFile(organizationId, range.from, range.to, format, locale)
       : type === "messaging_summary"
-        ? await this.buildMessagingFile(organizationId, range.from, range.to, format)
-        : await this.reports.buildReportFile(organizationId, type, range.from, range.to, format);
-    return { file, periodLabel };
+        ? await this.buildMessagingFile(organizationId, range.from, range.to, format, locale)
+        : await this.reports.buildReportFile(organizationId, type, range.from, range.to, format, locale);
+    return { file, periodLabel, locale };
   }
 
   // ---------------- running ----------------
@@ -352,8 +365,9 @@ export class ScheduledReportsService {
     }
     let file: BuiltFile;
     let periodLabel: string;
+    let locale: ApiLocale = "bn";
     try {
-      ({ file, periodLabel } = await this.buildFile(organizationId, config, now));
+      ({ file, periodLabel, locale } = await this.buildFile(organizationId, config, now));
     } catch (e: any) {
       const range = String(config.cadence) === "weekly" ? FinanceReportsService.lastWeekRange(now) : FinanceReportsService.yesterdayRange(now);
       const run = await this.t("scheduledReportRun").create({
@@ -375,14 +389,14 @@ export class ScheduledReportsService {
     if (!this.email.isConfigured()) {
       return createRun("failed_no_provider", { reason: "email_not_configured", attachment: file.filename, recipients: recipients.map((email) => ({ email, ok: false, error: "email_not_configured" })) });
     }
-    const label = REPORT_LABELS_BN[String(config.reportType)] ?? String(config.reportType);
+    const label = reportLabelFor(String(config.reportType), locale);
     const results: Array<{ email: string; ok: boolean; messageId?: string; error?: string }> = [];
     for (const to of recipients) {
       try {
         const sent = await this.email.send({
           to,
-          subject: `রিপোর্ট: ${label} (${periodLabel})`,
-          text: `${file.summary}\n\nসম্পূর্ণ রিপোর্টটি এই ইমেইলে সংযুক্ত (attachment) করা হয়েছে: ${file.filename}`,
+          subject: catalogText("finance.scheduled.emailSubject", locale, { label, period: periodLabel }),
+          text: catalogText("finance.scheduled.emailBody", locale, { summary: file.summary, filename: file.filename }),
           attachments: [{ filename: file.filename, content: file.body, contentType: file.contentType }],
         });
         results.push({ email: to, ok: true, messageId: sent.providerMessageId });
