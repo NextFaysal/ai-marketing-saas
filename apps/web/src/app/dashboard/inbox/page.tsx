@@ -12,6 +12,12 @@ import { ChannelChip, ConvAvatar, ShipmentWidget } from "@/components/inbox-extr
 const EmojiPickerPanel = dynamic(() => import("@/components/inbox-extras").then((m) => m.EmojiPickerPanel), { ssr: false });
 const VoiceRecorder = dynamic(() => import("@/components/inbox-extras").then((m) => m.VoiceRecorder), { ssr: false });
 const MediaView = dynamic(() => import("@/components/inbox-extras").then((m) => m.MediaView), { ssr: false });
+const PipelineBoardView = dynamic(() => import("./PipelineBoardView").then((m) => m.PipelineBoardView), { ssr: false });
+const MediaLibraryView = dynamic(() => import("./MediaLibraryView").then((m) => m.MediaLibraryView), { ssr: false });
+const ShortcutsModal = dynamic(() => import("./ShortcutsModal").then((m) => m.ShortcutsModal), { ssr: false });
+const QuickActionsSheet = dynamic(() => import("./QuickActionsSheet").then((m) => m.QuickActionsSheet), { ssr: false });
+const NewMessageModal = dynamic(() => import("./NewMessageModal").then((m) => m.NewMessageModal), { ssr: false });
+const CommandPaletteModal = dynamic(() => import("./CommandPaletteModal").then((m) => m.CommandPaletteModal), { ssr: false });
 import { insertAtCursor, toggleBulletLines, wrapSelection } from "@/lib/composer-format";
 import { mergeTimeline } from "@/lib/timeline";
 import { SNOOZE_PRESETS, isActivelySnoozed, snoozeBodyForCustom, snoozeBodyForMinutes } from "@/lib/snooze";
@@ -2136,157 +2142,25 @@ export default function InboxPage() {
       ) : null}
 
       {viewMode === "board" ? (
-        <div className="card p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-bold text-slate-900">🗂️ সেলস পাইপলাইন বোর্ড</span>
-                {board && (
-                  <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 ring-1 ring-indigo-200">
-                    মোট সক্রিয় {board.totalActive}টি
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">ড্র্যাগ করে স্টেজ পরিবর্তন করুন — অটোমেটিক স্টেজ সিঙ্ক হবে</p>
-            </div>
-            <button className="btn-secondary btn-sm" onClick={() => void loadBoard()}>↻ রিফ্রেশ</button>
-          </div>
-
-          {!board ? (
-            <p className="py-12 text-center text-sm text-slate-400 font-medium">পাইপলাইন লোড হচ্ছে...</p>
-          ) : (
-            <div className="flex gap-3 overflow-x-auto pb-4 pt-1 snap-x">
-              {([["new", "🆕 New Lead"], ["talking", "💬 Talking"], ["ordered", "🛒 Order Placed"], ["shipped", "🚚 Shipped"], ["delivered", "✅ Completed"], ["repeat", "🔁 Repeat"]] as const).map(([stage, label]) => (
-                <div
-                  key={stage}
-                  className={`min-h-[220px] w-72 shrink-0 rounded-2xl p-3 border transition-colors snap-start ${
-                    stage === "shipped"
-                      ? "border-sky-200 bg-sky-50/40"
-                      : "border-slate-200/80 bg-slate-50/70"
-                  }`}
-                  title={stage === "shipped" ? "Shipped ধাপটি কুরিয়ারের স্ট্যাটাস থেকে নিজে থেকে আসে — এখানে কার্ড ফেলা যায় না" : undefined}
-                  onDragOver={stage === "shipped" ? undefined : (e) => e.preventDefault()}
-                  onDrop={stage === "shipped" ? undefined : async (e) => {
-                    e.preventDefault();
-                    const convId = e.dataTransfer.getData("text/plain");
-                    const orgId = getOrganizationId(); if (!convId || !orgId) return;
-                    await apiFetch(`/organizations/${orgId}/inbox/conversations/${convId}`, { method: "PATCH", body: JSON.stringify({ pipelineStage: stage }) }).catch(() => undefined);
-                    void loadBoard();
-                  }}
-                >
-                  <div className="mb-2 flex items-center justify-between border-b border-slate-200/60 pb-2">
-                    <span className="text-xs font-bold text-slate-800">{label}</span>
-                    <span className="rounded-full bg-white px-2 py-0.5 text-[10.5px] font-bold text-slate-600 shadow-xs ring-1 ring-slate-200/60">
-                      {board.stages[stage]?.count ?? 0}
-                    </span>
-                  </div>
-                  <div className="text-[11px] font-semibold text-emerald-700 bg-emerald-50/80 px-2 py-1 rounded-lg mb-3">
-                    অর্ডার মূল্য: ৳{board.stages[stage] ? (Number(board.stages[stage].valueMinor) / 100).toLocaleString("bn-BD") : "০"}
-                  </div>
-
-                  <div className="space-y-2">
-                    {(board.stages[stage]?.cards ?? []).map((card: any) => (
-                      <div
-                        key={card.id}
-                        draggable
-                        onDragStart={(e) => e.dataTransfer.setData("text/plain", card.id)}
-                        onClick={() => { setViewMode("list"); void openConversation({ id: card.id } as Conversation); }}
-                        className="cursor-pointer rounded-xl border border-slate-200/90 bg-white p-3 shadow-xs transition hover:border-brand-300 hover:shadow-md hover:-translate-y-0.5 active:scale-98"
-                      >
-                        <div className="flex items-center justify-between gap-1.5">
-                          <span className="truncate text-xs font-bold text-slate-900">{card.contactName ?? card.contactPhone ?? "গ্রাহক"}</span>
-                          <ChannelChip channel={card.channel} />
-                        </div>
-                        <div className="truncate text-xs text-slate-500 mt-1">{card.lastMessagePreview ?? "—"}</div>
-                        <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-1.5 text-[10.5px] text-slate-400">
-                          <span>{card.lastMessageAt ? new Date(card.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}</span>
-                          {card.unreadCount > 0 ? <span className="rounded-full bg-red-500 px-1.5 py-0.2 font-bold text-white text-[10px]">{card.unreadCount}</span> : null}
-                          {card.latestOrderTotalMinor ? <span className="font-bold text-emerald-600">৳{(Number(card.latestOrderTotalMinor) / 100).toLocaleString("bn-BD")}</span> : null}
-                        </div>
-                      </div>
-                    ))}
-                    {(board.stages[stage]?.cards ?? []).length === 0 && (
-                      <p className="py-6 text-center text-xs text-slate-400 italic">কোনো চ্যাট নেই</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-slate-400">কার্ড Drag করে অন্য কলামে ছাড়লে Stage বদলায়। Stage অটো-এগোয়ও: প্রথম Reply → Talking, Chat Order → Order Placed/Repeat, কুরিয়ার পার্সেল পথে থাকলে → Shipped (এই ধাপটি শুধু কুরিয়ারের আসল স্ট্যাটাস থেকে আসে — হাতে বসানো যায় না), Order Delivered হলে → Completed।</p>
-        </div>
+        <PipelineBoardView
+          board={board}
+          loadBoard={loadBoard}
+          onOpenConversation={(c) => void openConversation(c as Conversation)}
+          onSwitchToList={() => setViewMode("list")}
+        />
       ) : null}
 
       {viewMode === "media" ? (
-        <div className="card p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-            <div>
-              <div className="text-base font-bold text-slate-900">🖼️ মিডিয়া লাইব্রেরি (শেষ ৯০ দিন)</div>
-              <p className="text-xs text-slate-400 mt-0.5">সব চ্যানেল থেকে আসা ছবি, অডিও, ভিডিও ও ডকুমেন্ট</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                className="input !w-48 !text-xs !py-1.5"
-                placeholder="নাম বা ফোন খুঁজুন…"
-                value={mediaQ}
-                onChange={(e) => setMediaQ(e.target.value)}
-              />
-              <select
-                className="input !w-32 !text-xs !py-1.5"
-                value={mediaType}
-                onChange={(e) => setMediaType(e.target.value)}
-              >
-                <option value="">সব ধরন</option>
-                <option value="image">🖼️ ছবি</option>
-                <option value="audio">🎙️ ভয়েস</option>
-                <option value="video">🎬 ভিডিও</option>
-                <option value="document">📄 ডকুমেন্ট</option>
-              </select>
-              <button className="btn-secondary btn-sm" onClick={() => void loadMedia()}>↻ রিফ্রেশ</button>
-            </div>
-          </div>
-
-          {mediaItems.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-xl">🖼️</div>
-              <p className="text-sm font-semibold text-slate-700">কোনো মিডিয়া পাওয়া যায়নি</p>
-              <p className="text-xs text-slate-400 mt-0.5">গ্রাহক বা এজেন্টের পাঠানো ছবি ও ভয়েস ফাইল এখানে জমা থাকবে</p>
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {mediaItems.map((m: any) => (
-                <button
-                  key={m.id}
-                  className="group rounded-2xl border border-slate-200/80 bg-white p-3.5 text-left shadow-xs transition hover:border-brand-300 hover:shadow-md hover:-translate-y-0.5"
-                  onClick={() => { setViewMode("list"); void openConversation({ id: m.conversationId } as Conversation); }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-lg group-hover:scale-105 transition-transform">
-                      {m.type === "image" ? "🖼️" : m.type === "audio" ? "🎙️" : m.type === "video" ? "🎬" : "📄"}
-                    </span>
-                    {m.stored ? (
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-                        💾 সুরক্ষিত ক্লাউড
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200">
-                        প্ল্যাটফর্মে
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-3 truncate text-xs font-bold text-slate-900 group-hover:text-brand-600 transition-colors">
-                    {m.contactName ?? "গ্রাহক"} · <span className="capitalize">{m.channel}</span>
-                  </div>
-                  <div className="mt-1 text-[11px] text-slate-400 flex items-center justify-between">
-                    <span>{new Date(m.createdAt).toLocaleDateString("bn-BD")}</span>
-                    {m.sizeBytes ? <span>{(m.sizeBytes / 1024).toFixed(0)} KB</span> : null}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-slate-400">"💾 সুরক্ষিত ক্লাউড" মানে ছবি/ভয়েস আমাদের মিডিয়া পাইপলাইনে জমা আছে — মূল প্ল্যাটফর্ম থেকে লিংক মেয়াদ শেষ হলেও ফাইল মুছে যাবে না।</p>
-        </div>
+        <MediaLibraryView
+          mediaItems={mediaItems}
+          mediaQ={mediaQ}
+          setMediaQ={setMediaQ}
+          mediaType={mediaType}
+          setMediaType={setMediaType}
+          loadMedia={loadMedia}
+          onOpenConversation={(c) => void openConversation(c as Conversation)}
+          onSwitchToList={() => setViewMode("list")}
+        />
       ) : null}
 
       <div
@@ -5180,261 +5054,50 @@ export default function InboxPage() {
   )}
 
       {paletteOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/60 backdrop-blur-sm p-4 pt-20 transition-all animate-in fade-in duration-150" onClick={() => setPaletteOpen(false)}>
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-3 text-sm font-semibold text-slate-800">
-              <span className="flex items-center gap-2">
-                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-xs font-bold text-indigo-600">⌘</span>
-                <span>দ্রুত অ্যাকশন ও কমান্ড প্যালেট</span>
-              </span>
-              <kbd className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 shadow-2xs">ESC</kbd>
-            </div>
-            <div className="max-h-84 overflow-y-auto p-2 space-y-1">
-              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">অপঠিত কথোপকথন</div>
-              {conversations.filter((c) => c.unreadCount > 0).slice(0, 5).map((c) => (
-                <button key={c.id} className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-50 transition" onClick={() => { setPaletteOpen(false); void openConversation(c); }}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <ContactAvatar name={c.contactName ?? c.contactPhone} channel={c.channel} size="sm" />
-                    <span className="truncate font-medium text-slate-800">{c.contactName ?? c.contactPhone ?? "গ্রাহক"}</span>
-                  </div>
-                  <span className="shrink-0 flex items-center gap-1.5">
-                    <ChannelChip channel={c.channel} />
-                    <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">{c.unreadCount} অপঠিত</span>
-                  </span>
-                </button>
-              ))}
-              <div className="my-1.5 border-t border-slate-100" />
-              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">কুইক ফিল্টার ও অ্যাকশন</div>
-              <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => { setPaletteOpen(false); onFilter({ unreadOnly: !filters.unreadOnly }); }}>
-                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-50 text-blue-600 text-xs font-bold">📬</span>
-                <span>{filters.unreadOnly ? "সব কথোপকথন দেখুন" : "শুধু অপঠিত বার্তাগুলো ফিল্টার করুন"}</span>
-              </button>
-              {(["whatsapp", "messenger", "instagram", "webchat"] as const).map((ch) => (
-                <button key={ch} className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => { setPaletteOpen(false); onFilter({ channel: filters.channel === ch ? "" : ch }); }}>
-                  <span className="flex items-center gap-2">
-                    <ChannelChip channel={ch} />
-                    <span className="font-medium capitalize">{ch} এর চ্যাট ফিল্টার</span>
-                  </span>
-                  <span className="text-xs text-slate-400 font-medium">{filters.channel === ch ? "সক্রিয় ✓" : "ফিল্টার"}</span>
-                </button>
-              ))}
-              {active && myId ? (
-                <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-indigo-700 hover:bg-indigo-50 transition" onClick={() => { setPaletteOpen(false); void patchConversation({ assignedUserId: myId }); }}>
-                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 text-xs font-bold">👤</span>
-                  <span>বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন</span>
-                  <kbd className="ml-auto rounded-md border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 shadow-2xs">E</kbd>
-                </button>
-              ) : null}
-              <button className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 transition" onClick={() => { setPaletteOpen(false); setShowShortcuts(true); }}>
-                <span className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-slate-100 text-slate-600 text-xs font-bold">⌨️</span>
-                  <span>কীবোর্ড শর্টকাট তালিকা</span>
-                </span>
-                <kbd className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 shadow-2xs">?</kbd>
-              </button>
-            </div>
-          </div>
-        </div>
+        <CommandPaletteModal
+          isOpen={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          conversations={conversations}
+          active={active}
+          myId={myId}
+          filters={filters}
+          onFilter={onFilter}
+          onOpenConversation={(c) => void openConversation(c)}
+          onPatchConversation={(p) => void patchConversation(p)}
+          onOpenShortcuts={() => setShowShortcuts(true)}
+        />
       ) : null}
 
       {showShortcuts ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all animate-in fade-in duration-150" onClick={() => setShowShortcuts(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl ring-1 ring-slate-900/10" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
-                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 text-xs">⌨️</span>
-                <span>কীবোর্ড শর্টকাট</span>
-              </div>
-              <button className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition" onClick={() => setShowShortcuts(false)}>✕</button>
-            </div>
-            <ul className="divide-y divide-slate-100 text-xs text-slate-600">
-              <li className="flex items-center justify-between py-2">
-                <span>Command Palette খুলুন</span>
-                <span className="flex items-center gap-1 font-mono">
-                  <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">⌘K</kbd>
-                  <span className="text-slate-400">বা</span>
-                  <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">Ctrl+K</kbd>
-                </span>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>তালিকায় নিচে / ওপরে যান</span>
-                <span className="flex items-center gap-1 font-mono">
-                  <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">J</kbd>
-                  <span className="text-slate-400">/</span>
-                  <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shadow-2xs">K</kbd>
-                </span>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>বেছে নেওয়া কথোপকথন খুলুন</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">Enter</kbd>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>খোঁজার বক্সে ফোকাস করুন</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">/</kbd>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>উত্তরের ঘরে (Composer) যান</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">R</kbd>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>বর্তমান কথোপকথন নিজেকে অ্যাসাইন করুন</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">E</kbd>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>শর্টকাট গাইড দেখুন</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">?</kbd>
-              </li>
-              <li className="flex items-center justify-between py-2">
-                <span>প্যানেল বা মোডাল বন্ধ করুন</span>
-                <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold font-mono text-slate-700 shadow-2xs">Esc</kbd>
-              </li>
-            </ul>
-            <div className="mt-4 rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500 text-center">
-              💡 কোনো লেখার ঘরে (Input/Textarea) থাকা অবস্থায় ⌘K ছাড়া অন্যান্য শর্টকাট ট্রিগার হয় না।
-            </div>
-          </div>
-        </div>
+        <ShortcutsModal
+          isOpen={showShortcuts}
+          onClose={() => setShowShortcuts(false)}
+        />
       ) : null}
 
-      {/* 📱 Mobile Quick Actions Bottom Sheet (Matching Demo 1 & 2 Image #8) */}
       {quickActionsOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in" onClick={() => setQuickActionsOpen(false)}>
-          <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl animate-in slide-in-from-bottom duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <span className="text-base font-bold text-slate-900">দ্রুত অ্যাকশন</span>
-              <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={() => setQuickActionsOpen(false)}>✕</button>
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-4">
-              <button
-                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-blue-50/50 hover:border-blue-300"
-                onClick={() => { setQuickActionsOpen(false); setOrderOpen(true); }}
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 text-lg">📄</span>
-                <div>
-                  <div className="font-bold text-slate-900">ইনভয়েস পাঠান</div>
-                  <div className="text-[10px] text-slate-400">চ্যাট থেকে অর্ডার তৈরি</div>
-                </div>
-              </button>
-              <button
-                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-blue-50/50 hover:border-blue-300"
-                onClick={() => { setQuickActionsOpen(false); setNotice("টাস্ক উইন্ডো খোলা হচ্ছে..."); }}
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 text-lg">📋</span>
-                <div>
-                  <div className="font-bold text-slate-900">টাস্ক তৈরি করুন</div>
-                  <div className="text-[10px] text-slate-400">রিমাইন্ডার ও ফলোআপ</div>
-                </div>
-              </button>
-              <button
-                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-amber-50/50 hover:border-amber-300"
-                onClick={() => { setQuickActionsOpen(false); setComposerMode("note"); focusComposer(); }}
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600 text-lg">📝</span>
-                <div>
-                  <div className="font-bold text-slate-900">নোট যোগ করুন</div>
-                  <div className="text-[10px] text-slate-400">টিম প্রাইভেট হুইস্পার</div>
-                </div>
-              </button>
-              <button
-                className="flex items-center gap-3 rounded-2xl border border-slate-200/90 bg-white p-3.5 text-left text-xs font-semibold text-slate-800 shadow-2xs hover:bg-emerald-50/50 hover:border-emerald-300"
-                onClick={() => { setQuickActionsOpen(false); if (active) patchConversation({ status: active.status === "closed" ? "open" : "closed" }); }}
-              >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 text-lg">✓</span>
-                <div>
-                  <div className="font-bold text-slate-900">মার্ক অ্যাজ রিজলভড</div>
-                  <div className="text-[10px] text-slate-400">চ্যাট সমাধান করুন</div>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
+        <QuickActionsSheet
+          isOpen={quickActionsOpen}
+          onClose={() => setQuickActionsOpen(false)}
+          onOpenOrder={() => setOrderOpen(true)}
+          onAddTaskNotice={() => setNotice("টাস্ক উইন্ডো খোলা হচ্ছে...")}
+          onAddNote={() => { setComposerMode("note"); focusComposer(); }}
+          onToggleResolve={() => { if (active) patchConversation({ status: active.status === "closed" ? "open" : "closed" }); }}
+        />
       ) : null}
 
-      {/* ✉️ New Message Modal (Matching Demo 1 & 2 Image #9) */}
       {newMsgOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in" onClick={() => setNewMsgOpen(false)}>
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 text-blue-600 text-sm">✉️</span>
-                <span className="text-base font-bold text-slate-900">নতুন বার্তা পাঠান</span>
-              </div>
-              <button className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" onClick={() => setNewMsgOpen(false)}>✕</button>
-            </div>
-
-            <div className="space-y-4 pt-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">কোন চ্যানেলে পাঠাবেন?</label>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {([
-                    { id: "whatsapp", label: "WhatsApp", icon: "🟢", cls: "border-emerald-200 bg-emerald-50/60 text-emerald-800" },
-                    { id: "messenger", label: "Messenger", icon: "🔵", cls: "border-sky-200 bg-sky-50/60 text-sky-800" },
-                    { id: "instagram", label: "Instagram", icon: "🟣", cls: "border-fuchsia-200 bg-fuchsia-50/60 text-fuchsia-800" },
-                    { id: "telegram", label: "Telegram", icon: "✈️", cls: "border-cyan-200 bg-cyan-50/60 text-cyan-800" },
-                  ] as const).map((ch) => (
-                    <button
-                      key={ch.id}
-                      type="button"
-                      onClick={() => setNewMsgForm({ ...newMsgForm, channel: ch.id })}
-                      className={`flex items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-bold transition ${
-                        newMsgForm.channel === ch.id
-                          ? `${ch.cls} ring-2 ring-blue-500/30 shadow-xs`
-                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                      }`}
-                    >
-                      <span>{ch.icon}</span>
-                      <span>{ch.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">প্রাপক (ফোন নম্বর / ইউজার আইডি)</label>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  placeholder="যেমন: +8801712345678"
-                  value={newMsgForm.recipient}
-                  onChange={(e) => setNewMsgForm({ ...newMsgForm, recipient: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">মেসেজের বিষয়বস্তু</label>
-                <textarea
-                  rows={4}
-                  className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  placeholder="নমস্কার! আমরা আপনার জন্য একটি বিশেষ অফার নিয়ে এসেছি..."
-                  value={newMsgForm.message}
-                  onChange={(e) => setNewMsgForm({ ...newMsgForm, message: e.target.value })}
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                <button
-                  type="button"
-                  className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                  onClick={() => setNewMsgOpen(false)}
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="button"
-                  disabled={!newMsgForm.recipient.trim() || !newMsgForm.message.trim()}
-                  className="flex items-center gap-1.5 rounded-2xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50 transition"
-                  onClick={() => {
-                    setNewMsgOpen(false);
-                    setNotice(`${newMsgForm.channel.toUpperCase()} এ বার্তা প্রেরণের প্রসেসিং শুরু হয়েছে।`);
-                    setNewMsgForm({ channel: "whatsapp", recipient: "", message: "" });
-                  }}
-                >
-                  <span>পাঠান</span>
-                  <span>🚀</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <NewMessageModal
+          isOpen={newMsgOpen}
+          onClose={() => setNewMsgOpen(false)}
+          form={newMsgForm}
+          setForm={setNewMsgForm}
+          onSend={(channel) => {
+            setNewMsgOpen(false);
+            setNotice(`${channel.toUpperCase()} এ বার্তা প্রেরণের প্রসেসিং শুরু হয়েছে।`);
+            setNewMsgForm({ channel: "whatsapp", recipient: "", message: "" });
+          }}
+        />
       ) : null}
 
       {/* 📱 Mobile Bottom Navigation Bar (Hidden during active chat so composer is never covered) */}
